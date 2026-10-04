@@ -1,18 +1,20 @@
 ## The SH4 dynarec ##
 #
 #	sh4.singlestep.dynarec    the single-step vectors through decoder -> shil -> x64 backend
+#	sh4.differential          interpreter against dynarec, from the initial state of every vector
 #
-#	It enters the blocks of the x64 backend directly (dynarec_runner.h), on other hosts it is skipped.
+#	Both enter the blocks of the x64 backend directly (dynarec_runner.h), on other hosts they are skipped.
 #
 
 if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})))
   set(nulldc_sh4_dynarec_missing
       "the SH4 dynarec tests run the blocks of the x64 backend, this is not an x86-64 build with the SH4 recompiler")
   nulldc_add_skipped_test(sh4.singlestep.dynarec "${nulldc_sh4_dynarec_missing}")
+  nulldc_add_skipped_test(sh4.differential "${nulldc_sh4_dynarec_missing}")
   return()
 endif()
 
-# The interpreter is part of it: the recompiler falls back to its handlers
+# The interpreter is part of it: the recompiler falls back to its handlers, and the differential runs both
 nulldc_add_libswirl_library(nulldc_sh4_dynarec
   SOURCES ${NULLDC_SH4_INTERP_SOURCES}
           hw/sh4/dyna/decoder.cpp
@@ -35,4 +37,23 @@ if(NULLDC_HAVE_SH4_TESTS)
   set_tests_properties(sh4.singlestep.dynarec PROPERTIES TIMEOUT 300)
 else()
   nulldc_add_skipped_test(sh4.singlestep.dynarec "${NULLDC_SH4_TESTS_MISSING}")
+endif()
+
+add_executable(sh4_differential
+  differential.cpp
+  diff_engines.cpp    diff_engines.h
+  diff_memory.cpp     diff_memory.h
+  dynarec_runner.cpp  dynarec_runner.h
+)
+target_link_libraries(sh4_differential PRIVATE nulldc_sh4_dynarec nulldc_test_common)
+target_compile_definitions(sh4_differential PRIVATE
+  NULLDC_SH4_TESTS_DIR="${NULLDC_SH4_TESTS_DIR}"
+  NULLDC_BASELINE="${CMAKE_CURRENT_SOURCE_DIR}/baseline_differential.txt"
+)
+
+if(NULLDC_HAVE_SH4_TESTS)
+  add_test(NAME sh4.differential COMMAND sh4_differential)
+  set_tests_properties(sh4.differential PROPERTIES TIMEOUT 300)
+else()
+  nulldc_add_skipped_test(sh4.differential "${NULLDC_SH4_TESTS_MISSING}")
 endif()
