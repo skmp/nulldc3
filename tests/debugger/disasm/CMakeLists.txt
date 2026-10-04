@@ -10,6 +10,11 @@ project(dbg_disasm_tests CXX)
 #   -DARM_OBJDUMP=<arm-eabi-objdump>
 #   -DDEVTOOLS_DIR=<dreamcast-devtools checkout with node_modules installed>
 
+# The golden test walks a few million encodings
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
