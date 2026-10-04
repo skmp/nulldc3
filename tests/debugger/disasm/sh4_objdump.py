@@ -3,7 +3,9 @@
 Compares dbg::DisasmSh4 with GNU objdump (-m sh4) over all 65536 opcodes.
 
 The opcodes are laid out as a little-endian binary image at BASE; both sides resolve PC-relative
-literals against that image. See README.md for the normalisation rules and the explained differences.
+literals against that image. Opcode n sits at BASE + 2n, so the comparison is repeated at BASE + 2 to
+see every opcode at both alignments of pc. See README.md for the normalisation rules and the explained
+differences.
 
 Exit status: 0 no unexplained difference, 1 unexplained differences, 77 oracle not available.
 """
@@ -35,11 +37,11 @@ def squeeze(text):
     return ' '.join(text.split())
 
 
-def run_objdump(objdump, workdir):
+def run_objdump(objdump, workdir, base):
     image = os.path.join(workdir, 'sh4_all.bin')
     with open(image, 'wb') as f:
         f.write(b''.join(struct.pack('<H', op) for op in range(0x10000)))
-    out = subprocess.run([objdump, '-D', '-b', 'binary', '-m', 'sh4', '-EL', '--adjust-vma=0x%x' % BASE, image],
+    out = subprocess.run([objdump, '-D', '-b', 'binary', '-m', 'sh4', '-EL', '--adjust-vma=0x%x' % base, image],
                          check=True, capture_output=True, text=True).stdout
     result = {}
     for line in out.splitlines():
@@ -47,15 +49,15 @@ def run_objdump(objdump, workdir):
         if not m:
             continue
         op = int(m.group(3) + m.group(2), 16)
-        assert int(m.group(1), 16) == BASE + op * 2, line
+        assert int(m.group(1), 16) == base + op * 2, line
         text, _, comment = m.group(4).partition('!')
         result[op] = (squeeze(text), comment.strip())
     assert len(result) == 0x10000, len(result)
     return result
 
 
-def run_ours(test_bin, mode):
-    out = subprocess.run([test_bin, 'sh4', str(mode), '0x%x' % BASE], check=True, capture_output=True, text=True).stdout
+def run_ours(test_bin, mode, base):
+    out = subprocess.run([test_bin, 'sh4', str(mode), '0x%x' % base], check=True, capture_output=True, text=True).stdout
     result = {}
     for line in out.splitlines():
         op, sig, text = line.split('\t')
@@ -182,12 +184,12 @@ def main():
 
     os.makedirs(args.workdir, exist_ok=True)
     version = subprocess.run([args.objdump, '--version'], capture_output=True, text=True).stdout.splitlines()[0]
-    obj = run_objdump(args.objdump, args.workdir)
     status = 0
 
-    for mode in range(4):
-        counts, rules, classes, checked, bad = compare(obj, run_ours(args.test_bin, mode), mode)
-        name = 'PR=%d SZ=%d' % (mode & 1, (mode >> 1) & 1)
+    for mode, base in ((0, BASE), (0, BASE + 2), (1, BASE), (2, BASE), (3, BASE)):
+        obj = run_objdump(args.objdump, args.workdir, base)
+        counts, rules, classes, checked, bad = compare(obj, run_ours(args.test_bin, mode, base), mode)
+        name = 'PR=%d SZ=%d at 0x%08x' % (mode & 1, (mode >> 1) & 1, base)
         print('sh4 %s vs %s%s' % (name, version, '' if mode == 0 else ' rewritten by the FPSCR rules'))
         print('  encodings compared    65536')
         print('  identical             %d' % counts['identical'])

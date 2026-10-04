@@ -40,6 +40,8 @@ Rows are reviewed by hand before they go into a `golden_*.inc`.
 
 All 65536 opcodes are written as a little-endian image at `0x8c010000` and disassembled with
 `sh-elf-objdump -D -b binary -m sh4 -EL`. Both sides resolve PC-relative literals against the image.
+Opcode n sits at base + 2n, which ties the alignment of `pc` to bit 0 of the opcode, so the comparison is
+repeated with the image at `0x8c010002`: every opcode is seen at both alignments.
 Compared per opcode: valid / invalid, text, the info flags (derived from objdump's mnemonic), branch
 targets, literal addresses and literal values.
 
@@ -54,14 +56,15 @@ Normalisation (counted as "normalised-equal"):
 
 Result (GNU objdump 2.43):
 
-| FPSCR | compared | identical | normalised-equal | explained | unexplained |
-|---|---|---|---|---|---|
-| PR=0 SZ=0 | 65536 | 55792 | 9728 | 16 | 0 |
-| PR=1 SZ=0 | 65536 | 54176 | 11344 | 16 | 0 |
-| PR=0 SZ=1 | 65536 | 55536 | 9984 | 16 | 0 |
-| PR=1 SZ=1 | 65536 | 53920 | 11600 | 16 | 0 |
+| FPSCR | image base | compared | identical | normalised-equal | explained | unexplained |
+|---|---|---|---|---|---|---|
+| PR=0 SZ=0 | `0x8c010000` | 65536 | 55792 | 9728 | 16 | 0 |
+| PR=0 SZ=0 | `0x8c010002` | 65536 | 55792 | 9728 | 16 | 0 |
+| PR=1 SZ=0 | `0x8c010000` | 65536 | 54176 | 11344 | 16 | 0 |
+| PR=0 SZ=1 | `0x8c010000` | 65536 | 55536 | 9984 | 16 | 0 |
+| PR=1 SZ=1 | `0x8c010000` | 65536 | 53920 | 11600 | 16 | 0 |
 
-Checked in each mode: 59033 flag sets, 9216 branch targets, 8448 literal addresses, 8192 literal values.
+Checked in each run: 59033 flag sets, 9216 branch targets, 8448 literal addresses, 8192 literal values.
 
 Explained differences:
 
