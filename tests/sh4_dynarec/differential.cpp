@@ -148,6 +148,7 @@ static bool kind_is_gated(u32 kind)
 
 struct DiffOptions
 {
+	std::string name;
 	std::string vectors_dir;
 	std::string baseline;
 	std::string file_pattern;
@@ -332,14 +333,14 @@ static bool load_baseline(const std::string& path, std::map<std::string, DiffBas
 	return true;
 }
 
-static bool save_baseline(const std::string& path, const std::map<std::string, DiffCounts>& results)
+static bool save_baseline(const std::string& path, const char* name, const std::map<std::string, DiffCounts>& results)
 {
 	FILE* f = fopen(path.c_str(), "w");
 
 	if (!f)
 		return false;
 
-	fprintf(f, "# " DIFF_NAME " baseline: on how many vectors the SH4 interpreter and the dynarec agree, per file, by what the\n");
+	fprintf(f, "# %s baseline: on how many vectors the SH4 interpreter and the dynarec agree, per file, by what the\n", name);
 	fprintf(f, "# others differ, and for how many the dynarec compiles the instruction to native code.\n");
 	fprintf(f, "# The test fails when a file runs fewer vectors than listed here, has fewer identical or native ones, or more\n");
 	fprintf(f, "# of both-crash, crash, path, bus or state.\n");
@@ -383,6 +384,7 @@ static int usage(const DiffOptions& defaults)
 		"\n"
 		"  --vectors <dir>      vector files (*" SS_FILE_SUFFIX "), default %s\n"
 		"  --baseline <file>    baseline file, default %s\n"
+		"  --name <name>        what the report and the baseline call the test, for another set of vectors\n"
 		"  --update-baseline    write the counts of this run into the baseline file (all files have to be run)\n"
 		"  --strict             every count that is not the baseline's fails: the baseline has to be the one of\n"
 		"                       this build. ctest runs the test this way\n"
@@ -403,6 +405,7 @@ int main(int argc, char** argv)
 {
 	DiffOptions opt;
 
+	opt.name = DIFF_NAME;
 	opt.vectors_dir = NULLDC_SH4_TESTS_DIR;
 	opt.baseline = NULLDC_BASELINE;
 	opt.vector = -1;
@@ -423,6 +426,8 @@ int main(int argc, char** argv)
 			opt.vectors_dir = argv[++i];
 		else if (arg == "--baseline" && has_value)
 			opt.baseline = argv[++i];
+		else if (arg == "--name" && has_value)
+			opt.name = argv[++i];
 		else if (arg == "--file" && has_value)
 			opt.file_pattern = argv[++i];
 		else if (arg == "--vector" && has_value)
@@ -501,7 +506,7 @@ int main(int argc, char** argv)
 
 	std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
 
-	fprintf(report, DIFF_NAME ": vectors %s\n\n", opt.vectors_dir.c_str());
+	fprintf(report, "%s: vectors %s\n\n", opt.name.c_str(), opt.vectors_dir.c_str());
 	fprintf(report, "%-26s %-24s %5s %5s %9s %9s %10s %6s  %s\n", "file", "instruction", "total", "run", "identical", "different", "both-crash",
 		"native", "filtered");
 
@@ -827,7 +832,7 @@ int main(int argc, char** argv)
 
 	if (opt.update_baseline)
 	{
-		if (!save_baseline(opt.baseline, results))
+		if (!save_baseline(opt.baseline, opt.name.c_str(), results))
 		{
 			fprintf(report, "\ncannot write %s\n", opt.baseline.c_str());
 			return 2;
@@ -847,7 +852,7 @@ int main(int argc, char** argv)
 	if (!gated)
 		fprintf(report, "\nnot compared with the baseline\n");
 
-	fprintf(report, "\n" DIFF_NAME ": %s\n", problems ? "FAIL" : "PASS");
+	fprintf(report, "\n%s: %s\n", opt.name.c_str(), problems ? "FAIL" : "PASS");
 	fflush(report);
 
 	return problems ? 1 : 0;

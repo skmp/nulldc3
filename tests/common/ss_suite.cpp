@@ -77,6 +77,7 @@ struct SsBaseline
 
 struct SsOptions
 {
+	std::string name;
 	std::string vectors_dir;
 	std::string baseline;
 	std::string file_pattern;
@@ -197,14 +198,14 @@ static bool load_baseline(const std::string& path, std::map<std::string, SsBasel
 	return true;
 }
 
-static bool save_baseline(const std::string& path, const SsSuite& suite, const std::map<std::string, SsCounts>& results)
+static bool save_baseline(const std::string& path, const char* name, const SsSuite& suite, const std::map<std::string, SsCounts>& results)
 {
 	FILE* f = fopen(path.c_str(), "w");
 
 	if (!f)
 		return false;
 
-	fprintf(f, "# %s baseline: what devcast passes of the single-step vectors, per file.\n", suite.name);
+	fprintf(f, "# %s baseline: what devcast passes of the single-step vectors, per file.\n", name);
 	fprintf(f, "# The test fails when a file runs or passes fewer vectors than listed here%s.\n",
 		suite.native ? ", or has fewer whose instruction is\n# compiled to native code" : "");
 	fprintf(f, "# Written by the test's --update-baseline, see tests/README.md.\n");
@@ -267,6 +268,7 @@ static int usage(const SsSuite& suite, const SsOptions& defaults)
 		"\n"
 		"  --vectors <dir>      vector files (*" SS_FILE_SUFFIX "), default %s\n"
 		"  --baseline <file>    baseline file, default %s\n"
+		"  --name <name>        what the report and the baseline call the test, for another set of vectors\n"
 		"  --update-baseline    write the counts of this run into the baseline file (all files have to be run)\n"
 		"  --strict             counts above the baseline fail as well: the baseline has to be the one of this\n"
 		"                       build. ctest runs the test this way\n"
@@ -287,6 +289,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 {
 	SsOptions opt;
 
+	opt.name = suite.name;
 	opt.vectors_dir = suite.vectors_dir;
 	opt.baseline = suite.baseline;
 	opt.vector = -1;
@@ -307,6 +310,8 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 			opt.vectors_dir = argv[++i];
 		else if (arg == "--baseline" && has_value)
 			opt.baseline = argv[++i];
+		else if (arg == "--name" && has_value)
+			opt.name = argv[++i];
 		else if (arg == "--file" && has_value)
 			opt.file_pattern = argv[++i];
 		else if (arg == "--vector" && has_value)
@@ -381,7 +386,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 
 	std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
 
-	fprintf(report, "%s: vectors %s\n\n", suite.name, opt.vectors_dir.c_str());
+	fprintf(report, "%s: vectors %s\n\n", opt.name.c_str(), opt.vectors_dir.c_str());
 	fprintf(report, "%-26s %-24s %5s %5s %5s %7s %6s%s  %s\n", "file", "instruction", "total", "run", "exact", "lenient", "failed",
 		suite.native ? " native" : "", "filtered");
 
@@ -735,7 +740,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 
 	if (opt.update_baseline)
 	{
-		if (!save_baseline(opt.baseline, suite, results))
+		if (!save_baseline(opt.baseline, opt.name.c_str(), suite, results))
 		{
 			fprintf(report, "\ncannot write %s\n", opt.baseline.c_str());
 			return 2;
@@ -755,7 +760,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 	if (!gated)
 		fprintf(report, "\nnot compared with the baseline\n");
 
-	fprintf(report, "\n%s: %s\n", suite.name, problems ? "FAIL" : "PASS");
+	fprintf(report, "\n%s: %s\n", opt.name.c_str(), problems ? "FAIL" : "PASS");
 	fflush(report);
 
 	return problems ? 1 : 0;

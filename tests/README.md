@@ -37,7 +37,8 @@ instead (the submodules, the wren7-rtl checkout and its build outputs alike). CI
                        (what the SH4 core needs instead of an emulator), ss_* (vector reader, guest memory,
                        policy, state, suite runner), selftest
     sh4_singlestep/    the vectors through the interpreter
-    sh4_dynarec/       the vectors through the dynarec
+    sh4_dynarec/       the vectors through the dynarec, and the interpreter against the dynarec
+    sh4_directed/      hand-written vectors for all of the above
     arm7/              ARM7 tests
     vendor/            the submodules
     files/             fixtures
@@ -106,6 +107,27 @@ counts as well and needs the same.
 
 `--verbose` prints, for every vector that is not an exact pass, the opcodes, the expected and the actual bus
 activity and the registers before, expected and actual.
+
+## The directed vectors
+
+The single-step vectors are random. None of the 500 ADDC vectors has a sum of 0xFFFFFFFF with T set, so an ADDC
+that loses the carry of adding T passes all of them. `sh4_directed/directed_gen.cpp` has hand-written vectors for
+the instructions that take or leave a carry, a borrow or an overflow in T and for the compares: ADDC, SUBC, NEGC,
+ADDV, SUBV, ROTCL, ROTCR, DT, DIV1 and the CMP instructions, on 0, 0xFFFFFFFF, 0x7FFFFFFF and 0x80000000 with T
+clear and set (176 vectors). What an instruction leaves is written down from its definition in the SH-4 software
+manual, nothing of it comes from an emulator.
+
+The build writes them into `<build dir>/sh4_directed/vectors` in the format and under the file names of the
+single-step vectors, and `sh4.directed.interp`, `sh4.directed.dynarec` and `sh4.directed.differential` are the
+three SH4 executables on that directory, with the baselines `sh4_directed/baseline_*.txt`. They need no
+submodule.
+
+    sh4_singlestep_interp --name sh4.directed.interp --vectors <build dir>/sh4_directed/vectors \
+                          --baseline tests/sh4_directed/baseline_interp.txt --verbose
+
+A new case is a row in a table of `directed_gen.cpp`, then a build and `--update-baseline` of the three. A
+hand-written vector that is not an exact pass is a wrong row or a defect of the emulator: find out which before
+the baseline is committed.
 
 ## Adding a suite
 

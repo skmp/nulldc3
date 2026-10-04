@@ -9,6 +9,7 @@
 if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})))
   set(nulldc_sh4_dynarec_missing
       "the SH4 dynarec tests run the blocks of the x64 backend, this is not an x86-64 build with the SH4 recompiler")
+  set(nulldc_sh4_dynarec_missing "${nulldc_sh4_dynarec_missing}" PARENT_SCOPE)
   nulldc_add_skipped_test(sh4.singlestep.dynarec "${nulldc_sh4_dynarec_missing}")
   nulldc_add_skipped_test(sh4.differential "${nulldc_sh4_dynarec_missing}")
   return()
