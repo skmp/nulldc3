@@ -1,11 +1,46 @@
 ## ARM7 tests ##
 #
-#	Nothing is built here yet.
+#	nulldc_arm7_interp    the ARM7 interpreter and SoundCPU of libswirl, without the recompiler (FEAT_AREC =
+#	                      DYNAREC_NONE). SoundCPU.cpp is compiled through arm7_machine.cpp, which wraps it into
+#	                      the machine the tests run their guests on
+#	nulldc_arm7_test      what the tests share: options, report, checks and baseline (arm7_suite)
 #
-#	What is there to build on (tests/common):
-#	  nulldc_add_libswirl_library(<target> SOURCES hw/arm7/arm7.cpp ...)
-#	  nulldc_test_common    test_guard.h: msgboxf / os_DebugBreak, die() trap and watchdog
-#	  NULLDC_HAVE_ARM7_TESTS, NULLDC_ARM7_TESTS_DIR, NULLDC_ARM7_TESTS_MISSING   arm7di-tests-dreamcast
-#	  NULLDC_HAVE_WREN7, NULLDC_WREN7_DIR, NULLDC_WREN7_MISSING                  wren7 console suites
-#	  nulldc_add_skipped_test(<name> <reason>)
+#	arm7_vendor           arm7.vendor: the programs of tests/vendor/arm7di-tests-dreamcast
 #
+#	The tests are gated on baseline.txt.
+#
+
+nulldc_add_libswirl_library(nulldc_arm7_interp
+  AREC DYNAREC_NONE
+  SOURCES hw/arm7/arm7.cpp hw/arm7/arm7_interpreter.cpp
+)
+target_sources(nulldc_arm7_interp PRIVATE arm7_machine.cpp arm7_machine.h)
+target_include_directories(nulldc_arm7_interp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+
+add_library(nulldc_arm7_test STATIC
+  arm7_suite.cpp      arm7_suite.h
+)
+target_link_libraries(nulldc_arm7_test PUBLIC nulldc_test_common)
+target_include_directories(nulldc_arm7_test PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(nulldc_arm7_test PRIVATE $<TARGET_PROPERTY:nulldc_arm7_interp,INTERFACE_COMPILE_DEFINITIONS>)
+
+set(nulldc_arm7_baseline "${CMAKE_CURRENT_SOURCE_DIR}/baseline.txt")
+
+# A test that finds its data missing when it runs says so and exits with this code
+set(nulldc_arm7_skip_code 77)
+
+
+add_executable(arm7_vendor vendor_main.cpp)
+target_link_libraries(arm7_vendor PRIVATE nulldc_arm7_interp nulldc_arm7_test nulldc_test_common)
+target_compile_definitions(arm7_vendor PRIVATE
+  NULLDC_ARM7_TESTS_DIR="${NULLDC_ARM7_TESTS_DIR}"
+  NULLDC_BASELINE="${nulldc_arm7_baseline}"
+)
+
+if(NULLDC_HAVE_ARM7_TESTS)
+  add_test(NAME arm7.vendor COMMAND arm7_vendor)
+  set_tests_properties(arm7.vendor PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE ${nulldc_arm7_skip_code})
+else()
+  nulldc_add_skipped_test(arm7.vendor "${NULLDC_ARM7_TESTS_MISSING}")
+endif()
+
