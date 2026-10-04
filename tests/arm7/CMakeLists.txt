@@ -3,11 +3,15 @@
 #	nulldc_arm7_interp    the ARM7 interpreter and SoundCPU of libswirl, without the recompiler (FEAT_AREC =
 #	                      DYNAREC_NONE). SoundCPU.cpp is compiled through arm7_machine.cpp, which wraps it into
 #	                      the machine the tests run their guests on
-#	nulldc_arm7_test      what the tests share: options, report, checks and baseline (arm7_suite)
+#	nulldc_arm7_test      what the tests share: options, report, checks and baseline (arm7_suite), the console
+#	                      jobs of wren7-rtl (wren7_job)
 #
 #	arm7_vendor           arm7.vendor: the programs of tests/vendor/arm7di-tests-dreamcast
+#	arm7_wren7 <suite>    arm7.wren7.<suite>: console jobs of a wren7-rtl checkout against the console's results.
+#	                      Nothing of wren7-rtl is in this repository, the tests are skipped without a checkout
+#	                      (NULLDC_WREN7_DIR) or without its build outputs
 #
-#	The tests are gated on baseline.txt.
+#	All of them are gated on baseline.txt, see README.md.
 #
 
 nulldc_add_libswirl_library(nulldc_arm7_interp
@@ -19,6 +23,7 @@ target_include_directories(nulldc_arm7_interp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR
 
 add_library(nulldc_arm7_test STATIC
   arm7_suite.cpp      arm7_suite.h
+  wren7_job.cpp       wren7_job.h
 )
 target_link_libraries(nulldc_arm7_test PUBLIC nulldc_test_common)
 target_include_directories(nulldc_arm7_test PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -44,3 +49,24 @@ else()
   nulldc_add_skipped_test(arm7.vendor "${NULLDC_ARM7_TESTS_MISSING}")
 endif()
 
+
+add_executable(arm7_wren7 wren7_main.cpp)
+target_link_libraries(arm7_wren7 PRIVATE nulldc_arm7_interp nulldc_arm7_test nulldc_test_common)
+target_compile_definitions(arm7_wren7 PRIVATE
+  NULLDC_WREN7_DIR="${NULLDC_WREN7_DIR}"
+  NULLDC_BASELINE="${nulldc_arm7_baseline}"
+)
+
+if(NULLDC_HAVE_WREN7 AND NOT EXISTS "${NULLDC_WREN7_DIR}/build/hw/arm/stub.bin")
+  message(STATUS "${NULLDC_WREN7_DIR}/build/hw/arm has no done stub: wren7-rtl's ARM programs are not built (make -C model/hw/arm)")
+  message(STATUS "The tests that replay the wren7 console suites report themselves as skipped until they are.")
+endif()
+
+foreach(suite vendor qemu_diff mulsem bringup)
+  if(NULLDC_HAVE_WREN7)
+    add_test(NAME arm7.wren7.${suite} COMMAND arm7_wren7 ${suite})
+    set_tests_properties(arm7.wren7.${suite} PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE ${nulldc_arm7_skip_code})
+  else()
+    nulldc_add_skipped_test(arm7.wren7.${suite} "${NULLDC_WREN7_MISSING}")
+  endif()
+endforeach()
