@@ -8,6 +8,7 @@ project(dbg_disasm_tests CXX)
 # The oracle tests are reported as skipped when their tool is missing:
 #   -DSH_OBJDUMP=<sh-elf-objdump>
 #   -DARM_OBJDUMP=<arm-eabi-objdump>
+#   -DDEVTOOLS_DIR=<dreamcast-devtools checkout with node_modules installed>
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -68,3 +69,17 @@ find_program(ARM_OBJDUMP
 disasm_oracle_test(arm7_objdump "${Python3_Interpreter_FOUND}" "python3 not found"
   "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/arm7_objdump.py"
   --objdump "${ARM_OBJDUMP}" --test-bin $<TARGET_FILE:disasm_test> --workdir "${CMAKE_CURRENT_BINARY_DIR}/oracle")
+
+set(DEVTOOLS_DIR "${DEVCAST_DIR}/../dreamcast-devtools" CACHE PATH "dreamcast-devtools checkout (DSP playground oracle)")
+set(TSX "${DEVTOOLS_DIR}/node_modules/.bin/tsx")
+set(DSP_UTILS "${DEVTOOLS_DIR}/src/app/dsp/dspUtils.ts")
+
+if(EXISTS "${TSX}" AND EXISTS "${DSP_UTILS}")
+  set(DSP_ORACLE_FOUND TRUE)
+else()
+  set(DSP_ORACLE_FOUND FALSE)
+endif()
+disasm_oracle_test(dsp_playground "${DSP_ORACLE_FOUND}"
+  "no tsx / dspUtils.ts under ${DEVTOOLS_DIR}; set -DDEVTOOLS_DIR=<dreamcast-devtools checkout with node_modules>"
+  "${TSX}" "${CMAKE_CURRENT_SOURCE_DIR}/dsp_playground.mts"
+  --dsp-utils "${DSP_UTILS}" --test-bin $<TARGET_FILE:disasm_test>)
