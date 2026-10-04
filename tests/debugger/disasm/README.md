@@ -17,6 +17,7 @@ Options: `-DSH_OBJDUMP=<sh-elf-objdump>`, `-DARM_OBJDUMP=<arm-eabi-objdump>`,
 |---|---|---|
 | `golden` | nothing | checked-in tables `golden_*.inc`, plus invariants over all 65536 SH-4 opcodes x 4 FPSCR modes, 1,000,000 random ARM words and 200,000 random DSP steps |
 | `sh4_objdump` | python3, a SuperH GNU objdump | every SH-4 opcode against `objdump -m sh4` |
+| `sh4_objdump_selftest` | python3, a SuperH GNU objdump | the `sh4_objdump` comparison itself: wrong info fields in the dump must be reported |
 | `sh4_opcode_table` | python3 | every SH-4 opcode against `libswirl/hw/sh4/sh4_opcode_list.cpp` |
 | `arm7_objdump` | python3, an ARM GNU objdump | 249,364 ARM encodings against `objdump -m armv3` |
 | `dsp_playground` | `tsx` and `src/app/dsp/dspUtils.ts` of dreamcast-devtools | 100,193 DSP steps against the playground's disassembler and assembler |
@@ -65,6 +66,11 @@ Result (GNU objdump 2.43):
 | PR=1 SZ=1 | `0x8c010000` | 65536 | 53920 | 11600 | 16 | 0 |
 
 Checked in each run: 59033 flag sets, 9216 branch targets, 8448 literal addresses, 8192 literal values.
+
+`sh4_objdump_selftest` (`sh4_objdump.py --self-test`) holds the comparison to these figures. It takes the dump of
+the first run and makes one field wrong on every opcode that has it: each of the six flags in turn (set <-> clear),
+the branch target, the literal address, the literal value. Each of the nine corrupted dumps must come back
+unexplained on exactly the encodings counted above for that field (59033, 9216, 8448, 8192).
 
 Explained differences:
 

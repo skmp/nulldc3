@@ -7,7 +7,11 @@ literals against that image. Opcode n sits at BASE + 2n, so the comparison is re
 see every opcode at both alignments of pc. See README.md for the normalisation rules and the explained
 differences.
 
-Exit status: 0 no unexplained difference, 1 unexplained differences, 77 oracle not available.
+--self-test checks the comparison instead of the disassembler: every info field it counts as checked is made
+wrong in the dump, and each wrong value has to be reported.
+
+Exit status: 0 no unexplained difference (--self-test: every wrong value reported), 1 otherwise,
+77 oracle not available.
 """
 import argparse
 import os
@@ -22,6 +26,9 @@ SKIP = 77
 # FPU instructions whose register operands become DRn when FPSCR.PR = 1
 PR_ARITH = {'fadd', 'fsub', 'fmul', 'fdiv', 'fcmp/eq', 'fcmp/gt', 'fabs', 'fneg', 'fsqrt', 'float', 'ftrc'}
 BRANCH = {'bra', 'bsr', 'bt', 'bf', 'bt.s', 'bf.s'}
+
+# Flag letters of the info signature: valid, branch, delayed, call, return, conditional, trap
+SIGNATURE = 'vbdcr?t'
 
 # Info flags by objdump mnemonic, in the order of the signature: branch, delayed, call, return, conditional, trap
 FLAGS = {
@@ -171,11 +178,73 @@ def compare(obj, ours, mode):
     return counts, rules, classes, checked, bad
 
 
+def corruptions():
+    """
+    One entry per info field compare() counts as checked: (name, key of 'checked', change). change() takes the
+    comment and the info of one opcode and returns them with that field wrong, or None when the opcode has no
+    such field.
+    """
+    def flag(position):
+        def change(comment, info):
+            flags = info['flags']
+            if flags[0] != 'v':
+                return None
+            flipped = SIGNATURE[position] if flags[position] == '-' else '-'
+            return comment, dict(info, flags=flags[:position] + flipped + flags[position + 1:])
+        return change
+
+    def target(comment, info):
+        if 't' not in info:
+            return None
+        return comment, dict(info, t='%08x' % (int(info['t'], 16) ^ 2))
+
+    def literal_address(comment, info):
+        if 'l' not in info:
+            return None
+        address, size = info['l'].split('/')
+        return comment, dict(info, l='%08x/%s' % (int(address, 16) ^ 4, size))
+
+    def literal_value(comment, info):
+        if not comment:
+            return None
+        return '0x%08x' % (int(comment, 16) ^ 1), info
+
+    return [(SIGNATURE[position] + ' flag', 'flag sets', flag(position)) for position in range(1, len(SIGNATURE))] + [
+        ('branch target', 'branch targets', target),
+        ('literal address', 'literal addresses', literal_address),
+        ('literal value', 'literal values', literal_value)]
+
+
+def self_test(obj, ours):
+    """
+    Checks compare() itself: with one info field made wrong on every opcode that has it, exactly the encodings
+    counted as checked for that field have to come back unexplained. Returns the exit status.
+    """
+    counts, _, _, checked, _ = compare(obj, ours, 0)
+    if counts['unexplained']:
+        print('  needs a dump without unexplained differences, this one has %d' % counts['unexplained'])
+        return 1
+
+    status = 0
+    for name, key, change in corruptions():
+        corrupted = {}
+        for op, (text, comment, info) in ours.items():
+            corrupted[op] = (text,) + (change(comment, info) or (comment, info))
+        reported = compare(obj, corrupted, 0)[0]['unexplained']
+        verdict = '' if reported == checked[key] else '  NOT ALL REPORTED'
+        print('  wrong %-16s unexplained on %5d of %5d %s%s' % (name, reported, checked[key], key, verdict))
+        if verdict:
+            status = 1
+    return status
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--objdump', default='')
     ap.add_argument('--test-bin', required=True)
     ap.add_argument('--workdir', required=True)
+    ap.add_argument('--self-test', action='store_true',
+                    help='test the comparison itself: wrong info fields in the dump have to be reported')
     args = ap.parse_args()
 
     if not args.objdump or args.objdump.endswith('-NOTFOUND') or not os.path.exists(args.objdump):
@@ -184,6 +253,11 @@ def main():
 
     os.makedirs(args.workdir, exist_ok=True)
     version = subprocess.run([args.objdump, '--version'], capture_output=True, text=True).stdout.splitlines()[0]
+
+    if args.self_test:
+        print('sh4 comparison self-test, PR=0 SZ=0 at 0x%08x vs %s' % (BASE, version))
+        return self_test(run_objdump(args.objdump, args.workdir, BASE), run_ours(args.test_bin, 0, BASE))
+
     status = 0
 
     for mode, base in ((0, BASE), (0, BASE + 2), (1, BASE), (2, BASE), (3, BASE)):

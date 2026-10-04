@@ -63,6 +63,13 @@ disasm_oracle_test(sh4_objdump "${Python3_Interpreter_FOUND}" "python3 not found
   "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/sh4_objdump.py"
   --objdump "${SH_OBJDUMP}" --test-bin $<TARGET_FILE:disasm_test> --workdir "${CMAKE_CURRENT_BINARY_DIR}/oracle")
 
+# The comparison itself: a wrong flag, target or literal in the dump has to come back as a difference.
+# Own workdir: the image file must not be shared with sh4_objdump under ctest -j.
+disasm_oracle_test(sh4_objdump_selftest "${Python3_Interpreter_FOUND}" "python3 not found"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/sh4_objdump.py" --self-test
+  --objdump "${SH_OBJDUMP}" --test-bin $<TARGET_FILE:disasm_test>
+  --workdir "${CMAKE_CURRENT_BINARY_DIR}/oracle/selftest")
+
 disasm_oracle_test(sh4_opcode_table "${Python3_Interpreter_FOUND}" "python3 not found"
   "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/sh4_table_check.py"
   --opcode-list "${LIBSWIRL_DIR}/hw/sh4/sh4_opcode_list.cpp" --test-bin $<TARGET_FILE:disasm_test>)
