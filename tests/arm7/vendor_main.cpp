@@ -4,6 +4,13 @@
 	A program is loaded at 0 and run from reset until the next instruction is the end marker. It collects the
 	checks that failed in r1: bit 4 a wrong destination register, bit 5 a wrong base register, bits 0-3 wrong flags,
 	the rest is the test's own. Bits 30 and 31 are set by some tests whatever they find and are no errors.
+
+	The programs are straight lines: one that is not executed at all arrives at its end marker as well, with
+	r1 = 0. So "no error bit" is not what a program has to show. The checks are
+	  programs      the program gets to its end marker and has no error bit in r1
+	  final-state   r0-r14 and CPSR at the end marker are the ones the baseline pins for the program
+	  control       the same program on a core that skips every instruction does not pass the two checks above.
+	                A program for which it does proves nothing, and that fails the run whatever the baseline says
 */
 #include "arm7_machine.h"
 #include "arm7_suite.h"
@@ -16,8 +23,17 @@
 //The longest program gets to its end marker in about 50 instructions
 #define MAX_STEPS 100000
 
+//r0-r14, CPSR
+#define STATE_WORDS 16
+
+static const char* const state_name[STATE_WORDS] =
+{
+	"r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "CPSR",
+};
+
 struct ProgramRun
 {
+	bool skip;		//the control: nothing is executed
 	bool ended;
 	u32 steps;
 };
@@ -34,9 +50,31 @@ static void run_program(void* arg)
 			break;
 		}
 
-		arm7m_step();
+		if (run->skip)
+			arm7m_context()->regs[R15_ARM_NEXT].I += 4;
+		else
+			arm7m_step();
+
 		run->steps++;
 	}
+}
+
+static void load_program(const std::vector<u8>& image)
+{
+	arm7m_hold_reset();
+	arm7m_clear();
+	memcpy(arm7m_ram(), &image[0], image.size());
+	arm7m_release_reset();
+}
+
+static void save_state(std::vector<u32>& state)
+{
+	state.clear();
+
+	for (u32 i = 0; i < 15; i++)
+		state.push_back(arm7m_context()->regs[i].I);
+
+	state.push_back(arm7m_cpsr());
 }
 
 int main(int argc, char** argv)
@@ -83,24 +121,38 @@ int main(int argc, char** argv)
 			continue;
 		}
 
-		arm7m_hold_reset();
-		arm7m_clear();
-		memcpy(arm7m_ram(), &image[0], image.size());
-		arm7m_release_reset();
+		load_program(image);
 
 		ProgramRun run;
 
+		run.skip = false;
 		run.ended = false;
 		run.steps = 0;
 
 		TestGuardResult guard = arm7_guarded(name, &run_program, &run);
 
-		u32 r1 = arm7m_context()->regs[1].I;
-		bool pass = guard == TGR_OK && run.ended && (r1 & ERROR_BITS) == 0;
+		std::vector<u32> state, pinned;
+
+		save_state(state);
+		arm7_pin(name, state);
+
+		u32 r1 = state[1];
+		bool has_pin = arm7_baseline_pin(name, pinned) && pinned.size() == STATE_WORDS;
+
+		//the row that is being written is the one that counts
+		if (arm7_suite_opt().update_baseline)
+		{
+			pinned = state;
+			has_pin = true;
+		}
+		bool ended = guard == TGR_OK && run.ended;
+		bool pass = ended && (r1 & ERROR_BITS) == 0;
+		bool state_pass = ended && has_pin && state == pinned;
 
 		arm7_count("programs", pass);
+		arm7_count("final-state", state_pass);
 
-		fprintf(arm7_report, "%-8s %s  r1 %08X  %u instructions", name.c_str(), pass ? "pass" : "FAIL", r1, run.steps);
+		fprintf(arm7_report, "%-8s %s  r1 %08X  %u instructions", name.c_str(), pass && state_pass ? "pass" : "FAIL", r1, run.steps);
 
 		if (guard != TGR_OK)
 			fprintf(arm7_report, "  %s: %s", test_guard_result_name(guard), test_guard_message());
@@ -110,7 +162,39 @@ int main(int argc, char** argv)
 			fprintf(arm7_report, "  wrong:%s%s%s%s", (r1 & 0x0F) ? " flags" : "", (r1 & 0x10) ? " Rd" : "", (r1 & 0x20) ? " Rn" : "",
 				(r1 & ERROR_BITS & ~0x3F) ? " other" : "");
 
+		if (ended && !has_pin)
+			fprintf(arm7_report, "  final state: not pinned in the baseline");
+
+		for (u32 w = 0; ended && has_pin && w < STATE_WORDS; w++)
+		{
+			if (state[w] != pinned[w])
+				fprintf(arm7_report, "  %s is %08X, pinned %08X;", state_name[w], state[w], pinned[w]);
+		}
+
 		fprintf(arm7_report, "\n");
+
+		//the control
+		load_program(image);
+
+		ProgramRun skipped;
+
+		skipped.skip = true;
+		skipped.ended = false;
+		skipped.steps = 0;
+
+		TestGuardResult skip_guard = arm7_guarded(name + " (control)", &run_program, &skipped);
+
+		std::vector<u32> skip_state;
+
+		save_state(skip_state);
+
+		//what it has to be told from: the state that passes, and the one this run would pin
+		bool told = skip_guard == TGR_OK && skip_state != state && !(has_pin && skip_state == pinned);
+
+		arm7_count("control", told);
+
+		if (!told)
+			arm7_problem("%s: a core that skips every instruction ends with the same r0-r14 and CPSR, the program shows nothing", name.c_str());
 	}
 
 	return arm7_suite_end();

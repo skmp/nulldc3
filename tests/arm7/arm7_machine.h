@@ -21,6 +21,9 @@ u8* arm7m_ram();
 //The registers. regs[R15_ARM_NEXT] is the address of the next instruction
 Arm7Context* arm7m_context();
 
+//CPSR as MRS reads it: the interpreter keeps the flags, the interrupt masks and the mode apart from the register
+u32 arm7m_cpsr();
+
 //ARMRST, as the SH4 side drives it. The CPU is reset when it is released
 void arm7m_hold_reset();
 void arm7m_release_reset();

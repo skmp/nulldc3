@@ -8,11 +8,25 @@ register window is a plain register file that only knows the bit a guest raises 
 
 | test | what it runs | data |
 |---|---|---|
-| `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast, from reset to their end marker; a program passes with `r1 & 0x3FFFFFFF == 0` | `tests/vendor/arm7di-tests-dreamcast` (submodule) |
+| `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast, from reset to their end marker: no error bit in r1 (`r1 & 0x3FFFFFFF == 0`) and the pinned r0-r14 and CPSR at the end | `tests/vendor/arm7di-tests-dreamcast` (submodule) |
 | `arm7.wren7.vendor` | the same programs as console jobs: r1 and CPSR against the console's | wren7-rtl |
 | `arm7.wren7.qemu_diff` | 4 x 1000 random instructions (data processing, MUL/MLA, LDR/STR, LDM/STM, SWP): registers, flags and memory of every case against the console's | wren7-rtl |
 | `arm7.wren7.mulsem` | 1024 multiplier inputs: MUL(S)/MLA(S) results and flags, and the Rd == Rm forms, against the console's | wren7-rtl |
 | `arm7.wren7.bringup` | a countdown kernel run three times in a row, and one that runs into its timeout: what a reset keeps | wren7-rtl |
+
+## arm7.vendor
+
+The programs are straight lines that collect the checks that failed in r1. A core that executes nothing slides
+to the end marker with r1 = 0 as well, so a program has to show more than "no error bit":
+
+* `programs`: the program gets to its end marker and has no error bit in r1,
+* `final-state`: r0-r14 and CPSR at the end marker are the ones `baseline.txt` pins for the program (the `pin`
+  rows). r1 with its bits 30 and 31 is what a Dreamcast answers too (`arm7.wren7.vendor`); the other registers
+  are what the interpreter leaves today, so a fix that changes them (the reset state, `KNOWN_FAILURES.md` D7)
+  needs `--update-baseline`,
+* `control`: every program is run a second time on a core that skips every instruction, and that run must not
+  pass the two checks above. A program for which it does fails the test whatever the baseline says, also when
+  the baseline is being updated.
 
 ## The wren7 console suites
 
@@ -42,10 +56,11 @@ console keeps the ARM registers over a reset, so the registers a job never write
 
 ## The baseline
 
-`baseline.txt` has, per test and check, how many cases there are and how many pass. A test fails when
+`baseline.txt` has, per test and check, how many cases there are and how many pass, and the rows of words a
+test pins. A test fails when
 
 * a check passes fewer cases than its baseline, or has another number of cases,
-* a check is missing from the baseline, or the baseline has a check that the run does not,
+* a check is missing from the baseline, or the baseline has a check or a pinned row that the run does not,
 * guest code makes the emulator code crash (die(), verify(), a signal) or hang.
 
 Passes above the baseline are reported; with `--strict`, as ctest runs the tests, they fail until the baseline

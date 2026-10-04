@@ -6,6 +6,9 @@
 	  - a check passes fewer cases than its baseline, or has another number of cases
 	  - a check is not in the baseline, or a check of the baseline was not counted
 	  - guest code crashes the emulator code (die(), verify(), a signal) or hangs it
+	A test can also pin rows of words in the baseline, the registers a program ends with for example. The test
+	compares them and counts the result into a check; a pinned row that the run does not have fails the run.
+
 	Passes above the baseline are reported. They fail the run with --strict, which is how ctest runs the tests: a
 	baseline that is behind lets a regression back to its counts pass. --update-baseline writes the counts into
 	the file.
@@ -57,6 +60,11 @@ bool arm7_selected(const std::string& name);
 //One case of a check, or a number of them
 void arm7_count(const std::string& check, bool pass);
 void arm7_count_cases(const std::string& check, u32 total, u32 pass);
+
+//A row of words that the baseline pins under <name>. arm7_baseline_pin() gets the baseline's (false: it has
+//none), arm7_pin() gives the row of this run, which is what --update-baseline writes
+bool arm7_baseline_pin(const std::string& name, std::vector<u32>& words);
+void arm7_pin(const std::string& name, const std::vector<u32>& words);
 
 //Fails the run whatever the counts are
 void arm7_problem(const char* fmt, ...);

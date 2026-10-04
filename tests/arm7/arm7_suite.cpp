@@ -36,6 +36,13 @@ struct Arm7BaselineRow
 	u32 pass;
 };
 
+struct Arm7Pin
+{
+	std::string test;
+	std::string name;
+	std::vector<u32> words;
+};
+
 FILE* arm7_report;
 
 static std::string test_name;
@@ -43,6 +50,8 @@ static Arm7Options options;
 static std::vector<Arm7Check> checks;
 static std::vector<std::string> problems;
 static std::vector<Arm7BaselineRow> baseline;
+static std::vector<Arm7Pin> baseline_pins;
+static std::vector<Arm7Pin> pins;		//of this run
 static std::chrono::steady_clock::time_point started;
 
 //* and ? wildcards
@@ -74,6 +83,36 @@ static bool load_baseline(const std::string& path)
 
 		if (line[0] == '#')
 			continue;
+
+		//pin <test> <name> <words in hex>
+		if (strncmp(line, "pin ", 4) == 0)
+		{
+			Arm7Pin pin;
+			int used = 0;
+
+			if (sscanf(line + 4, "%127s %127s%n", test, check, &used) != 2)
+				continue;
+
+			pin.test = test;
+			pin.name = check;
+
+			char* next = line + 4 + used;
+
+			for (;;)
+			{
+				char* end;
+				u32 word = (u32)strtoul(next, &end, 16);
+
+				if (end == next)
+					break;
+
+				pin.words.push_back(word);
+				next = end;
+			}
+
+			baseline_pins.push_back(pin);
+			continue;
+		}
 
 		if (sscanf(line, "%127s %127s %u %u", test, check, &row.total, &row.pass) == 4)
 		{
@@ -132,6 +171,42 @@ static bool save_baseline(const std::string& path)
 
 	for (size_t i = 0; i < rows.size(); i++)
 		fprintf(f, "%-24s %-20s %5u %5u\n", rows[i].test.c_str(), rows[i].check.c_str(), rows[i].total, rows[i].pass);
+
+	//the pinned rows: the ones of this test are replaced where they were as well
+	std::vector<Arm7Pin> all;
+
+	placed = false;
+
+	for (size_t i = 0; i <= baseline_pins.size(); i++)
+	{
+		bool mine = i < baseline_pins.size() && baseline_pins[i].test == test_name;
+
+		if (!placed && (mine || i == baseline_pins.size()))
+		{
+			all.insert(all.end(), pins.begin(), pins.end());
+			placed = true;
+		}
+
+		if (i < baseline_pins.size() && !mine)
+			all.push_back(baseline_pins[i]);
+	}
+
+	if (!all.empty())
+	{
+		fprintf(f, "#\n");
+		fprintf(f, "# Pinned: what a test has to find again, word for word. arm7.vendor: r0-r14 and CPSR at the end marker of\n");
+		fprintf(f, "# every program.\n");
+	}
+
+	for (size_t i = 0; i < all.size(); i++)
+	{
+		fprintf(f, "pin %-12s %-8s", all[i].test.c_str(), all[i].name.c_str());
+
+		for (size_t w = 0; w < all[i].words.size(); w++)
+			fprintf(f, " %08X", all[i].words[w]);
+
+		fprintf(f, "\n");
+	}
 
 	fclose(f);
 
@@ -282,6 +357,31 @@ void arm7_count(const std::string& check, bool pass)
 	arm7_count_cases(check, 1, pass ? 1 : 0);
 }
 
+bool arm7_baseline_pin(const std::string& name, std::vector<u32>& words)
+{
+	for (size_t i = 0; i < baseline_pins.size(); i++)
+	{
+		if (baseline_pins[i].test == test_name && baseline_pins[i].name == name)
+		{
+			words = baseline_pins[i].words;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void arm7_pin(const std::string& name, const std::vector<u32>& words)
+{
+	Arm7Pin pin;
+
+	pin.test = test_name;
+	pin.name = name;
+	pin.words = words;
+
+	pins.push_back(pin);
+}
+
 void arm7_problem(const char* fmt, ...)
 {
 	char text[1536];
@@ -371,6 +471,18 @@ int arm7_suite_end()
 
 			if (b.test == test_name && !counted)
 				arm7_problem("%s: in the baseline, but the run has no such check", b.check.c_str());
+		}
+
+		for (size_t i = 0; i < baseline_pins.size(); i++)
+		{
+			const Arm7Pin& b = baseline_pins[i];
+			bool found = false;
+
+			for (size_t p = 0; p < pins.size(); p++)
+				found = found || pins[p].name == b.name;
+
+			if (b.test == test_name && !found)
+				arm7_problem("%s: pinned in the baseline, but the run has nothing of that name", b.name.c_str());
 		}
 	}
 

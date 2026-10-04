@@ -107,6 +107,13 @@ Arm7Context* arm7m_context()
 	return &scpu->ctx;
 }
 
+u32 arm7m_cpsr()
+{
+	ARM7Backend::CPUUpdateCPSR(&scpu->ctx);
+
+	return scpu->ctx.regs[RN_CPSR].I;
+}
+
 void arm7m_hold_reset()
 {
 	scpu->SetResetState(1);
