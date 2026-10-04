@@ -16,8 +16,9 @@ submodule to fetch. Other checkouts can be used with `-DNULLDC_SH4_TESTS_DIR=`, 
 `-DNULLDC_WREN7_DIR=` (wren7-rtl, default `../wren7-rtl` next to the repository if it is there).
 
 A skipped test has not run and is not a pass: `ctest` exits with 0 when everything that did run passes, also
-when that is `common.selftest` alone. With `-DNULLDC_TESTS_REQUIRE_DATA=ON` missing data fails its tests
-instead (the submodules, the wren7-rtl checkout and its build outputs alike). CI should configure that way.
+when that is only the tests that need no data. With `-DNULLDC_TESTS_REQUIRE_DATA=ON` missing data fails its
+tests instead (the submodules, the wren7-rtl checkout and its build outputs alike). CI should configure that
+way.
 
 ## Building and running
 
@@ -25,10 +26,30 @@ instead (the submodules, the wren7-rtl checkout and its build outputs alike). CI
     ninja -C <build dir>
     ctest --test-dir <build dir> --output-on-failure
 
-| test | what it runs |
-|---|---|
-| `common.selftest` | the harness on itself, and the two properties of `hw/mem/_vmem` the suites lean on (unaligned accesses end in the handler, constant address lookups return the handlers that are mapped) |
-| `sh4.singlestep.interp` | every single-step vector through the SH4 interpreter, gated on `sh4_singlestep/baseline.txt` |
+| test | what it runs | data |
+|---|---|---|
+| `common.selftest` | the harness on itself, and the properties of `hw/mem/_vmem` the suites lean on (unaligned accesses end in the handler, constant address lookups return the handlers that are mapped and their context) | none |
+| `sh4.singlestep.interp` | every single-step vector through the SH4 interpreter, gated on `sh4_singlestep/baseline.txt` | `vendor/sh4-tests` |
+| `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
+| `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
+| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges) | none |
+| `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
+| `arm7.directed` | ADC, SBC and RSC at the edges with the carry clear and set, hand-written results | none |
+| `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
+
+The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
+unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it.
+
+Every test but `common.selftest` is gated on a baseline file, and ctest runs them with `--strict`: a count
+below its baseline fails, and so does one above it, until the baseline is updated and committed.
+
+More about the suites:
+
+* this file: the single-step vectors, the filter, the baseline and the directed vectors,
+* `sh4_dynarec/README.md`: how the dynarec is run, the differential, the native count;
+  `sh4_dynarec/KNOWN_DIFFERENCES.md`: what is behind the two dynarec baselines,
+* `arm7/README.md`: the ARM7 tests and the wren7 console suites; `arm7/KNOWN_FAILURES.md`: why checks of the
+  ARM7 baseline are below their number of cases, and what else is known to be wrong in the ARM7.
 
 ## Layout
 
@@ -37,9 +58,11 @@ instead (the submodules, the wren7-rtl checkout and its build outputs alike). CI
                        (what the SH4 core needs instead of an emulator), ss_* (vector reader, guest memory,
                        policy, state, suite runner), selftest
     sh4_singlestep/    the vectors through the interpreter
-    sh4_dynarec/       the vectors through the dynarec, and the interpreter against the dynarec
+    sh4_dynarec/       the vectors through the dynarec, and the interpreter against the dynarec (README.md,
+                       KNOWN_DIFFERENCES.md)
     sh4_directed/      hand-written vectors for all of the above
-    arm7/              ARM7 tests
+    arm7/              the ARM7 interpreter: vendor programs, directed cases, wren7 console suites (README.md,
+                       KNOWN_FAILURES.md)
     vendor/            the submodules
     files/             fixtures
 
