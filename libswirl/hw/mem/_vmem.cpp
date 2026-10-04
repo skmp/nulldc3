@@ -73,15 +73,15 @@ void* _vmem_read_const(u32 addr,bool& ismem,u32 sz)
 		const unat id=iirf;
 		if (sz==1)
 		{
-			return (void*)_vmem_RF8[id/4];
+			return (void*)_vmem_RF8[id];
 		}
 		else if (sz==2)
 		{
-			return (void*)_vmem_RF16[id/4];
+			return (void*)_vmem_RF16[id];
 		}
 		else if (sz==4)
 		{
-			return (void*)_vmem_RF32[id/4];
+			return (void*)_vmem_RF32[id];
 		}
 		else
 		{
@@ -114,15 +114,15 @@ void* _vmem_page_info(u32 addr,bool& ismem,u32 sz,u32& page_sz,bool rw)
 		page_sz=24;
 		if (sz==1)
 		{
-			return rw?(void*)_vmem_RF8[id/4]:(void*)_vmem_WF8[id/4];
+			return rw?(void*)_vmem_RF8[id]:(void*)_vmem_WF8[id];
 		}
 		else if (sz==2)
 		{
-			return rw?(void*)_vmem_RF16[id/4]:(void*)_vmem_WF16[id/4];
+			return rw?(void*)_vmem_RF16[id]:(void*)_vmem_WF16[id];
 		}
 		else if (sz==4)
 		{
-			return rw?(void*)_vmem_RF32[id/4]:(void*)_vmem_WF32[id/4];
+			return rw?(void*)_vmem_RF32[id]:(void*)_vmem_WF32[id];
 		}
 		else
 		{
