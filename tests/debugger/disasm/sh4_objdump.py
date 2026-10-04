@@ -133,7 +133,7 @@ def compare(obj, ours, mode):
             ok = info['flags'] == 'v' + FLAGS.get(obj_text.split(' ')[0], '------')
             checked['flag sets'] += 1
             if mnemonic in BRANCH:
-                ok = info.get('t') is not None and int(info['t'], 16) == int(address.group(1), 16)
+                ok = ok and info.get('t') is not None and int(info['t'], 16) == int(address.group(1), 16)
                 checked['branch targets'] += 1
             elif 't' in info:
                 ok = False
