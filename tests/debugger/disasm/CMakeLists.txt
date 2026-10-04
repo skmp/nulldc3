@@ -7,6 +7,7 @@ project(dbg_disasm_tests CXX)
 #
 # The oracle tests are reported as skipped when their tool is missing:
 #   -DSH_OBJDUMP=<sh-elf-objdump>
+#   -DARM_OBJDUMP=<arm-eabi-objdump>
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -59,3 +60,11 @@ disasm_oracle_test(sh4_objdump "${Python3_Interpreter_FOUND}" "python3 not found
 disasm_oracle_test(sh4_opcode_table "${Python3_Interpreter_FOUND}" "python3 not found"
   "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/sh4_table_check.py"
   --opcode-list "${LIBSWIRL_DIR}/hw/sh4/sh4_opcode_list.cpp" --test-bin $<TARGET_FILE:disasm_test>)
+
+find_program(ARM_OBJDUMP
+  NAMES arm-eabi-objdump arm-none-eabi-objdump
+  HINTS /opt/toolchains/dc/arm-eabi/bin /opt/toolchains/dc-dca3/arm-eabi/bin)
+
+disasm_oracle_test(arm7_objdump "${Python3_Interpreter_FOUND}" "python3 not found"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/arm7_objdump.py"
+  --objdump "${ARM_OBJDUMP}" --test-bin $<TARGET_FILE:disasm_test> --workdir "${CMAKE_CURRENT_BINARY_DIR}/oracle")
