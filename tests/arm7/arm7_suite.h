@@ -44,8 +44,8 @@ struct Arm7Options
 extern FILE* arm7_report;
 
 //Reads the command line from argv[first] on. data_option and select_option are the names of the options that
-//set data_dir and select, opt comes in with the defaults. False: bad command line (also: first is beyond argc),
-//the usage was printed
+//set data_dir and select (data_option 0: the test has no data), opt comes in with the defaults. False: bad
+//command line (also: first is beyond argc), the usage was printed
 bool arm7_suite_options(int argc, char** argv, int first, const char* usage_head, const char* data_option,
 	const char* select_option, Arm7Options& opt);
 

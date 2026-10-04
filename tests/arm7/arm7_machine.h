@@ -24,6 +24,9 @@ Arm7Context* arm7m_context();
 //CPSR as MRS reads it: the interpreter keeps the flags, the interrupt masks and the mode apart from the register
 u32 arm7m_cpsr();
 
+//Sets N, Z, C and V: bits 3 to 0 of nzcv, as they are in bits 31 to 28 of CPSR
+void arm7m_set_flags(u32 nzcv);
+
 //ARMRST, as the SH4 side drives it. The CPU is reset when it is released
 void arm7m_hold_reset();
 void arm7m_release_reset();

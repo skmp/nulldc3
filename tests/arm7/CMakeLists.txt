@@ -7,6 +7,7 @@
 #	                      jobs of wren7-rtl (wren7_job)
 #
 #	arm7_vendor           arm7.vendor: the programs of tests/vendor/arm7di-tests-dreamcast
+#	arm7_directed         arm7.directed: single instructions with hand-written results, no data needed
 #	arm7_wren7 <suite>    arm7.wren7.<suite>: console jobs of a wren7-rtl checkout against the console's results.
 #	                      Nothing of wren7-rtl is in this repository, the tests are skipped without a checkout
 #	                      (NULLDC_WREN7_DIR) or without its build outputs. A checkout that lacks anything else
@@ -55,6 +56,14 @@ if(NULLDC_HAVE_ARM7_TESTS)
 else()
   nulldc_add_missing_data_test(arm7.vendor "${NULLDC_ARM7_TESTS_MISSING}")
 endif()
+
+
+add_executable(arm7_directed directed_main.cpp)
+target_link_libraries(arm7_directed PRIVATE nulldc_arm7_interp nulldc_arm7_test nulldc_test_common)
+target_compile_definitions(arm7_directed PRIVATE NULLDC_BASELINE="${nulldc_arm7_baseline}")
+
+add_test(NAME arm7.directed COMMAND arm7_directed --strict)
+set_tests_properties(arm7.directed PROPERTIES TIMEOUT 60)
 
 
 add_executable(arm7_wren7 wren7_main.cpp)

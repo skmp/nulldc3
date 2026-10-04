@@ -39,6 +39,9 @@ arm7.wren7.mulsem        mlas-flags            1024   522
 arm7.wren7.mulsem        muls-rd-rm            1024    69
 arm7.wren7.bringup       result                   5     5
 arm7.wren7.bringup       reset-state              4     0
+arm7.directed            adc                     24    24
+arm7.directed            sbc                     23    23
+arm7.directed            rsc                     16    16
 #
 # Pinned: what a test has to find again, word for word. arm7.vendor: r0-r14 and CPSR at the end marker of
 # every program.

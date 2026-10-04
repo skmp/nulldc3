@@ -114,6 +114,11 @@ u32 arm7m_cpsr()
 	return scpu->ctx.regs[RN_CPSR].I;
 }
 
+void arm7m_set_flags(u32 nzcv)
+{
+	scpu->ctx.regs[RN_PSR_FLAGS].FLG.NZCV = nzcv;
+}
+
 void arm7m_hold_reset()
 {
 	scpu->SetResetState(1);

@@ -231,7 +231,7 @@ bool arm7_suite_options(int argc, char** argv, int first, const char* usage_head
 		std::string arg = argv[i];
 		bool has_value = i + 1 < argc;
 
-		if (arg == data_option && has_value)
+		if (data_option && arg == data_option && has_value)
 			opt.data_dir = argv[++i];
 		else if (arg == select_option && has_value)
 			opt.select = argv[++i];
@@ -259,10 +259,15 @@ bool arm7_suite_options(int argc, char** argv, int first, const char* usage_head
 
 	if (!ok)
 	{
+		fprintf(stderr, "%s\n\n", usage_head);
+
+		if (data_option)
+		{
+			fprintf(stderr, "  %s <dir>%*s the test data, default %s\n", data_option, (int)(14 - strlen(data_option)), "",
+				defaults.data_dir.empty() ? "(none)" : defaults.data_dir.c_str());
+		}
+
 		fprintf(stderr,
-			"%s\n"
-			"\n"
-			"  %s <dir>%*s the test data, default %s\n"
 			"  %s <pattern>%*s only what has <pattern> in its name, or matches it if it has * or ?,\n"
 			"                       no baseline check\n"
 			"  --baseline <file>    baseline file, default %s\n"
@@ -273,8 +278,6 @@ bool arm7_suite_options(int argc, char** argv, int first, const char* usage_head
 			"                       skipped and exits with %d\n"
 			"  --verbose            every case that does not pass, not only the first of each check\n"
 			"  --emu-output         do not hide what the emulator code prints\n",
-			usage_head,
-			data_option, (int)(14 - strlen(data_option)), "", defaults.data_dir.empty() ? "(none)" : defaults.data_dir.c_str(),
 			select_option, (int)(10 - strlen(select_option)), "",
 			defaults.baseline.c_str(), ARM7_EXIT_SKIPPED);
 	}

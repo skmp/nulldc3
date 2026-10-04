@@ -9,6 +9,7 @@ register window is a plain register file that only knows the bit a guest raises 
 | test | what it runs | data |
 |---|---|---|
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast, from reset to their end marker: no error bit in r1 (`r1 & 0x3FFFFFFF == 0`) and the pinned r0-r14 and CPSR at the end | `tests/vendor/arm7di-tests-dreamcast` (submodule) |
+| `arm7.directed` | ADC, SBC and RSC on operands at the edges with the carry clear and set, 63 single instructions with hand-written results | none |
 | `arm7.wren7.vendor` | the same programs as console jobs: r1 and CPSR against the console's | wren7-rtl |
 | `arm7.wren7.qemu_diff` | 4 x 1000 random instructions (data processing, MUL/MLA, LDR/STR, LDM/STM, SWP): registers, flags and memory of every case against the console's | wren7-rtl |
 | `arm7.wren7.mulsem` | 1024 multiplier inputs: MUL(S)/MLA(S) results and flags, and the Rd == Rm forms, against the console's | wren7-rtl |
@@ -27,6 +28,15 @@ to the end marker with r1 = 0 as well, so a program has to show more than "no er
 * `control`: every program is run a second time on a core that skips every instruction, and that run must not
   pass the two checks above. A program for which it does fails the test whatever the baseline says, also when
   the baseline is being updated.
+
+## arm7.directed
+
+The random instructions of the console suites have no ADC whose carry out comes from the carry in
+(0xFFFFFFFF + 0 + C), and the vendor programs have one ADC, SBC and RSC each: an ADCS that computes its carry
+without the carry in passes all of them. `directed_main.cpp` has tables of single instructions (register and
+immediate operand, with and without S) with the operands, the flags going in and what Rd and N, Z, C, V have
+to be afterwards, written down from the definition of the instruction and not taken from an emulator. A new
+case is a row in a table and `arm7_directed --update-baseline`.
 
 ## The wren7 console suites
 
@@ -66,18 +76,20 @@ test pins. A test fails when
 Passes above the baseline are reported; with `--strict`, as ctest runs the tests, they fail until the baseline
 is updated. `KNOWN_FAILURES.md` explains every check that is below its number of cases. After a fix
 
-    <build dir>/arm7/arm7_wren7 mulsem --update-baseline       # or: arm7_vendor --update-baseline
+    <build dir>/arm7/arm7_wren7 mulsem --update-baseline       # or: arm7_vendor / arm7_directed --update-baseline
 
 rewrites the rows of that test; commit the file with the fix and take the entry out of `KNOWN_FAILURES.md`.
 
 ## Looking at a failure
 
     arm7_vendor --program LDR_7                 # a part of the name, * and ? work
+    arm7_directed --check sbc
     arm7_wren7 qemu_diff --verbose              # every case that differs, not only the first of each check
     arm7_wren7 bringup --job hello_1 --emu-output
     arm7_wren7 vendor --wren7 <other checkout>
 
-A run with `--program` / `--job` is not compared with the baseline, it passes when everything in it does.
+A run with `--program` / `--job` / `--check` is not compared with the baseline, it passes when everything in it
+does.
 
 ## Adding a suite
 
