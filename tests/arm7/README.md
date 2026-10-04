@@ -46,7 +46,8 @@ console keeps the ARM registers over a reset, so the registers a job never write
 * a check is missing from the baseline, or the baseline has a check that the run does not,
 * guest code makes the emulator code crash (die(), verify(), a signal) or hang.
 
-`KNOWN_FAILURES.md` explains every check that is below its number of cases. After a fix
+Passes above the baseline are reported; with `--strict`, as ctest runs the tests, they fail until the baseline
+is updated. `KNOWN_FAILURES.md` explains every check that is below its number of cases. After a fix
 
     <build dir>/arm7/arm7_wren7 mulsem --update-baseline       # or: arm7_vendor --update-baseline
 

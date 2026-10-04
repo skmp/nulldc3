@@ -82,6 +82,9 @@ static SuperH4Backend* recompiler;
 static BlockEntryFP* block_entry;
 static RuntimeBlockInfo* block;
 
+static u32 compiled;
+static u32 interpreted;
+
 void dynarec_init()
 {
 	//as the emulator starts up (LoadSettings)
@@ -113,6 +116,9 @@ void dynarec_run(const DynarecCode& code, u32 count, u32* executed)
 	block = 0;
 
 	LastAddr = LastAddr_min;
+
+	compiled = 0;
+	interpreted = 0;
 
 	u32 done = 0;
 
@@ -151,6 +157,22 @@ void dynarec_run(const DynarecCode& code, u32 count, u32* executed)
 		dec_DecodeBlock(block, max_cycles);
 		code.serve_opcodes(false);
 
+		//dec_fallback: rs2 is the address behind the instruction
+		u32 fallbacks = 0;
+
+		for (size_t i = 0; i < block->oplist.size(); i++)
+		{
+			const shil_opcode& op = block->oplist[i];
+
+			if (op.op != shop_ifb)
+				continue;
+
+			u32 index = done + (op.rs2._imm - 2 - pc) / 2;
+
+			if (index < 32)
+				fallbacks |= 1u << index;
+		}
+
 		AnalyseBlock(block);
 
 		if (block->guest_opcodes == 0 || block->guest_opcodes > left)
@@ -163,6 +185,9 @@ void dynarec_run(const DynarecCode& code, u32 count, u32* executed)
 		rdv_ngen->Compile(block, NoCheck, false, false, do_opts);
 		verify(block->code != 0);
 
+		compiled = done + block->guest_opcodes;
+		interpreted |= fallbacks;
+
 		block_entry((DynarecCodeEntryPtr)CC_RW2RX(block->code));
 
 		for (u32 i = 0; i < block->guest_opcodes; i++)
@@ -173,4 +198,14 @@ void dynarec_run(const DynarecCode& code, u32 count, u32* executed)
 		delete block;
 		block = 0;
 	}
+}
+
+u32 dynarec_compiled()
+{
+	return compiled;
+}
+
+u32 dynarec_interpreted()
+{
+	return interpreted;
 }

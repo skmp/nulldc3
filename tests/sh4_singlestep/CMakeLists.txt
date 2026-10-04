@@ -8,7 +8,7 @@ target_compile_definitions(sh4_singlestep_interp PRIVATE
 )
 
 if(NULLDC_HAVE_SH4_TESTS)
-  add_test(NAME sh4.singlestep.interp COMMAND sh4_singlestep_interp)
+  add_test(NAME sh4.singlestep.interp COMMAND sh4_singlestep_interp --strict)
   set_tests_properties(sh4.singlestep.interp PROPERTIES TIMEOUT 300)
 else()
   nulldc_add_skipped_test(sh4.singlestep.interp "${NULLDC_SH4_TESTS_MISSING}")

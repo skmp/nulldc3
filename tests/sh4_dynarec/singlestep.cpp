@@ -23,6 +23,11 @@ static void run(const SsTest& test)
 	}
 }
 
+static bool native()
+{
+	return dynarec_native(SS_TEST_INSTRUCTION);
+}
+
 //What the dynarec does not pass and the interpreter does. KNOWN_DIFFERENCES.md has the details
 static const char known_rte[] =
 	"dynarec: RTE loads SR from SSR in front of its delay slot, which then runs on the register bank of the new SR. "
@@ -54,6 +59,7 @@ int main(int argc, char** argv)
 	suite.known = known;
 	suite.init = &dynarec_init;
 	suite.run = &run;
+	suite.native = &native;
 
 	return ss_suite_main(argc, argv, suite);
 }

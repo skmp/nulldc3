@@ -144,6 +144,7 @@ bool arm7_suite_options(int argc, char** argv, int first, const char* usage_head
 	const Arm7Options defaults = opt;
 
 	opt.update_baseline = false;
+	opt.strict = false;
 	opt.verbose = false;
 	opt.emu_output = false;
 
@@ -162,6 +163,8 @@ bool arm7_suite_options(int argc, char** argv, int first, const char* usage_head
 			opt.baseline = argv[++i];
 		else if (arg == "--update-baseline")
 			opt.update_baseline = true;
+		else if (arg == "--strict")
+			opt.strict = true;
 		else if (arg == "--verbose")
 			opt.verbose = true;
 		else if (arg == "--emu-output")
@@ -186,6 +189,8 @@ bool arm7_suite_options(int argc, char** argv, int first, const char* usage_head
 			"                       no baseline check\n"
 			"  --baseline <file>    baseline file, default %s\n"
 			"  --update-baseline    write the counts of this run into the baseline file\n"
+			"  --strict             passes above the baseline fail as well: the baseline has to be the one of this\n"
+			"                       build. ctest runs the test this way\n"
 			"  --verbose            every case that does not pass, not only the first of each check\n"
 			"  --emu-output         do not hide what the emulator code prints\n",
 			usage_head,
@@ -342,6 +347,9 @@ int arm7_suite_end()
 			arm7_problem("%s: has %u cases, the baseline was made with %u", c.name.c_str(), c.total, b->total);
 		else if (c.pass < b->pass)
 			arm7_problem("%s: %u pass, baseline %u", c.name.c_str(), c.pass, b->pass);
+		else if (c.pass > b->pass && options.strict)
+			arm7_problem("%s: %u pass, above the baseline %u: run with --update-baseline and commit %s", c.name.c_str(), c.pass, b->pass,
+				options.baseline.c_str());
 		else if (c.pass > b->pass)
 			improvements++;
 	}

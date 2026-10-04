@@ -43,7 +43,7 @@ target_compile_definitions(arm7_vendor PRIVATE
 )
 
 if(NULLDC_HAVE_ARM7_TESTS)
-  add_test(NAME arm7.vendor COMMAND arm7_vendor)
+  add_test(NAME arm7.vendor COMMAND arm7_vendor --strict)
   set_tests_properties(arm7.vendor PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE ${nulldc_arm7_skip_code})
 else()
   nulldc_add_skipped_test(arm7.vendor "${NULLDC_ARM7_TESTS_MISSING}")
@@ -64,7 +64,7 @@ endif()
 
 foreach(suite vendor qemu_diff mulsem bringup)
   if(NULLDC_HAVE_WREN7)
-    add_test(NAME arm7.wren7.${suite} COMMAND arm7_wren7 ${suite})
+    add_test(NAME arm7.wren7.${suite} COMMAND arm7_wren7 ${suite} --strict)
     set_tests_properties(arm7.wren7.${suite} PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE ${nulldc_arm7_skip_code})
   else()
     nulldc_add_skipped_test(arm7.wren7.${suite} "${NULLDC_WREN7_MISSING}")

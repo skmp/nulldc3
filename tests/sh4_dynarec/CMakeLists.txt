@@ -33,7 +33,7 @@ target_compile_definitions(sh4_singlestep_dynarec PRIVATE
 )
 
 if(NULLDC_HAVE_SH4_TESTS)
-  add_test(NAME sh4.singlestep.dynarec COMMAND sh4_singlestep_dynarec)
+  add_test(NAME sh4.singlestep.dynarec COMMAND sh4_singlestep_dynarec --strict)
   set_tests_properties(sh4.singlestep.dynarec PROPERTIES TIMEOUT 300)
 else()
   nulldc_add_skipped_test(sh4.singlestep.dynarec "${NULLDC_SH4_TESTS_MISSING}")
@@ -52,7 +52,7 @@ target_compile_definitions(sh4_differential PRIVATE
 )
 
 if(NULLDC_HAVE_SH4_TESTS)
-  add_test(NAME sh4.differential COMMAND sh4_differential)
+  add_test(NAME sh4.differential COMMAND sh4_differential --strict)
   set_tests_properties(sh4.differential PROPERTIES TIMEOUT 300)
 else()
   nulldc_add_skipped_test(sh4.differential "${NULLDC_SH4_TESTS_MISSING}")

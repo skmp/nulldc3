@@ -10,12 +10,19 @@
 	  pass-lenient  as above, FP registers compared with ss_float_lenient (includes the exact passes)
 	  failed        run and not even a lenient pass: wrong bus activity, wrong state, crash or hang
 
+	A suite that compiles the instructions (SsSuite::native) has one more count per file:
+	  native        vectors whose instruction under test was turned into native code. The others were handed
+	                to the interpreter's handler, and say nothing about the recompiler
+
 	The baseline has the counts of every file. The run fails when
-	  - a file passes fewer vectors than its baseline, exact or lenient, or runs fewer vectors
+	  - a file passes fewer vectors than its baseline, exact or lenient, runs fewer vectors or has fewer
+	    native ones
 	  - a vector crashes in a file for which neither the policy (SSP_MAY_CRASH) nor the suite (SsSuiteKnown)
 	    announces it, or a vector hangs
 	  - a vector file is not in the policy table or not in the baseline, or the other way around
-	Counts above the baseline are reported and do not fail, --update-baseline writes them into the file.
+	Counts above the baseline are reported. They fail the run with --strict, which is how ctest runs the
+	suites: a baseline that is behind lets a regression back to its counts pass. --update-baseline writes the
+	counts into the file.
 
 	--file, --vector, --verbose and --unfilter are for looking at single files and vectors, the option list is
 	in the usage text.
@@ -43,6 +50,8 @@ struct SsSuite
 	void (*init)();						//once, when the SH4 environment and the guest memory are up. May be 0
 	void (*run)(const SsTest& test);	//executes the 4 instructions of the vector that is loaded. Runs guarded
 										//(test_guard.h): test_guard_abort() is how it reports a failure of its own
+	bool (*native)();					//after run: the instruction under test was compiled to native code. 0 for a
+										//suite that does not compile
 };
 
 //The main() of a suite. Returns the exit code: 0 pass, 1 fail, 2 could not run

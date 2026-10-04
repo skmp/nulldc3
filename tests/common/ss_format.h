@@ -100,8 +100,11 @@ static_assert(sizeof(SsTest) == 756, "SsTest layout");
 
 #define SS_FILE_SUFFIX ".json.bin"
 
+//The instruction under test is the second of the 4
+#define SS_TEST_INSTRUCTION 1
+
 //The opcode under test
-static inline u16 ss_opcode(const SsTest& test) { return (u16)test.opcodes.op[1]; }
+static inline u16 ss_opcode(const SsTest& test) { return (u16)test.opcodes.op[SS_TEST_INSTRUCTION]; }
 
 //Reads a vector file and checks the framing of every record. On failure error says what is wrong
 bool ss_load_file(const std::string& path, std::vector<SsTest>& tests, std::string& error);

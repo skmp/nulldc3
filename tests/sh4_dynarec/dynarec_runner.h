@@ -27,3 +27,15 @@ void dynarec_init();
 //Has to run guarded (test_guard.h): it ends in test_guard_abort() when the blocks do not add up to count
 //instructions, and whatever the recompiler dies of ends it as well
 void dynarec_run(const DynarecCode& code, u32 count, u32* executed);
+
+//What the last dynarec_run compiled, also when it did not come back: the number of instructions whose blocks
+//were compiled, and which of them are not native code. Bit i is set when the block of instruction i calls the
+//interpreter's handler for it (shop_ifb, the decoder's fallback)
+u32 dynarec_compiled();
+u32 dynarec_interpreted();
+
+//Instruction index of the last dynarec_run was compiled to native code
+static inline bool dynarec_native(u32 index)
+{
+	return index < dynarec_compiled() && (dynarec_interpreted() & (1u << index)) == 0;
+}

@@ -37,6 +37,7 @@ int main(int argc, char** argv)
 	suite.known = 0;
 	suite.init = 0;
 	suite.run = &run;
+	suite.native = 0;
 
 	return ss_suite_main(argc, argv, suite);
 }

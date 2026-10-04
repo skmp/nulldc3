@@ -10,20 +10,26 @@
 	What a vector expects plays no part. Only the vectors that devcast cannot run are filtered: unaligned data
 	accesses and odd PCs (ss_policy.h).
 
-	Per file the report has: total / run / identical / different / both-crash / filtered, how the different
-	ones differ and the first of them with its opcode, FPSCR and SR, and what differs in it.
+	Per file the report has: total / run / identical / different / both-crash / native / filtered, how the
+	different ones differ and the first of them with its opcode, FPSCR and SR, and what differs in it.
 	  identical    the engines agree on all of the above
 	  different    they do not. By what differs first: crash (one engine ends in die()/verify()/a signal and the
 	               other runs through, or they end in different ones), path, bus, state, notify
 	  both-crash   both engines end in the same die()/verify()/signal: there are no results to compare
+	  native       the dynarec turned the instruction under test into native code. For the others it calls the
+	               interpreter's handler, and the two engines agree because they are one
 
 	The baseline has the counts of every file. The run fails when
-	  - a file has fewer identical vectors than its baseline, or runs fewer vectors. It then lists the vectors
-	    of the kinds of difference that the file has more of than its baseline
+	  - a file has fewer identical vectors than its baseline, runs fewer vectors or has fewer native ones
+	  - a file has more vectors than its baseline that differ by crash, path, bus or state, or that crash in both
+	    engines. A difference may go away or become a notification, it may not become one of another kind
 	  - an engine hangs
 	  - a vector file is not in the policy table or not in the baseline, or the other way around
-	Counts above the baseline are reported and do not fail, --update-baseline writes them into the file.
-	KNOWN_DIFFERENCES.md has what is behind the differences of the baseline.
+	and lists the vectors of the kinds of difference that the file has more of than its baseline.
+	Every other count that is not the baseline's is reported. With --strict, which is how ctest runs the test,
+	it fails the run as well: a baseline that is behind lets a regression back to its counts pass.
+	--update-baseline writes the counts into the file. KNOWN_DIFFERENCES.md has what is behind the differences
+	of the baseline.
 */
 #include "ss_format.h"
 #include "ss_policy.h"
@@ -99,6 +105,7 @@ struct DiffCounts
 	u32 total;
 	u32 run;
 	u32 kind[DK_COUNT];
+	u32 native;
 	u32 filtered[SSF_COUNT];
 
 	DiffCounts() { memset(this, 0, sizeof(*this)); }
@@ -119,6 +126,7 @@ struct DiffCounts
 		run += o.run;
 		for (u32 k = 0; k < DK_COUNT; k++)
 			kind[k] += o.kind[k];
+		native += o.native;
 		for (u32 r = 0; r < SSF_COUNT; r++)
 			filtered[r] += o.filtered[r];
 	}
@@ -129,7 +137,14 @@ struct DiffBaseline
 	u32 total;
 	u32 run;
 	u32 kind[DK_COUNT];
+	u32 native;
 };
+
+//A kind of difference that a file may not have more of than its baseline
+static bool kind_is_gated(u32 kind)
+{
+	return kind == DK_BOTH_CRASH || kind == DK_CRASH || kind == DK_PATH || kind == DK_BUS || kind == DK_STATE;
+}
 
 struct DiffOptions
 {
@@ -138,6 +153,7 @@ struct DiffOptions
 	std::string file_pattern;
 	int vector;
 	bool update_baseline;
+	bool strict;				//every count that is not the baseline's fails
 	bool verbose;
 	bool emu_output;
 	u32 unfilter;				//mask of the filter reasons (1 << SSF_x) that are not applied
@@ -306,8 +322,8 @@ static bool load_baseline(const std::string& path, std::map<std::string, DiffBas
 
 		memset(&b, 0, sizeof(b));
 
-		if (sscanf(line, "%255s %u %u %u %u %u %u %u %u %u", name, &b.total, &b.run, &b.kind[DK_IDENTICAL], &b.kind[DK_BOTH_CRASH],
-			&b.kind[DK_CRASH], &b.kind[DK_PATH], &b.kind[DK_BUS], &b.kind[DK_STATE], &b.kind[DK_NOTIFY]) == 10)
+		if (sscanf(line, "%255s %u %u %u %u %u %u %u %u %u %u", name, &b.total, &b.run, &b.kind[DK_IDENTICAL], &b.kind[DK_BOTH_CRASH],
+			&b.kind[DK_CRASH], &b.kind[DK_PATH], &b.kind[DK_BUS], &b.kind[DK_STATE], &b.kind[DK_NOTIFY], &b.native) == 11)
 			baseline[name] = b;
 	}
 
@@ -323,19 +339,21 @@ static bool save_baseline(const std::string& path, const std::map<std::string, D
 	if (!f)
 		return false;
 
-	fprintf(f, "# " DIFF_NAME " baseline: on how many vectors the SH4 interpreter and the dynarec agree, per file, and by what\n");
-	fprintf(f, "# the others differ. The test fails when a file runs fewer vectors than listed here or has fewer identical ones.\n");
+	fprintf(f, "# " DIFF_NAME " baseline: on how many vectors the SH4 interpreter and the dynarec agree, per file, by what the\n");
+	fprintf(f, "# others differ, and for how many the dynarec compiles the instruction to native code.\n");
+	fprintf(f, "# The test fails when a file runs fewer vectors than listed here, has fewer identical or native ones, or more\n");
+	fprintf(f, "# of both-crash, crash, path, bus or state.\n");
 	fprintf(f, "# Written by the test's --update-baseline, tests/sh4_dynarec/KNOWN_DIFFERENCES.md has the causes.\n");
 	fprintf(f, "#\n");
-	fprintf(f, "# %-24s %5s %5s %9s %10s %5s %5s %5s %5s %6s\n", "file", "total", "run", diff_kind_name[DK_IDENTICAL], diff_kind_name[DK_BOTH_CRASH],
-		diff_kind_name[DK_CRASH], diff_kind_name[DK_PATH], diff_kind_name[DK_BUS], diff_kind_name[DK_STATE], diff_kind_name[DK_NOTIFY]);
+	fprintf(f, "# %-24s %5s %5s %9s %10s %5s %5s %5s %5s %6s %6s\n", "file", "total", "run", diff_kind_name[DK_IDENTICAL], diff_kind_name[DK_BOTH_CRASH],
+		diff_kind_name[DK_CRASH], diff_kind_name[DK_PATH], diff_kind_name[DK_BUS], diff_kind_name[DK_STATE], diff_kind_name[DK_NOTIFY], "native");
 
 	for (std::map<std::string, DiffCounts>::const_iterator it = results.begin(); it != results.end(); ++it)
 	{
 		const DiffCounts& c = it->second;
 
-		fprintf(f, "%-26s %5u %5u %9u %10u %5u %5u %5u %5u %6u\n", it->first.c_str(), c.total, c.run, c.kind[DK_IDENTICAL], c.kind[DK_BOTH_CRASH],
-			c.kind[DK_CRASH], c.kind[DK_PATH], c.kind[DK_BUS], c.kind[DK_STATE], c.kind[DK_NOTIFY]);
+		fprintf(f, "%-26s %5u %5u %9u %10u %5u %5u %5u %5u %6u %6u\n", it->first.c_str(), c.total, c.run, c.kind[DK_IDENTICAL], c.kind[DK_BOTH_CRASH],
+			c.kind[DK_CRASH], c.kind[DK_PATH], c.kind[DK_BUS], c.kind[DK_STATE], c.kind[DK_NOTIFY], c.native);
 	}
 
 	fclose(f);
@@ -366,6 +384,8 @@ static int usage(const DiffOptions& defaults)
 		"  --vectors <dir>      vector files (*" SS_FILE_SUFFIX "), default %s\n"
 		"  --baseline <file>    baseline file, default %s\n"
 		"  --update-baseline    write the counts of this run into the baseline file (all files have to be run)\n"
+		"  --strict             every count that is not the baseline's fails: the baseline has to be the one of\n"
+		"                       this build. ctest runs the test this way\n"
 		"  --file <pattern>     only the files whose name or instruction contains <pattern>, or matches it if it\n"
 		"                       has * or ?\n"
 		"  --vector <N>         only vector N (0 based) of each file, no baseline check\n"
@@ -387,6 +407,7 @@ int main(int argc, char** argv)
 	opt.baseline = NULLDC_BASELINE;
 	opt.vector = -1;
 	opt.update_baseline = false;
+	opt.strict = false;
 	opt.verbose = false;
 	opt.emu_output = false;
 	opt.unfilter = 0;
@@ -410,6 +431,8 @@ int main(int argc, char** argv)
 			i++;
 		else if (arg == "--update-baseline")
 			opt.update_baseline = true;
+		else if (arg == "--strict")
+			opt.strict = true;
 		else if (arg == "--verbose")
 			opt.verbose = true;
 		else if (arg == "--emu-output")
@@ -479,7 +502,8 @@ int main(int argc, char** argv)
 	std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
 
 	fprintf(report, DIFF_NAME ": vectors %s\n\n", opt.vectors_dir.c_str());
-	fprintf(report, "%-26s %-24s %5s %5s %9s %9s %10s  %s\n", "file", "instruction", "total", "run", "identical", "different", "both-crash", "filtered");
+	fprintf(report, "%-26s %-24s %5s %5s %9s %9s %10s %6s  %s\n", "file", "instruction", "total", "run", "identical", "different", "both-crash",
+		"native", "filtered");
 
 	std::map<std::string, DiffCounts> results;
 	DiffCounts sum;
@@ -551,6 +575,9 @@ int main(int argc, char** argv)
 
 			counts.kind[kind]++;
 
+			if (dynarec.native)
+				counts.native++;
+
 			if (kind != DK_IDENTICAL)
 			{
 				if (listed[kind].size() < DIFF_LIST_MAX)
@@ -573,8 +600,8 @@ int main(int argc, char** argv)
 				filtered += diff_format("%s%s=%u", filtered.empty() ? "" : " ", ss_filter_name((SsFilterReason)r), counts.filtered[r]);
 		}
 
-		fprintf(report, "%-26s %-24s %5u %5u %9u %9u %10u  %s\n", file.c_str(), policy->mnemonic, counts.total, counts.run, counts.kind[DK_IDENTICAL],
-			counts.different(), counts.kind[DK_BOTH_CRASH], filtered.empty() ? "-" : filtered.c_str());
+		fprintf(report, "%-26s %-24s %5u %5u %9u %9u %10u %6u  %s\n", file.c_str(), policy->mnemonic, counts.total, counts.run, counts.kind[DK_IDENTICAL],
+			counts.different(), counts.kind[DK_BOTH_CRASH], counts.native, filtered.empty() ? "-" : filtered.c_str());
 
 		//the first vector of every kind of difference
 		for (u32 k = DK_HANG; k < DK_COUNT && !opt.verbose && opt.vector < 0; k++)
@@ -624,6 +651,9 @@ int main(int argc, char** argv)
 			continue;
 		}
 
+		//a count that is not the baseline's and does not fail by itself
+		const char* moved = opt.strict ? "FAIL not as in the baseline" : "not as in the baseline";
+
 		if (counts.run < b.run)
 		{
 			notes.push_back(diff_format("FAIL %s: run %u, baseline %u", file.c_str(), counts.run, b.run));
@@ -631,13 +661,37 @@ int main(int argc, char** argv)
 		}
 		else if (counts.run > b.run)
 		{
-			notes.push_back(diff_format("above the baseline: %s run %u, baseline %u", file.c_str(), counts.run, b.run));
+			notes.push_back(diff_format("%s: %s run %u, baseline %u", moved, file.c_str(), counts.run, b.run));
 			improvements++;
 		}
 
-		if (counts.kind[DK_IDENTICAL] < b.kind[DK_IDENTICAL])
+		if (counts.native < b.native)
 		{
-			notes.push_back(diff_format("FAIL %s (%s): identical %u, baseline %u", file.c_str(), policy->mnemonic, counts.kind[DK_IDENTICAL], b.kind[DK_IDENTICAL]));
+			notes.push_back(diff_format("FAIL %s (%s): native %u, baseline %u: the dynarec hands the instruction to the interpreter", file.c_str(),
+				policy->mnemonic, counts.native, b.native));
+			problems++;
+		}
+		else if (counts.native > b.native)
+		{
+			notes.push_back(diff_format("%s: %s native %u, baseline %u", moved, file.c_str(), counts.native, b.native));
+			improvements++;
+		}
+
+		//fewer identical vectors, or more that differ in a way a file may not have more of
+		std::string worse;
+
+		if (counts.kind[DK_IDENTICAL] < b.kind[DK_IDENTICAL])
+			worse = diff_format("identical %u, baseline %u", counts.kind[DK_IDENTICAL], b.kind[DK_IDENTICAL]);
+
+		for (u32 k = DK_BOTH_CRASH; k < DK_COUNT; k++)
+		{
+			if (kind_is_gated(k) && counts.kind[k] > b.kind[k])
+				worse += diff_format("%s%s %u, baseline %u", worse.empty() ? "" : "; ", diff_kind_name[k], counts.kind[k], b.kind[k]);
+		}
+
+		if (!worse.empty())
+		{
+			notes.push_back(diff_format("FAIL %s (%s): %s", file.c_str(), policy->mnemonic, worse.c_str()));
 			problems++;
 
 			//which vectors: the ones of the kinds there are more of now
@@ -654,22 +708,17 @@ int main(int argc, char** argv)
 				if (counts.kind[k] > listed[k].size())
 					notes.push_back(diff_format("    and %u more, all of them: --file %s --verbose", counts.kind[k] - (u32)listed[k].size(), file.c_str()));
 			}
+
+			continue;
 		}
-		else if (counts.kind[DK_IDENTICAL] > b.kind[DK_IDENTICAL])
+
+		//what is left: more identical vectors, more or fewer notifications, fewer of another kind
+		for (u32 k = DK_IDENTICAL; k < DK_COUNT; k++)
 		{
-			notes.push_back(diff_format("above the baseline: %s identical %u, baseline %u", file.c_str(), counts.kind[DK_IDENTICAL], b.kind[DK_IDENTICAL]));
-			improvements++;
-		}
-		else
-		{
-			//as many identical ones, differing in another way
-			for (u32 k = DK_BOTH_CRASH; k < DK_COUNT; k++)
+			if (k != DK_HANG && counts.kind[k] != b.kind[k])
 			{
-				if (counts.kind[k] != b.kind[k])
-				{
-					notes.push_back(diff_format("not as in the baseline: %s %s %u, baseline %u", file.c_str(), diff_kind_name[k], counts.kind[k], b.kind[k]));
-					improvements++;
-				}
+				notes.push_back(diff_format("%s: %s %s %u, baseline %u", moved, file.c_str(), diff_kind_name[k], counts.kind[k], b.kind[k]));
+				improvements++;
 			}
 		}
 	}
@@ -708,6 +757,7 @@ int main(int argc, char** argv)
 	fprintf(report, "  both-crash   %6u  %s\n", sum.kind[DK_BOTH_CRASH], diff_kind_description[DK_BOTH_CRASH]);
 	if (sum.kind[DK_HANG])
 		fprintf(report, "  hang         %6u  %s\n", sum.kind[DK_HANG], diff_kind_description[DK_HANG]);
+	fprintf(report, "  native       %6u  vectors whose instruction the dynarec compiles to native code, the others it hands to the interpreter\n", sum.native);
 	fprintf(report, "  filtered     %6u\n", sum.total - sum.run);
 
 	for (u32 r = 1; r < SSF_COUNT; r++)
@@ -787,7 +837,11 @@ int main(int argc, char** argv)
 	}
 	else if (improvements)
 	{
-		fprintf(report, "\n%u counts are not the baseline's and do not fail: run with --update-baseline and commit %s\n", improvements, opt.baseline.c_str());
+		fprintf(report, "\n%u counts are not the baseline's%s: run with --update-baseline and commit %s\n", improvements,
+			opt.strict ? ", which fails with --strict" : " and do not fail", opt.baseline.c_str());
+
+		if (opt.strict)
+			problems++;
 	}
 
 	if (!gated)

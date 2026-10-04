@@ -43,6 +43,7 @@ struct EngineResult
 	SsState state;
 	std::vector<SsBusAccess> bus;	//data accesses
 	std::vector<u32> path;			//addresses the instructions were run from
+	bool native;					//dynarec: the instruction under test was compiled to native code (dynarec_runner.h)
 };
 
 //Once, when the SH4 environment (sh4_env.h) is up: maps the memory and starts the recompiler

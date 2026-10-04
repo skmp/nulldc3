@@ -62,6 +62,7 @@ static void run_engine(const SsTest& test, bool interpreter, EngineResult& resul
 	result.notifications = result.guard == TGR_OK ? test_guard_msgbox_count() : 0;
 	result.notification = result.notifications ? test_guard_last_msgbox() : "";
 	result.bus = diff_mem_log();
+	result.native = !interpreter && dynarec_native(SS_TEST_INSTRUCTION);
 
 	if (interpreter)
 		result.path = diff_mem_fetches();
@@ -258,6 +259,7 @@ bool diff_compare_selfcheck()
 	a.name = "interpreter";
 	a.guard = TGR_OK;
 	a.notifications = 0;
+	a.native = false;
 	memset(&a.state, 0, sizeof(a.state));
 	a.bus.push_back(write);
 	for (u32 n = 0; n < 4; n++)

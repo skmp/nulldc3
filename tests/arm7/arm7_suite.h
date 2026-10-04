@@ -6,7 +6,9 @@
 	  - a check passes fewer cases than its baseline, or has another number of cases
 	  - a check is not in the baseline, or a check of the baseline was not counted
 	  - guest code crashes the emulator code (die(), verify(), a signal) or hangs it
-	Passes above the baseline are reported and do not fail, --update-baseline writes them into the file.
+	Passes above the baseline are reported. They fail the run with --strict, which is how ctest runs the tests: a
+	baseline that is behind lets a regression back to its counts pass. --update-baseline writes the counts into
+	the file.
 	KNOWN_FAILURES.md has the reason for every check that is below its number of cases.
 */
 #pragma once
@@ -29,6 +31,7 @@ struct Arm7Options
 	std::string baseline;
 	std::string select;			//only the programs / jobs that match, no baseline check
 	bool update_baseline;
+	bool strict;				//passes above the baseline fail
 	bool verbose;
 	bool emu_output;
 };

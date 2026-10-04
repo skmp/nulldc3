@@ -35,6 +35,13 @@ filter and how a baseline works; `KNOWN_DIFFERENCES.md` has what the two baselin
 The interpreter suite with another way to execute the 4 instructions. Instruction fetches are not part of the
 expected bus order here; instead the addresses the blocks were decoded from have to be the vector's fetch addresses.
 
+The decoder hands the instructions it has no translation for to the interpreter's handler (`shop_ifb`); a vector
+of such an instruction passes without any native code being tested. Both tests count, per file, the vectors
+whose instruction was compiled (`native` in the report and in the baselines) and fail when a file has fewer than
+its baseline. 35 files are at 0 today: ADDV, SUBV, NEGC, DIV1, XTRCT, TAS.B, the logic instructions on
+`@(R0,GBR)`, MOVCA.L, OCBI / OCBP / OCBWB, CLRMAC, LDTLB, LDC.L @Rm+,SR, STC.L SR,@-Rn, LDS and LDS.L to FPSCR,
+SLEEP, TRAPA and the FPU instructions with PR=1. In every other file all vectors that are run are native.
+
 ## sh4.differential
 
 Does not look at what the vectors expect. Both engines start from the vector's initial state, run its 4
@@ -51,15 +58,21 @@ run are filtered (`unaligned`, `odd-pc`): 91,989 of 116,500 run.
 
 A vector is *identical*, *different* (by the first of: crash, path, bus, state, notify) or *both-crash* (both
 engines end in the same `die()` / `verify()` / signal). The baseline has these counts per file. The test fails when
-a file has fewer identical vectors or runs fewer than its baseline, and then lists the vectors of the kinds of
-difference the file has more of, each with its opcode, PR/SZ, FPSCR, SR and what differs:
+a file
+
+* has fewer identical vectors than its baseline, runs fewer, or has fewer whose instruction is native,
+* has more vectors than its baseline that differ by crash, path, bus or state, or that crash in both engines. A
+  difference may go away or become a notification; it may not become a difference of another kind,
+
+and then lists the vectors of the kinds of difference the file has more of, each with its opcode, PR/SZ, FPSCR, SR
+and what differs:
 
     FAIL 1111mmmm00111101_sz0_pr0 (ftrc frm,fpul): identical 253, baseline 254
       state 1, baseline 0 (the final states differ):
         #383 op F43D PR=0 SZ=0, FPSCR 00000001 (FR=0 DN=0 RM=1), SR 700083B3 (MD=1 RB=1 BL=1 FD=1): state: FPUL interpreter 7FFFFFFF dynarec 80000000; ...
 
-An engine that hangs fails the test as well. Counts that moved without costing identical vectors are reported and
-do not fail.
+An engine that hangs fails the test as well. Every other count that is not the baseline's (more identical vectors,
+notifications that come or go, fewer of another kind) is reported, and fails with `--strict`, as ctest runs it.
 
 ## Looking at a failure, updating a baseline
 

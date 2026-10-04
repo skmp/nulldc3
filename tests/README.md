@@ -85,7 +85,8 @@ fails when
 * a vector file is missing from the policy table or from the baseline, or the baseline lists a file that is
   not there.
 
-It reports, without failing, the counts that are above the baseline. After a fix:
+Counts above the baseline are reported. Run by hand they do not fail; ctest runs every test with `--strict`,
+where they do: a baseline that is behind lets a later regression back to its counts pass. After a fix:
 
     <build dir>/sh4_singlestep/sh4_singlestep_interp --update-baseline
 

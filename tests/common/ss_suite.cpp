@@ -43,6 +43,7 @@ struct SsCounts
 	u32 crash;
 	u32 hang;
 	u32 notified;	//vectors during which the emulator called msgboxf and carried on
+	u32 native;		//vectors whose instruction under test was compiled to native code (SsSuite::native)
 	u32 filtered[SSF_COUNT];
 
 	SsCounts() { memset(this, 0, sizeof(*this)); }
@@ -58,6 +59,7 @@ struct SsCounts
 		crash += o.crash;
 		hang += o.hang;
 		notified += o.notified;
+		native += o.native;
 		for (u32 i = 0; i < SSF_COUNT; i++)
 			filtered[i] += o.filtered[i];
 	}
@@ -69,6 +71,8 @@ struct SsBaseline
 	u32 run;
 	u32 exact;
 	u32 lenient;
+	u32 native;
+	bool has_native;
 };
 
 struct SsOptions
@@ -78,6 +82,7 @@ struct SsOptions
 	std::string file_pattern;
 	int vector;
 	bool update_baseline;
+	bool strict;				//counts above the baseline fail
 	bool verbose;
 	bool emu_output;
 	u32 unfilter;				//mask of the filter reasons (1 << SSF_x) that are not applied
@@ -177,7 +182,13 @@ static bool load_baseline(const std::string& path, std::map<std::string, SsBasel
 		if (line[0] == '#')
 			continue;
 
-		if (sscanf(line, "%255s %u %u %u %u", name, &b.total, &b.run, &b.exact, &b.lenient) == 5)
+		b.native = 0;
+
+		int fields = sscanf(line, "%255s %u %u %u %u %u", name, &b.total, &b.run, &b.exact, &b.lenient, &b.native);
+
+		b.has_native = fields == 6;
+
+		if (fields >= 5)
 			baseline[name] = b;
 	}
 
@@ -194,13 +205,21 @@ static bool save_baseline(const std::string& path, const SsSuite& suite, const s
 		return false;
 
 	fprintf(f, "# %s baseline: what devcast passes of the single-step vectors, per file.\n", suite.name);
-	fprintf(f, "# The test fails when a file runs or passes fewer vectors than listed here.\n");
+	fprintf(f, "# The test fails when a file runs or passes fewer vectors than listed here%s.\n",
+		suite.native ? ", or has fewer whose instruction is\n# compiled to native code" : "");
 	fprintf(f, "# Written by the test's --update-baseline, see tests/README.md.\n");
 	fprintf(f, "#\n");
-	fprintf(f, "# %-24s %5s %5s %5s %7s\n", "file", "total", "run", "exact", "lenient");
+	fprintf(f, "# %-24s %5s %5s %5s %7s%s\n", "file", "total", "run", "exact", "lenient", suite.native ? " native" : "");
 
 	for (std::map<std::string, SsCounts>::const_iterator it = results.begin(); it != results.end(); ++it)
-		fprintf(f, "%-26s %5u %5u %5u %7u\n", it->first.c_str(), it->second.total, it->second.run, it->second.exact, it->second.lenient);
+	{
+		fprintf(f, "%-26s %5u %5u %5u %7u", it->first.c_str(), it->second.total, it->second.run, it->second.exact, it->second.lenient);
+
+		if (suite.native)
+			fprintf(f, " %6u", it->second.native);
+
+		fprintf(f, "\n");
+	}
 
 	fclose(f);
 
@@ -249,6 +268,8 @@ static int usage(const SsSuite& suite, const SsOptions& defaults)
 		"  --vectors <dir>      vector files (*" SS_FILE_SUFFIX "), default %s\n"
 		"  --baseline <file>    baseline file, default %s\n"
 		"  --update-baseline    write the counts of this run into the baseline file (all files have to be run)\n"
+		"  --strict             counts above the baseline fail as well: the baseline has to be the one of this\n"
+		"                       build. ctest runs the test this way\n"
 		"  --file <pattern>     only the files whose name or instruction contains <pattern>, or matches it if it\n"
 		"                       has * or ?\n"
 		"  --vector <N>         only vector N (0 based) of each file, no baseline check\n"
@@ -270,6 +291,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 	opt.baseline = suite.baseline;
 	opt.vector = -1;
 	opt.update_baseline = false;
+	opt.strict = false;
 	opt.verbose = false;
 	opt.emu_output = false;
 	opt.unfilter = 0;
@@ -293,6 +315,8 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 			i++;
 		else if (arg == "--update-baseline")
 			opt.update_baseline = true;
+		else if (arg == "--strict")
+			opt.strict = true;
 		else if (arg == "--verbose")
 			opt.verbose = true;
 		else if (arg == "--emu-output")
@@ -358,7 +382,8 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 	std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
 
 	fprintf(report, "%s: vectors %s\n\n", suite.name, opt.vectors_dir.c_str());
-	fprintf(report, "%-26s %-24s %5s %5s %5s %7s %6s  %s\n", "file", "instruction", "total", "run", "exact", "lenient", "failed", "filtered");
+	fprintf(report, "%-26s %-24s %5s %5s %5s %7s %6s%s  %s\n", "file", "instruction", "total", "run", "exact", "lenient", "failed",
+		suite.native ? " native" : "", "filtered");
 
 	std::map<std::string, SsCounts> results;
 	SsCounts sum;
@@ -432,6 +457,9 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 
 			if (guard == TGR_OK && test_guard_msgbox_count() != 0)
 				counts.notified++;
+
+			if (suite.native && suite.native())
+				counts.native++;
 
 			bool bus_ok = ss_mem_end();
 
@@ -527,8 +555,15 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 			filtered += text;
 		}
 
-		fprintf(report, "%-26s %-24s %5u %5u %5u %7u %6u  %s\n", file.c_str(), policy->mnemonic, counts.total, counts.run, counts.exact,
-			counts.lenient, counts.failed(), filtered.empty() ? "-" : filtered.c_str());
+		char native[16];
+
+		native[0] = 0;
+
+		if (suite.native)
+			snprintf(native, sizeof(native), " %6u", counts.native);
+
+		fprintf(report, "%-26s %-24s %5u %5u %5u %7u %6u%s  %s\n", file.c_str(), policy->mnemonic, counts.total, counts.run, counts.exact,
+			counts.lenient, counts.failed(), native, filtered.empty() ? "-" : filtered.c_str());
 
 		if (!first.empty() && !opt.verbose)
 			fprintf(report, "    first: %s\n", first.c_str());
@@ -596,7 +631,8 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 		} \
 		else if ((now) > (was)) \
 		{ \
-			snprintf(text, sizeof(text), "above the baseline: %s " what " %u, baseline %u", file.c_str(), (now), (was)); \
+			snprintf(text, sizeof(text), "%s: %s " what " %u, baseline %u", opt.strict ? "FAIL above the baseline" : "above the baseline", \
+				file.c_str(), (now), (was)); \
 			notes.push_back(text); \
 			improvements++; \
 		}
@@ -604,6 +640,17 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 		GATE("run", counts.run, b.run);
 		GATE("pass-exact", counts.exact, b.exact);
 		GATE("pass-lenient", counts.lenient, b.lenient);
+
+		if (suite.native && !b.has_native)
+		{
+			snprintf(text, sizeof(text), "FAIL %s: the baseline has no native count", file.c_str());
+			notes.push_back(text);
+			problems++;
+		}
+		else if (suite.native)
+		{
+			GATE("native", counts.native, b.native);
+		}
 
 #undef GATE
 	}
@@ -635,6 +682,8 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 	fprintf(report, "  pass-exact   %6u\n", sum.exact);
 	fprintf(report, "  pass-lenient %6u\n", sum.lenient);
 	fprintf(report, "  failed       %6u  (crashed %u, hung %u)\n", sum.failed(), sum.crash, sum.hang);
+	if (suite.native)
+		fprintf(report, "  native       %6u  vectors whose instruction is compiled to native code, the others are handed to the interpreter\n", sum.native);
 	if (sum.notified)
 		fprintf(report, "  msgboxf      %6u  vectors during which the emulator code raised a notification and carried on\n", sum.notified);
 	fprintf(report, "  filtered     %6u\n", filtered_total);
@@ -696,7 +745,11 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 	}
 	else if (improvements)
 	{
-		fprintf(report, "\n%u counts are above the baseline: run with --update-baseline and commit %s\n", improvements, opt.baseline.c_str());
+		fprintf(report, "\n%u counts are above the baseline%s: run with --update-baseline and commit %s\n", improvements,
+			opt.strict ? ", which fails with --strict" : "", opt.baseline.c_str());
+
+		if (opt.strict)
+			problems++;
 	}
 
 	if (!gated)
