@@ -1,0 +1,11 @@
+{
+  "version": "0.0.0-test",
+  "protocol": 3,
+  "gitRev": "fixture",
+  "files": [
+    { "path": "index.html" },
+    { "path": "assets/app-0123abcd.js" },
+    { "path": "assets/style-89ef4567.css" },
+    { "path": "assets/empty.txt" }
+  ]
+}
