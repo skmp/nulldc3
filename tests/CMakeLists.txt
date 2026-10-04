@@ -79,5 +79,6 @@ endfunction()
 include(common/libswirl.cmake)
 
 add_subdirectory(common)
+add_subdirectory(sh4_singlestep)
 add_subdirectory(sh4_dynarec)
 add_subdirectory(arm7)
