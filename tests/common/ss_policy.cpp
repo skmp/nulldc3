@@ -328,21 +328,23 @@ static bool ftrc_of_nan(const SsFilePolicy& policy, const SsTest& test)
 	return is_nan32(fp[m]);
 }
 
-SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test)
+SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, u32 ignore)
 {
 	const SsState& initial = test.initial.s;
 
-	if (policy.flags & SSP_TRAPA)
+#define APPLIES(reason) ((ignore & (1 << (reason))) == 0)
+
+	if (APPLIES(SSF_TRAPA_NOP) && (policy.flags & SSP_TRAPA))
 		return SSF_TRAPA_NOP;
 
 	//exceptions of the instruction itself come before the ones of its data access
-	if ((policy.flags & SSP_PRIVILEGED) && (initial.SR & 0x40000000) == 0)
+	if (APPLIES(SSF_PRIVILEGED) && (policy.flags & SSP_PRIVILEGED) && (initial.SR & 0x40000000) == 0)
 		return SSF_PRIVILEGED;
 
-	if ((policy.flags & SSP_FPU) && (initial.SR & 0x00008000) != 0)
+	if (APPLIES(SSF_FPU_DISABLED) && (policy.flags & SSP_FPU) && (initial.SR & 0x00008000) != 0)
 		return SSF_FPU_DISABLED;
 
-	for (u32 i = 0; i < 4; i++)
+	for (u32 i = 0; i < 4 && APPLIES(SSF_UNALIGNED); i++)
 	{
 		const SsCycle& c = test.cycles.c[i];
 
@@ -353,7 +355,7 @@ SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test)
 			return SSF_UNALIGNED;
 	}
 
-	for (u32 i = 0; i < 4; i++)
+	for (u32 i = 0; i < 4 && APPLIES(SSF_ODD_PC); i++)
 	{
 		const SsCycle& c = test.cycles.c[i];
 
@@ -361,11 +363,13 @@ SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test)
 			return SSF_ODD_PC;
 	}
 
-	if ((policy.flags & SSP_FP_RESULT) && result_is_nan(policy, test))
+	if (APPLIES(SSF_HOST_NAN) && (policy.flags & SSP_FP_RESULT) && result_is_nan(policy, test))
 		return SSF_HOST_NAN;
 
-	if ((policy.flags & SSP_FTRC) && ftrc_of_nan(policy, test))
+	if (APPLIES(SSF_HOST_NAN) && (policy.flags & SSP_FTRC) && ftrc_of_nan(policy, test))
 		return SSF_HOST_NAN;
+
+#undef APPLIES
 
 	return SSF_NONE;
 }

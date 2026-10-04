@@ -441,6 +441,20 @@ static void test_policy()
 
 	CHECK(ss_policy_filter(*trapa, t) == SSF_TRAPA_NOP);
 
+	//more than one reason: the first one, and the next one when that is left out
+	const SsFilePolicy* ldc_l_sr = ss_policy_find("0100mmmm00000111_sz0_pr0");
+
+	CHECK(ldc_l_sr != 0);
+	if (ldc_l_sr)
+	{
+		t.cycles.c[1].actions |= SS_ACTION_READ;
+		t.cycles.c[1].read_addr = 0x0C000101;
+		CHECK(ss_policy_filter(*ldc_l_sr, t) == SSF_PRIVILEGED);
+		CHECK(ss_policy_filter(*ldc_l_sr, t, 1 << SSF_PRIVILEGED) == SSF_UNALIGNED);
+		CHECK(ss_policy_filter(*ldc_l_sr, t, (1 << SSF_PRIVILEGED) | (1 << SSF_UNALIGNED)) == SSF_NONE);
+		t.cycles.c[1].actions = SS_ACTION_FETCH;
+	}
+
 	//FPU disabled
 	CHECK(ss_policy_filter(*fadd, t) == SSF_NONE);
 	t.initial.s.SR = 0x8000;

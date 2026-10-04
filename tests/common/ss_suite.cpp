@@ -80,6 +80,7 @@ struct SsOptions
 	bool update_baseline;
 	bool verbose;
 	bool emu_output;
+	u32 unfilter;				//mask of the filter reasons (1 << SSF_x) that are not applied
 };
 
 static FILE* report;
@@ -123,6 +124,40 @@ static bool file_selected(const std::string& pattern, const std::string& name)
 		return name.find(pattern) != std::string::npos;
 
 	return glob(pattern.c_str(), name.c_str());
+}
+
+//"reason,reason,..." or "all"
+static bool parse_unfilter(const char* list, SsOptions& opt)
+{
+	std::string text = list;
+	size_t start = 0;
+
+	while (start <= text.size())
+	{
+		size_t end = text.find(',', start);
+
+		if (end == std::string::npos)
+			end = text.size();
+
+		std::string name = text.substr(start, end - start);
+		bool found = false;
+
+		for (u32 r = 1; r < SSF_COUNT; r++)
+		{
+			if (name == "all" || name == ss_filter_name((SsFilterReason)r))
+			{
+				opt.unfilter |= 1 << r;
+				found = true;
+			}
+		}
+
+		if (!found)
+			return false;
+
+		start = end + 1;
+	}
+
+	return true;
 }
 
 static bool load_baseline(const std::string& path, std::map<std::string, SsBaseline>& baseline)
@@ -217,6 +252,8 @@ static int usage(const SsSuite& suite, const SsOptions& defaults)
 		"  --file <pattern>     only the files whose name or instruction contains <pattern>, or matches it if it\n"
 		"                       has * or ?\n"
 		"  --vector <N>         only vector N (0 based) of each file, no baseline check\n"
+		"  --unfilter <reasons> run the vectors that are filtered for these reasons as well (comma separated, or\n"
+		"                       all), no baseline check. To see what the emulator does with them\n"
 		"  --verbose            for every vector that is not an exact pass: the state before, expected and actual,\n"
 		"                       and the bus activity\n"
 		"  --emu-output         do not hide what the emulator code prints\n",
@@ -235,6 +272,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 	opt.update_baseline = false;
 	opt.verbose = false;
 	opt.emu_output = false;
+	opt.unfilter = 0;
 
 	const SsOptions defaults = opt;
 
@@ -251,6 +289,8 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 			opt.file_pattern = argv[++i];
 		else if (arg == "--vector" && has_value)
 			opt.vector = atoi(argv[++i]);
+		else if (arg == "--unfilter" && has_value && parse_unfilter(argv[i + 1], opt))
+			i++;
 		else if (arg == "--update-baseline")
 			opt.update_baseline = true;
 		else if (arg == "--verbose")
@@ -262,10 +302,11 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 	}
 
 	bool all_files = opt.file_pattern.empty() && opt.vector < 0;
+	bool gated = opt.vector < 0 && opt.unfilter == 0;	//the counts can be compared with the baseline
 
-	if (opt.update_baseline && !all_files)
+	if (opt.update_baseline && (!all_files || !gated))
 	{
-		fprintf(stderr, "--update-baseline needs a run of all files\n");
+		fprintf(stderr, "--update-baseline needs a run of all files as the policy filters them\n");
 		return 2;
 	}
 
@@ -281,7 +322,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 	std::map<std::string, SsBaseline> baseline;
 	bool have_baseline = load_baseline(opt.baseline, baseline);
 
-	if (!have_baseline && !opt.update_baseline && opt.vector < 0)
+	if (!have_baseline && !opt.update_baseline && gated)
 	{
 		fprintf(stderr, "cannot read the baseline %s\n", opt.baseline.c_str());
 		return 2;
@@ -367,7 +408,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 
 			counts.total++;
 
-			SsFilterReason reason = ss_policy_filter(*policy, test);
+			SsFilterReason reason = ss_policy_filter(*policy, test, opt.unfilter);
 
 			if (reason != SSF_NONE)
 			{
@@ -523,7 +564,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 			continue;
 		}
 
-		if (opt.update_baseline)
+		if (opt.update_baseline || !gated)
 			continue;
 
 		std::map<std::string, SsBaseline>::const_iterator base = baseline.find(file);
@@ -573,7 +614,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 		return 2;
 	}
 
-	if (all_files && !opt.update_baseline)
+	if (all_files && gated && !opt.update_baseline)
 	{
 		for (std::map<std::string, SsBaseline>::const_iterator it = baseline.begin(); it != baseline.end(); ++it)
 		{
@@ -653,10 +694,13 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 
 		fprintf(report, "\nbaseline written to %s\n", opt.baseline.c_str());
 	}
-	else if (improvements && opt.vector < 0)
+	else if (improvements)
 	{
 		fprintf(report, "\n%u counts are above the baseline: run with --update-baseline and commit %s\n", improvements, opt.baseline.c_str());
 	}
+
+	if (!gated)
+		fprintf(report, "\nnot compared with the baseline\n");
 
 	fprintf(report, "\n%s: %s\n", suite.name, problems ? "FAIL" : "PASS");
 	fflush(report);

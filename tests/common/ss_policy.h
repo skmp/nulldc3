@@ -49,8 +49,10 @@ const SsFilePolicy* ss_policy_find(const std::string& file);
 u32 ss_policy_count();
 const SsFilePolicy* ss_policy_at(u32 index);
 
-//Why a vector is not run, SSF_NONE if it is
-SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test);
+//Why a vector is not run, SSF_NONE if it is. When more than one reason applies it is the first in the order an
+//SH4 would notice them: the instruction, its data access, the next fetch. ignore is a mask of reasons
+//(1 << SSF_x) that are left out
+SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, u32 ignore = 0);
 
 const char* ss_filter_name(SsFilterReason reason);
 const char* ss_filter_description(SsFilterReason reason);

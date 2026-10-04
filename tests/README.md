@@ -97,6 +97,7 @@ counts as well and needs the same.
     sh4_singlestep_interp --file 0000nnnn11000011 --verbose      # a part of the file name ...
     sh4_singlestep_interp --file fipr --vector 18 --verbose      # ... or of the instruction; * and ? work
     sh4_singlestep_interp --emu-output ...                       # do not hide what the emulator code prints
+    sh4_singlestep_interp --unfilter fpu-disabled,privileged     # run filtered vectors as well (or: all)
 
 `--verbose` prints, for every vector that is not an exact pass, the opcodes, the expected and the actual bus
 activity and the registers before, expected and actual.

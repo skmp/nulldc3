@@ -16,6 +16,9 @@
 	    announces it, or a vector hangs
 	  - a vector file is not in the policy table or not in the baseline, or the other way around
 	Counts above the baseline are reported and do not fail, --update-baseline writes them into the file.
+
+	--file, --vector, --verbose and --unfilter are for looking at single files and vectors, the option list is
+	in the usage text.
 */
 #pragma once
 #include "ss_format.h"
