@@ -15,6 +15,7 @@ Measured on x86-64 (GCC 13, a CPU with SSE3 and FMA, without AVX-512), x64 backe
 | identical | 78,891 |
 | different | 12,473 (crash 299, path 0, bus 0, state 442, notify 11,732) |
 | both-crash | 625 |
+| native | 76,038: the instruction under test is native code in the dynarec. 35 files have none |
 | filtered | 24,511 (unaligned 23,524, odd-pc 987) |
 
 A vector with more than one difference is counted under the first of crash, path, bus, state, notify.
@@ -78,7 +79,9 @@ Both engines end in the same `die()` / `verify()` / unaligned access. They agree
 * Unaligned data accesses and odd PCs (24,511 vectors) end both engines in the unaligned access handler and are
   filtered. In the emulator the dynarec with a host memory mapping does not go through that handler.
 * An instruction the decoder has no translation for is one call of the interpreter's handler in both engines. That
-  compares the decoder's bookkeeping around it (PC, block ends, register write-back), not two implementations.
+  compares the decoder's bookkeeping around it (PC, block ends, register write-back), not two implementations. The
+  `native` column of the baselines has, per file, for how many vectors it is not so; `README.md` lists the 35 files
+  that are at 0.
 * The x64 backend picks code by host CPU feature. With FMA, as measured, FMAC is `vfmadd231ss` and agrees with the
   interpreter's double precision multiply-add on all 500 vectors; the path without FMA (`mulss`, `addss`) was not run.
   The AVX-512 path of `shop_frswap` was not run either.

@@ -19,8 +19,8 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 | D7 | `arm7.wren7.vendor` `cpsr` | 45 | 4 | 41 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 0 | 4 |
 
-Everything else passes: `arm7.vendor` 45/45, the r1 of the 45 vendor jobs, the other 3997 of the 4000
-qemu_diff cases, the MULS and MLAS results, and how all 55 jobs end.
+Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 63/63, the r1 of the 45 vendor jobs, the other 3997
+of the 4000 qemu_diff cases, the MULS and MLAS results, and how all 55 jobs end.
 
 ### D2: ROR by a register whose low byte is 0 changes C
 
