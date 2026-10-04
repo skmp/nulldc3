@@ -9,7 +9,8 @@
 #	arm7_vendor           arm7.vendor: the programs of tests/vendor/arm7di-tests-dreamcast
 #	arm7_wren7 <suite>    arm7.wren7.<suite>: console jobs of a wren7-rtl checkout against the console's results.
 #	                      Nothing of wren7-rtl is in this repository, the tests are skipped without a checkout
-#	                      (NULLDC_WREN7_DIR) or without its build outputs
+#	                      (NULLDC_WREN7_DIR) or without its build outputs. A checkout that lacks anything else
+#	                      fails them
 #
 #	All of them are gated on baseline.txt, see README.md.
 #
@@ -31,8 +32,14 @@ target_compile_definitions(nulldc_arm7_test PRIVATE $<TARGET_PROPERTY:nulldc_arm
 
 set(nulldc_arm7_baseline "${CMAKE_CURRENT_SOURCE_DIR}/baseline.txt")
 
-# A test that finds its data missing when it runs says so and exits with this code
+# A test that finds its data missing when it runs says so and exits with this code. With --require-data it fails
 set(nulldc_arm7_skip_code 77)
+
+if(NULLDC_TESTS_REQUIRE_DATA)
+  set(nulldc_arm7_require_data --require-data)
+else()
+  set(nulldc_arm7_require_data "")
+endif()
 
 
 add_executable(arm7_vendor vendor_main.cpp)
@@ -43,10 +50,10 @@ target_compile_definitions(arm7_vendor PRIVATE
 )
 
 if(NULLDC_HAVE_ARM7_TESTS)
-  add_test(NAME arm7.vendor COMMAND arm7_vendor --strict)
+  add_test(NAME arm7.vendor COMMAND arm7_vendor --strict ${nulldc_arm7_require_data})
   set_tests_properties(arm7.vendor PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE ${nulldc_arm7_skip_code})
 else()
-  nulldc_add_skipped_test(arm7.vendor "${NULLDC_ARM7_TESTS_MISSING}")
+  nulldc_add_missing_data_test(arm7.vendor "${NULLDC_ARM7_TESTS_MISSING}")
 endif()
 
 
@@ -59,14 +66,14 @@ target_compile_definitions(arm7_wren7 PRIVATE
 
 if(NULLDC_HAVE_WREN7 AND NOT EXISTS "${NULLDC_WREN7_DIR}/build/hw/arm/stub.bin")
   message(STATUS "${NULLDC_WREN7_DIR}/build/hw/arm has no done stub: wren7-rtl's ARM programs are not built (make -C model/hw/arm)")
-  message(STATUS "The tests that replay the wren7 console suites report themselves as skipped until they are.")
+  message(STATUS "The tests that replay the wren7 console suites do not run until they are.")
 endif()
 
 foreach(suite vendor qemu_diff mulsem bringup)
   if(NULLDC_HAVE_WREN7)
-    add_test(NAME arm7.wren7.${suite} COMMAND arm7_wren7 ${suite} --strict)
+    add_test(NAME arm7.wren7.${suite} COMMAND arm7_wren7 ${suite} --strict ${nulldc_arm7_require_data})
     set_tests_properties(arm7.wren7.${suite} PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE ${nulldc_arm7_skip_code})
   else()
-    nulldc_add_skipped_test(arm7.wren7.${suite} "${NULLDC_WREN7_MISSING}")
+    nulldc_add_missing_data_test(arm7.wren7.${suite} "${NULLDC_WREN7_MISSING}")
   endif()
 endforeach()

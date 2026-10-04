@@ -49,7 +49,13 @@ static u32 number(const std::string& text)
 	return (u32)strtoul(text.c_str(), 0, 0);
 }
 
-//file is the name as the job file has it. What is below build/ is not in a wren7-rtl checkout, it is made from it
+//What is below build/ is not in a wren7-rtl checkout, it is made from it
+bool wren7_is_build_output(const std::string& file)
+{
+	return file.compare(0, 9, "../build/") == 0;
+}
+
+//file is the name as the job file has it
 static std::string missing(const std::string& path, const std::string& file = "")
 {
 	std::string text = path + " is not there";
@@ -58,8 +64,12 @@ static std::string missing(const std::string& path, const std::string& file = ""
 		text += ". wren7-rtl builds it with: make -C model/hw/arm (arm-eabi toolchain)";
 	else if (file.compare(0, 22, "../build/hw/qemu_diff/") == 0)
 		text += ". wren7-rtl builds it with: ../build/model/hw_suite gen qemu_diff, run in model/ (arm-eabi toolchain)";
-	else if (file.compare(0, 9, "../build/") == 0)
+	else if (wren7_is_build_output(file))
 		text += ". It is a build output of wren7-rtl";
+	else if (file.compare(0, 10, "../vendor/") == 0)
+		text += ", the wren7-rtl checkout is not complete: its submodules are missing";
+	else
+		text += ", the wren7-rtl checkout is not complete";
 
 	return text;
 }
@@ -70,13 +80,19 @@ Wren7Load wren7_load_suite(const std::string& wren7_dir, const std::string& suit
 	out.out_dir.clear();
 	out.jobs.clear();
 
+	if (!arm7_dir_exists(out.model_dir))
+	{
+		error = "no wren7-rtl checkout in " + wren7_dir + " (it has no model directory)";
+		return W7L_MISSING;
+	}
+
 	std::string job_file = out.model_dir + "/tests/hw/" + suite + "/jobs.txt";
 	std::vector<std::vector<std::string> > lines;
 
 	if (!read_lines(job_file, lines))
 	{
 		error = missing(job_file);
-		return W7L_MISSING;
+		return W7L_BAD;
 	}
 
 	std::map<std::string, std::vector<u8> > files;
@@ -128,7 +144,7 @@ Wren7Load wren7_load_suite(const std::string& wren7_dir, const std::string& suit
 				if (!arm7_read_file(path, files[image.file]))
 				{
 					error = missing(path, image.file);
-					return W7L_MISSING;
+					return wren7_is_build_output(image.file) ? W7L_MISSING : W7L_BAD;
 				}
 			}
 
@@ -182,7 +198,7 @@ Wren7Load wren7_load_suite(const std::string& wren7_dir, const std::string& suit
 	if (!read_lines(results_file, lines))
 	{
 		error = missing(results_file);
-		return W7L_MISSING;
+		return W7L_BAD;
 	}
 
 	for (size_t j = 0; j < out.jobs.size(); j++)
@@ -217,7 +233,7 @@ Wren7Load wren7_load_suite(const std::string& wren7_dir, const std::string& suit
 		if (!arm7_read_file(capture, job.console))
 		{
 			error = missing(capture);
-			return W7L_MISSING;
+			return W7L_BAD;
 		}
 
 		//register readouts follow the regions

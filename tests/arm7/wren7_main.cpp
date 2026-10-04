@@ -131,7 +131,7 @@ static void check_vendor(const Wren7Job& job, const Wren7Run& run)
 	check_words("cpsr", job, run, cpsr, 1);
 }
 
-static bool load_qemu_cases(const Wren7Suite& suite, std::string& error, bool& missing)
+static bool load_qemu_cases(const Wren7Suite& suite, std::string& error)
 {
 	for (size_t j = 0; j < suite.jobs.size(); j++)
 	{
@@ -142,8 +142,7 @@ static bool load_qemu_cases(const Wren7Suite& suite, std::string& error, bool& m
 
 		if (!f)
 		{
-			error = path + " is not there";
-			missing = true;
+			error = path + " is not there, the wren7-rtl checkout is not complete";
 			return false;
 		}
 
@@ -174,7 +173,6 @@ static bool load_qemu_cases(const Wren7Suite& suite, std::string& error, bool& m
 		if (!fits)
 		{
 			error = path + ": does not fit the regions that job " + job.name + " reads";
-			missing = false;
 			return false;
 		}
 	}
@@ -380,19 +378,19 @@ int main(int argc, char** argv)
 	std::string test = std::string("arm7.wren7.") + def->name;
 
 	if (opt.data_dir.empty())
-		return arm7_suite_skip(test.c_str(), "no wren7-rtl checkout, configure with -DNULLDC_WREN7_DIR=<path to wren7-rtl> or pass --wren7 <dir>");
+		return arm7_suite_skip(test.c_str(), opt, "no wren7-rtl checkout, configure with -DNULLDC_WREN7_DIR=<path to wren7-rtl> or pass --wren7 <dir>");
 
 	Wren7Suite suite;
 	std::string error;
-	bool missing = false;
 
 	Wren7Load loaded = wren7_load_suite(opt.data_dir, def->name, suite, error);
 
-	if (loaded == W7L_OK && def->check == &check_qemu_diff && !load_qemu_cases(suite, error, missing))
-		loaded = missing ? W7L_MISSING : W7L_BAD;
+	if (loaded == W7L_OK && def->check == &check_qemu_diff && !load_qemu_cases(suite, error))
+		loaded = W7L_BAD;
 
+	//only what a checkout does not come with is a reason to skip
 	if (loaded == W7L_MISSING)
-		return arm7_suite_skip(test.c_str(), error);
+		return arm7_suite_skip(test.c_str(), opt, error);
 
 	if (loaded != W7L_OK)
 	{

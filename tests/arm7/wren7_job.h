@@ -77,9 +77,12 @@ struct Wren7Suite
 enum Wren7Load
 {
 	W7L_OK,
-	W7L_MISSING,	//a file is not there: no checkout, or its build outputs are missing
-	W7L_BAD,		//a file is there and is not what it should be
+	W7L_MISSING,	//there is no checkout, or a build output of it is not there
+	W7L_BAD,		//a file of the checkout is not there or is not what it should be
 };
+
+//file, as a job file names it, is a build output of wren7-rtl and not a part of a checkout
+bool wren7_is_build_output(const std::string& file);
 
 //Reads model/tests/hw/<suite>/jobs.txt with everything it refers to. error says what is wrong otherwise
 Wren7Load wren7_load_suite(const std::string& wren7_dir, const std::string& suite, Wren7Suite& out, std::string& error);

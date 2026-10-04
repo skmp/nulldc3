@@ -23,7 +23,7 @@
 #define ARM7_EXIT_PASS 0
 #define ARM7_EXIT_FAIL 1
 #define ARM7_EXIT_ERROR 2		//could not run
-#define ARM7_EXIT_SKIPPED 77	//the test data is not there, SKIP_RETURN_CODE of the tests
+#define ARM7_EXIT_SKIPPED 77	//the test data is not there, SKIP_RETURN_CODE of the tests. ARM7_EXIT_ERROR with --require-data
 
 struct Arm7Options
 {
@@ -32,6 +32,7 @@ struct Arm7Options
 	std::string select;			//only the programs / jobs that match, no baseline check
 	bool update_baseline;
 	bool strict;				//passes above the baseline fail
+	bool require_data;			//test data that is not there is an error, not a reason to skip
 	bool verbose;
 	bool emu_output;
 };
@@ -66,10 +67,12 @@ TestGuardResult arm7_guarded(const std::string& what, TestGuardFP* fn, void* arg
 //Prints the counts, compares them with the baseline or writes it. Returns the exit code
 int arm7_suite_end();
 
-//Prints why the test is skipped. Returns the exit code
-int arm7_suite_skip(const char* name, const std::string& reason);
+//The test data is not there: prints why the test is skipped or, with opt.require_data, why it cannot run.
+//Returns the exit code
+int arm7_suite_skip(const char* name, const Arm7Options& opt, const std::string& reason);
 
 //Helpers
 bool arm7_read_file(const std::string& path, std::vector<u8>& data);
 bool arm7_list_files(const std::string& dir, const char* suffix, std::vector<std::string>& names);	//sorted, without suffix
+bool arm7_dir_exists(const std::string& dir);
 u32 arm7_le32(const std::vector<u8>& data, size_t offset);

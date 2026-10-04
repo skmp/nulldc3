@@ -57,7 +57,7 @@ int main(int argc, char** argv)
 
 	if (!arm7_list_files(bins, ".s.bin", programs) || programs.empty())
 	{
-		return arm7_suite_skip(test, "no test binaries (*.s.bin) in " + bins +
+		return arm7_suite_skip(test, opt, "no test binaries (*.s.bin) in " + bins +
 			", run: git submodule update --init tests/vendor/arm7di-tests-dreamcast");
 	}
 

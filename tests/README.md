@@ -15,6 +15,10 @@ A suite whose data is missing is still built; its test is reported as skipped an
 submodule to fetch. Other checkouts can be used with `-DNULLDC_SH4_TESTS_DIR=`, `-DNULLDC_ARM7_TESTS_DIR=` and
 `-DNULLDC_WREN7_DIR=` (wren7-rtl, default `../wren7-rtl` next to the repository if it is there).
 
+A skipped test has not run and is not a pass: `ctest` exits with 0 when everything that did run passes, also
+when that is `common.selftest` alone. With `-DNULLDC_TESTS_REQUIRE_DATA=ON` missing data fails its tests
+instead (the submodules, the wren7-rtl checkout and its build outputs alike). CI should configure that way.
+
 ## Building and running
 
     cmake -S tests -B <build dir> -G Ninja
@@ -112,7 +116,8 @@ A suite is a directory with a `CMakeLists.txt` that is added in `tests/CMakeList
 * `nulldc_test_common`: link it after the libswirl library. Stubs are taken from it only for the symbols the
   libswirl objects leave undefined; `msgboxf` and `os_DebugBreak` always come from `test_guard`.
 * `NULLDC_HAVE_SH4_TESTS` / `NULLDC_HAVE_ARM7_TESTS` / `NULLDC_HAVE_WREN7`, the `*_DIR` and `*_MISSING`
-  variables and `nulldc_add_skipped_test(<name> <reason>)` for data that is not there.
+  variables and `nulldc_add_missing_data_test(<name> <reason>)` for data that is not there (skipped, or failed
+  with `NULLDC_TESTS_REQUIRE_DATA`); `nulldc_add_skipped_test(<name> <reason>)` for a test the host cannot run.
 
 A second way to run the SH4 vectors only has to fill an `SsSuite` (`common/ss_suite.h`): how the 4 instructions
 of a loaded vector are executed, whether instruction fetches are part of the expected bus order, and what that

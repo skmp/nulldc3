@@ -22,8 +22,12 @@ endif()
 
 ## Test data ##
 #
-#	The vectors are git submodules under tests/vendor, the paths can point at any other checkout
+#	The vectors are git submodules under tests/vendor, the paths can point at any other checkout.
+#	A test whose data is missing is reported as skipped, and ctest does not fail on skipped tests:
+#	NULLDC_TESTS_REQUIRE_DATA makes it a failed test instead.
 #
+
+option(NULLDC_TESTS_REQUIRE_DATA "Missing test data (submodules, wren7-rtl checkout and its build outputs) fails the tests instead of skipping them" OFF)
 
 set(NULLDC_SH4_TESTS_DIR "${nulldc_tests_path}/vendor/sh4-tests"
     CACHE PATH "SingleStepTests/sh4 checkout (*.json.bin)")
@@ -45,7 +49,7 @@ else()
   set(NULLDC_HAVE_SH4_TESTS OFF)
   set(NULLDC_SH4_TESTS_MISSING
       "no SH4 single-step vectors in ${NULLDC_SH4_TESTS_DIR}, run: git submodule update --init tests/vendor/sh4-tests")
-  message(WARNING "${NULLDC_SH4_TESTS_MISSING}\nThe sh4.* tests are registered as skipped.")
+  message(WARNING "${NULLDC_SH4_TESTS_MISSING}\nThe sh4.* tests that need them do not run.")
 endif()
 
 file(GLOB nulldc_arm7_bins "${NULLDC_ARM7_TESTS_DIR}/bins/*.s.bin")
@@ -55,7 +59,7 @@ else()
   set(NULLDC_HAVE_ARM7_TESTS OFF)
   set(NULLDC_ARM7_TESTS_MISSING
       "no ARM7 test binaries in ${NULLDC_ARM7_TESTS_DIR}/bins, run: git submodule update --init tests/vendor/arm7di-tests-dreamcast")
-  message(WARNING "${NULLDC_ARM7_TESTS_MISSING}\nThe arm7.* tests that need them are registered as skipped.")
+  message(WARNING "${NULLDC_ARM7_TESTS_MISSING}\nThe arm7.* tests that need them do not run.")
 endif()
 
 if(NULLDC_WREN7_DIR AND EXISTS "${NULLDC_WREN7_DIR}")
@@ -65,7 +69,7 @@ else()
   set(NULLDC_WREN7_MISSING
       "no wren7-rtl checkout (NULLDC_WREN7_DIR is \"${NULLDC_WREN7_DIR}\"), configure with -DNULLDC_WREN7_DIR=<path to wren7-rtl>")
   message(STATUS "${NULLDC_WREN7_MISSING}")
-  message(STATUS "The tests that replay the wren7 console suites are registered as skipped.")
+  message(STATUS "The tests that replay the wren7 console suites do not run.")
 endif()
 
 enable_testing()
@@ -74,6 +78,16 @@ enable_testing()
 function(nulldc_add_skipped_test name reason)
   add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -E echo "SKIPPED: ${reason}")
   set_tests_properties(${name} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+endfunction()
+
+# Registers <name> for a test whose data is not there: skipped, or failed with NULLDC_TESTS_REQUIRE_DATA
+function(nulldc_add_missing_data_test name reason)
+  if(NULLDC_TESTS_REQUIRE_DATA)
+    add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -E echo "MISSING: ${reason}")
+    set_tests_properties(${name} PROPERTIES FAIL_REGULAR_EXPRESSION "MISSING:")
+  else()
+    nulldc_add_skipped_test(${name} "${reason}")
+  endif()
 endfunction()
 
 include(common/libswirl.cmake)

@@ -30,7 +30,9 @@ its `build/` directory, which is not part of a checkout:
     cd <wren7-rtl>/model && ../build/model/hw_suite gen qemu_diff  # build/hw/qemu_diff: s1.bin .. s4.bin
 
 The first and the last need the arm-eabi toolchain (`DC_ARM_BIN`, see `model/hw/arm/Makefile`). Without a
-checkout, or with a file missing, a test is reported as skipped and says what it did not find.
+checkout, or without one of these build outputs, a test is reported as skipped and says what it did not find;
+it fails instead with `-DNULLDC_TESTS_REQUIRE_DATA=ON` (`--require-data`). A checkout that lacks anything else
+(a job file, the console's results or captures, its submodules) is not a reason to skip: the test fails.
 
 A job (`wren7_job.h`) is a set of images and patched words in wave RAM. It runs from the release of the ARM
 reset until the done stub raises MCIPD.SCPU; the stub saves the registers into a result block first. The

@@ -145,6 +145,7 @@ bool arm7_suite_options(int argc, char** argv, int first, const char* usage_head
 
 	opt.update_baseline = false;
 	opt.strict = false;
+	opt.require_data = false;
 	opt.verbose = false;
 	opt.emu_output = false;
 
@@ -165,6 +166,8 @@ bool arm7_suite_options(int argc, char** argv, int first, const char* usage_head
 			opt.update_baseline = true;
 		else if (arg == "--strict")
 			opt.strict = true;
+		else if (arg == "--require-data")
+			opt.require_data = true;
 		else if (arg == "--verbose")
 			opt.verbose = true;
 		else if (arg == "--emu-output")
@@ -191,12 +194,14 @@ bool arm7_suite_options(int argc, char** argv, int first, const char* usage_head
 			"  --update-baseline    write the counts of this run into the baseline file\n"
 			"  --strict             passes above the baseline fail as well: the baseline has to be the one of this\n"
 			"                       build. ctest runs the test this way\n"
+			"  --require-data       test data that is not there is an error. Without it the test says that it is\n"
+			"                       skipped and exits with %d\n"
 			"  --verbose            every case that does not pass, not only the first of each check\n"
 			"  --emu-output         do not hide what the emulator code prints\n",
 			usage_head,
 			data_option, (int)(14 - strlen(data_option)), "", defaults.data_dir.empty() ? "(none)" : defaults.data_dir.c_str(),
 			select_option, (int)(10 - strlen(select_option)), "",
-			defaults.baseline.c_str());
+			defaults.baseline.c_str(), ARM7_EXIT_SKIPPED);
 	}
 
 	return ok;
@@ -407,8 +412,14 @@ int arm7_suite_end()
 	return problems.empty() ? ARM7_EXIT_PASS : ARM7_EXIT_FAIL;
 }
 
-int arm7_suite_skip(const char* name, const std::string& reason)
+int arm7_suite_skip(const char* name, const Arm7Options& opt, const std::string& reason)
 {
+	if (opt.require_data)
+	{
+		fprintf(stderr, "MISSING: %s: %s\n", name, reason.c_str());
+		return ARM7_EXIT_ERROR;
+	}
+
 	printf("SKIPPED: %s: %s\n", name, reason.c_str());
 
 	return ARM7_EXIT_SKIPPED;
@@ -458,6 +469,18 @@ bool arm7_list_files(const std::string& dir, const char* suffix, std::vector<std
 	closedir(d);
 
 	std::sort(names.begin(), names.end());
+
+	return true;
+}
+
+bool arm7_dir_exists(const std::string& dir)
+{
+	DIR* d = opendir(dir.c_str());
+
+	if (!d)
+		return false;
+
+	closedir(d);
 
 	return true;
 }
