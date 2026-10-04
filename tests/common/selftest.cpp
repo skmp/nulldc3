@@ -20,8 +20,6 @@
 #include <signal.h>
 #endif
 
-void* _vmem_page_info(u32 addr, bool& ismem, u32 sz, u32& page_sz, bool rw);
-
 static u32 checks;
 static u32 failures;
 
@@ -84,17 +82,25 @@ static void test_guard()
 
 #define HANDLERS 6
 
-template<u32 id> static u8 DYNACALL h_read8(void*, u32) { return (u8)id; }
-template<u32 id> static u16 DYNACALL h_read16(void*, u32) { return (u16)id; }
-template<u32 id> static u32 DYNACALL h_read32(void*, u32) { return id; }
-template<u32 id> static void DYNACALL h_write8(void*, u32, u8) { }
-template<u32 id> static void DYNACALL h_write16(void*, u32, u16) { }
-template<u32 id> static void DYNACALL h_write32(void*, u32, u32) { }
+//Handler <id> is registered with the address of its entry as context. It answers with its id, and counts a
+//write, only when it is called with that context
+static u32 handler_ctx[HANDLERS + 1];
+static u32 handler_writes;
 
-#define REGISTER(id) _vmem_register_handler(0, h_read8<id>, h_read16<id>, h_read32<id>, h_write8<id>, h_write16<id>, h_write32<id>)
+template<u32 id> static u32 answer(void* ctx) { return ctx == &handler_ctx[id] ? id : 0xBAD; }
+
+template<u32 id> static u8 DYNACALL h_read8(void* ctx, u32) { return (u8)answer<id>(ctx); }
+template<u32 id> static u16 DYNACALL h_read16(void* ctx, u32) { return (u16)answer<id>(ctx); }
+template<u32 id> static u32 DYNACALL h_read32(void* ctx, u32) { return answer<id>(ctx); }
+template<u32 id> static void DYNACALL h_write8(void* ctx, u32, u8) { handler_writes += answer<id>(ctx) == id; }
+template<u32 id> static void DYNACALL h_write16(void* ctx, u32, u16) { handler_writes += answer<id>(ctx) == id; }
+template<u32 id> static void DYNACALL h_write32(void* ctx, u32, u32) { handler_writes += answer<id>(ctx) == id; }
+
+#define REGISTER(id) _vmem_register_handler(&handler_ctx[id], h_read8<id>, h_read16<id>, h_read32<id>, h_write8<id>, h_write16<id>, h_write32<id>)
 
 //_vmem_read_const / _vmem_page_info are how the recompilers resolve accesses to constant addresses. For a page
-//that is served by handlers they have to hand out the handlers that _vmem_ReadMem* / _vmem_WriteMem* call
+//that is served by handlers they have to hand out the handlers that _vmem_ReadMem* / _vmem_WriteMem* call, and
+//the context those call them with
 static void test_vmem_handlers()
 {
 	_vmem_reset();
@@ -120,30 +126,51 @@ static void test_vmem_handlers()
 		CHECK(_vmem_ReadMem16(addr) == want);
 		CHECK(_vmem_ReadMem32(addr) == want);
 
+		handler_writes = 0;
+		_vmem_WriteMem8(addr, 0);
+		_vmem_WriteMem16(addr, 0);
+		_vmem_WriteMem32(addr, 0);
+		CHECK(handler_writes == 3);
+
 		bool ismem = true;
+		void* ctx = 0;
 
 		typedef u8 DYNACALL Read8(void*, u32);
 		typedef u16 DYNACALL Read16(void*, u32);
 		typedef u32 DYNACALL Read32(void*, u32);
 
-		Read8* r8 = (Read8*)_vmem_read_const(addr, ismem, 1);
-		CHECK(!ismem && r8(0, addr) == want);
+		Read8* r8 = (Read8*)_vmem_read_const(addr, ismem, 1, ctx);
+		CHECK(!ismem && ctx == &handler_ctx[want] && r8(ctx, addr) == want);
 
-		Read16* r16 = (Read16*)_vmem_read_const(addr, ismem, 2);
-		CHECK(!ismem && r16(0, addr) == want);
+		ctx = 0;
+		Read16* r16 = (Read16*)_vmem_read_const(addr, ismem, 2, ctx);
+		CHECK(!ismem && ctx == &handler_ctx[want] && r16(ctx, addr) == want);
 
-		Read32* r32 = (Read32*)_vmem_read_const(addr, ismem, 4);
-		CHECK(!ismem && r32(0, addr) == want);
+		ctx = 0;
+		Read32* r32 = (Read32*)_vmem_read_const(addr, ismem, 4, ctx);
+		CHECK(!ismem && ctx == &handler_ctx[want] && r32(ctx, addr) == want);
+
+		//with any other context the handler does not answer, so the three checks above do check the context
+		CHECK(r32(0, addr) != want && r32(&handler_ctx[0], addr) != want);
 
 		u32 page_sz = 0;
 
-		CHECK(_vmem_page_info(addr, ismem, 1, page_sz, true) == (void*)_vmem_RF8[ids[i]]);
-		CHECK(_vmem_page_info(addr, ismem, 2, page_sz, true) == (void*)_vmem_RF16[ids[i]]);
-		CHECK(_vmem_page_info(addr, ismem, 4, page_sz, true) == (void*)_vmem_RF32[ids[i]]);
-		CHECK(_vmem_page_info(addr, ismem, 1, page_sz, false) == (void*)_vmem_WF8[ids[i]]);
-		CHECK(_vmem_page_info(addr, ismem, 2, page_sz, false) == (void*)_vmem_WF16[ids[i]]);
-		CHECK(_vmem_page_info(addr, ismem, 4, page_sz, false) == (void*)_vmem_WF32[ids[i]]);
-		CHECK(!ismem && page_sz == 24);
+		for (u32 rw = 0; rw < 2; rw++)
+		{
+			bool read = rw == 0;
+
+			ctx = 0;
+			CHECK(_vmem_page_info(addr, ismem, 1, page_sz, read, ctx) == (read ? (void*)_vmem_RF8[ids[i]] : (void*)_vmem_WF8[ids[i]]));
+			CHECK(!ismem && page_sz == 24 && ctx == &handler_ctx[want]);
+
+			ctx = 0;
+			CHECK(_vmem_page_info(addr, ismem, 2, page_sz, read, ctx) == (read ? (void*)_vmem_RF16[ids[i]] : (void*)_vmem_WF16[ids[i]]));
+			CHECK(!ismem && page_sz == 24 && ctx == &handler_ctx[want]);
+
+			ctx = 0;
+			CHECK(_vmem_page_info(addr, ismem, 4, page_sz, read, ctx) == (read ? (void*)_vmem_RF32[ids[i]] : (void*)_vmem_WF32[ids[i]]));
+			CHECK(!ismem && page_sz == 24 && ctx == &handler_ctx[want]);
+		}
 	}
 
 	//a page that is backed by memory
@@ -157,9 +184,10 @@ static void test_vmem_handlers()
 	_vmem_map_block(block, 0x20, 0x20, 255);
 
 	bool ismem = false;
-	void* ptr = _vmem_read_const(0x20000010, ismem, 4);
+	void* ctx = &block;
+	void* ptr = _vmem_read_const(0x20000010, ismem, 4, ctx);
 
-	CHECK(ismem && ptr == &block[0x10]);
+	CHECK(ismem && ptr == &block[0x10] && ctx == 0);
 	CHECK(_vmem_ReadMem32(0x20000010) == 0x12345678);
 
 	_vmem_reset();
@@ -387,12 +415,20 @@ static void test_memory()
 	ss_mem_begin(t, 2, 4, false);
 
 	bool ismem = true;
+	void* ctx = 0;
 	typedef u16 DYNACALL Read16(void*, u32);
-	Read16* handler = (Read16*)_vmem_read_const(0x0C000100, ismem, 2);
+	Read16* handler = (Read16*)_vmem_read_const(0x0C000100, ismem, 2, ctx);
 
-	CHECK(!ismem && handler(0, 0x0C000100) == 0xCAFE);
+	CHECK(!ismem && handler(ctx, 0x0C000100) == 0xCAFE);
 	_vmem_WriteMem32(0x0C000200, 0x11223344);
 	CHECK(ss_mem_end());
+
+	//called with another context than the one the handlers are registered with: what a recompiler does that
+	//takes the handler from the lookup and the context from somewhere else
+	ss_mem_begin(t, 2, 4, false);
+	handler(&ismem, 0x0C000100);
+	CHECK(strstr(ss_mem_error(), "context") != 0);
+	CHECK(!ss_mem_end());
 }
 
 //// ss_policy

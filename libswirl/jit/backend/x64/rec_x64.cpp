@@ -843,7 +843,8 @@ public:
 	void GenReadMemoryImmediate(const shil_opcode& op) {
 		bool isram = false;
 		u32 size = op.flags & 0x7f;
-		void* ptr = _vmem_read_const(op.rs1._imm, isram, size);
+		void* ctx;
+		void* ptr = _vmem_read_const(op.rs1._imm, isram, size, ctx);
 
 		if (isram) {
 			// Immediate pointer to RAM: super-duper fast access
@@ -868,7 +869,7 @@ public:
 		else
 		{
 			// Not RAM: the returned pointer is a memory handler
-			mov(call_regs[0].cvt64(), (uintptr_t)sh4_cpu);
+			mov(call_regs[0].cvt64(), (uintptr_t)ctx);
 			mov(call_regs[1], op.rs1._imm);
 
 			switch(size) {

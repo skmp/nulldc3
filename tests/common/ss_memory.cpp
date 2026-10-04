@@ -18,6 +18,10 @@ static u32 opcodes[5];
 
 static char error[256];
 
+//What the handlers are registered with. A recompiler that resolves a constant address to a handler has to call
+//it with this, as _vmem_ReadMem* / _vmem_WriteMem* do
+static u32 handler_ctx;
+
 static void fail(const char* fmt, ...)
 {
 	//only the first one, what follows it is fallout
@@ -146,17 +150,23 @@ static void bus_write(u32 size, u32 addr, u32 data)
 		fail("write%u @%08X: value %0*X, expected %0*X", size * 8, addr, size * 2, data & mask, size * 2, want);
 }
 
-static u8 DYNACALL read8(void* ctx, u32 addr) { return (u8)bus_read(1, addr); }
-static u16 DYNACALL read16(void* ctx, u32 addr) { return (u16)bus_read(2, addr); }
-static u32 DYNACALL read32(void* ctx, u32 addr) { return bus_read(4, addr); }
+static void check_ctx(void* ctx)
+{
+	if (ctx != &handler_ctx)
+		fail("a memory handler was called with a context that is not the one it is registered with");
+}
 
-static void DYNACALL write8(void* ctx, u32 addr, u8 data) { bus_write(1, addr, data); }
-static void DYNACALL write16(void* ctx, u32 addr, u16 data) { bus_write(2, addr, data); }
-static void DYNACALL write32(void* ctx, u32 addr, u32 data) { bus_write(4, addr, data); }
+static u8 DYNACALL read8(void* ctx, u32 addr) { check_ctx(ctx); return (u8)bus_read(1, addr); }
+static u16 DYNACALL read16(void* ctx, u32 addr) { check_ctx(ctx); return (u16)bus_read(2, addr); }
+static u32 DYNACALL read32(void* ctx, u32 addr) { check_ctx(ctx); return bus_read(4, addr); }
+
+static void DYNACALL write8(void* ctx, u32 addr, u8 data) { check_ctx(ctx); bus_write(1, addr, data); }
+static void DYNACALL write16(void* ctx, u32 addr, u16 data) { check_ctx(ctx); bus_write(2, addr, data); }
+static void DYNACALL write32(void* ctx, u32 addr, u32 data) { check_ctx(ctx); bus_write(4, addr, data); }
 
 void ss_mem_install()
 {
-	_vmem_handler handler = _vmem_register_handler(0, read8, read16, read32, write8, write16, write32);
+	_vmem_handler handler = _vmem_register_handler(&handler_ctx, read8, read16, read32, write8, write16, write32);
 
 	_vmem_map_handler(handler, 0x00, 0xFF);
 }

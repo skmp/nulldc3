@@ -61,16 +61,20 @@ void* _vmem_get_ptr2(u32 addr,u32& mask)
 	return ptr;
 }
 
-void* _vmem_read_const(u32 addr,bool& ismem,u32 sz)
+//ctx is what the returned handler has to be called with
+void* _vmem_read_const(u32 addr,bool& ismem,u32 sz,void*& ctx)
 {
 	u32   page=addr>>24;
 	unat  iirf=(unat)_vmem_MemInfo_ptr[page];
 	void* ptr=(void*)(iirf&~HANDLER_MAX);
 
+	ctx=0;
+
 	if (ptr==0)
 	{
 		ismem=false;
 		const unat id=iirf;
+		ctx=_vmem_CTX[id];
 		if (sz==1)
 		{
 			return (void*)_vmem_RF8[id];
@@ -101,16 +105,19 @@ void* _vmem_read_const(u32 addr,bool& ismem,u32 sz)
 	return 0;
 }
 
-void* _vmem_page_info(u32 addr,bool& ismem,u32 sz,u32& page_sz,bool rw)
+void* _vmem_page_info(u32 addr,bool& ismem,u32 sz,u32& page_sz,bool rw,void*& ctx)
 {
 	u32   page=addr>>24;
 	unat  iirf=(unat)_vmem_MemInfo_ptr[page];
 	void* ptr=(void*)(iirf&~HANDLER_MAX);
 	
+	ctx=0;
+
 	if (ptr==0)
 	{
 		ismem=false;
 		const unat id=iirf;
+		ctx=_vmem_CTX[id];
 		page_sz=24;
 		if (sz==1)
 		{

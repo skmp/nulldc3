@@ -276,7 +276,9 @@ void _vmem_release(VLockedMemory* mram, VLockedMemory* vram, VLockedMemory* aica
 //dynarec helpers
 void _vmem_get_ptrs(u32 sz,bool write,void*** vmap,void*** func);
 void* _vmem_get_ptr2(u32 addr,u32& mask);
-void* _vmem_read_const(u32 addr,bool& ismem,u32 sz);
+//A handler (ismem is false) is called with ctx, as _vmem_ReadMem* / _vmem_WriteMem* call it with _vmem_CTX
+void* _vmem_read_const(u32 addr,bool& ismem,u32 sz,void*& ctx);
+void* _vmem_page_info(u32 addr,bool& ismem,u32 sz,u32& page_sz,bool rw,void*& ctx);
 
 extern u8* virt_ram_base;
 

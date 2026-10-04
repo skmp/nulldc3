@@ -72,7 +72,7 @@ void ngen_Unary(shil_opcode* op,x86_opcode_class natop)
 	x86e->Emit(natop,reg.mapg(op->rd));
 }
 
-void* _vmem_read_const(u32 addr,bool& ismem,u32 sz);
+void* _vmem_read_const(u32 addr,bool& ismem,u32 sz,void*& ctx);
 
 u32 ngen_CC_BytesPushed;
 void X86NGenBackend::CC_Start(shil_opcode* op)
@@ -247,7 +247,8 @@ void ngen_opcode(RuntimeBlockInfo* block, shil_opcode* op,x86_block* x86e, bool 
 				if (op->rs1.is_imm())
 				{
 					if (prof.enable) x86e->Emit(op_add32,&prof.counters.shil.readm_const,1);
-					void* ptr=_vmem_read_const(op->rs1._imm,isram,size);
+					void* ctx;
+					void* ptr=_vmem_read_const(op->rs1._imm,isram,size,ctx);
 					if (isram)
 					{
 #ifdef PROF2
@@ -304,7 +305,7 @@ void ngen_opcode(RuntimeBlockInfo* block, shil_opcode* op,x86_block* x86e, bool 
 #ifdef PROF2
 						x86e->Emit(op_add32,&srmls,1);
 #endif
-						x86e->Emit(op_mov32,ECX, (uintptr_t)(sh4_cpu));
+						x86e->Emit(op_mov32,ECX, (uintptr_t)(ctx));
 						x86e->Emit(op_mov32,EDX,op->rs1._imm);
 						fuct=ptr;
 					}
@@ -576,7 +577,8 @@ void ngen_opcode(RuntimeBlockInfo* block, shil_opcode* op,x86_block* x86e, bool 
 				{
 					if (prof.enable) x86e->Emit(op_add32,&prof.counters.shil.readm_const,1);
 					bool isram;
-					void* ptr=_vmem_read_const(op->rs1._imm,isram,size);
+					void* ctx;	//only the pointer to ram is used here
+					void* ptr=_vmem_read_const(op->rs1._imm,isram,size,ctx);
 					if (isram)
 					{
 						if (size<=2)
