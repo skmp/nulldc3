@@ -142,6 +142,23 @@ void* _vmem_page_info(u32 addr,bool& ismem,u32 sz,u32& page_sz,bool rw)
 	return 0;
 }
 
+//unaligned accesses
+static void _vmem_unaligned_default(u32 addr,u32 sz,bool write)
+{
+	EMUERROR2("Unaligned %dbit %s at 0x%X",sz*8,write?"write":"read",addr);
+	die("Unaligned memory access");
+}
+
+_vmem_UnalignedFP* _vmem_unaligned_handler=&_vmem_unaligned_default;
+
+void _vmem_unaligned(u32 addr,u32 sz,bool write)
+{
+	_vmem_unaligned_handler(addr,sz,write);
+
+	//the access was never made, there is nothing to go back to
+	abort();
+}
+
 //0xDEADC0D3 or 0
 #define MEM_ERROR_RETURN_VALUE 0xDEADC0D3
 

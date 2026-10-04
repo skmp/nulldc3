@@ -206,13 +206,24 @@ void DYNACALL Write##name(void* ctx, u32 addr, T data) { \
 	that->Write##name<sz, T>(addr, data); \
 }
 
+//Unaligned accesses
+//Every unaligned 16/32/64 bit access ends up in the handler. It does not come back to the access: it either
+//terminates (the default prints the access and dies) or unwinds out of it (longjmp, exception)
+typedef void _vmem_UnalignedFP(u32 Address, u32 sz, bool write);
+extern _vmem_UnalignedFP* _vmem_unaligned_handler;
+
+#if BUILD_COMPILER==COMPILER_VC
+__declspec(noreturn) void _vmem_unaligned(u32 Address, u32 sz, bool write);
+#else
+void _vmem_unaligned(u32 Address, u32 sz, bool write) __attribute__((noreturn));
+#endif
+
 //ReadMem/WriteMem functions
 //ReadMem
 INLINE u32 DYNACALL _vmem_ReadMem8SX32(u32 Address) { return _vmem_readt<s8, s32>(Address); }
 INLINE u32 DYNACALL _vmem_ReadMem16SX32(u32 Address) { 
 	if (Address & 1) {
-		EMUERROR2("Unaligned 16bit read at 0x%X", Address);
-		for (;;);
+		_vmem_unaligned(Address, 2, false);
 	}
 	return _vmem_readt<s16, s32>(Address); 
 }
@@ -220,22 +231,19 @@ INLINE u32 DYNACALL _vmem_ReadMem16SX32(u32 Address) {
 INLINE u8 DYNACALL _vmem_ReadMem8(u32 Address) { return _vmem_readt<u8, u8>(Address); }
 INLINE u16 DYNACALL _vmem_ReadMem16(u32 Address) {
 	if (Address & 1) {
-		EMUERROR2("Unaligned 16bit read at 0x%X", Address);
-		for (;;);
+		_vmem_unaligned(Address, 2, false);
 	}
 	return _vmem_readt<u16, u16>(Address);
 }
 INLINE u32 DYNACALL _vmem_ReadMem32(u32 Address) {
 	if (Address & 3) {
-		EMUERROR2("Unaligned 32bit read at 0x%X", Address);
-		for (;;);
+		_vmem_unaligned(Address, 4, false);
 	}
 	return _vmem_readt<u32, u32>(Address);
 }
 INLINE u64 DYNACALL _vmem_ReadMem64(u32 Address) {
 	if (Address & 7) {
-		EMUERROR2("Unaligned 64bit read at 0x%X", Address);
-		for (;;);
+		_vmem_unaligned(Address, 8, false);
 	}
 	return _vmem_readt<u64, u64>(Address);
 }
@@ -244,22 +252,19 @@ INLINE u64 DYNACALL _vmem_ReadMem64(u32 Address) {
 INLINE void DYNACALL _vmem_WriteMem8(u32 Address, u8 data) { _vmem_writet<u8>(Address, data); }
 INLINE void DYNACALL _vmem_WriteMem16(u32 Address, u16 data) {
 	if (Address & 1) {
-		EMUERROR2("Unaligned 16bit write at 0x%X", Address);
-		for (;;);
+		_vmem_unaligned(Address, 2, true);
 	}
 	_vmem_writet<u16>(Address, data);
 }
 INLINE void DYNACALL _vmem_WriteMem32(u32 Address, u32 data) {
 	if (Address & 3) {
-		EMUERROR2("Unaligned 32bit write at 0x%X", Address);
-		for (;;);
+		_vmem_unaligned(Address, 4, true);
 	}
 	_vmem_writet<u32>(Address, data);
 }
 INLINE void DYNACALL _vmem_WriteMem64(u32 Address, u64 data) {
 	if (Address & 7) {
-		EMUERROR2("Unaligned 64bit write at 0x%X", Address);
-		for (;;);
+		_vmem_unaligned(Address, 8, true);
 	}
 	_vmem_writet<u64>(Address, data);
 }
