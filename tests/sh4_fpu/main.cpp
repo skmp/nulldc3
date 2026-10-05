@@ -1,7 +1,7 @@
 /*
 	sh4_fpu <test>: the SH4 FPU instructions through the interpreter and through the dynarec, against what the
 	hardware computes. The hardware's results are not in this repository: they are read from a shrike4-rtl
-	checkout, and its headers are compiled in from there.
+	checkout, and its headers are compiled in from there (README.md).
 
 	  scalar    sh4.fpu.scalar, scalar.cpp: the console's records of the scalar instructions
 	  vector    sh4.fpu.vector, vector.cpp: FIPR, FTRV, FSCA and FSRRA against shrike4-rtl's bit-exact model, and

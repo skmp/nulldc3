@@ -5,7 +5,7 @@
 #
 #	The console's records and the model are shrike4-rtl's. Nothing of it is in this repository: its headers are
 #	compiled in from the checkout (NULLDC_SHRIKE4_DIR) and its data is read from there. Without a checkout the
-#	tests are skipped. Both are gated on a baseline.
+#	tests are skipped. Both are gated on a baseline, see README.md.
 #
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/../../shrike4-rtl")
