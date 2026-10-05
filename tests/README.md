@@ -16,7 +16,12 @@ submodule to fetch. Other checkouts can be used with `-DNULLDC_SH4_TESTS_DIR=`, 
 `-DNULLDC_WREN7_DIR=` (wren7-rtl, default `../wren7-rtl` next to the repository if it is there).
 
 The system tests that boot a KallistiOS program take the programs by path: `-DNULLDC_ELF_DIR=<directory with
-2ndmix.elf and hello.elf>`. Without it those tests are skipped.
+2ndmix.elf and hello.elf>`, the two KallistiOS examples of those names. The option has no default. Without it
+configure says that the programs are missing, and eleven tests are skipped: `system.boot.2ndmix.jit`,
+`system.boot.2ndmix.interp`, `system.boot.hello.jit`, `system.boot.hello.interp`, `system.determinism` and
+`system.frame.refsw2`, and the first five again as `system.hle.*`. The other system tests run on three programs
+of a few instructions that are part of the suite, so a run without the option boots no KallistiOS, renders no
+frame and compares no state hash between runs.
 
 A skipped test has not run and is not a pass: `ctest` exits with 0 when everything that did run passes, also
 when that is only the tests that need no data. With `-DNULLDC_TESTS_REQUIRE_DATA=ON` missing data fails its
@@ -25,7 +30,7 @@ alike). CI should configure that way.
 
 ## Building and running
 
-    cmake -S tests -B <build dir> -G Ninja
+    cmake -S tests -B <build dir> -G Ninja -DNULLDC_ELF_DIR=<directory with 2ndmix.elf and hello.elf>
     ninja -C <build dir>
     ctest --test-dir <build dir> --output-on-failure
 
