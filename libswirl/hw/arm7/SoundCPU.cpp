@@ -11,6 +11,7 @@
 #include "SoundCPU.h"
 #include "arm7.h"
 #include "arm7_context.h"
+#include "debugger/debugger.h"
 
 #include <memory>
 
@@ -46,6 +47,8 @@ static void update_e68k(Arm7Context* ctx)
 		//a request of level 0 does not interrupt, and L reads 0 behind it (console: fiqdiag d1.bin, d4.bin, d5.bin)
 		if (ctx->aica_reg_L != 0)
 		{
+			DBG_EVENT(dbg::EV_AICA_INTERRUPT, "to the ARM7: level %u", ctx->aica_reg_L);
+
 			//Set the pending signal
 			ctx->e68k_reg_M = 1;
 			ctx->e68k_out = true;

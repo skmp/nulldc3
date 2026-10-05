@@ -14,6 +14,7 @@
 #include <algorithm>
 #include "serialize.h"
 #include "aica_hash.h"
+#include "debugger/debugger.h"
 
 using namespace std;
 #undef FAR
@@ -509,6 +510,9 @@ struct ChannelEx
 
 			StepStreamInitial(this);
 
+			DBG_EVENT(dbg::EV_AICA_KEY_ON, "channel %d: start %06X, loop %04X..%04X%s", ChanelNumber, (u32)(SA - aica_ram), loop.LSA, loop.LEA,
+				ccd->LPCTL ? "" : ", no loop");
+
 			key_printf("[%d] KEY_ON %s @ %f Hz, loop : %d\n",-1,stream_names[ccd->PCMS],(44100.0*update_rate)/1024,ccd->LPCTL); //fixme channel number
 		}
 		else
@@ -520,6 +524,8 @@ struct ChannelEx
 	{
 		if (AEG.state!=EG_Release)
 		{
+			DBG_EVENT(dbg::EV_AICA_KEY_OFF, "channel %d", ChanelNumber);
+
 			key_printf("[%d] KEY_OFF -> Release\n",-1); // fixme channel number
 			SetAegState(EG_Release);
 			//switch to release state
@@ -887,6 +893,8 @@ void StreamStep(ChannelEx* ch)
 
 		if (ca_t >= ch->loop.LEA)
 		{
+			DBG_EVENT(dbg::EV_AICA_LOOP, "channel %d: loop end %04X, %s", ch->ChanelNumber, ch->loop.LEA, LPCTL ? "loops" : "stops");
+
 			ch->loop.looped = 1;
 			CA = ch->loop.LSA;
 			if (LPCTL)

@@ -38,6 +38,7 @@
 #include <time.h>
 
 #include "aica_hash.h"
+#include "debugger/debugger.h"
 
 struct AICARTC_impl : MMIODevice
 {
@@ -232,6 +233,7 @@ struct AicaDevice final : AICA {
 			if ((SB_ISTEXT & SH4_IRQ_BIT) == 0)
 			{
 				//if no interrupt is already pending then raise one :)
+				DBG_EVENT(dbg::EV_AICA_INTERRUPT, "to the SH4: MCIPD & MCIEB = %03X", p_ints);
 				asic->RaiseInterrupt(holly_SPU_IRQ);
 			}
 		}
