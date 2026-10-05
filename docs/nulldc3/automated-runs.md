@@ -22,6 +22,7 @@ A complete headless run:
 | `config:Exit.FrameHash` | `yes` | The exit line has a hash of the last frame a software renderer presented. |
 | `config:Exit.FramePng` | a path | That frame is written there as a PNG (implies `Exit.FrameHash`). |
 | `config:Dreamcast.RTC` | N, seconds since 1970 | Pins the real-time clock: every run starts at that second, taken as the time of the console (no time zone). 0 or absent: the time of the host. |
+| `config:Debug.FixedRtc` | N, seconds since 1970 | The same pin under a second key. When both keys are there and this one is not 0, this one is taken. |
 | `config:Debug.BlockOnFault` | `yes` | A fatal fault blocks the process for a native debugger instead of ending it. Linux. See "Faults". |
 
 Keys that were there before and that a headless run usually wants: `audio:backend=none` (no audio device is opened;
