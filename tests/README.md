@@ -54,15 +54,26 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `runctl.guest_exit.*` | `utils/run_control.cpp` on the config store, with stand-ins for the machine and the user interface, one process per run (`window`: no key, `key`: `Exit.OnGuestExit`, `vblanks`: `Exit.AfterVblanks`, `seconds`: `Exit.AfterSeconds`, `headless`): a guest program that returns to the BIOS ends every run but the first, with `reason=guest-exit` on the exit line and the user interface stopped, and leaves the first to its window | none |
 | `system.*` | the emulator binary of the default build, headless: `-help`, the keys that end a run and the line it prints, the pinned RTC, `emu.cfg` left alone, what a fatal fault and a signal that is sent do and that the faults of the guest are still handled, programs that boot under reios on the JIT and on the interpreter with their serial output, the software renderer into a PNG, a run that is repeated and has to end in the same state hash every time, and the speed script of `tests/perf` on one of them (`system/README.md` has the list, and what a deterministic run takes) | none, or the programs of `NULLDC_ELF_DIR` |
 | `system.hle.*` | the same on the emulator built with `-DHAS_TA_LLE=OFF` | none, or the programs of `NULLDC_ELF_DIR` |
+| `aica.dsp.api` | the AICA DSP core (`libswirl/hw/aica/dsp_core`) on itself: a sample in one go against its 128 steps from every step, state out and in, two cores in turns, its registers, fields that hold more than their registers' bits, a wave RAM of 4, 8 and 16 MB; and its known-answer programs: the shifter, the address of a memory step on 2 to 16 MB, the ring, the read latch rules, the MIXS banks | none |
+| `aica.dsp.diff.random` `aica.dsp.diff.sparse` `aica.dsp.diff.directed` | the AICA DSP core against the DSP of the caique sample model on generated programs, compared behind every step | a caique-rtl checkout |
+| `aica.dsp.case.dsp_basic` `.dsp_mem` `.dsp_mem2` `.dsp_mem3` `.dsp_wslot` `.dsp_unpack` `.dsp_pack` `.dsp_temp` `.dsp_coll` `.sh4_latch` `.mdec_hold` | the DSP programs caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
+| `aica.dsp.capi` | the C interface of the AICA DSP core, compiled for the host, against the core called itself, on random programs and on the known-answer programs | none |
+| `aica.dsp.wasm` | the WebAssembly build of the AICA DSP core in node, through its loader and its C interface, against the core compiled for the host, on the same programs | emcc and node, skipped without them |
+| `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | the script that builds it, run by sh on a PATH without emcc: it builds with the emsdk in `EMSDK`, and says that it has no emcc when there is no emsdk | an emcc that is in an emsdk, and node; skipped otherwise |
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
 run on Linux hosts with python3.
+The `aica.dsp.diff.*` and `aica.dsp.case.*` tests need `-DNULLDC_CAIQUE_DIR=<path to caique-rtl>` unless caique-rtl
+sits next to the repository; they compile its sample model and its DSP programs (C) from there and read its console
+captures.
 
-Every test but `common.selftest`, `sh4.core`, `cfg.overrides`, `runctl.guest_exit.*` and the system tests is gated
-on a baseline file, and ctest runs them with `--strict`: a count that is worse than its baseline fails, and so does
-one that is better, until the baseline is updated and committed. `common.selftest`, `sh4.core`, `cfg.overrides`,
-each `runctl.guest_exit.*` test and each system test are lists of checks that all have to hold.
+Every test but `common.selftest`, `sh4.core`, `cfg.overrides`, `runctl.guest_exit.*`, the system tests,
+`aica.dsp.capi` and the `aica.dsp.wasm` tests is gated on a baseline file, and ctest runs them with `--strict`: a
+count that is worse than its baseline fails, and so does one that is better, until the baseline is updated and
+committed. `common.selftest`, `sh4.core`, `cfg.overrides`, each `runctl.guest_exit.*` test, each system test,
+`aica.dsp.capi` and `aica.dsp.wasm` are lists of checks that all have to hold; `aica.dsp.wasm.emsdk` and
+`aica.dsp.wasm.noemcc` are what the build script returns and prints.
 
 More about the suites:
 
@@ -71,7 +82,10 @@ More about the suites:
   `sh4_dynarec/KNOWN_DIFFERENCES.md`: what is behind the two dynarec baselines,
 * `arm7/README.md`: the ARM7 tests and the wren7 console suites; `arm7/KNOWN_FAILURES.md`: why checks of the
   ARM7 baseline are below their number of cases, and what else is known to be wrong in the ARM7,
-* `system/README.md`: the system tests, which emulator they run and how, their guest programs.
+* `system/README.md`: the system tests, which emulator they run and how, their guest programs,
+* `aica_dsp/README.md`: the AICA DSP core's tests, which of the console's captures are compared with the core
+  directly and which through the caique model; `aica_dsp/KNOWN_FAILURES.md`: the three lines of a console report
+  that depend on the console's timing.
 
 ## Layout
 
@@ -92,6 +106,8 @@ More about the suites:
     system/            the emulator binary, headless, on guest programs (README.md)
     perf/              not a test: perf.py measures the speed of the emulator on a guest program (README.md),
                        BASELINE.md has the figures of one machine
+    aica_dsp/          the AICA DSP core: its interface, the caique model step for step, caique's console
+                       captures, the C interface and the WebAssembly build (README.md, KNOWN_FAILURES.md)
     vendor/            the submodules
     files/             fixtures
 
@@ -275,7 +291,7 @@ A suite is a directory with a `CMakeLists.txt` that is added in `tests/CMakeList
   an object library of libswirl translation units, built like the emulator builds them.
 * `nulldc_test_common`: link it after the libswirl library. Stubs are taken from it only for the symbols the
   libswirl objects leave undefined; `msgboxf` and `os_DebugBreak` always come from `test_guard`.
-* `NULLDC_HAVE_SH4_TESTS` / `NULLDC_HAVE_ARM7_TESTS` / `NULLDC_HAVE_WREN7`, the `*_DIR` and `*_MISSING`
+* `NULLDC_HAVE_SH4_TESTS` / `NULLDC_HAVE_ARM7_TESTS` / `NULLDC_HAVE_WREN7` / `NULLDC_HAVE_CAIQUE`, the `*_DIR` and `*_MISSING`
   variables and `nulldc_add_missing_data_test(<name> <reason>)` for data that is not there (skipped, or failed
   with `NULLDC_TESTS_REQUIRE_DATA`); `nulldc_add_skipped_test(<name> <reason>)` for a test the host cannot run.
 
