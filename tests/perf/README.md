@@ -1,8 +1,9 @@
 # Speed measurements
 
 `perf.py` runs a guest program for a fixed emulated time and reports how fast that went, in percent of real time
-(100 = a Dreamcast). It is a tool, not a ctest test: nothing here passes or fails on a number. `BASELINE.md` has
-the figures of the machine this was written on.
+(100 = a Dreamcast). It is a tool, not a ctest test: nothing here passes or fails on a number (`system.perf.script`
+runs it on a program of the system tests and checks that its figures are there, not what they are). `BASELINE.md`
+has the figures of the machine this was written on.
 
     # no rendering: headless, the none renderer. Any build of the emulator.
     python3 tests/perf/perf.py --emulator <devcast> --program <2ndmix.elf>
@@ -13,14 +14,28 @@ the figures of the machine this was written on.
     --engines jit,interp     which SH4 engines (both)
     --seconds 60             emulated seconds per run
     --runs 5                 runs per engine; the median is the result
-    --json <file>            the result as JSON: per engine the median, the lowest and the highest, every run,
-                             the load of the machine (1 minute average) in front of every run, the renderer,
-                             the date, the CPU
+    --json <file>            the result as JSON: per engine the median, the lowest and the highest of both
+                             figures, every run (both figures, its CPU seconds and emulated seconds), the load
+                             of the machine (1 minute average) in front of every run, the renderer, the date,
+                             the CPU
 
-A run is one process. It ends itself with `config:Exit.AfterSeconds` and prints its own speed: emulated time over
-wall time, both from the first vblank on (`docs/nulldc3/automated-runs.md`), so process start-up and the loading of
-the program are not in the figure; the start of the program itself is. Runs are made one after the other. The
-clock is pinned and there is no audio backend, so every run does the same work. A program that returns to the BIOS
+A run is one process. It ends itself with `config:Exit.AfterSeconds`, and two figures come out of it:
+
+* the **speed**, which the emulator prints itself: emulated time over wall time, both from the first vblank on
+  (`docs/nulldc3/automated-runs.md`), so process start-up and the loading of the program are not in the figure;
+  the start of the program itself is. It is what a person in front of the machine gets, and what the machine
+  does besides is in it: a run that waits for a core is slower by that wait.
+* the **speed by CPU time**: the emulated time of the run over the CPU time its process used, user and system,
+  of all its threads and from its start to its end (`getrusage` of the child). It is what the run costs. Time
+  the process waits for a core is not in it, which makes it the figure to compare between two measurements; what
+  the other work on the machine does to a core that is running (the second thread of the core, the caches) still
+  is. Headless, one thread does the work, and a run that never waits for a core differs in the two only by the
+  start and the end of the process and by how the kernel's CPU clock runs against its wall clock. With a window
+  the thread of the user interface and the GL driver use CPU time as well, and the figure is well below the
+  speed.
+
+Runs are made one after the other. The clock is pinned and there is no audio backend, so every run does the same
+work. A program that returns to the BIOS
 before the time is up ends its run there (`reason=guest-exit`, with a window as well), and the script stops with
 an error: a run that was not as long as asked gives no figure.
 
@@ -34,5 +49,6 @@ Rules the script keeps:
   It then takes the GL renderer string the emulator itself prints (`OpenGL renderer: ...`) as the truth: a
   software rasteriser is refused, or with `--allow-software-gl` measured and labelled `gl-software`, never
   `gl-gpu`.
-* **The load of the machine is recorded**, not controlled. Figures from a busy machine are lower and wider; compare
-  the range, not only the median.
+* **The load of the machine is recorded**, not controlled. Figures from a busy machine are lower and wider, both
+  of them: compare measurements made at a similar load, and the range, not only the median. The load that is
+  recorded is the 1 minute average, which trails what the machine is doing by about that long.

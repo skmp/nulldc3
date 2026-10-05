@@ -11,6 +11,7 @@ the runs are headless), a core file limit of 1 byte and a wall-clock watchdog th
 """
 
 import argparse
+import json
 import os
 import re
 import resource
@@ -476,6 +477,52 @@ def case_determinism(h):
         print('  %s: %d runs, hash %s' % (engine, len(runs), first.fields['hash']))
 
 
+def case_perf_script(h):
+    """tests/perf/perf.py on a program of the suite: for each engine a speed by wall clock and one by CPU time."""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, 'perf', 'perf.py')
+    output = os.path.join(h.work, 'perf.json')
+    args = [sys.executable, script, '--emulator', h.options.emulator, '--program', h.guest('guest_spin'),
+            '--seconds', '0.5', '--runs', '3', '--json', output]
+    try:
+        done = subprocess.run(args, cwd=h.work, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=4 * h.options.watchdog)
+    except subprocess.TimeoutExpired:
+        raise Failure('perf.py did not end: %s' % ' '.join(args))
+    log = done.stdout.decode('utf-8', 'replace')
+
+    def expect(condition, message):
+        check(condition, '%s\n  %s\n%s' % (message, ' '.join(args), '\n'.join('    | ' + l for l in log.splitlines())))
+
+    expect(done.returncode == 0, 'perf.py: exit code %s' % done.returncode)
+    expect(os.path.isfile(output), 'perf.py wrote no JSON')
+    with open(output) as f:
+        result = json.load(f)
+
+    try:
+        expect([r['engine'] for r in result['results']] == ['jit', 'interp'], 'not one result per engine')
+        for r in result['results']:
+            expect(r['renderer'] == 'none', 'not the none renderer')
+            for figure in ('speed_pct', 'speed_cpu_pct'):
+                runs = r[figure + '_runs']
+                expect(len(runs) == 3 and all(x > 0 for x in runs), '%s: no %s of 3 runs' % (r['engine'], figure))
+                expect(r[figure + '_min'] == min(runs) and r[figure + '_max'] == max(runs) and
+                       r[figure + '_median'] == sorted(runs)[1],
+                       '%s: %s is not the median, lowest and highest of its runs' % (r['engine'], figure))
+            # the speed by CPU time is the emulated time of the run over the CPU time of its process
+            for emu, cpu, speed in zip(r['emu_s_runs'], r['cpu_s_runs'], r['speed_cpu_pct_runs']):
+                expect(0.5 <= emu < 0.5 + 0.021, '%s: a run of %f emulated seconds' % (r['engine'], emu))
+                expect(cpu > 0 and abs(speed - emu / cpu * 100) < 1e-6, '%s: %f %% by CPU time for %f emulated '
+                       'seconds on %f CPU seconds' % (r['engine'], speed, emu, cpu))
+            expect(len(r['load_1m_runs']) == 3, '%s: no load of the machine per run' % r['engine'])
+    except KeyError as missing:
+        expect(False, 'the JSON has no %s' % missing)
+
+    # and both are in the table
+    header = [line for line in log.splitlines() if line.startswith('engine')]
+    expect(len(header) == 1 and 'median %' in header[0] and 'CPU median %' in header[0], 'no table with both figures')
+    print('  ' + '\n  '.join(line for line in log.splitlines() if re.match(r'engine|jit |interp ', line)))
+
+
 CASES = {
     'help': case_help,
     'guest_exit.jit': lambda h: case_guest_exit(h, 'jit'),
@@ -497,6 +544,7 @@ CASES = {
     'fault.ill': lambda h: case_fault(h, 'ill'),
     'fault.block': case_fault_block,
     'determinism': case_determinism,
+    'perf.script': case_perf_script,
 }
 
 

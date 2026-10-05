@@ -39,6 +39,7 @@ set(nulldc_system_cases
   "boot.hello.interp:ELF"
   "frame.refsw2:ELF,LLE"
   "determinism:ELF"
+  "perf.script:"
 )
 
 find_package(Python3 COMPONENTS Interpreter)

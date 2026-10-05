@@ -4,11 +4,18 @@
     perf.py --emulator <binary> --program <elf> [--renderer none|gl] [--engines jit,interp]
             [--seconds 60] [--runs 5] [--json <file>]
 
-Each run is one process: the program runs for --seconds emulated seconds (config:Exit.AfterSeconds) and the
-speed is what the emulator prints when it ends, emulated time over wall time from the first vblank on. The
-runs of an engine are made one after the other and their median is reported, next to the lowest and the highest
-and the load of the machine in front of every run. The result goes to stdout as a table and, with --json, to a
-file as JSON. Not a test: nothing here passes or fails on a number.
+Each run is one process: the program runs for --seconds emulated seconds (config:Exit.AfterSeconds). Two
+figures come out of it, both in percent of real time:
+
+  speed       what the emulator prints when it ends: emulated time over wall time, from the first vblank on.
+              It is what a person sees, and it falls with every moment the run waits for a core.
+  CPU speed   emulated time over the CPU time of the process (user + system, every thread, from its start to
+              its end). It is what the run costs, and the figure to compare between two measurements: waiting
+              for a core is not in it. A busy machine still lowers it, by less.
+
+The runs of an engine are made one after the other and the median of each figure is reported, next to the lowest
+and the highest and the load of the machine in front of every run. The result goes to stdout as a table and,
+with --json, to a file as JSON. Not a test: nothing here passes or fails on a number.
 
   --renderer none   headless, config:pvr.backend=none. Any build of the emulator.
   --renderer gl     a window and the gles renderer, which only a -DHAS_TA_LLE=OFF build has. Needs a display
@@ -119,11 +126,15 @@ def run_once(options, engine, environment, directory):
 
     load = os.getloadavg()[0]
     watchdog = max(300, options.seconds * 60)   # down to 1/60 of real time before the run is given up
+    # the runs are made one at a time: what the children of this process used in between is the run
+    before = resource.getrusage(resource.RUSAGE_CHILDREN)
     try:
         out = subprocess.run(args, cwd=directory, env=base, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, timeout=watchdog, preexec_fn=limit_core)
     except subprocess.TimeoutExpired:
         sys.exit('perf: the run did not end within %d s: %s' % (watchdog, ' '.join(args)))
+    after = resource.getrusage(resource.RUSAGE_CHILDREN)
+    cpu = (after.ru_utime - before.ru_utime) + (after.ru_stime - before.ru_stime)
     log = out.stdout.decode('utf-8', 'replace')
 
     line = re.search(r'^nulldc-exit: (.*)$', log, re.M)
@@ -134,8 +145,10 @@ def run_once(options, engine, environment, directory):
 
     used = re.search(r'^RendIF: Using renderer: (\S+)', log, re.M)
     gl = re.search(r'^OpenGL renderer: (.*)$', log, re.M)
+    emu = float(fields['emu_s'])
     return {'speed_pct': float(fields['speed_pct']), 'wall_s': float(fields['wall_s']),
-            'emu_s': float(fields['emu_s']), 'vblanks': int(fields['vblanks']), 'load_1m': load,
+            'cpu_s': cpu, 'speed_cpu_pct': emu / cpu * 100 if cpu > 0 else 0.0,
+            'emu_s': emu, 'vblanks': int(fields['vblanks']), 'load_1m': load,
             'renderer': used.group(1) if used else None, 'gl_renderer': gl.group(1).strip() if gl else None}
 
 
@@ -181,8 +194,9 @@ def main():
             runs = []
             for i in range(options.runs):
                 runs.append(run_once(options, engine, environment, os.path.join(work, '%s-%d' % (engine, i))))
-                print('  %-6s run %d: %7.1f %%  (load %.1f)' % (engine, i + 1, runs[-1]['speed_pct'],
-                                                               runs[-1]['load_1m']), file=sys.stderr)
+                print('  %-6s run %d: %7.1f %%, CPU %7.1f %%  (load %.1f)' % (
+                    engine, i + 1, runs[-1]['speed_pct'], runs[-1]['speed_cpu_pct'], runs[-1]['load_1m']),
+                    file=sys.stderr)
 
             label = runs[0]['renderer']
             gl_renderer = runs[0]['gl_renderer']
@@ -196,6 +210,7 @@ def main():
                 label = 'gl-software' if software else 'gl-gpu'
 
             speeds = [r['speed_pct'] for r in runs]
+            cpu_speeds = [r['speed_cpu_pct'] for r in runs]
             result['results'].append({
                 'engine': engine,
                 'renderer': label,
@@ -204,6 +219,12 @@ def main():
                 'speed_pct_min': min(speeds),
                 'speed_pct_max': max(speeds),
                 'speed_pct_runs': speeds,
+                'speed_cpu_pct_median': statistics.median(cpu_speeds),
+                'speed_cpu_pct_min': min(cpu_speeds),
+                'speed_cpu_pct_max': max(cpu_speeds),
+                'speed_cpu_pct_runs': cpu_speeds,
+                'cpu_s_runs': [r['cpu_s'] for r in runs],
+                'emu_s_runs': [r['emu_s'] for r in runs],
                 'load_1m_runs': [r['load_1m'] for r in runs],
                 'vblanks': runs[0]['vblanks'],
                 'emu_s': runs[0]['emu_s'],
@@ -213,10 +234,12 @@ def main():
 
     print('%s, %g emulated seconds, median of %d runs, %s' % (result['program'], options.seconds, options.runs,
                                                               result['date']))
-    print('%-8s %-12s %10s %10s %10s   %s' % ('engine', 'renderer', 'median %', 'min %', 'max %', 'load (1 min)'))
+    print('%-8s %-12s %10s %10s %10s %14s %10s %10s   %s' % (
+        'engine', 'renderer', 'median %', 'min %', 'max %', 'CPU median %', 'CPU min %', 'CPU max %', 'load (1 min)'))
     for r in result['results']:
-        print('%-8s %-12s %10.1f %10.1f %10.1f   %.1f - %.1f%s' % (
+        print('%-8s %-12s %10.1f %10.1f %10.1f %14.1f %10.1f %10.1f   %.1f - %.1f%s' % (
             r['engine'], r['renderer'], r['speed_pct_median'], r['speed_pct_min'], r['speed_pct_max'],
+            r['speed_cpu_pct_median'], r['speed_cpu_pct_min'], r['speed_cpu_pct_max'],
             min(r['load_1m_runs']), max(r['load_1m_runs']),
             '   [%s]' % r['gl_renderer'] if r['gl_renderer'] else ''))
 
