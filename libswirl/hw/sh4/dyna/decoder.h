@@ -48,6 +48,8 @@ struct ngen_features
 {
 	bool OnlyDynamicEnds;     //if set the block endings aren't handled natively and only Dynamic block end type is used
 	bool InterpreterFallback; //if set all the non-branch opcodes are handled with the ifb opcode
+	bool DebugChecks = false; //if set the backend implements everything SH4DBG_NATIVE stands for (hw/sh4/sh4_if.h)
+	bool CtxAtSlice = false;  //if set Sh4cntx is complete, pc included, whenever the generated code calls UpdateSystem (SH4DBG_CTX_AT_SLICE)
 };
 
 struct RuntimeBlockInfo;
