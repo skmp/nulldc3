@@ -120,7 +120,8 @@ void PrepareStepOut();
 // SuperH4::Run() returned with a debugger stop decided, after every step (executed, or complete at a vector),
 // for the start park and for a reset made while paused. Never for a service excursion, which publishes
 // nothing: temporary breakpoints and a pending step-out survive it. Also called when temporary state must end
-// without a stop: for a guest reset and when the emulator thread exits.
+// without a stop: for a guest reset and when the emulator thread exits. Never called without an emulator
+// thread.
 // Writes to *out (out may be null) what stopped. *out repeats what the helpers passed to emu::LatchStop for
 // this stop; dbg::emu publishes LatchStop's record and may check it against *out. Then removes every
 // temporary breakpoint, cancels a pending step-out (dbg_sh4_stepout = 0, instrumented blocks discarded),

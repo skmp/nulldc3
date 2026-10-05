@@ -235,6 +235,8 @@ void OnThreadExiting(bool guestExit);
 // state with a machine: (U) while Stopped, (E) for a guest reset or a reset by the debugger (park context).
 // The debugger drops what belonged to the old state: the owed remainder and resume exemption of the SH4
 // breakpoint mechanism, g_sleep_cut, temporary breakpoints, a pending step-out.
+// On (E) it calls dbg::sh4::OnPcWritten() and OnStop(nullptr). While Stopped it calls OnPcWritten() only: no
+// temporary breakpoint and no step-out exists then, because OnThreadExiting() ended them.
 // While Stopped it publishes a new stop (the stop counter advances) so that clients fetch again; on (E) the
 // stop, if one is in force, is published by Park().
 void OnGuestStateReplaced();
