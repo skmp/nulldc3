@@ -417,25 +417,26 @@ def explained(op, cls, obj_raw, our_text, our_valid):
     return None
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--objdump', default='')
-    ap.add_argument('--test-bin', required=True)
-    ap.add_argument('--workdir', required=True)
-    ap.add_argument('--verbose', action='store_true')
-    args = ap.parse_args()
+def expected(op, obj_raw):
+    """
+    What objdump's line for an encoding stands for in dbg_disasm's terms: (valid, text, rules, flags). rules names
+    the rewrites that changed something, flags is the info signature that follows from the text.
+    """
+    if '<UNDEFINED>' in obj_raw:
+        return False, '.word 0x%08x' % op, {'<UNDEFINED> -> .word'}, None
+    want, rules = rewrite(op, obj_raw)
+    rules |= twin(op)[1]
+    if op >> 28 == 15:
+        mnemonic, _, rest = want.partition(' ')
+        want = (mnemonic + 'nv ' + rest).strip()
+    return True, want, rules, expected_flags(op, want)
 
-    if not args.objdump or args.objdump.endswith('-NOTFOUND') or not os.path.exists(args.objdump):
-        print('SKIP: no ARM objdump (arm-eabi-objdump / arm-none-eabi-objdump); set -DARM_OBJDUMP=<path>')
-        return SKIP
 
-    os.makedirs(args.workdir, exist_ok=True)
-    version = subprocess.run([args.objdump, '--version'], capture_output=True, text=True).stdout.splitlines()[0]
-
-    ops = sample()
-    obj = run_objdump(args.objdump, args.workdir, [twin(op)[0] for op in ops])
-    ours = run_ours(args.test_bin, ops)
-
+def compare(ops, obj, expect, ours):
+    """
+    Compares the dump of the sample (ours) with objdump's lines (obj) and what they stand for (expect: one
+    expected() per encoding).
+    """
     counts = {'identical': 0, 'normalised': 0, 'unexplained': 0}
     rule_counts = {}
     class_counts = {}
@@ -450,23 +451,16 @@ def main():
         our_text = ' '.join(our_text.split())
         our_valid = info['flags'][0] == 'v'
         cls = classify(op)
-        nv = op >> 28 == 15
         pc = BASE + 4 * index
         stats = per_class.setdefault(cls, [0, 0, 0, 0])
         stats[0] += 1
 
-        obj_valid = '<UNDEFINED>' not in obj_raw
-        want, rules = rewrite(op, obj_raw) if obj_valid else ('.word 0x%08x' % op, {'<UNDEFINED> -> .word'})
-        if obj_valid:
-            rules |= twin(op)[1]
-            if nv:
-                mnemonic, _, rest = want.partition(' ')
-                want = (mnemonic + 'nv ' + rest).strip()
+        obj_valid, want, rules, want_flags = expect[index]
 
         same_text = obj_valid == our_valid and want == our_text
         ok = same_text
         if ok and our_valid:
-            ok = info['flags'] == expected_flags(op, want)
+            ok = info['flags'] == want_flags
             checked['flag sets'] += 1
         if ok:
             # addresses: objdump gives them as "0x..." operands (b / bl) or "@ 0x..." comments (pc-relative ldr / str);
@@ -514,6 +508,31 @@ def main():
         else:
             counts['unexplained'] += 1
             bad.append((op, cls, obj_raw, want, our_raw))
+
+    return counts, rule_counts, class_counts, per_class, checked, bad
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--objdump', default='')
+    ap.add_argument('--test-bin', required=True)
+    ap.add_argument('--workdir', required=True)
+    ap.add_argument('--verbose', action='store_true')
+    args = ap.parse_args()
+
+    if not args.objdump or args.objdump.endswith('-NOTFOUND') or not os.path.exists(args.objdump):
+        print('SKIP: no ARM objdump (arm-eabi-objdump / arm-none-eabi-objdump); set -DARM_OBJDUMP=<path>')
+        return SKIP
+
+    os.makedirs(args.workdir, exist_ok=True)
+    version = subprocess.run([args.objdump, '--version'], capture_output=True, text=True).stdout.splitlines()[0]
+
+    ops = sample()
+    obj = run_objdump(args.objdump, args.workdir, [twin(op)[0] for op in ops])
+    expect = [expected(op, obj_raw) for op, obj_raw in zip(ops, obj)]
+    ours = run_ours(args.test_bin, ops)
+
+    counts, rule_counts, class_counts, per_class, checked, bad = compare(ops, obj, expect, ours)
 
     print('arm7 vs %s -m armv3' % version)
     print('  encodings compared    %d' % len(ops))
