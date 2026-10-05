@@ -94,10 +94,13 @@ what its reset gives it, with the ARM held in reset (`arm7m_created_reset()`). I
 in the middle of a FIQ handler, as a guest can with SB_SFRES: nothing of the interrupt controller is left
 (`arm7m_controller_idle()`), and the program that is started next gets the interrupts it asks for and no other.
 
-The check `debug` is about what the sound CPU gives the debugger (`SoundCPU::DebugGetReg`) and no guest ever
-sees: under the indices 21 to 25 it shows R8 to R12 of the modes other than FIQ. In front of a FIQ and behind it
-those are the registers the program computes with; inside the handler, which has the five of the FIQ bank in
-their place, they are still the interrupted program's, and reading them changes nothing.
+The check `debug` is about what the sound CPU gives the debugger (`SoundCPU::DebugGetReg`,
+`DebugGetInterrupt`) and no guest ever sees: under the indices 21 to 25 it shows R8 to R12 of the modes other
+than FIQ. In front of a FIQ and behind it those are the registers the program computes with; inside the handler,
+which has the five of the FIQ bank in their place, they are still the interrupted program's, and reading them
+changes nothing. L is for the debugger what the ARM reads, at level 1, at level 7 and behind a request of level
+0, and the debugger's read is not the acknowledge the ARM's is: a handler that leaves the L read to the debugger
+is entered again. The in-service flag is 1 from the latch of a request to the write of M.
 
 ## The wren7 console suites
 

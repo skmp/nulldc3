@@ -66,3 +66,6 @@ void arm7m_write32(u32 addr, u32 data);
 
 //A register as the debugger reads it (SoundCPU::DebugGetReg)
 bool arm7m_debug_reg(u32 reg, u32* value);
+
+//L and the in-service flag of the interrupt controller as the debugger reads them (SoundCPU::DebugGetInterrupt)
+bool arm7m_debug_interrupt(u32* level, u32* in_service);

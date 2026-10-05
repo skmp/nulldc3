@@ -261,3 +261,8 @@ bool arm7m_debug_reg(u32 reg, u32* value)
 {
 	return scpu->DebugGetReg(reg, value);
 }
+
+bool arm7m_debug_interrupt(u32* level, u32* in_service)
+{
+	return scpu->DebugGetInterrupt(level, in_service);
+}

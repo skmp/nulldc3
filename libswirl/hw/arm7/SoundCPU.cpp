@@ -417,6 +417,13 @@ struct SoundCPU_impl : SoundCPU {
 		return false;
 	}
 
+	//L as arm_ReadReg gives it, without the acknowledge that goes with that read
+	bool DebugGetInterrupt(u32* level, u32* inService) {
+		*level = ctx.e68k_reg_L;
+		*inService = ctx.e68k_reg_M;
+		return true;
+	}
+
 	void serialize(void** data, unsigned int* total_size)
 	{
 		REICAST_S(ctx.aica_interr);

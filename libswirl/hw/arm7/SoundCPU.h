@@ -50,6 +50,12 @@ struct SoundCPU : MMIODevice {
 	// written.
 	virtual bool DebugSetReg(u32 reg, u32 value) { return false; }
 
+	// The interrupt controller in front of nFIQ: *level is the interrupt level register L at 0x2D00 as a read
+	// by the ARM7 delivers it, without the acknowledge of the request that goes with that read; *inService is
+	// the in-service flag M at 0x2D04, 1 while a request is in service. No side effects. Returns false while
+	// the values cannot be given.
+	virtual bool DebugGetInterrupt(u32* level, u32* inService) { return false; }
+
 	virtual ~SoundCPU() { }
 
 	static SoundCPU* Create(AICA* aica, u8* aica_ram, u32 aram_size);
