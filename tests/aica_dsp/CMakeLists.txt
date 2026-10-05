@@ -8,11 +8,12 @@
 #	                      programs, step for step
 #	aica_dsp_cases <case> aica.dsp.case.<case>: the DSP programs caique ran on a Dreamcast, on the model with the
 #	                      core in step and on the core alone, against the console's files
+#	aica_dsp_wasm_trace   what aica.dsp.wasm replays on aica_dsp_core.wasm: wasm_test.mjs, with node
 #	aica_dsp_bench        samples a second, not a test
 #
 #	The model, the programs and the console's files are caique-rtl's. Nothing of it is in this repository: the
 #	tests are compiled with its sources from the checkout (NULLDC_CAIQUE_DIR) and read its captures from there.
-#	Without a checkout they are skipped. All are gated on baseline.txt.
+#	Without a checkout they are skipped. All but aica.dsp.wasm are gated on baseline.txt, see README.md.
 #
 
 string(REPLACE "-fpermissive" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
@@ -141,3 +142,59 @@ else()
   target_sources(aica_dsp_cases PRIVATE $<TARGET_OBJECTS:nulldc_caique_replay>)
 endif()
 
+
+## The WebAssembly build ##
+#
+#	aica.dsp.wasm needs emcc and node. emcc: on the PATH, or the emsdk in the environment's EMSDK or in ~/emsdk.
+#
+
+add_executable(aica_dsp_wasm_trace
+  wasm_trace.cpp
+  "${nulldc_dsp_core_path}/wasm/aica_dsp_capi.cpp"
+  "${nulldc_dsp_core_path}/wasm/aica_dsp_capi.h"
+)
+target_link_libraries(aica_dsp_wasm_trace PRIVATE nulldc_aica_dsp_test)
+target_compile_definitions(aica_dsp_wasm_trace PRIVATE AICA_DSP_CAPI)
+
+find_program(NULLDC_NODE node)
+find_program(NULLDC_EMCC emcc HINTS "$ENV{EMSDK}/upstream/emscripten" "$ENV{HOME}/emsdk/upstream/emscripten")
+
+if(NOT NULLDC_EMCC)
+  nulldc_add_skipped_test(aica.dsp.wasm "no emcc: not on the PATH, and no emsdk in EMSDK or ~/emsdk")
+elseif(NOT NULLDC_NODE)
+  nulldc_add_skipped_test(aica.dsp.wasm "no node on the PATH")
+else()
+  get_filename_component(nulldc_emcc_dir "${NULLDC_EMCC}" DIRECTORY)
+  get_filename_component(nulldc_emsdk_dir "${nulldc_emcc_dir}/../.." ABSOLUTE)
+
+  set(nulldc_dsp_wasm_dir "${CMAKE_CURRENT_BINARY_DIR}/wasm")
+  set(nulldc_dsp_wasm_trace "${CMAKE_CURRENT_BINARY_DIR}/wasm_trace.bin")
+
+  # build.sh --check builds twice and fails when the two builds differ or have a path of this machine in them
+  add_custom_command(
+    OUTPUT "${nulldc_dsp_wasm_dir}/aica_dsp_core.wasm" "${nulldc_dsp_wasm_dir}/aica_dsp_core.mjs"
+    COMMAND ${CMAKE_COMMAND} -E env "EMSDK=${nulldc_emsdk_dir}" "PATH=${nulldc_emcc_dir}:$ENV{PATH}"
+            sh "${nulldc_dsp_core_path}/wasm/build.sh" --check "${nulldc_dsp_wasm_dir}"
+    DEPENDS "${nulldc_dsp_core_path}/aica_dsp_core.cpp" "${nulldc_dsp_core_path}/aica_dsp_core.h"
+            "${nulldc_dsp_core_path}/wasm/aica_dsp_capi.cpp" "${nulldc_dsp_core_path}/wasm/aica_dsp_capi.h"
+            "${nulldc_dsp_core_path}/wasm/aica_dsp_core.mjs" "${nulldc_dsp_core_path}/wasm/build.sh"
+    COMMENT "AICA DSP core for WebAssembly, twice"
+    VERBATIM
+  )
+
+  add_custom_command(
+    OUTPUT "${nulldc_dsp_wasm_trace}"
+    COMMAND aica_dsp_wasm_trace "${nulldc_dsp_wasm_trace}"
+    DEPENDS aica_dsp_wasm_trace
+    COMMENT "Trace of the native AICA DSP core for aica.dsp.wasm"
+    VERBATIM
+  )
+
+  add_custom_target(aica_dsp_wasm ALL
+    DEPENDS "${nulldc_dsp_wasm_dir}/aica_dsp_core.wasm" "${nulldc_dsp_wasm_trace}")
+
+  add_test(NAME aica.dsp.wasm
+    COMMAND "${NULLDC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/wasm_test.mjs"
+            "${nulldc_dsp_wasm_dir}/aica_dsp_core.mjs" "${nulldc_dsp_wasm_dir}/aica_dsp_core.wasm" "${nulldc_dsp_wasm_trace}")
+  set_tests_properties(aica.dsp.wasm PROPERTIES TIMEOUT 120)
+endif()
