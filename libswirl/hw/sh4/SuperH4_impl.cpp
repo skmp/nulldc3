@@ -69,6 +69,9 @@ bool SuperH4_impl::setBackend(SuperH4Backends backend) {
 }
 
 void SuperH4_impl::Run() {
+    // the host FP mode is per thread: FPSCR was last written by another one (reset, load state, the thread before)
+    sh4_host_fp_resync();
+
     sh4_backend->Loop();
 }
 

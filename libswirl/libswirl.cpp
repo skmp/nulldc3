@@ -735,9 +735,6 @@ struct Dreamcast_impl : VirtualDreamcast {
             printf("Using DSP Interpreter\n");
         }
 
-        // the host FP mode is per thread: FPSCR was last written by another one (reset, load state, the thread before)
-        sh4_host_fp_resync();
-
         sh4_cpu->Start();
 
         emu_started.Set();
@@ -751,7 +748,6 @@ struct Dreamcast_impl : VirtualDreamcast {
             if (reset_requested)
             {
                 virtualDreamcast->Reset();
-                sh4_host_fp_resync();
                 sh4_cpu->Start();
 #ifdef SCRIPTING
                 luabindings_onreset();
@@ -1148,9 +1144,6 @@ struct Dreamcast_impl : VirtualDreamcast {
 
         mmu_set_state();
         sh4_sched_ffts();
-
-        // the state has its own FPSCR, and old_rm / old_dn of the thread that saved it
-        sh4_host_fp_resync();
 
         // TODO: save state fix this
         dynamic_cast<SPG*>(sh4_cpu->GetA0Handler(A0H_SPG))->CalculateSync();

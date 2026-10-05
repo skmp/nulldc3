@@ -11,8 +11,8 @@
 	FPU in the mode UpdateFPSCR sets, so that mode is what decides how both round.
 
 	The host FP mode and threads. The mode belongs to a thread, and the emulator resets, loads states and runs
-	the CPU on more than one: the thread that starts to run the CPU has to end up in the mode of FPSCR, whichever
-	thread wrote FPSCR last.
+	the CPU on more than one: the thread that runs the CPU (SuperH4_impl::Run) has to be in the mode of FPSCR,
+	whichever thread wrote FPSCR last.
 
 	TRAPA. EXPEVT and TRA are module registers and not part of a vector state, the directed vectors have the
 	rest of it.
@@ -23,11 +23,13 @@
 #include "hw/sh4/sh4_interpreter.h"
 #include "hw/sh4/sh4_mmio.h"
 #include "hw/sh4/sh4_mmr.h"
+#include "hw/mem/_vmem.h"
 
 #include <cstdio>
 #include <cstring>
 #include <future>
 #include <thread>
+#include <vector>
 
 #if HOST_CPU == CPU_X64 || HOST_CPU == CPU_X86
 #include <xmmintrin.h>
@@ -36,7 +38,6 @@
 //hw/sh4/sh4_core.h declares these, along with macros for r, sr, pr, ... that are better kept out of here
 void UpdateFPSCR();
 bool UpdateSR();
-void sh4_host_fp_resync();
 
 //hw/sh4/sh4_core_regs.cpp: the FPSCR.RM and DN the host FP mode was last set for. A save state carries them
 extern u32 old_rm;
@@ -279,21 +280,65 @@ static void load_fpscr(u32 value)
 	ExecuteOpcode(0x436A);
 }
 
-//What the emulator thread does before it runs the CPU (dc_run), and the mode it is in then
-static HostMode start_running()
+//// The program the CPU runs: these instructions at GUEST_PC and nop behind them
+
+#define GUEST_PC 0x8C010000
+
+static std::vector<u16> guest_program;
+
+static u8 DYNACALL guest_read8(void* ctx, u32 addr) { return 0; }
+static u32 DYNACALL guest_read32(void* ctx, u32 addr) { return 0; }
+
+static u16 DYNACALL guest_read16(void* ctx, u32 addr)
 {
-	sh4_host_fp_resync();
+	u32 index = (addr - GUEST_PC) >> 1;
+
+	return index < guest_program.size() ? guest_program[index] : 0x0009;
+}
+
+static void DYNACALL guest_write8(void* ctx, u32 addr, u8 data) { }
+static void DYNACALL guest_write16(void* ctx, u32 addr, u16 data) { }
+static void DYNACALL guest_write32(void* ctx, u32 addr, u32 data) { }
+
+static void map_guest_program()
+{
+	_vmem_handler handler = _vmem_register_handler(0, guest_read8, guest_read16, guest_read32, guest_write8, guest_write16, guest_write32);
+
+	_vmem_map_handler(handler, 0x00, 0xFF);
+}
+
+#define LDS_R3_FPSCR 0x436A
+#define LDS_R4_FPSCR 0x446A
+
+//The CPU is started with a program, for the thread that is going to run it
+static void start_cpu(SuperH4* cpu, const std::vector<u16>& program)
+{
+	guest_program = program;
+	Sh4cntx.pc = GUEST_PC;
+
+	cpu->Start();
+}
+
+//What the emulator thread does (dc_run): it runs the CPU until another thread stops it, which the CPU notices at
+//the end of a time slice, the first one at the earliest. The mode the thread is left in
+static HostMode run_cpu(SuperH4* cpu)
+{
+	cpu->Run();
 
 	return host_mode();
 }
 
-template<typename F>
-static HostMode on_new_thread(F fn)
+//The CPU runs a program on a thread that is started for it, as on every resume in the emulator
+static HostMode run_on_new_thread(SuperH4* cpu, const std::vector<u16>& program)
 {
 	HostMode mode;
-	std::thread thread([&mode, &fn] { mode = fn(); });
 
-	thread.join();
+	start_cpu(cpu, program);
+
+	std::thread emulator([&mode, cpu] { mode = run_cpu(cpu); });
+
+	cpu->Stop();
+	emulator.join();
 
 	return mode;
 }
@@ -316,11 +361,14 @@ static void test_host_fp_threads(SuperH4* cpu)
 	{
 		std::promise<void> reset_done;
 		std::future<void> wait = reset_done.get_future();
-		std::thread emulator([&mode, &wait] { wait.wait(); mode = start_running(); });
+		std::thread emulator([&mode, &wait, cpu] { wait.wait(); mode = run_cpu(cpu); });
 
 		cpu->Reset(false);
+		start_cpu(cpu, { });
 
 		reset_done.set_value();
+
+		cpu->Stop();
 		emulator.join();
 	}
 
@@ -332,9 +380,10 @@ static void test_host_fp_threads(SuperH4* cpu)
 	//thread that reset is in the mode of the reset, the guest has loaded FPSCR since
 	cpu->Reset(false);
 
-	on_new_thread([] { start_running(); load_fpscr(FPSCR_NEAREST); return host_mode(); });
+	Sh4cntx.r[3] = FPSCR_NEAREST;
+	run_on_new_thread(cpu, { LDS_R3_FPSCR });
 
-	mode = on_new_thread(start_running);
+	mode = run_on_new_thread(cpu, { });
 
 	CHECK_REG("FPSCR", Sh4cntx.fpscr.full, FPSCR_NEAREST);
 	CHECK(!mode.round_to_zero);
@@ -349,19 +398,24 @@ static void test_host_fp_threads(SuperH4* cpu)
 	old_rm = 0;
 	old_dn = 0;
 
-	mode = on_new_thread(start_running);
+	mode = run_on_new_thread(cpu, { });
 
 	CHECK(!mode.round_to_zero);
 	CHECK(!mode.flush_to_zero);
 
 	//and from there on the thread follows the FPSCR the guest loads
-	mode = on_new_thread([] { start_running(); load_fpscr(FPSCR_ZERO_FLUSH); return host_mode(); });
+	Sh4cntx.r[3] = FPSCR_ZERO_FLUSH;
+	Sh4cntx.r[4] = FPSCR_NEAREST;
 
+	mode = run_on_new_thread(cpu, { LDS_R3_FPSCR });
+
+	CHECK_REG("FPSCR", Sh4cntx.fpscr.full, FPSCR_ZERO_FLUSH);
 	CHECK(mode.round_to_zero);
 	CHECK(mode.flush_to_zero);
 
-	mode = on_new_thread([] { start_running(); load_fpscr(FPSCR_ZERO_FLUSH); load_fpscr(FPSCR_NEAREST); return host_mode(); });
+	mode = run_on_new_thread(cpu, { LDS_R3_FPSCR, LDS_R4_FPSCR });
 
+	CHECK_REG("FPSCR", Sh4cntx.fpscr.full, FPSCR_NEAREST);
 	CHECK(!mode.round_to_zero);
 	CHECK(!mode.flush_to_zero);
 }
@@ -441,6 +495,8 @@ int main()
 	sh4_env_init();
 
 	SuperH4* cpu = make_cpu();
+
+	map_guest_program();
 
 	test_reset(cpu, false);
 	test_reset(cpu, true);

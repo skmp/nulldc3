@@ -33,7 +33,7 @@ way.
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
 | `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses, RTE with a delay slot that reads what it restores, loads of FPSCR, TRAPA, FTRC at the edges of its range and of NaNs, FMAC on operands that show how often it rounds) | none |
-| `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them, the host rounding mode of every FPSCR.RM, the host FP mode of a thread that starts to run the CPU, the exception registers of TRAPA | none |
+| `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them, the host rounding mode of every FPSCR.RM, the host FP mode of a thread that runs the CPU, the exception registers of TRAPA | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | ADC, SBC and RSC at the edges with the carry clear and set, hand-written results | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
@@ -231,10 +231,11 @@ the baseline is committed, and a defect goes into the `known` list of the suite 
   as their bit 0 says, like the RTL and the soft-float reference of shrike4-rtl. Both engines compute with the
   host FPU in that mode.
 * the host FP mode and threads. The mode (MXCSR, FPCR) belongs to a thread, and the emulator resets and loads
-  states on one thread and runs the CPU on another. A thread that calls `sh4_host_fp_resync()`, as the emulator
-  thread does before it runs the CPU, has to be in the mode of FPSCR: a thread that is there before another one
-  resets, a thread that is started after the guest loaded FPSCR on the one before it, a thread that is started after
-  a state was loaded, and it has to follow the FPSCR loads that come after.
+  states on one thread and runs the CPU on another. The test starts the CPU and runs it (`SuperH4_impl::Run`) on a
+  thread of its own, on a program of nops and loads of FPSCR, stops it from the first thread as the emulator does,
+  and looks at the mode the thread that ran is left in. It has to be the mode of FPSCR: on a thread that is there
+  before another one resets, on a thread that is started after the guest loaded FPSCR on the one before it, on a
+  thread that is started after a state was loaded, and it has to follow the FPSCR loads that come after.
 * TRAPA, for the two registers of it that are not part of a vector state: with SR.BL = 0 EXPEVT = 160 and TRA =
   imm << 2 next to SSR, SPC, SGR, SR and PC, with SR.BL = 1 EXPEVT = 020, TRA as it was, and SR, VBR, FPSCR, PC and
   the host FP mode of a reset.
