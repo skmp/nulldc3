@@ -38,13 +38,15 @@ way.
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | hand-written cases: ADC, SBC and RSC at the edges with the carry clear and set, the logical operations with a ROR by a register, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2, the register behind them and M read back, what a reset of the ARM writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
+| `cfg.overrides` | the config store and the command line parser on a config file of their own: a value `-config` gave is in effect for the run and is not what a save of the settings writes to `emu.cfg`, a changed one is written, and a read-only store (the automated runs) writes nothing | none |
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it.
 
-Every test but `common.selftest` and `sh4.core` is gated on a baseline file, and ctest runs them with `--strict`:
-a count that is worse than its baseline fails, and so does one that is better, until the baseline is updated and
-committed. `common.selftest` and `sh4.core` are lists of checks that all have to hold.
+Every test but `common.selftest`, `sh4.core` and `cfg.overrides` is gated on a baseline file, and ctest runs them
+with `--strict`: a count that is worse than its baseline fails, and so does one that is better, until the baseline
+is updated and committed. `common.selftest`, `sh4.core` and `cfg.overrides` are lists of checks that all have to
+hold.
 
 More about the suites:
 
@@ -68,6 +70,7 @@ More about the suites:
                        FP mode, also across threads, EXPEVT and TRA)
     arm7/              the ARM7 interpreter: vendor programs, directed cases, wren7 console suites (README.md,
                        KNOWN_FAILURES.md)
+    cfg/               the config store: -config overrides and what a save writes
     vendor/            the submodules
     files/             fixtures
 
