@@ -1,8 +1,8 @@
 # Tests
 
-A standalone CMake project. It does not build the emulator: every suite compiles the libswirl translation
-units it tests (with the emulator's own definitions and flags, from `reicast/cmake/config.cmake`) and links them
-against stubs for the rest.
+A standalone CMake project. Every suite but one compiles the libswirl translation units it tests (with the
+emulator's own definitions and flags, from `reicast/cmake/config.cmake`) and links them against stubs for the
+rest. The system tests run the emulator itself, which the project builds for them.
 
 ## Getting the vectors
 
@@ -15,16 +15,23 @@ A suite whose data is missing is still built; its test is reported as skipped an
 submodule to fetch. Other checkouts can be used with `-DNULLDC_SH4_TESTS_DIR=`, `-DNULLDC_ARM7_TESTS_DIR=` and
 `-DNULLDC_WREN7_DIR=` (wren7-rtl, default `../wren7-rtl` next to the repository if it is there).
 
+The system tests that boot a KallistiOS program take the programs by path: `-DNULLDC_ELF_DIR=<directory with
+2ndmix.elf and hello.elf>`. Without it those tests are skipped.
+
 A skipped test has not run and is not a pass: `ctest` exits with 0 when everything that did run passes, also
 when that is only the tests that need no data. With `-DNULLDC_TESTS_REQUIRE_DATA=ON` missing data fails its
-tests instead (the submodules, the wren7-rtl checkout and its build outputs alike). CI should configure that
-way.
+tests instead (the submodules, the wren7-rtl checkout and its build outputs, the programs of `NULLDC_ELF_DIR`
+alike). CI should configure that way.
 
 ## Building and running
 
     cmake -S tests -B <build dir> -G Ninja
     ninja -C <build dir>
     ctest --test-dir <build dir> --output-on-failure
+
+The build includes two builds of the emulator for the system tests, about a minute each the first time
+(`-DNULLDC_SYSTEM_TESTS=OFF` leaves them and the system tests out, `-DNULLDC_EMULATOR=` and
+`-DNULLDC_EMULATOR_TA_HLE=` test given binaries instead: `system/README.md`).
 
 | test | what it runs | data |
 |---|---|---|
@@ -39,14 +46,17 @@ way.
 | `arm7.directed` | hand-written cases: ADC, SBC and RSC at the edges with the carry clear and set, the logical operations with a ROR by a register, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2, the register behind them and M read back, what a reset of the ARM writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
 | `cfg.overrides` | the config store and the command line parser on a config file of their own: a value `-config` gave is in effect for the run and is not what a save of the settings writes to `emu.cfg`, a changed one is written, and a read-only store (the automated runs) writes nothing | none |
+| `system.*` | the emulator binary of the default build, headless: `-help`, the keys that end a run and the line it prints, the pinned RTC, `emu.cfg` left alone, what a fatal fault does, programs that boot under reios on the JIT and on the interpreter with their serial output, the software renderer into a PNG (`system/README.md` has the list) | none, or the programs of `NULLDC_ELF_DIR` |
+| `system.hle.*` | the same on the emulator built with `-DHAS_TA_LLE=OFF` | none, or the programs of `NULLDC_ELF_DIR` |
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
-unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it.
+unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
+run on Linux hosts with python3.
 
-Every test but `common.selftest`, `sh4.core` and `cfg.overrides` is gated on a baseline file, and ctest runs them
-with `--strict`: a count that is worse than its baseline fails, and so does one that is better, until the baseline
-is updated and committed. `common.selftest`, `sh4.core` and `cfg.overrides` are lists of checks that all have to
-hold.
+Every test but `common.selftest`, `sh4.core`, `cfg.overrides` and the system tests is gated on a baseline file,
+and ctest runs them with `--strict`: a count that is worse than its baseline fails, and so does one that is better,
+until the baseline is updated and committed. `common.selftest`, `sh4.core`, `cfg.overrides` and each system test
+are lists of checks that all have to hold.
 
 More about the suites:
 
@@ -54,7 +64,8 @@ More about the suites:
 * `sh4_dynarec/README.md`: how the dynarec is run, the differential, the native count;
   `sh4_dynarec/KNOWN_DIFFERENCES.md`: what is behind the two dynarec baselines,
 * `arm7/README.md`: the ARM7 tests and the wren7 console suites; `arm7/KNOWN_FAILURES.md`: why checks of the
-  ARM7 baseline are below their number of cases, and what else is known to be wrong in the ARM7.
+  ARM7 baseline are below their number of cases, and what else is known to be wrong in the ARM7,
+* `system/README.md`: the system tests, which emulator they run and how, their guest programs.
 
 ## Layout
 
@@ -71,6 +82,7 @@ More about the suites:
     arm7/              the ARM7 interpreter: vendor programs, directed cases, wren7 console suites (README.md,
                        KNOWN_FAILURES.md)
     cfg/               the config store: -config overrides and what a save writes
+    system/            the emulator binary, headless, on guest programs (README.md)
     vendor/            the submodules
     files/             fixtures
 
