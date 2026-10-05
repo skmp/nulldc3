@@ -308,6 +308,105 @@ struct SoundCPU_impl : SoundCPU {
 		arm->InvalidateJitCache();
 	}
 
+	bool DebugEnabled() {
+		return ctx.enabled;
+	}
+
+	//The core keeps R8..R14 and the SPSR of the mode it is in in regs[8..14] and regs[RN_SPSR]; the slots of that
+	//mode's bank are written when the mode is left. While in FIQ mode the slots R8_FIQ..R12_FIQ hold the
+	//registers of the other modes, which were swapped out
+	bool DebugGetReg(u32 reg, u32* value) {
+		if (reg < 15)
+		{
+			*value = ctx.regs[reg].I;
+			return true;
+		}
+
+		if (reg == 15)
+		{
+			*value = ctx.regs[R15_ARM_NEXT].I;
+			return true;
+		}
+
+		if (reg == RN_CPSR)
+		{
+			//as CPUUpdateCPSR puts it together
+			arm7_reg cpsr;
+
+			cpsr.I = ctx.regs[RN_CPSR].I & 0x40;
+			cpsr.PSR.NZCV = ctx.regs[RN_PSR_FLAGS].FLG.NZCV;
+			if (!ctx.armFiqEnable)
+				cpsr.I |= 0x40;
+			if (!ctx.armIrqEnable)
+				cpsr.I |= 0x80;
+			cpsr.PSR.M = ctx.armMode;
+
+			*value = cpsr.I;
+			return true;
+		}
+
+		if (reg == RN_SPSR)
+		{
+			*value = ctx.regs[RN_SPSR].I;
+			return true;
+		}
+
+		//the banked registers: the index of the live copy for the bank of the mode the core is in
+		u32 live = reg;
+
+		switch (ctx.armMode)
+		{
+		case 0x10:
+		case 0x1F:
+			if (reg == R13_USR || reg == R14_USR)
+				live = reg - R13_USR + 13;
+			break;
+
+		case 0x11:
+			if (reg >= R8_FIQ && reg <= R14_FIQ)
+				live = reg - R8_FIQ + 8;
+			else if (reg == SPSR_FIQ)
+				live = RN_SPSR;
+			break;
+
+		case 0x12:
+			if (reg == R13_IRQ || reg == R14_IRQ)
+				live = reg - R13_IRQ + 13;
+			else if (reg == SPSR_IRQ)
+				live = RN_SPSR;
+			break;
+
+		case 0x13:
+			if (reg == R13_SVC || reg == R14_SVC)
+				live = reg - R13_SVC + 13;
+			else if (reg == SPSR_SVC)
+				live = RN_SPSR;
+			break;
+
+		case 0x17:
+			if (reg == R13_ABT || reg == R14_ABT)
+				live = reg - R13_ABT + 13;
+			else if (reg == SPSR_ABT)
+				live = RN_SPSR;
+			break;
+
+		case 0x1b:
+			if (reg == R13_UND || reg == R14_UND)
+				live = reg - R13_UND + 13;
+			else if (reg == SPSR_UND)
+				live = RN_SPSR;
+			break;
+		}
+
+		if ((reg >= R13_IRQ && reg <= SPSR_IRQ) || (reg >= R13_USR && reg <= SPSR_FIQ))
+		{
+			*value = ctx.regs[live].I;
+			return true;
+		}
+
+		return false;
+	}
+
 	void serialize(void** data, unsigned int* total_size)
 	{
 		REICAST_S(ctx.aica_interr);
