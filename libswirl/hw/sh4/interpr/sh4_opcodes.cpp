@@ -12,6 +12,7 @@
 
 //All non fpu opcodes :)
 #include "types.h"
+#include "debugger/debugger.h"
 
 
 #include "hw/pvr/pvr_mem.h"
@@ -914,6 +915,12 @@ sh4op(i0000_0000_0010_1011)
 	UpdateSR();	// SH7091: the delay slot runs on the register bank of the new SR
 	ExecuteDelayslot_RTE();
 	next_pc = newpc;
+
+	// A pending step-out of the debugger sees the return before an interrupt is accepted behind it. When the
+	// report stops, the acceptance below is held back by the stop latch and made on the resume
+	if (unlikely(dbg_sh4_stepout != 0))
+		dbg_sh4_CheckFlow(DBG_SH4_FLOW_RTE);
+
 	UpdateINTC();	// an interrupt that the new SR lets in is taken at the target, not in front of the delay slot
 }
 
@@ -1048,14 +1055,32 @@ sh4op(i0000_0000_0001_1011)
 
 	int i=0,s=1;
 
-	while (!UpdateSystem_INTC())//448
+	// The slices of this wait are not slice ends of the backend loop (debugger: g_in_sleep)
+	dbg::g_in_sleep = true;
+
+	for (;;)
 	{
+		// A debugger stop was decided in this wait: it ends here, and the sleep is executed again after the stop.
+		// A cpu that was stopped by anything else waits on, as it always did
+		if (unlikely(dbg::g_stop_latched))
+		{
+			dbg::g_sleep_cut = true;
+			s=0;
+			break;
+		}
+
+		if (UpdateSystem_INTC())//448
+			break;
+
 		if (i++>1000)
 		{
 			s=0;
 			break;
 		}
 	}
+
+	dbg::g_in_sleep = false;
+
 	//if not Interrupted , we must rexecute the sleep
 	if (s==0)
 		next_pc-=2;// re execute sleep
