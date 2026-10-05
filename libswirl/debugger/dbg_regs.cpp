@@ -410,8 +410,7 @@ bool ReadSbRegisterAt(uint32_t addr, uint32_t* value)
 
 } }
 
-// The device accessors that are free functions give nothing yet. Their place is hw/aica/aica_mmio.cpp, hw/gdrom/gdromv3.cpp and hw/holly/sh4_mem_area0.cpp.
-bool libAICA_DebugGetRTC(u32*, bool*) { return false; }
+// The device accessors that are free functions give nothing yet. Their place is hw/gdrom/gdromv3.cpp and hw/holly/sh4_mem_area0.cpp.
 bool gdrom_DebugGetState(GDRomDebugState*) { return false; }
 bool area0_DebugRom(const u8**, u32*) { return false; }
 bool area0_DebugNvmem(const u8**, u32*) { return false; }

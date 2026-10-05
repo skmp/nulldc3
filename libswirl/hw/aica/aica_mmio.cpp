@@ -145,6 +145,17 @@ u32 libAICA_GetRTC_now() {
 	return sh4_cpu->GetA0H<AICARTC_impl>(A0H_RTC)->GetRTC_now();
 }
 
+bool libAICA_DebugGetRTC(u32* seconds, bool* writeEnable) {
+	AICARTC_impl* rtc = sh4_cpu != nullptr ? sh4_cpu->GetA0H<AICARTC_impl>(A0H_RTC) : nullptr;
+
+	if (rtc == nullptr)
+		return false;
+
+	*seconds = rtc->RealTimeClock;
+	*writeEnable = rtc->rtc_EN != 0;
+	return true;
+}
+
 AicaHash aica_hash;
 
 struct AicaDevice final : AICA {
@@ -755,6 +766,46 @@ struct AicaDevice final : AICA {
 
 	void WriteReg(u32 addr, u32 data, u32 size) {
 		AICA_WriteReg(addr, data, size);
+	}
+
+	//The register file with what a read by the SH4 puts in front of it, byte by byte, and nothing written
+	bool DebugReadRegs(u32 offset, u32 len, u8* out)
+	{
+		if (offset > 0x8000 || len > 0x8000 - offset)
+			return false;
+
+		memcpy(out, aica_reg + offset, len);
+
+		auto patch = [&](u32 addr, u32 value) {
+			if (addr >= offset && addr - offset < len)
+				out[addr - offset] = (u8)value;
+		};
+
+		//the common registers a read works out first
+		for (u32 reg : { 0x2808u, 0x2810u, 0x2814u })
+		{
+			u32 value;
+
+			if (reg + 1 >= offset && reg < offset + len && sgc->DebugReadCommonReg(reg, &value))
+			{
+				patch(reg, value);
+				patch(reg + 1, value >> 8);
+			}
+		}
+
+		//SCILV0-2 read as 0
+		for (u32 addr = SCILV0_addr; addr < SCILV2_addr + 4; addr++)
+			patch(addr, 0);
+
+		patch(0x2C00, ARMRST);
+		patch(0x2C01, VREG);
+
+		return true;
+	}
+
+	bool DebugGetChannel(u32 channel, AicaChannelDebug* out)
+	{
+		return sgc->DebugGetChannel(channel, out);
 	}
 
 

@@ -5,6 +5,7 @@
 
 
 #include "sgc_if.h"
+#include "aica_mmio.h"
 #include "dsp.h"
 #include "dsp_backend.h"
 #include "aica_mem.h"
@@ -1192,6 +1193,64 @@ struct SGC_impl : SGC {
 		}
 		break;
 		}
+	}
+
+	bool DebugReadCommonReg(u32 reg, u32* value)
+	{
+		reg &= ~1;
+
+		if (reg < 0x2800 || reg > 0x2816)
+			return false;
+
+		u32 rv = aica_reg[reg] | (aica_reg[reg + 1] << 8);
+		u32 chan = CommonData->MSLC;
+
+		switch (reg)
+		{
+		case 0x2808:
+			//MIEMP, MOEMP
+			rv |= (1 << 8) | (1 << 11);
+			break;
+
+		case 0x2810:
+			//EG, SGC, LP
+			rv = (Chans[chan].AEG.GetValue() & 0x1FFF) | ((Chans[chan].AEG.state & 3) << 13) | ((Chans[chan].loop.looped & 1) << 15);
+			break;
+
+		case 0x2814:
+			rv = Chans[chan].CA & 0xFFFF;
+			break;
+		}
+
+		*value = rv;
+		return true;
+	}
+
+	bool DebugGetChannel(u32 channel, AicaChannelDebug* out)
+	{
+		if (channel >= 64)
+			return false;
+
+		ChannelEx& ch = Chans[channel];
+
+		out->enabled = ch.enabled;
+		out->looped = ch.loop.looped != 0;
+		out->aegState = (u8)ch.AEG.state;
+		out->fegState = (u8)ch.FEG.state;
+		//the envelope is kept as an attenuation, 0x3FF silent
+		out->aegLevel = 0x3FF - std::min(std::max(ch.AEG.GetValue(), 0), 0x3FF);
+		out->fegValue = ch.FEG.value;
+		out->ca = ch.CA;
+		out->caFraction = ch.step.fp;
+		out->step = ch.update_rate;
+		//the output moves from s0 to s1 as the fraction of the play position grows
+		out->sampleCurrent = ch.s1;
+		out->samplePrevious = ch.s0;
+		out->lfoState = ch.lfo.state;
+		out->alfo = ch.lfo.alfo;
+		out->plfo = ch.lfo.plfo;
+
+		return true;
 	}
 
 	void WriteCommonReg8(u32 reg, u32 data)
