@@ -14,13 +14,41 @@
 #include "sh4_dbg.h"
 #include "debugger/debugger.h"
 
-// every SH4_TIMESLICE cycles
-int UpdateSystem()
+// The slice end is in both of the functions below, with nothing between them and it: one of them is every
+// slice end of the recompilers
+#if BUILD_COMPILER == COMPILER_VC
+#define SLICE_INLINE __forceinline
+#else
+#define SLICE_INLINE inline __attribute__((always_inline))
+#endif
+
+// The slice end of a machine whose debugger wants something of it
+[[maybe_unused]] static NOINLINE int slice_end_attention()
 {
     // A debugger stop is decided: no emulated time passes and no scheduler callback runs until the
     // emulator thread has left the park context again
-    if (unlikely(dbg::g_stop_latched))
+    if (dbg::g_stop_latched)
         return 1;
+
+    Sh4cntx.sh4_sched_next -= SH4_TIMESLICE;
+    if (Sh4cntx.sh4_sched_next < 0)
+        sh4_sched_tick(SH4_TIMESLICE);
+
+    // Behind the scheduler tick: what a callback of this slice asked the debugger for is seen in this call
+    if (dbg::g_attn.load(std::memory_order_relaxed))
+        dbg::emu::SliceHook();
+
+    return Sh4cntx.interrupt_pend | (sh4_int_bCpuRun == false);
+}
+
+// every SH4_TIMESLICE cycles
+static SLICE_INLINE int slice_end()
+{
+    // The one test a slice pays for the debugger. The attention word is not zero while a call or a pause
+    // waits for the slice hook, and for as long as the stop latch is set (dbg::emu keeps a bit of it for
+    // that), so the latch is looked at only behind it
+    if (unlikely(dbg::g_attn.load(std::memory_order_relaxed)))
+        return slice_end_attention();
 
     //this is an optimisation (mostly for ARM)
     //makes scheduling easier !
@@ -28,20 +56,27 @@ int UpdateSystem()
 
     Sh4cntx.sh4_sched_next -= SH4_TIMESLICE;
     if (Sh4cntx.sh4_sched_next < 0)
+    {
         sh4_sched_tick(SH4_TIMESLICE);
 
-    // Behind the scheduler tick: what a callback of this slice asked the debugger for is seen in this call
-    if (unlikely(dbg::g_attn.load(std::memory_order_relaxed)))
-        dbg::emu::SliceHook();
+        // what a callback of this tick asked the debugger for is seen in this call
+        if (unlikely(dbg::g_attn.load(std::memory_order_relaxed)))
+            dbg::emu::SliceHook();
+    }
 
     // Force an interrupt check if the cpu has been stopped
     // ngen is required to only check the bCpuRun on interrupt processing
     return Sh4cntx.interrupt_pend | (sh4_int_bCpuRun == false);
 }
 
+int UpdateSystem()
+{
+    return slice_end();
+}
+
 int UpdateSystem_INTC()
 {
-    if (UpdateSystem())
+    if (slice_end())
         return UpdateINTC();
     else
         return 0;

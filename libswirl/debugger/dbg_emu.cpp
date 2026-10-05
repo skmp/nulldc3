@@ -62,6 +62,10 @@ namespace {
 
 typedef std::chrono::steady_clock Clock;
 
+// A bit of the attention word that is set exactly while the stop latch is: the slice end tests the word and
+// nothing else, and finds the latch behind it (hw/sh4/SuperH4_impl.cpp). The emulator thread's own
+const u32 kAttnLatched = 4;
+
 const char* const kPausedTitle = "nullDC 3.0.0 [paused by debugger]";
 const char* const kTitle = "nullDC 3.0.0";
 
@@ -283,9 +287,19 @@ void QueueEmptied()
 	The stop latch
 */
 
+void SetLatch(bool latched)
+{
+	g_stop_latched = latched;
+
+	if (latched)
+		g_attn.fetch_or(kAttnLatched);
+	else
+		g_attn.fetch_and(~kAttnLatched);
+}
+
 void Latch()
 {
-	g_stop_latched = true;
+	SetLatch(true);
 	g_parked = true;
 	p_sh4rcb->cntx.CpuRunning = false;
 }
@@ -437,7 +451,7 @@ void EnterStop()
 // Leaves the park context for Run(). resume: the stop in force ends with it
 u32 Leave(bool resume)
 {
-	g_stop_latched = false;
+	SetLatch(false);
 
 	AcceptDeferred();
 
@@ -467,7 +481,7 @@ u32 Leave(bool resume)
 // step is decided and the park loop goes on with it
 bool DoStep(Action action, u32* rv)
 {
-	g_stop_latched = false;
+	SetLatch(false);
 
 	bool accepted = AcceptDeferred();
 
@@ -478,7 +492,7 @@ bool DoStep(Action action, u32* rv)
 		// complete at the vector: nothing executes
 		sh4::PrepareStep();
 
-		g_stop_latched = true;
+		SetLatch(true);
 		Merge(e.want, e.wantId, StopCause::Step, 0);
 		return false;
 	}
@@ -536,7 +550,7 @@ bool DoStep(Action action, u32* rv)
 	e.inPark = true;
 
 	p_sh4rcb->cntx.CpuRunning = false;
-	g_stop_latched = true;
+	SetLatch(true);
 
 	e.stepFallback = engine.fallback;
 	Merge(e.want, e.wantId, StopCause::Step, 0);
@@ -1034,7 +1048,7 @@ void OnThreadEntered()
 	e = { };
 	e.firstPark = true;
 
-	g_stop_latched = false;
+	SetLatch(false);
 	g_intc_deferred = false;
 	g_in_sleep = false;
 	g_sleep_cut = false;
@@ -1046,7 +1060,7 @@ void OnThreadExiting(bool guestExit)
 
 	// The park context is left for good: what the latch held back is made, as at the slice end of a machine
 	// that no debugger stopped; what belonged to a stop goes
-	g_stop_latched = false;
+	SetLatch(false);
 	AcceptDeferred();
 
 	sh4::OnStop(nullptr);
@@ -1143,7 +1157,7 @@ u32 Park()
 
 	// In the park context nothing is accepted and no time passes, whatever a call does: an interrupt that a
 	// write lets in is accepted on the way out
-	g_stop_latched = true;
+	SetLatch(true);
 
 	NoteSleepCut();
 

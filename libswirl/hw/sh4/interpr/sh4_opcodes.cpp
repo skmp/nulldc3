@@ -1060,17 +1060,23 @@ sh4op(i0000_0000_0001_1011)
 
 	for (;;)
 	{
-		// A debugger stop was decided in this wait: it ends here, and the sleep is executed again after the stop.
-		// A cpu that was stopped by anything else waits on, as it always did
-		if (unlikely(dbg::g_stop_latched))
+		// One slice of the wait: UpdateSystem_INTC(), taken apart for the case that it accepts nothing
+		// although the slice has something to say
+		if (UpdateSystem())//448
 		{
-			dbg::g_sleep_cut = true;
-			s=0;
-			break;
-		}
+			if (UpdateINTC())
+				break;
 
-		if (UpdateSystem_INTC())//448
-			break;
+			// A debugger stop was decided, in this slice or before the wait began: the wait ends here, and the
+			// sleep is executed again after the stop. A cpu that was stopped by anything else waits on, as it
+			// always did
+			if (unlikely(dbg::g_stop_latched))
+			{
+				dbg::g_sleep_cut = true;
+				s=0;
+				break;
+			}
+		}
 
 		if (i++>1000)
 		{
