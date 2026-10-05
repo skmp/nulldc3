@@ -42,6 +42,18 @@ static void do_verify(void*) { verify(1 + 1 == 3); }
 static void do_abort(void*) { test_guard_abort("selftest abort %d", 42); }
 static void do_msgbox(void*) { msgboxf("just a %s", MBX_ICONERROR, "notification"); }
 
+//n notifications, the first twice
+static void do_msgboxes(void* n)
+{
+	for (u32 i = 0; i < *(u32*)n; i++)
+	{
+		msgboxf("notification %u", MBX_ICONERROR, i);
+
+		if (i == 0)
+			msgboxf("notification %u", MBX_ICONERROR, i);
+	}
+}
+
 static volatile u32 spin;
 static void do_hang(void*) { for (;;) spin = spin + 1; }
 
@@ -61,10 +73,32 @@ static void test_guard()
 	CHECK(test_guard_run(&do_msgbox, 0) == TGR_OK);
 	CHECK(test_guard_msgbox_count() == 1);
 	CHECK(strcmp(test_guard_last_msgbox(), "just a notification") == 0);
+	CHECK(test_guard_msgbox_texts() == 1);
+	CHECK(strcmp(test_guard_msgbox_text(0), "just a notification") == 0);
+
+	//every different text is kept once, in the order they came
+	u32 n = 3;
+
+	CHECK(test_guard_run(&do_msgboxes, &n) == TGR_OK);
+	CHECK(test_guard_msgbox_count() == 4);
+	CHECK(test_guard_msgbox_texts() == 3);
+	CHECK(strcmp(test_guard_msgbox_text(0), "notification 0") == 0);
+	CHECK(strcmp(test_guard_msgbox_text(2), "notification 2") == 0);
+	CHECK(strcmp(test_guard_last_msgbox(), "notification 2") == 0);
+
+	//more of them than are kept: the last entry is none of the texts, so it is nothing a suite knows by name
+	n = TEST_GUARD_MSGBOX_TEXTS + 3;
+
+	CHECK(test_guard_run(&do_msgboxes, &n) == TGR_OK);
+	CHECK(test_guard_msgbox_count() == n + 1);
+	CHECK(test_guard_msgbox_texts() == TEST_GUARD_MSGBOX_TEXTS + 1);
+	CHECK(strcmp(test_guard_msgbox_text(0), "notification 0") == 0);
+	CHECK(strncmp(test_guard_msgbox_text(TEST_GUARD_MSGBOX_TEXTS), "notification", 12) != 0);
 
 	//the next call starts clean
 	CHECK(test_guard_run(&do_nothing, 0) == TGR_OK);
 	CHECK(test_guard_msgbox_count() == 0);
+	CHECK(test_guard_msgbox_texts() == 0);
 	CHECK(test_guard_message()[0] == 0);
 
 #if !defined(_WIN32)

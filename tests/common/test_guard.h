@@ -37,6 +37,13 @@ const char* test_guard_message();
 u32 test_guard_msgbox_count();
 const char* test_guard_last_msgbox();
 
+//The different texts of those calls, in the order they came first. TEST_GUARD_MSGBOX_TEXTS of them are kept, one
+//more entry stands for all the others
+#define TEST_GUARD_MSGBOX_TEXTS 4
+
+u32 test_guard_msgbox_texts();
+const char* test_guard_msgbox_text(u32 index);
+
 //msgboxf text is only recorded, this prints it as well
 void test_guard_echo_msgbox(bool echo);
 

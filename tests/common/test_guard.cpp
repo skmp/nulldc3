@@ -31,6 +31,8 @@ static volatile u32 guard_serial;
 static char guard_message[1024];
 static char last_msgbox[1024];
 static u32 msgbox_count;
+static char msgbox_text[TEST_GUARD_MSGBOX_TEXTS + 1][sizeof(last_msgbox)];
+static u32 msgbox_texts;
 static bool echo_msgbox;
 
 static u32 watchdog_ms;
@@ -69,6 +71,18 @@ int msgboxf(const wchar* text, unsigned int type, ...)
 
 	flatten(last_msgbox);
 	msgbox_count++;
+
+	u32 seen = 0;
+
+	while (seen < msgbox_texts && strcmp(msgbox_text[seen], last_msgbox) != 0)
+		seen++;
+
+	if (seen == msgbox_texts && msgbox_texts <= TEST_GUARD_MSGBOX_TEXTS)
+	{
+		//the first text there is no room for stands for all that follow
+		strcpy(msgbox_text[msgbox_texts], msgbox_texts < TEST_GUARD_MSGBOX_TEXTS ? last_msgbox : "(more texts than are kept)");
+		msgbox_texts++;
+	}
 
 	if (echo_msgbox)
 		printf("msgboxf: %s\n", last_msgbox);
@@ -167,6 +181,7 @@ TestGuardResult test_guard_run(TestGuardFP* fn, void* arg)
 	guard_message[0] = 0;
 	last_msgbox[0] = 0;
 	msgbox_count = 0;
+	msgbox_texts = 0;
 	guard_serial = guard_serial + 1;
 
 	int rv = guard_setjmp();
@@ -195,6 +210,16 @@ u32 test_guard_msgbox_count()
 const char* test_guard_last_msgbox()
 {
 	return last_msgbox;
+}
+
+u32 test_guard_msgbox_texts()
+{
+	return msgbox_texts;
+}
+
+const char* test_guard_msgbox_text(u32 index)
+{
+	return index < msgbox_texts ? msgbox_text[index] : "";
 }
 
 void test_guard_echo_msgbox(bool echo)
