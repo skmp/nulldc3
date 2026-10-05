@@ -120,8 +120,8 @@ the command line in the emulator, the boot program of `guest.s` here. *State* is
   guest, where the guest does not come back to, so that the fallback loop runs the rest of it, in the
   baselines too. `selftest.sh` prints how many of them differ from the JIT's (B12 on the booted guest: the
   FPU arithmetic of the two differs).
-- A run whose other thread came too late to do anything prints no state. Its session then differs from the
-  baselines and is repeated.
+- A run whose other thread came too late to do anything is made again in its session. In the emulator that
+  moves the runs behind it away from their baselines: the session then differs from them and is repeated.
 
 The machine of this directory boots a guest that has all of it. A vblank is every 29th slice end and an
 interrupt request every 2nd; the boot program opens the interrupts behind 24576 instructions with them masked

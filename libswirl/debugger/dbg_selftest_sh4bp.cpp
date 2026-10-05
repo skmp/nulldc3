@@ -365,6 +365,7 @@ const u32 kBootSteps = 12000;		// the steps the path is sampled with
 const u32 kStopBudget = 20000;		// a case that stops at breakpoints, or pauses, disarms behind this many stops
 const u32 kCallBudget = 2000;		// the calls of the case with service excursions
 const u32 kOutChain = 4;			// step-outs asked for between two vblanks
+const u32 kVoidRuns = 20;			// runs of a case that are made again because its other thread came too late
 const u32 kVblankId = 1000;			// the id of the event breakpoint
 const u32 kResetVector = 0xA0000000;	// where a run starts
 const u16 kSleepOp = 0x001B;
@@ -438,7 +439,7 @@ struct AddrSet
 	  BOOT_STOP    a stop behind that one and in front of the end of the run, whatever its cause. The guest is
 	               resumed behind it unless the case arms a step (BootStep) or ends the run (boot_abort)
 	  BOOT_END     parked where the run ends, the state is taken. A case whose other thread did not get to act
-	               in this run says so (boot_void): the run then prints no state, and its session is run again
+	               in this run says so (boot_void): the run is made again
 	  BOOT_RESULT  the check of the case, on what it counted
 */
 enum BootAt { BOOT_WINDOW, BOOT_STOP, BOOT_END, BOOT_RESULT };
@@ -953,7 +954,7 @@ bool BootProfile(const emu::RunState& stop)
 // cases in them. Every session begins with the run that takes the path. false: armed. true: the test is over
 bool BootSuite(const emu::RunState& stop, const char* gate, const BootCase* cases, u32 count, bool baseline)
 {
-	static u32 index;
+	static u32 index, voids;
 	static bool begun;
 
 	if (!BootProfile(stop))
@@ -983,7 +984,18 @@ bool BootSuite(const emu::RunState& stop, const char* gate, const BootCase* case
 		if (!BootRun(stop, baseline ? nullptr : c.fn, c.mode))
 			return false;
 
+		// The other thread of the case came too late to do anything in this run: the run is made again. Where a
+		// reset is not exact that moves the runs behind it away from their baselines, and the session is one
+		// that differs
+		if (boot_ok && boot_void && voids < kVoidRuns)
+		{
+			voids++;
+			index--;
+			continue;
+		}
+
 		begun = false;
+		voids = 0;
 
 		if (!boot_ok)
 			continue;
@@ -994,7 +1006,7 @@ bool BootSuite(const emu::RunState& stop, const char* gate, const BootCase* case
 			Check(true, "booted guest, %s: the run got to %s", c.what, Where(c.mode));
 
 		if (boot_void)
-			Note("booted guest, %s: the other thread came too late in this run, it has no state", c.what);
+			Note("booted guest, %s: the other thread came too late in %u runs, the case has no state", c.what, kVoidRuns + 1);
 		else
 			Note("cmp boot.%s.%u %s", gate, index, Text(boot_state));
 
