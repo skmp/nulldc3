@@ -1290,11 +1290,15 @@ struct Server::Impl {
 			}
 
 			if (fds[0].revents) {
-				wakePending = false;
 				char drain[64];
 				while (recv(wakeFd, drain, (int)sizeof(drain), 0) > 0) {
 				}
 			}
+			// The flag falls only after the socket is empty. Cleared first, a Wake could set it again and
+			// have its datagram taken by the drain: flag set, nothing to read, and no later Wake would
+			// send. What was queued before this point is seen by the pass below; clearing on every pass
+			// also covers a datagram that never arrived.
+			wakePending = false;
 			// Connections accepted during this pass sit behind `count` and wait for the next poll.
 			for (size_t i = 0; i < count; i++) {
 				if (fds[i + 1].revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL))

@@ -7,6 +7,8 @@
 
 #include "check.h"
 
+#include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
@@ -633,6 +635,61 @@ static void TestSlowClient(Server& server, Recorder& rec, int port) {
 	REQUIRE(rec.WaitClosed(closed + 2));
 }
 
+// Sends from several threads race with the network thread picking a wake-up up. Whatever the interleaving,
+// the wake-up has to stay armed: afterwards one send still interrupts the idle thread, and so does Stop.
+static void TestWakeUps() {
+	Recorder rec;
+	Server server;
+	rec.server = &server;
+	Options options;
+	options.port = 0;
+	REQUIRE(server.Start(options, &rec));
+	TestClient ws;
+	uint32_t id = Open(ws, rec, server.Port());
+
+	// The short sleeps let the network thread get back to its wait, so nearly every send is a wake-up of
+	// its own and many of them arrive while the thread handles the one before.
+	const int kThreads = 8, kMessages = 3000;
+	std::vector<std::thread> threads;
+	for (int t = 0; t < kThreads; t++) {
+		threads.emplace_back([&server, id, t] {
+			uint32_t seed = (uint32_t)t * 7919u + 99;
+			for (int i = 0; i < kMessages; i++) {
+				server.SendText(id, "x");
+				seed = seed * 1664525u + 1013904223u;
+				std::this_thread::sleep_for(std::chrono::microseconds(1 + (seed >> 16) % 400));
+			}
+		});
+	}
+	for (int i = 0; i < kThreads * kMessages; i++)
+		REQUIRE(Text(ws) == "x");
+	for (auto& thread : threads)
+		thread.join();
+
+	// A wake-up that got lost shows as a delivery at the thread's next periodic look (250 ms) instead.
+	std::vector<long long> delays;
+	for (int i = 0; i < 9; i++) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(30));
+		auto start = std::chrono::steady_clock::now();
+		server.SendText(id, "probe");
+		CHECK_EQ(Text(ws), std::string("probe"));
+		delays.push_back(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count());
+	}
+	std::sort(delays.begin(), delays.end());
+	printf("send to delivery after %d racing sends: median %lld us, slowest %lld us\n", kThreads * kMessages, delays[delays.size() / 2], delays.back());
+	CHECK(delays[delays.size() / 2] < 100000);
+
+	// Stop while the thread waits, most of a period before its next periodic look: only the wake-up ends
+	// that wait in time.
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	auto start = std::chrono::steady_clock::now();
+	server.Stop();
+	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+	printf("Stop after the racing sends: %lld ms\n", (long long)elapsed);
+	CHECK(elapsed < 150);
+	CHECK_EQ(rec.Closed(), (size_t)1);
+}
+
 static void TestStop() {
 	Recorder rec;
 	Options options;
@@ -785,5 +842,6 @@ int main() {
 	CHECK_EQ(rec.Opened(), rec.Closed());
 
 	TestStop();
+	TestWakeUps();
 	return Finish("test_e2e");
 }
