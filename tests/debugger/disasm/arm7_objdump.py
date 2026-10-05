@@ -463,7 +463,8 @@ def main():
                 mnemonic, _, rest = want.partition(' ')
                 want = (mnemonic + 'nv ' + rest).strip()
 
-        ok = obj_valid == our_valid and want == our_text
+        same_text = obj_valid == our_valid and want == our_text
+        ok = same_text
         if ok and our_valid:
             ok = info['flags'] == expected_flags(op, want)
             checked['flag sets'] += 1
@@ -505,7 +506,8 @@ def main():
                 stats[1] += 1
             continue
 
-        why = explained(op, cls, obj_raw, our_text, our_valid)
+        # the documented classes are differences in validity or text; a wrong info field is never one of them
+        why = None if same_text else explained(op, cls, obj_raw, our_text, our_valid)
         if why:
             class_counts[why] = class_counts.get(why, 0) + 1
             stats[3] += 1
