@@ -85,33 +85,33 @@ int32_t AicaDspUnpack(uint16_t word)
 
 void AicaDspDecode(const uint16_t mpro[4], AicaDspInst* inst)
 {
-	inst->TRA = (mpro[0] >> 9) & 0x7F;
-	inst->TWT = (mpro[0] >> 8) & 1;
-	inst->TWA = (mpro[0] >> 1) & 0x7F;
+	inst->TRA = (uint8_t)((mpro[0] >> 9) & 0x7F);
+	inst->TWT = (uint8_t)((mpro[0] >> 8) & 1);
+	inst->TWA = (uint8_t)((mpro[0] >> 1) & 0x7F);
 
-	inst->XSEL = (mpro[1] >> 15) & 1;
-	inst->YSEL = (mpro[1] >> 13) & 3;
-	inst->IRA = (mpro[1] >> 7) & 0x3F;
-	inst->IWT = (mpro[1] >> 6) & 1;
-	inst->IWA = (mpro[1] >> 1) & 0x1F;
+	inst->XSEL = (uint8_t)((mpro[1] >> 15) & 1);
+	inst->YSEL = (uint8_t)((mpro[1] >> 13) & 3);
+	inst->IRA = (uint8_t)((mpro[1] >> 7) & 0x3F);
+	inst->IWT = (uint8_t)((mpro[1] >> 6) & 1);
+	inst->IWA = (uint8_t)((mpro[1] >> 1) & 0x1F);
 
-	inst->TABLE = (mpro[2] >> 15) & 1;
-	inst->MWT = (mpro[2] >> 14) & 1;
-	inst->MRD = (mpro[2] >> 13) & 1;
-	inst->EWT = (mpro[2] >> 12) & 1;
-	inst->EWA = (mpro[2] >> 8) & 0xF;
-	inst->ADRL = (mpro[2] >> 7) & 1;
-	inst->FRCL = (mpro[2] >> 6) & 1;
-	inst->SHIFT = (mpro[2] >> 4) & 3;
-	inst->YRL = (mpro[2] >> 3) & 1;
-	inst->NEGB = (mpro[2] >> 2) & 1;
-	inst->ZERO = (mpro[2] >> 1) & 1;
-	inst->BSEL = mpro[2] & 1;
+	inst->TABLE = (uint8_t)((mpro[2] >> 15) & 1);
+	inst->MWT = (uint8_t)((mpro[2] >> 14) & 1);
+	inst->MRD = (uint8_t)((mpro[2] >> 13) & 1);
+	inst->EWT = (uint8_t)((mpro[2] >> 12) & 1);
+	inst->EWA = (uint8_t)((mpro[2] >> 8) & 0xF);
+	inst->ADRL = (uint8_t)((mpro[2] >> 7) & 1);
+	inst->FRCL = (uint8_t)((mpro[2] >> 6) & 1);
+	inst->SHIFT = (uint8_t)((mpro[2] >> 4) & 3);
+	inst->YRL = (uint8_t)((mpro[2] >> 3) & 1);
+	inst->NEGB = (uint8_t)((mpro[2] >> 2) & 1);
+	inst->ZERO = (uint8_t)((mpro[2] >> 1) & 1);
+	inst->BSEL = (uint8_t)(mpro[2] & 1);
 
-	inst->NOFL = (mpro[3] >> 15) & 1;
-	inst->MASA = (mpro[3] >> 9) & 0x3F;
-	inst->ADREB = (mpro[3] >> 8) & 1;
-	inst->NXADR = (mpro[3] >> 7) & 1;
+	inst->NOFL = (uint8_t)((mpro[3] >> 15) & 1);
+	inst->MASA = (uint8_t)((mpro[3] >> 9) & 0x3F);
+	inst->ADREB = (uint8_t)((mpro[3] >> 8) & 1);
+	inst->NXADR = (uint8_t)((mpro[3] >> 7) & 1);
 }
 
 void AicaDspEncode(const AicaDspInst* inst, uint16_t mpro[4])

@@ -1,7 +1,8 @@
 ## AICA DSP core tests ##
 #
 #	The core is libswirl/hw/aica/dsp_core: one translation unit that needs nothing of the emulator. It is compiled
-#	here as the emulator's compilers have to take it, without the permissive mode of the emulator build.
+#	here as the emulator's compilers have to take it, without the permissive mode of the emulator build, and with
+#	no conversion that narrows or changes a sign left to the compiler.
 #
 #	aica_dsp_api          aica.dsp.api: what the calls of the core promise each other. No data needed
 #	aica_dsp_diff <set>   aica.dsp.diff.<set>: the core against the DSP of the caique sample model on generated
@@ -32,7 +33,7 @@ target_include_directories(nulldc_aica_dsp_core PUBLIC "${nulldc_core_path}")
 target_compile_features(nulldc_aica_dsp_core PUBLIC cxx_std_20)
 
 if(NOT MSVC)
-  target_compile_options(nulldc_aica_dsp_core PRIVATE -Wall -Wextra -Werror)
+  target_compile_options(nulldc_aica_dsp_core PRIVATE -Wall -Wextra -Wconversion -Wsign-conversion -Werror)
 endif()
 
 add_library(nulldc_aica_dsp_test STATIC dsp_suite.cpp dsp_suite.h)
