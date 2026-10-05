@@ -27,7 +27,7 @@ endif()
 #	NULLDC_TESTS_REQUIRE_DATA makes it a failed test instead.
 #
 
-option(NULLDC_TESTS_REQUIRE_DATA "Missing test data (submodules, wren7-rtl checkout and its build outputs) fails the tests instead of skipping them" OFF)
+option(NULLDC_TESTS_REQUIRE_DATA "Missing test data (submodules, wren7-rtl checkout and its build outputs, the oracles of the debugger tests) fails the tests instead of skipping them" OFF)
 
 set(NULLDC_SH4_TESTS_DIR "${nulldc_tests_path}/vendor/sh4-tests"
     CACHE PATH "SingleStepTests/sh4 checkout (*.json.bin)")
@@ -41,6 +41,15 @@ else()
 endif()
 set(NULLDC_WREN7_DIR "${nulldc_wren7_default}"
     CACHE PATH "wren7-rtl checkout (ARM7 console suites), empty: those tests are skipped")
+
+set(nulldc_devtools_default "")
+foreach(candidate "${nulldc_root_path}/devtools" "${nulldc_root_path}/../dreamcast-devtools")
+  if(nulldc_devtools_default STREQUAL "" AND EXISTS "${candidate}")
+    get_filename_component(nulldc_devtools_default "${candidate}" ABSOLUTE)
+  endif()
+endforeach()
+set(NULLDC_DEVTOOLS_DIR "${nulldc_devtools_default}"
+    CACHE PATH "dreamcast-devtools checkout with its node_modules installed (oracles of the debugger tests), empty: those tests are skipped")
 
 file(GLOB nulldc_sh4_vectors "${NULLDC_SH4_TESTS_DIR}/*.json.bin")
 if(nulldc_sh4_vectors)
@@ -62,6 +71,14 @@ else()
   message(WARNING "${NULLDC_ARM7_TESTS_MISSING}\nThe arm7.* tests that need them do not run.")
 endif()
 
+if(EXISTS "${CMAKE_SOURCE_DIR}/../../caique-rtl")
+  get_filename_component(nulldc_caique_default "${CMAKE_SOURCE_DIR}/../../caique-rtl" ABSOLUTE)
+else()
+  set(nulldc_caique_default "")
+endif()
+set(NULLDC_CAIQUE_DIR "${nulldc_caique_default}"
+    CACHE PATH "caique-rtl checkout (AICA sample model and console captures), empty: the tests that need it are skipped")
+
 if(NULLDC_WREN7_DIR AND EXISTS "${NULLDC_WREN7_DIR}")
   set(NULLDC_HAVE_WREN7 ON)
 else()
@@ -70,6 +87,27 @@ else()
       "no wren7-rtl checkout (NULLDC_WREN7_DIR is \"${NULLDC_WREN7_DIR}\"), configure with -DNULLDC_WREN7_DIR=<path to wren7-rtl>")
   message(STATUS "${NULLDC_WREN7_MISSING}")
   message(STATUS "The tests that replay the wren7 console suites do not run.")
+endif()
+
+# What the AICA DSP tests compile of caique-rtl: its sample model and the DSP programs it ran on a console
+set(NULLDC_HAVE_CAIQUE OFF)
+
+if(NOT NULLDC_CAIQUE_DIR OR NOT EXISTS "${NULLDC_CAIQUE_DIR}")
+  set(NULLDC_CAIQUE_MISSING
+      "no caique-rtl checkout (NULLDC_CAIQUE_DIR is \"${NULLDC_CAIQUE_DIR}\"), configure with -DNULLDC_CAIQUE_DIR=<path to caique-rtl>")
+elseif(NOT EXISTS "${NULLDC_CAIQUE_DIR}/model/sample-model/aica_model.cpp" OR NOT EXISTS "${NULLDC_CAIQUE_DIR}/model/cases/aica_io.h")
+  set(NULLDC_CAIQUE_MISSING
+      "${NULLDC_CAIQUE_DIR} has no model/sample-model/aica_model.cpp or no model/cases/aica_io.h: NULLDC_CAIQUE_DIR is not a caique-rtl checkout")
+else()
+  set(NULLDC_HAVE_CAIQUE ON)
+endif()
+
+if(NULLDC_HAVE_CAIQUE)
+  # the DSP programs of caique-rtl are C
+  enable_language(C)
+else()
+  message(STATUS "${NULLDC_CAIQUE_MISSING}")
+  message(STATUS "The tests that compare the AICA DSP core with the caique model and with its console captures do not run.")
 endif()
 
 enable_testing()
@@ -90,6 +128,28 @@ function(nulldc_add_missing_data_test name reason)
   endif()
 endfunction()
 
+
+## The debugger's suites ##
+#
+#	The modules of the debugger that link without the emulator have their suites in tests/debugger. Each is a
+#	CMake project of its own that also builds alone (cmake -S tests/debugger/<suite>), with its own flags and
+#	warnings: those sources have to build without -fpermissive. They are added here, in front of
+#	common/libswirl.cmake, which sets the emulator's definitions and flags for every directory behind it. A
+#	suite puts NULLDC_TEST_PREFIX in front of its test names, so that they are debugger.<suite>.<name> here,
+#	and takes NULLDC_DEVTOOLS_DIR and NULLDC_TESTS_REQUIRE_DATA from this project.
+#	A suite of tests/debugger that compiles libswirl translation units as the emulator does is added further
+#	down, with the suites that do the same.
+#
+
+foreach(suite net disasm regs)
+  if(EXISTS "${nulldc_tests_path}/debugger/${suite}/CMakeLists.txt")
+    set(NULLDC_TEST_PREFIX "debugger.${suite}.")
+    add_subdirectory(debugger/${suite})
+  endif()
+endforeach()
+unset(NULLDC_TEST_PREFIX)
+
+
 include(common/libswirl.cmake)
 
 add_subdirectory(common)
@@ -97,5 +157,12 @@ add_subdirectory(sh4_singlestep)
 add_subdirectory(sh4_dynarec)
 add_subdirectory(sh4_directed)
 add_subdirectory(sh4_core)
+if(EXISTS "${nulldc_tests_path}/debugger/sh4bp/CMakeLists.txt")
+  add_subdirectory(debugger/sh4bp)
+endif()
 add_subdirectory(arm7)
 add_subdirectory(sh4_fpu)
+add_subdirectory(cfg)
+add_subdirectory(run_control)
+add_subdirectory(system)
+add_subdirectory(aica_dsp)

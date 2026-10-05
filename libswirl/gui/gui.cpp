@@ -44,6 +44,7 @@
 
 #include "libswirl.h"
 #include "gui/gui_renderer.h"
+#include "utils/run_control.h"
 
 bool game_started;
 
@@ -1075,7 +1076,11 @@ struct ReicastUI_impl : GUI {
     }
 };
 
+GUI* CreateHeadlessGUI();
+
 GUI* GUI::Create() {
+    if (runctl_headless())
+        return CreateHeadlessGUI();
 
     return new ReicastUI_impl();
 }
@@ -1092,7 +1097,9 @@ int msgboxf(const wchar* text, unsigned int type, ...) {
     printf("%s\n", temp);
     fflush(stdout);
 
-    g_GUI->DisplayNotification(temp, 2000);
+    // die() and verify() end up here, also before there is a GUI
+    if (g_GUI)
+        g_GUI->DisplayNotification(temp, 2000);
 
     return 1;
 }

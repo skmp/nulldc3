@@ -13,6 +13,7 @@
 #include "hw/naomi/naomi.h"
 #include "hw/naomi/naomi_cart.h"
 #include "hw/pvr/spg.h"
+#include "hw/aica/aica_mmio.h"
 #include "input/gamepad.h"
 #include <time.h>
 
@@ -632,8 +633,19 @@ struct maple_sega_vmu: maple_base
 							w32(MFID_3_Clock);
 
 							time_t now;
-							time(&now);
-							tm* timenow=localtime(&now);
+							tm* timenow;
+
+							if (settings.dreamcast.RTC != 0)
+							{
+								// a pinned clock (config:Dreamcast.RTC): the VMU has the time of the console's
+								now = (time_t)libAICA_GetRTC() - (20 * 365 + 5) * 24 * 60 * 60;
+								timenow = gmtime(&now);
+							}
+							else
+							{
+								time(&now);
+								timenow = localtime(&now);
+							}
 
 							u8* timebuf=dma_buffer_out;
 

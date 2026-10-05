@@ -37,6 +37,9 @@
 #include "libswirl.h"
 #include <time.h>
 
+#include "aica_hash.h"
+#include "debugger/debugger.h"
+
 struct AICARTC_impl : MMIODevice
 {
 	int rtc_schid = -1;
@@ -45,6 +48,11 @@ struct AICARTC_impl : MMIODevice
 
 	u32 GetRTC_now()
 	{
+		// A pinned clock (settings.dreamcast.RTC: config:Debug.FixedRtc, else config:Dreamcast.RTC): every run starts at
+		// that second, whatever the time of the host is
+		if (settings.dreamcast.RTC != 0)
+			return (u32)((20 * 365 + 5) * 24 * 60 * 60 + settings.dreamcast.RTC);
+
 		// The Dreamcast Epoch time is 1/1/50 00:00 but without support for time zone or DST.
 		// We compute the TZ/DST current time offset and add it to the result
 		// as if we were in the UTC time zone (as well as the DC Epoch)
@@ -138,6 +146,23 @@ u32 libAICA_GetRTC_now() {
 	return sh4_cpu->GetA0H<AICARTC_impl>(A0H_RTC)->GetRTC_now();
 }
 
+u32 libAICA_GetRTC() {
+	return sh4_cpu->GetA0H<AICARTC_impl>(A0H_RTC)->RealTimeClock;
+}
+
+bool libAICA_DebugGetRTC(u32* seconds, bool* writeEnable) {
+	AICARTC_impl* rtc = sh4_cpu != nullptr ? sh4_cpu->GetA0H<AICARTC_impl>(A0H_RTC) : nullptr;
+
+	if (rtc == nullptr)
+		return false;
+
+	*seconds = rtc->RealTimeClock;
+	*writeEnable = rtc->rtc_EN != 0;
+	return true;
+}
+
+AicaHash aica_hash;
+
 struct AicaDevice final : AICA {
 	u32 VREG;//video reg =P
 	u32 ARMRST;//arm reset reg
@@ -212,6 +237,7 @@ struct AicaDevice final : AICA {
 			if ((SB_ISTEXT & SH4_IRQ_BIT) == 0)
 			{
 				//if no interrupt is already pending then raise one :)
+				DBG_EVENT(dbg::EV_AICA_INTERRUPT, "to the SH4: MCIPD & MCIEB = %03X", p_ints);
 				asic->RaiseInterrupt(holly_SPU_IRQ);
 			}
 		}
@@ -707,6 +733,10 @@ struct AicaDevice final : AICA {
 
 		dma_sched_id = sh4_sched_register(this, 0, STATIC_FORWARD(AicaDevice, dma_end_sched));
 
+		//the sound regression harness (aica_hash.h)
+		if (aica_hash.configure != nullptr)
+			aica_hash.configure();
+
 		return true;
 	}
 
@@ -729,6 +759,10 @@ struct AicaDevice final : AICA {
 	void Update(u32 Samples)
 	{
 		sgc->AICA_Sample32();
+
+		//the sound regression harness (aica_hash.h)
+		if (unlikely(aica_hash.ticks_wanted != 0))
+			aica_hash.tick(aica_reg);
 	}
 
 	//Aica reads (both sh4&arm)
@@ -738,6 +772,46 @@ struct AicaDevice final : AICA {
 
 	void WriteReg(u32 addr, u32 data, u32 size) {
 		AICA_WriteReg(addr, data, size);
+	}
+
+	//The register file with what a read by the SH4 puts in front of it, byte by byte, and nothing written
+	bool DebugReadRegs(u32 offset, u32 len, u8* out)
+	{
+		if (offset > 0x8000 || len > 0x8000 - offset)
+			return false;
+
+		memcpy(out, aica_reg + offset, len);
+
+		auto patch = [&](u32 addr, u32 value) {
+			if (addr >= offset && addr - offset < len)
+				out[addr - offset] = (u8)value;
+		};
+
+		//the common registers a read works out first
+		for (u32 reg : { 0x2808u, 0x2810u, 0x2814u })
+		{
+			u32 value;
+
+			if (reg + 1 >= offset && reg < offset + len && sgc->DebugReadCommonReg(reg, &value))
+			{
+				patch(reg, value);
+				patch(reg + 1, value >> 8);
+			}
+		}
+
+		//SCILV0-2 read as 0
+		for (u32 addr = SCILV0_addr; addr < SCILV2_addr + 4; addr++)
+			patch(addr, 0);
+
+		patch(0x2C00, ARMRST);
+		patch(0x2C01, VREG);
+
+		return true;
+	}
+
+	bool DebugGetChannel(u32 channel, AicaChannelDebug* out)
+	{
+		return sgc->DebugGetChannel(channel, out);
 	}
 
 

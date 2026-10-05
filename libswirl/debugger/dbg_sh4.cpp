@@ -312,6 +312,8 @@ extern "C" u32 DYNACALL dbg_sh4_Check(u32 pc, u32 refund, u32 block_end)
 	return Stop(cause, id);
 }
 
+void dbg_sh4_SlotRuns() { }
+
 /*
 	sp is R15 behind the call or return and its slot.
 

@@ -5,8 +5,14 @@
 #include "build.h"
 #include "types.h"
 
+#include <atomic>
+
 u8* emu_vram;
 extern u32 FrameCount;
+
+// Set by the input code of every build, consumed by the renderers of the TA_LLE build
+std::atomic<bool> refsw2_do_dump(false);
+
 #if FEAT_TA == TA_LLE
 #include "imgui/imgui.h"
 #include "hw/pvr/Renderer_if.h"
@@ -16,14 +22,13 @@ extern u32 FrameCount;
 #include "hw/pvr/pvr_regs.h"
 #include "hw/pvr/pvr_mem.h"
 #include "rend/TexCache.h"
+#include "utils/run_control.h"
 
 #include <set>
 
 extern FILE* rendlog;
 extern const char* dump_textures;
 extern std::set<u64> texture_dumps;
-
-std::atomic<bool> refsw2_do_dump(false);
 
 void RenderCORE();
 
@@ -288,6 +293,10 @@ struct refsw2rend : Renderer
             }
             break;
         }
+
+        // without a GL context the frame is done here
+        if (runctl_present(pb.data(), width, SPG_CONTROL.interlace ? height * 2 : height))
+            return;
         
 	// TODO softrend without X11 (SDL f.e.)
     //die("Softrend doesn't know how to update the screen");
@@ -337,5 +346,5 @@ struct refsw2rend : Renderer
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 };
-static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refsw2", "Different refsw", 2, [](u8* vram) { return (Renderer*) new refsw2rend(vram); } });
+static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refsw2", "Different refsw", 2, [](u8* vram) { return (Renderer*) new refsw2rend(vram); }, true });
 #endif

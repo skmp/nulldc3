@@ -10,6 +10,7 @@
 */
 
 #include "gdromv3.h"
+#include "debugger/debugger.h"
 
 #include "types.h"
 #include "libswirl.h"
@@ -340,6 +341,8 @@ struct GDRomV3_impl final : MMIODevice {
     }
     void gd_process_ata_cmd()
     {
+        DBG_EVENT(dbg::EV_GDROM_COMMAND, "ATA command %02X", ata_cmd.command);
+
         //Any ATA command clears these bits, unless aborted/error :p
         Error.ABRT = 0;
 
@@ -443,6 +446,9 @@ struct GDRomV3_impl final : MMIODevice {
 
     void gd_process_spi_cmd()
     {
+        DBG_EVENT(dbg::EV_GDROM_COMMAND, "packet command %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+            packet_cmd.data_8[0], packet_cmd.data_8[1], packet_cmd.data_8[2], packet_cmd.data_8[3], packet_cmd.data_8[4], packet_cmd.data_8[5],
+            packet_cmd.data_8[6], packet_cmd.data_8[7], packet_cmd.data_8[8], packet_cmd.data_8[9], packet_cmd.data_8[10], packet_cmd.data_8[11]);
 
         printf_spi("Sense: %02x %02x %02x \n", sns_asc, sns_ascq, sns_key);
 
@@ -1256,6 +1262,43 @@ MMIODevice* Create_GDRomDevice(SuperH4Mmr* sh4mmr, SystemBus* sb, ASIC* asic) {
 }
 //Init/Term/Res
 
+
+bool gdrom_DebugGetState(GDRomDebugState* out)
+{
+    GDRomV3_impl* gd = sh4_cpu != nullptr ? sh4_cpu->GetA0H<GDRomV3_impl>(A0H_GDROM) : nullptr;
+
+    if (gd == nullptr)
+        return false;
+
+    out->state = gd->gd_state;
+    out->discType = gd->gd_disk_type;
+    // a read of the status has DSC set, a read of the error register the sense key in its high half
+    out->status = gd->GDStatus.full | (1 << 4);
+    out->error = (u8)((gd->Error.full & 0x0F) | ((gd->sns_key & 0x0F) << 4));
+    out->interruptReason = gd->IntReason.full;
+    out->features = gd->Features.full;
+    out->sectorCount = gd->SecCount.full;
+    out->sectorNumber = gd->SecNumber.full;
+    out->driveSelect = (u8)gd->DriveSel;
+    out->ataCommand = gd->ata_cmd.command;
+    out->byteCount = gd->ByteCount.full;
+    memcpy(out->packet, gd->packet_cmd.data_8, sizeof(out->packet));
+    out->senseKey = (u8)gd->sns_key;
+    out->senseAsc = (u8)gd->sns_asc;
+    out->senseAscq = (u8)gd->sns_ascq;
+    out->cddaPlaying = gd->cdda.playing;
+    out->cddaRepeats = gd->cdda.repeats;
+    out->cddaCurrent = gd->cdda.CurrAddr.FAD;
+    out->cddaStart = gd->cdda.StartAddr.FAD;
+    out->cddaEnd = gd->cdda.EndAddr.FAD;
+    out->readStartSector = gd->read_params.start_sector;
+    out->readRemainingSectors = gd->read_params.remaining_sectors;
+    out->readSectorType = gd->read_params.sector_type;
+    out->pioIndex = gd->pio_buff.index;
+    out->pioSize = gd->pio_buff.size;
+
+    return true;
+}
 
 //disk changes etc
 void libCore_gdrom_disc_change()

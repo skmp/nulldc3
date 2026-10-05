@@ -14,6 +14,7 @@
 #include "oslib/oslib.h"
 #include "input/gamepad.h"
 #include "gui/gui_partials.h"
+#include "utils/run_control.h"
 
 std::unique_ptr<GUIRenderer> g_GUIRenderer;
 
@@ -90,6 +91,9 @@ static void findGLVersion()
     // workarounds
 
     auto renderer = (const char*)glGetString(GL_RENDERER);
+
+    // which device draws: a speed that was measured on a software rasteriser has to say so
+    printf("OpenGL renderer: %s\n", renderer ? renderer : "unknown");
 
     if (renderer && strstr(renderer, "V3D 4.2"))
     {
@@ -602,6 +606,11 @@ struct GUIRenderer_impl : GUIRenderer {
     }
 };
 
+GUIRenderer* CreateHeadlessGUIRenderer();
+
 GUIRenderer* GUIRenderer::Create(GUI* gui) {
+    if (runctl_headless())
+        return CreateHeadlessGUIRenderer();
+
     return new GUIRenderer_impl();
 };

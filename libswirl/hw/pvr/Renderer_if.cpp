@@ -18,6 +18,7 @@
 #include "deps/crypto/md5.h"
 
 #include "scripting/lua_bindings.h"
+#include "utils/run_control.h"
 
 #include <memory>
 #include <atomic>
@@ -533,6 +534,8 @@ void rend_vblank()
 	}
 	render_called = false;
     pvr_update_framebuffer_watches();
+
+    runctl_vblank();
 }
 
 

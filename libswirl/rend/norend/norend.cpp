@@ -34,10 +34,7 @@ struct norend : Renderer
 	void Present() { }
 };
 
-#include "hw/pvr/Renderer_if.h"
-
-#if FEAT_TA == TA_HLE
+// Registered in every build: with TA_LLE the TA still runs, CORE is what is left out
 Renderer* rend_norend(u8* vram) { return new ::norend(); }
 
-static auto norend = RegisterRendererBackend(rendererbackend_t{ "none", "No PVR Rendering", -2, rend_norend });
-#endif
+static auto norend = RegisterRendererBackend(rendererbackend_t{ "none", "No PVR Rendering", -2, rend_norend, true });

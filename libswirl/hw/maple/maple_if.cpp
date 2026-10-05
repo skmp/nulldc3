@@ -19,6 +19,7 @@
 #include "types.h"
 #include "hw/holly/holly_intc.h"
 #include "hw/maple/maple_helper.h"
+#include "debugger/debugger.h"
 
 enum MaplePattern
 {
@@ -101,6 +102,8 @@ struct MapleDevice final : MMIODevice {
 #if debug_maple
 			printf("Maple: DoMapleDma SB_MDSTAR=%x\n", SB_MDSTAR);
 #endif
+		DBG_EVENT(dbg::EV_MAPLE_DMA, "maple DMA: command table at %08X", SB_MDSTAR);
+
 		u32 addr = SB_MDSTAR;
 		u32 xfer_count = 0;
 		bool last = false;
@@ -292,7 +295,7 @@ struct MapleDevice final : MMIODevice {
 #endif
 	}
 
-	u64 reconnect_time;
+	u64 reconnect_time = 0;	// 0: no reconnect is pending
 	void handle_reconnect_periodical()
 	{
 		if (reconnect_time != 0 && reconnect_time <= sh4_sched_now64())

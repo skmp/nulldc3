@@ -1,8 +1,11 @@
 # Tests
 
-A standalone CMake project. It does not build the emulator: every suite compiles the libswirl translation
-units it tests (with the emulator's own definitions and flags, from `reicast/cmake/config.cmake`) and links them
-against stubs for the rest.
+A standalone CMake project. Every suite but one compiles the libswirl translation units it tests (with the
+emulator's own definitions and flags, from `reicast/cmake/config.cmake`) and links them against stubs for the
+rest. The system tests run the emulator itself, which the project builds for them.
+
+The suites of `debugger/` are CMake projects of their own, with their own flags, which this project adds: "The
+debugger's suites" below.
 
 ## Getting the vectors
 
@@ -15,16 +18,28 @@ A suite whose data is missing is still built; its test is reported as skipped an
 submodule to fetch. Other checkouts can be used with `-DNULLDC_SH4_TESTS_DIR=`, `-DNULLDC_ARM7_TESTS_DIR=` and
 `-DNULLDC_WREN7_DIR=` (wren7-rtl, default `../wren7-rtl` next to the repository if it is there).
 
+The system tests that boot a KallistiOS program take the programs by path: `-DNULLDC_ELF_DIR=<directory with
+2ndmix.elf and hello.elf>`, the two KallistiOS examples of those names. The option has no default. Without it
+configure says that the programs are missing, and eleven tests are skipped: `system.boot.2ndmix.jit`,
+`system.boot.2ndmix.interp`, `system.boot.hello.jit`, `system.boot.hello.interp`, `system.determinism` and
+`system.frame.refsw2`, and the first five again as `system.hle.*`. The other system tests run on three programs
+of a few instructions that are part of the suite, so a run without the option boots no KallistiOS, renders no
+frame and compares no state hash between runs.
+
 A skipped test has not run and is not a pass: `ctest` exits with 0 when everything that did run passes, also
 when that is only the tests that need no data. With `-DNULLDC_TESTS_REQUIRE_DATA=ON` missing data fails its
-tests instead (the submodules, the wren7-rtl checkout and its build outputs alike). CI should configure that
-way.
+tests instead (the submodules, the wren7-rtl checkout and its build outputs, the programs of `NULLDC_ELF_DIR`
+alike). CI should configure that way.
 
 ## Building and running
 
-    cmake -S tests -B <build dir> -G Ninja
+    cmake -S tests -B <build dir> -G Ninja -DNULLDC_ELF_DIR=<directory with 2ndmix.elf and hello.elf>
     ninja -C <build dir>
     ctest --test-dir <build dir> --output-on-failure
+
+The build includes two builds of the emulator for the system tests, about a minute each the first time
+(`-DNULLDC_SYSTEM_TESTS=OFF` leaves them and the system tests out, `-DNULLDC_EMULATOR=` and
+`-DNULLDC_EMULATOR_TA_HLE=` test given binaries instead: `system/README.md`).
 
 | test | what it runs | data |
 |---|---|---|
@@ -38,13 +53,30 @@ way.
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | hand-written cases: ADC, SBC and RSC at the edges with the carry clear and set, the logical operations with a ROR by a register, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2, the register behind them and M read back, what a reset of the ARM writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
+| `cfg.overrides` | the config store and the command line parser on a config file of their own: a value `-config` gave is in effect for the run and is not what a save of the settings writes to `emu.cfg`, a changed one is written, and a read-only store (the automated runs) writes nothing | none |
+| `runctl.guest_exit.*` | `utils/run_control.cpp` on the config store, with stand-ins for the machine and the user interface, one process per run (`window`: no key, `key`: `Exit.OnGuestExit`, `vblanks`: `Exit.AfterVblanks`, `seconds`: `Exit.AfterSeconds`, `headless`): a guest program that returns to the BIOS ends every run but the first, with `reason=guest-exit` on the exit line and the user interface stopped, and leaves the first to its window | none |
+| `system.*` | the emulator binary of the default build, headless: `-help`, the keys that end a run and the line it prints, the pinned RTC, `emu.cfg` left alone, what a fatal fault and a signal that is sent do and that the faults of the guest are still handled, programs that boot under reios on the JIT and on the interpreter with their serial output, the software renderer into a PNG, a run that is repeated and has to end in the same state hash every time, and the speed script of `tests/perf` on one of them (`system/README.md` has the list, and what a deterministic run takes) | none, or the programs of `NULLDC_ELF_DIR` |
+| `system.hle.*` | the same on the emulator built with `-DHAS_TA_LLE=OFF` | none, or the programs of `NULLDC_ELF_DIR` |
+| `aica.dsp.api` | the AICA DSP core (`libswirl/hw/aica/dsp_core`) on itself: a sample in one go against its 128 steps from every step, state out and in, two cores in turns, its registers, fields that hold more than their registers' bits, a wave RAM of 4, 8 and 16 MB; and its known-answer programs: the shifter, the address of a memory step on 2 to 16 MB, the ring, the read latch rules, the MIXS banks | none |
+| `aica.dsp.diff.random` `aica.dsp.diff.sparse` `aica.dsp.diff.directed` | the AICA DSP core against the DSP of the caique sample model on generated programs, compared behind every step | a caique-rtl checkout |
+| `aica.dsp.case.dsp_basic` `.dsp_mem` `.dsp_mem2` `.dsp_mem3` `.dsp_wslot` `.dsp_unpack` `.dsp_pack` `.dsp_temp` `.dsp_coll` `.sh4_latch` `.mdec_hold` | the DSP programs caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
+| `aica.dsp.capi` | the C interface of the AICA DSP core, compiled for the host, against the core called itself, on random programs and on the known-answer programs | none |
+| `aica.dsp.wasm` | the WebAssembly build of the AICA DSP core in node, through its loader and its C interface, against the core compiled for the host, on the same programs | emcc and node, skipped without them |
+| `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | the script that builds it, run by sh on a PATH without emcc: it builds with the emsdk in `EMSDK`, and says that it has no emcc when there is no emsdk | an emcc that is in an emsdk, and node; skipped otherwise |
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
-unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it.
+unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
+run on Linux hosts with python3.
+The `aica.dsp.diff.*` and `aica.dsp.case.*` tests need `-DNULLDC_CAIQUE_DIR=<path to caique-rtl>` unless caique-rtl
+sits next to the repository; they compile its sample model and its DSP programs (C) from there and read its console
+captures.
 
-Every test but `common.selftest` and `sh4.core` is gated on a baseline file, and ctest runs them with `--strict`:
-a count that is worse than its baseline fails, and so does one that is better, until the baseline is updated and
-committed. `common.selftest` and `sh4.core` are lists of checks that all have to hold.
+Every test but `common.selftest`, `sh4.core`, `cfg.overrides`, `runctl.guest_exit.*`, the system tests,
+`aica.dsp.capi` and the `aica.dsp.wasm` tests is gated on a baseline file, and ctest runs them with `--strict`: a
+count that is worse than its baseline fails, and so does one that is better, until the baseline is updated and
+committed. `common.selftest`, `sh4.core`, `cfg.overrides`, each `runctl.guest_exit.*` test, each system test,
+`aica.dsp.capi` and `aica.dsp.wasm` are lists of checks that all have to hold; `aica.dsp.wasm.emsdk` and
+`aica.dsp.wasm.noemcc` are what the build script returns and prints.
 
 More about the suites:
 
@@ -52,7 +84,11 @@ More about the suites:
 * `sh4_dynarec/README.md`: how the dynarec is run, the differential, the native count;
   `sh4_dynarec/KNOWN_DIFFERENCES.md`: what is behind the two dynarec baselines,
 * `arm7/README.md`: the ARM7 tests and the wren7 console suites; `arm7/KNOWN_FAILURES.md`: why checks of the
-  ARM7 baseline are below their number of cases, and what else is known to be wrong in the ARM7.
+  ARM7 baseline are below their number of cases, and what else is known to be wrong in the ARM7,
+* `system/README.md`: the system tests, which emulator they run and how, their guest programs,
+* `aica_dsp/README.md`: the AICA DSP core's tests, which of the console's captures are compared with the core
+  directly and which through the caique model; `aica_dsp/KNOWN_FAILURES.md`: the three lines of a console report
+  that depend on the console's timing.
 
 ## Layout
 
@@ -68,8 +104,18 @@ More about the suites:
                        FP mode, also across threads, EXPEVT and TRA)
     arm7/              the ARM7 interpreter: vendor programs, directed cases, wren7 console suites (README.md,
                        KNOWN_FAILURES.md)
+    cfg/               the config store: -config overrides and what a save writes
+    run_control/       the keys that end a run: which runs the end of the guest program ends
+    system/            the emulator binary, headless, on guest programs (README.md)
+    perf/              not a test: perf.py measures the speed of the emulator on a guest program (README.md),
+                       BASELINE.md has the figures of one machine
+    aica_dsp/          the AICA DSP core: its interface, the caique model step for step, caique's console
+                       captures, the C interface and the WebAssembly build (README.md, KNOWN_FAILURES.md)
     vendor/            the submodules
     files/             fixtures
+    debugger/          the debugger's modules that link without the emulator, one CMake project per directory:
+                       net/ (transport, embedded UI), disasm/ (disassemblers, README.md), regs/ (device tree
+                       tables, and device state that has a test without the machine, README.md)
 
 ## The single-step vectors
 
@@ -251,9 +297,12 @@ A suite is a directory with a `CMakeLists.txt` that is added in `tests/CMakeList
   an object library of libswirl translation units, built like the emulator builds them.
 * `nulldc_test_common`: link it after the libswirl library. Stubs are taken from it only for the symbols the
   libswirl objects leave undefined; `msgboxf` and `os_DebugBreak` always come from `test_guard`.
-* `NULLDC_HAVE_SH4_TESTS` / `NULLDC_HAVE_ARM7_TESTS` / `NULLDC_HAVE_WREN7`, the `*_DIR` and `*_MISSING`
+* `NULLDC_HAVE_SH4_TESTS` / `NULLDC_HAVE_ARM7_TESTS` / `NULLDC_HAVE_WREN7` / `NULLDC_HAVE_CAIQUE`, the `*_DIR` and `*_MISSING`
   variables and `nulldc_add_missing_data_test(<name> <reason>)` for data that is not there (skipped, or failed
   with `NULLDC_TESTS_REQUIRE_DATA`); `nulldc_add_skipped_test(<name> <reason>)` for a test the host cannot run.
+
+A suite of the debugger is a directory of `tests/debugger` instead, named in the list of them in
+`tests/CMakeLists.txt`: a CMake project that also builds alone, see "The debugger's suites".
 
 A second way to run the SH4 vectors only has to fill an `SsSuite` (`common/ss_suite.h`): how the 4 instructions
 of a loaded vector are executed, whether instruction fetches are part of the expected bus order, and what that
@@ -280,3 +329,65 @@ hosts only.
 
 * `sh4_fpu/README.md`: the data, how a case is run, the groups and columns, the baselines, looking at a failure,
 * `sh4_fpu/KNOWN_FAILURES.md`: why the counts are below their totals, cause by cause.
+
+## The debugger's suites
+
+The modules of `libswirl/debugger` that link without the emulator have their tests under `tests/debugger`, one
+CMake project per directory. Each builds alone, with its own options (the head of its `CMakeLists.txt`):
+
+    cmake -S tests/debugger/net -B <build dir> -G Ninja && ninja -C <build dir> && ctest --test-dir <build dir>
+
+and this project adds them all, so that one `ctest` runs everything. They are not compiled with the emulator's
+flags: the debugger's sources have to build as standard C++20, without `-fpermissive`, and with warnings on. That
+is why `tests/CMakeLists.txt` adds them in front of `common/libswirl.cmake`, and why they come first in the
+output of `ctest`. Here their tests are named `debugger.<suite>.<name>`; alone, `<name>`. One directory of them,
+`debugger/regs/aica`, compiles two translation units of the emulator and takes its definitions and flags, for
+itself only.
+
+| test | what it runs | needs |
+|---|---|---|
+| `debugger.net.test_ws` `debugger.net.test_http` | the WebSocket handshake and framing of `dbg_net.cpp` against the vectors of RFC 6455; its HTTP side: request parsing, the Host and Origin rules, static files, path sanitising | nothing |
+| `debugger.net.test_fuzz` | random and mutated input to both parsers: no crash, no hang, no unbounded buffering, no byte from outside the web root | nothing |
+| `debugger.net.test_e2e` | `dbg::net::Server` over loopback, through its public interface, against the test's own client | nothing |
+| `debugger.net.test_webui` | the embedded UI: the bundle the build embedded is served file for file | nothing (the bundle is `debugger/net/bundle`) |
+| `debugger.net.interop_ws` | the server against the `ws` package, the WebSocket implementation of the devtools tooling | node, a dreamcast-devtools checkout with `node_modules` |
+| `debugger.net.embed_off` `embed_auto` `embed_mismatch` `embed_incomplete` `embed_rebuilt` `embed_corrupt` `embed_names` | the UI embed step of the emulator build: which bundle is picked, what stops the configure step or the build, what a rebuilt bundle does, which files are embedded | nothing |
+| `debugger.disasm.golden` | `dbg_disasm.cpp`: checked-in encodings of SH-4, ARM7 and the AICA DSP, and the invariants that need no tool | nothing |
+| `debugger.disasm.sh4_objdump` `debugger.disasm.sh4_objdump_selftest` | every SH-4 opcode against GNU objdump, and that comparison on dumps with a wrong field | python3, a SuperH objdump |
+| `debugger.disasm.sh4_opcode_table` | every SH-4 opcode against `hw/sh4/sh4_opcode_list.cpp` | python3 |
+| `debugger.disasm.arm7_objdump` `debugger.disasm.arm7_objdump_selftest` | 249,364 ARM encodings against GNU objdump, and that comparison on dumps with a changed field | python3, an ARM objdump |
+| `debugger.disasm.dsp_playground` | 100,193 DSP steps against the disassembler and assembler of the devtools playground | a dreamcast-devtools checkout with `node_modules` |
+| `debugger.regs.tables` `debugger.regs.sources` | `dbg_regs_tables.cpp`, the device tree behind `debugger.describe`: the tables by themselves, and their on-chip and system bus rows against `hw/sh4/sh4_mmr.h` and `hw/holly/sb_regs.h` | nothing |
+| `debugger.regs.panels` | the panel ids of the tables against the list of the devtools UI | a dreamcast-devtools checkout |
+| `debugger.regs.aica.channels` `debugger.regs.aica.rtc` | the sound generator (`hw/aica/sgc_if.cpp`) and the settings of the sound regression harness (`hw/aica/aica_hash.cpp`), compiled as the emulator compiles them: the state of a channel that no register write sets, for the guest, for the debugger and in the samples; the two keys that pin the real-time clock | nothing |
+
+What the tests of the last column look for, and the option that says where it is:
+
+* a dreamcast-devtools checkout with its packages installed (`node_modules`): `-DNULLDC_DEVTOOLS_DIR=<path>`,
+  default `devtools` in the repository or `../dreamcast-devtools` next to it, whichever is there. A suite built
+  alone has its own option for it (`-DDEVTOOLS_DIR=`, `-DDBG_NET_NODE_MODULES=`);
+* the objdumps: `-DSH_OBJDUMP=<sh-elf-objdump>` and `-DARM_OBJDUMP=<arm-eabi-objdump>`; without the option they
+  are looked for on the `PATH` and in the KallistiOS toolchain directories under `/opt/toolchains`;
+* `node` and `python3` on the `PATH`.
+
+A test that does not find its tool is skipped, and fails with `-DNULLDC_TESTS_REQUIRE_DATA=ON`, like a test
+without its data.
+
+`ctest -E '^debugger\.'` leaves them out, `ctest -R '^debugger\.net\.'` runs one suite.
+
+* `debugger/disasm/README.md`: what is compared with objdump, the opcode table and the playground, and every
+  difference that is accepted,
+* `debugger/regs/README.md`: what the table tests check, and the tests of `regs/aica`, the one directory of these
+  suites that takes the emulator's definitions and flags (`reicast/cmake/config.cmake`, for itself only),
+* the head of `debugger/net/CMakeLists.txt`: the sanitizer builds and the bundle of the net suite.
+
+A new suite is a directory `tests/debugger/<suite>` with a `CMakeLists.txt` that starts with its own
+`cmake_minimum_required` and `project`, uses `CMAKE_CURRENT_SOURCE_DIR` / `CMAKE_CURRENT_BINARY_DIR` and names
+its tests `${NULLDC_TEST_PREFIX}<name>` (the prefix is empty when the suite is built alone). `tests/CMakeLists.txt`
+adds the directories it lists that are there. From this project a suite gets `NULLDC_DEVTOOLS_DIR` and
+`NULLDC_TESTS_REQUIRE_DATA`; it has to work without them.
+
+A suite of `tests/debugger` that needs more of the emulator than such a module, and compiles libswirl
+translation units as the other suites of this project do, is one of those suites ("Adding a suite"):
+`tests/CMakeLists.txt` adds it behind `common/libswirl.cmake`, and it names its tests `debugger.<suite>.<name>`
+itself.

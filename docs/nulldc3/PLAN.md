@@ -35,6 +35,14 @@ on one port, default `127.0.0.1:55543`, UI bundle embedded), all guest-state acc
 (v2 + target metadata, register merge, writes, tables, correlated binary frames), and a contract test runner that validates
 either server (mock or emulator) with the UI's own zod schemas.
 
+**Package status (2026-10-05).** Merged into devcast `skmp/nulldc3`: E1 transport + UI embed, E2 disassemblers, E0 shared
+headers (frozen after three review rounds; 15 comment-level notes being applied). Running against the frozen headers: E3
+(registers, memory, device accessors, events, sound regression harness), E4b (port of the SH4 breakpoint prototype), I0 (one
+ctest for everything), E4a (emulator thread and run control; its no-regression gate is the deterministic state hash).
+Then E5 (core) gated by the contract runner. For E5: in automated runs (headless or an `Exit.*` key) the server stays off
+unless `Debugger:Enabled` is set explicitly, so parallel test runs do not fight over the port. Devtools: F0 done (+ Playwright e2e suite, error boundaries, offline bundle);
+F1 (protocol v3, mock module, contract runner) and F2 (M1 panels) running.
+
 | Milestone | Content | Gate |
 | --- | --- | --- |
 | M0 | devtools hygiene: lint/typecheck/tests/build green, real scripts, versions, docs, fresh clone works without Rust — **DONE** (13 commits, verified from a fresh clone); follow-up in progress: Playwright e2e smoke suite, error boundaries, offline Monaco | `npm run check` |
@@ -44,7 +52,16 @@ either server (mock or emulator) with the UI's own zod schemas.
 | M4 | CORE inspector fed by the emulator; TA inspector; TLB/SQ/OC-RAM tables; TA/CORE event breakpoints | contract (holly) |
 | M5 | SH4 simulator panel re-based on the measured model (shares the table generator of track 3) | fixture gate >= 300/305 |
 
-### Track 2 — test suite  (T2.1-T2.3 DONE, verified, merged into `skmp/nulldc3` at d261fcc0; T2.4 FPU console suite in progress)
+### Track 2 — test suite  (T2.0-T2.4 DONE, verified, merged; 91 ctest targets on `skmp/nulldc3` at c185f4a6)
+
+**T2.0 (merged).** Headless runs (no display needed), `Exit.AfterVblanks/AfterSeconds/OnGuestExit` with a machine-readable
+exit line and a state hash, pinned RTC (`Dreamcast.RTC`), `-config` overrides not saved, `-help` and fatal faults terminate,
+`none` renderer in the default build, the TA_HLE build links, `tests/system`, `tests/run_control`, `tests/perf`
+(`docs/nulldc3/automated-runs.md`). **Determinism: solved for automated runs** — the causes were the RTC taken from host
+time and window input; with the RTC pinned and no input, 600 JIT and 600 interpreter runs give one hash each (also under
+load and pinned to one core). JIT and interpreter hashes differ from each other because fast timing charges them differently.
+Quiet-machine baseline (2ndmix, `none`): JIT about 1,224 % of real time, interpreter about 550 %; GL on the GPU: JIT about
+1,111 % (`tests/perf/BASELINE.md`). Perf figures taken while other work loads the machine are not comparable.
 
 In progress on top of it (branches `skmp/nulldc3-fpu-tests`, `-sh4-fixes`, `-arm7-fixes`): the FPU suite against the shrike4
 console records and reference (by path), and the fast-tier fixes it and the other suites gate — FPSCR reset value and write
@@ -120,7 +137,10 @@ Reports: `devcast-sh4-timing.md`, `shrike4-timing-model.md`, `devcast-fpu.md`, `
 ### Track 5 — AICA tiers
 
 Reports: `devcast-aica-arm7.md`, `caique-for-devcast.md`.
-- **T5.0 (pulled forward, ahead of track 1 M3): one DSP core.** A standalone C++ AICA DSP that matches caique (derived from the
+- **T5.0 — DONE (core), merged: one DSP core.** `libswirl/hw/aica/dsp_core` matches the caique model after every step
+  (independent driver: 511 M steps, 0 mismatches), has a C interface and a reproducible emscripten build tested equal to
+  native, runs about 40x real time. Still to do under this item: wire it into the emulator's AICA, and swap the playground
+  (devtools F4). Original scope: A standalone C++ AICA DSP that matches caique (derived from the
   sample model's DSP: per-step execution with persistent state, the shared read latch, MRD/MWT/IWT step distances, the NOFL
   float format, ring buffer, MEMS/MIXS/TEMP/COEF/MADRS/MPRO/EFREG), with no dependency on the rest of the emulator. It is the
   single source for: (a) devcast's DSP in every tier (replaces the MAME-derived interpreter; the existing DSP JITs are ported

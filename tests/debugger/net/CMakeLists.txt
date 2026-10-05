@@ -5,6 +5,12 @@
 #   cmake --build <build dir> && ctest --test-dir <build dir>
 #
 # The bundle embedded by default is the small one in bundle/; NULLDC_DEVTOOLS_DIST works as in the emulator build.
+#
+# The tests project (tests/CMakeLists.txt) adds this directory as well. What it sets is all optional here:
+#   NULLDC_TEST_PREFIX          put in front of every test name (debugger.net.)
+#   NULLDC_DEVTOOLS_DIR         the dreamcast-devtools checkout whose node_modules has the ws package, in
+#                               place of the devtools tree next to or inside this one
+#   NULLDC_TESTS_REQUIRE_DATA   interop_ws fails instead of being skipped
 
 cmake_minimum_required(VERSION 3.19)
 project(dbg_net_tests C CXX)
@@ -68,47 +74,62 @@ foreach(name test_ws test_http test_fuzz)
     # dbg_net.cpp is not the main file of these translation units, which makes GCC report its internal types.
     target_compile_options(${name} PRIVATE -Wno-subobject-linkage)
   endif()
-  add_test(NAME ${name} COMMAND ${name})
+  add_test(NAME ${NULLDC_TEST_PREFIX}${name} COMMAND ${name})
 endforeach()
 
 add_executable(test_e2e test_e2e.cpp)
 target_compile_options(test_e2e PRIVATE ${warnings})
 target_link_libraries(test_e2e dbg_net)
-add_test(NAME test_e2e COMMAND test_e2e)
+add_test(NAME ${NULLDC_TEST_PREFIX}test_e2e COMMAND test_e2e)
 
 add_executable(test_webui test_webui.cpp $<TARGET_OBJECTS:dbg_webui>)
 target_compile_options(test_webui PRIVATE ${warnings})
 target_link_libraries(test_webui dbg_net)
-add_test(NAME test_webui COMMAND test_webui "${DBG_WEBUI_BUNDLE_DIR}")
+add_test(NAME ${NULLDC_TEST_PREFIX}test_webui COMMAND test_webui "${DBG_WEBUI_BUNDLE_DIR}")
 
 add_executable(dbg_net_demo demo.cpp $<TARGET_OBJECTS:dbg_webui>)
 target_compile_options(dbg_net_demo PRIVATE ${warnings})
 target_link_libraries(dbg_net_demo dbg_net)
 
-set_tests_properties(test_ws test_http test_fuzz test_e2e test_webui PROPERTIES TIMEOUT 300)
+foreach(name test_ws test_http test_fuzz test_e2e test_webui)
+  set_tests_properties(${NULLDC_TEST_PREFIX}${name} PROPERTIES TIMEOUT 300)
+endforeach()
 
-# Interoperability with the "ws" package of the devtools tree. Skipped without node or without the package.
+# Interoperability with the "ws" package of the devtools tree. Skipped without node or without the package:
+# the script prints "SKIP: <reason>" and returns 77 for the latter. With NULLDC_TESTS_REQUIRE_DATA either one
+# is a failed test.
 find_program(NODE_EXECUTABLE NAMES node nodejs)
 set(DBG_NET_NODE_MODULES "" CACHE PATH "node_modules directory that has the ws package (default: the devtools tree next to or inside this one)")
 set(node_modules "${DBG_NET_NODE_MODULES}")
-foreach(candidate "${tree}/devtools/node_modules" "${tree}/../dreamcast-devtools/node_modules")
+set(candidates "")
+if(NOT DEFINED NULLDC_DEVTOOLS_DIR)
+  set(candidates "${tree}/devtools/node_modules" "${tree}/../dreamcast-devtools/node_modules")
+elseif(NULLDC_DEVTOOLS_DIR)
+  set(candidates "${NULLDC_DEVTOOLS_DIR}/node_modules")
+endif()
+foreach(candidate ${candidates})
   if(node_modules STREQUAL "" AND EXISTS "${candidate}/ws")
     set(node_modules "${candidate}")
   endif()
 endforeach()
+set(interop_ws "${NULLDC_TEST_PREFIX}interop_ws")
 if(NODE_EXECUTABLE AND NOT CMAKE_CROSSCOMPILING)
-  add_test(NAME interop_ws COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/interop_ws.js" $<TARGET_FILE:dbg_net_demo> "${node_modules}")
-  set_tests_properties(interop_ws PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+  add_test(NAME ${interop_ws} COMMAND "${NODE_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/interop_ws.js" $<TARGET_FILE:dbg_net_demo> "${node_modules}")
 else()
-  add_test(NAME interop_ws COMMAND "${CMAKE_COMMAND}" -E echo "SKIP: no node to run interop_ws.js with")
-  set_tests_properties(interop_ws PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP:")
+  add_test(NAME ${interop_ws} COMMAND "${CMAKE_COMMAND}" -E echo "SKIP: no node to run interop_ws.js with")
+endif()
+set_tests_properties(${interop_ws} PROPERTIES TIMEOUT 300)
+if(NULLDC_TESTS_REQUIRE_DATA)
+  set_tests_properties(${interop_ws} PROPERTIES FAIL_REGULAR_EXPRESSION "SKIP:")
+else()
+  set_tests_properties(${interop_ws} PROPERTIES SKIP_RETURN_CODE 77 SKIP_REGULAR_EXPRESSION "SKIP:")
 endif()
 
 # The embed step itself: which bundle is picked, what stops the configure step, what a rebuilt bundle does,
 # which files of a bundle are embedded.
 foreach(case off auto mismatch incomplete rebuilt corrupt names)
-  add_test(NAME embed_${case} COMMAND "${CMAKE_COMMAND}"
+  add_test(NAME ${NULLDC_TEST_PREFIX}embed_${case} COMMAND "${CMAKE_COMMAND}"
     "-DCASE=${case}" "-DTREE=${tree}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/embed_check/${case}" "-DGENERATOR=${CMAKE_GENERATOR}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_check/run.cmake")
-  set_tests_properties(embed_${case} PROPERTIES TIMEOUT 300)
+  set_tests_properties(${NULLDC_TEST_PREFIX}embed_${case} PROPERTIES TIMEOUT 300)
 endforeach()

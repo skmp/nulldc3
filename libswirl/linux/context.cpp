@@ -169,6 +169,18 @@ void segfault_set_pc(void* segfault_ctx, unat new_pc, unat* old_pc)
 }
 
 
+unat segfault_get_pc(void* segfault_ctx)
+{
+#if !defined(TARGET_NO_EXCEPTIONS) && HOST_CPU != CPU_GENERIC
+	rei_host_context_t ctx;
+
+	context_segfault_bicopy(&ctx, UCTX_data, false);
+	return ctx.pc;
+#else
+	return 0;
+#endif
+}
+
 void context_from_segfault(rei_host_context_t* reictx) {
 #if !defined(TARGET_NO_EXCEPTIONS)
 	fault_printf("context from segfault pc: %p, %p\n",reictx->pc, segfault_copy.gregs[REG_RIP]);

@@ -40,6 +40,7 @@ struct SoundCPU : MMIODevice {
 	//                         core keeps apart
 	//   RN_SPSR               SPSR of the active mode
 	//   R13_IRQ .. SPSR_FIQ   the banked registers; for the bank of the active mode the live values
+	//   21..25                R8..R12 of the modes other than FIQ (the live values unless the core is in FIQ mode)
 	// No side effects. Returns false for any other index and while the value cannot be given.
 	virtual bool DebugGetReg(u32 reg, u32* value) { return false; }
 
@@ -48,6 +49,12 @@ struct SoundCPU : MMIODevice {
 	// dropped where the write needs it. Returns false, having changed nothing, when the register cannot be
 	// written.
 	virtual bool DebugSetReg(u32 reg, u32 value) { return false; }
+
+	// The interrupt controller in front of nFIQ: *level is the interrupt level register L at 0x2D00 as a read
+	// by the ARM7 delivers it, without the acknowledge of the request that goes with that read; *inService is
+	// the in-service flag M at 0x2D04, 1 while a request is in service. No side effects. Returns false while
+	// the values cannot be given.
+	virtual bool DebugGetInterrupt(u32* level, u32* inService) { return false; }
 
 	virtual ~SoundCPU() { }
 

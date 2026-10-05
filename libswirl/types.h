@@ -520,6 +520,7 @@ struct settings_t
 		u32 language;		// 0 -> JP, 1 -> EN, 2 -> DE, 3 -> FR, 4 -> SP, 5 -> IT, 6 -> default
 		std::vector<std::string> ContentPath;
 		bool FullMMU;
+		u32 RTC;			// 0 -> the host's clock, else the second (since 1970, console time) every run starts at
 	} dreamcast;
 
 	struct

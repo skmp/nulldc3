@@ -114,6 +114,9 @@ int showhelp(wchar** argv,int cl)
     printf("      Add a virtual config value unless a different value is written to em\n");
     printf("      Note: You can specify many settings in the xx:yy=zz , gg:hh=jj , ... format.\n");
     printf("            The spaces between the values and ',' are needed.\n");
+    printf("      Keys for runs without a person, see docs/nulldc3/automated-runs.md:\n");
+    printf("            config:Headless=yes  config:Exit.AfterVblanks=N  config:Exit.AfterSeconds=S\n");
+    printf("            config:Exit.OnGuestExit=yes  config:Exit.StateHash=yes  config:Dreamcast.RTC=N\n");
     printf("  -portable:\n");
     printf("      Look for data and discs in the current directory\n");
     printf("  -help:\n");

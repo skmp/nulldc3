@@ -24,6 +24,7 @@
 #include "hw/sh4/sh4_mem.h"
 
 #include "hw/naomi/naomi_cart.h"
+#include "utils/run_control.h"
 
 #include <map>
 
@@ -386,7 +387,8 @@ void reios_exit() {
 		printf("-----------------\n");
 		printf("REIOS: Exit\n");
 		printf("-----------------\n");
-		sh4_cpu->Stop();
+		if (!runctl_guest_exit())
+			sh4_cpu->Stop();
 	}
 
 	p_sh4rcb->cntx.pc = hook_addr(&reios_exit);
