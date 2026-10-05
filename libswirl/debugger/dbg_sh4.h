@@ -54,7 +54,8 @@ inline u32 MaskAddr(u32 addr) {
 // above it is taken to be another guest thread's stack.
 const u32 kStackWindow = 0x100000;
 
-// What the breakpoint state says about a stop.
+// What the breakpoint state says about a stop: the cause and id its helpers gave to emu::LatchStop, which
+// holds the record that is published.
 struct StopInfo {
 	StopCause cause;		// Breakpoint: a listed breakpoint stopped. Step: a temporary breakpoint stopped, or the
 							// return a step-out waited for was executed. NoCause: no check or flow report stopped
@@ -91,6 +92,9 @@ void PrepareResume();
 
 // Park loop, at the same point, for a step of one instruction. Arms the exemption as PrepareResume() does
 // and drops the owed remainder.
+// A step of any kind whose deferred interrupt acceptance accepted an interrupt is complete at the vector
+// without executing anything: StepCheck() looked at the instruction of the stop, not at the one at the
+// vector. This is then the only Prepare function called, and no instruction is executed behind it.
 void PrepareStep();
 
 // Park loop, at the same point, for a step-over, before PrepareResume() / PrepareStep().
@@ -98,6 +102,8 @@ void PrepareStep();
 // pc + 2, with sp0 = R15, and returns true: the caller goes on as for a resume (PrepareResume). The
 // temporary breakpoint stops, with StopCause::Step, only when R15 passes the stack test against sp0.
 // For any other instruction it changes nothing and returns false: the caller makes a step (PrepareStep).
+// Not called when the deferred interrupt acceptance accepted an interrupt: the step is complete (PrepareStep),
+// and the instruction at the vector is not the one the step was asked for.
 bool PrepareStepOver();
 
 // Park loop, at the same point, for a step-out, before PrepareResume(). Records sp0 = R15, sets
@@ -105,15 +111,19 @@ bool PrepareStepOver();
 // for a resume. The stop comes, with StopCause::Step, right after the RTS or RTE (and its slot) that leaves
 // the activation of the request: calls made on the level of the request are counted, handlers entered
 // after the request are skipped whole.
+// Not called when the deferred interrupt acceptance accepted an interrupt: the step is complete (PrepareStep).
 void PrepareStepOut();
 
 // Entering the park context for a stop, once per published stop and before the listener: after
-// SuperH4::Run() returned with a stop latched, after every executed step, for the start park and for a
-// reset made while paused. Also called when temporary state must end without a stop: for a guest reset and
-// when the emulator thread exits.
-// Writes to *out (out may be null) what stopped. Then removes every temporary breakpoint, cancels a pending
-// step-out (dbg_sh4_stepout = 0, instrumented blocks discarded), clears the exemption, makes
-// dbg_sh4_StopPending() false and records Sh4cntx.pc as the pc of the stop. The owed remainder stays.
+// SuperH4::Run() returned with a debugger stop decided, after every step (executed, or complete at a vector),
+// for the start park and for a reset made while paused. Never for a service excursion, which publishes
+// nothing: temporary breakpoints and a pending step-out survive it. Also called when temporary state must end
+// without a stop: for a guest reset and when the emulator thread exits.
+// Writes to *out (out may be null) what stopped. *out repeats what the helpers passed to emu::LatchStop for
+// this stop; dbg::emu publishes LatchStop's record and may check it against *out. Then removes every
+// temporary breakpoint, cancels a pending step-out (dbg_sh4_stepout = 0, instrumented blocks discarded),
+// clears the exemption, makes dbg_sh4_StopPending() false and records Sh4cntx.pc as the pc of the stop. The
+// owed remainder stays.
 void OnStop(StopInfo* out);
 
 // The debugger wrote the SH4 PC, the machine was reset or a state was loaded: drops the owed remainder and
