@@ -84,6 +84,8 @@ void SetActiveMask(u32 categories);
 //   "undefined opcode"          the opcode at pc is not an instruction the interpreter table executes
 //   "illegal slot instruction"  pc holds a delayed branch whose slot word cannot be read, is undefined or
 //                               is an instruction that writes pc
+// A delay-slot word that the opcode table has no handler for (0x0000 included) is an illegal slot
+// instruction: the step is refused.
 // In builds with MMU the word is read without address translation (dbg::mem): for a pc outside P1 / P2 the
 // preconditions, and the has_slot test of PrepareResume() / PrepareStep(), look at the physical address
 // pc & 0x1FFFFFFF. Steps and slot breakpoints in translated code are not supported.
@@ -91,8 +93,9 @@ int StepCheck(const char** why);
 
 // Park loop, when the park context is left for a resume, after the deferred interrupt acceptance and
 // sh4_host_fp_resync(). Arms the resume exemption iff Sh4cntx.pc has the key of the pc that the last
-// OnStop() recorded and dbg_sh4_WantsCheck is true for it (opcode read through dbg::mem). Keeps the owed
-// remainder if Sh4cntx.pc is exactly its pc, drops it otherwise.
+// OnStop() recorded and dbg_sh4_WantsCheck is true for it (opcode read through dbg::mem), and a check will
+// be made by what runs next: the active backend has SH4DBG_NATIVE or FallbackWanted() is true. Keeps the
+// owed remainder if Sh4cntx.pc is exactly its pc, drops it otherwise.
 void PrepareResume();
 
 // Park loop, at the same point, for a step of one instruction. Arms the exemption as PrepareResume() does
