@@ -18,6 +18,10 @@
 #include <utility>
 #include <vector>
 
+#ifndef _WIN32
+#include <pthread.h>
+#endif
+
 // What points the descriptor of stderr at a file and back.
 #ifdef _WIN32
 #include <io.h>
@@ -66,6 +70,62 @@ static bool Provider(const std::string& path, bool acceptGzip, StaticFile* file)
 	return true;
 }
 
+// CPU time that one thread has used, read from any thread: the thread calls Attach() once. Where a system
+// does not give the time of another thread, and before Attach(), it is the time of the whole process.
+class ThreadCpu {
+public:
+	~ThreadCpu() {
+#ifdef _WIN32
+		if (thread)
+			CloseHandle(thread);
+#endif
+	}
+
+	void Attach() {
+#ifdef _WIN32
+		if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &thread, 0, FALSE, DUPLICATE_SAME_ACCESS))
+			thread = nullptr;
+#elif defined(_POSIX_THREAD_CPUTIME) && _POSIX_THREAD_CPUTIME >= 0
+		if (pthread_getcpuclockid(pthread_self(), &clock) != 0)
+			clock = CLOCK_PROCESS_CPUTIME_ID;
+#endif
+	}
+
+	bool OfThread() const {
+#ifdef _WIN32
+		return thread != nullptr;
+#else
+		return clock != CLOCK_PROCESS_CPUTIME_ID;
+#endif
+	}
+
+	long long Ms() const {
+#ifdef _WIN32
+		FILETIME created, exited, kernel, user;
+		if (!(thread ? GetThreadTimes(thread, &created, &exited, &kernel, &user) : GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)))
+			return 0;
+		ULARGE_INTEGER k, u;
+		k.LowPart = kernel.dwLowDateTime;
+		k.HighPart = kernel.dwHighDateTime;
+		u.LowPart = user.dwLowDateTime;
+		u.HighPart = user.dwHighDateTime;
+		return (long long)((k.QuadPart + u.QuadPart) / 10000);
+#else
+		struct timespec ts;
+		if (clock_gettime(clock, &ts) != 0)
+			return 0;
+		return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
+	}
+
+private:
+#ifdef _WIN32
+	HANDLE thread = nullptr;
+#else
+	clockid_t clock = CLOCK_PROCESS_CPUTIME_ID;
+#endif
+};
+
 // Records what the server reports and answers a few commands:
 //   echo:<text>       the text back
 //   broadcast:<text>  the text to every client
@@ -82,12 +142,15 @@ struct Recorder : Handler {
 	std::vector<std::pair<uint32_t, std::string>> binaries;
 	std::thread::id thread;
 	bool oneThread = true;
+	ThreadCpu cpu;		// of the network thread, from its first callback on
 
 	void Note() {
-		if (thread == std::thread::id())
+		if (thread == std::thread::id()) {
 			thread = std::this_thread::get_id();
-		else if (thread != std::this_thread::get_id())
+			cpu.Attach();
+		} else if (thread != std::this_thread::get_id()) {
 			oneThread = false;
+		}
 	}
 
 	void OnOpen(uint32_t client) override {
@@ -186,41 +249,48 @@ static bool ExpectClose(TestClient& ws, int code) {
 	return ws.WaitClosed();
 }
 
-// CPU time the process has used so far, all threads.
-static long long ProcessCpuMs() {
-#ifdef _WIN32
-	FILETIME created, exited, kernel, user;
-	if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user))
-		return 0;
-	ULARGE_INTEGER k, u;
-	k.LowPart = kernel.dwLowDateTime;
-	k.HighPart = kernel.dwHighDateTime;
-	u.LowPart = user.dwLowDateTime;
-	u.HighPart = user.dwHighDateTime;
-	return (long long)((k.QuadPart + u.QuadPart) / 10000);
-#else
-	struct timespec ts;
-	if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts) != 0)
-		return 0;
-	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-#endif
-}
-
 static const char kHugeRequest[] = "GET /assets/huge.bin HTTP/1.1\r\nHost: localhost\r\n\r\n";
 
 // The peer asks for more than the sockets hold, closes its sending side and does not read: the server has
 // the peer's FIN and output that the socket does not take. Where poll reports that FIN on every call,
-// whatever it is asked for (WSAPoll), waiting for the socket must not become a busy loop.
-static void ParkHalfClosed(TestClient& parked, int port) {
+// whatever it is asked for (WSAPoll), waiting for the socket must not become a busy loop: the network thread
+// has to stay idle for as long as the peer is parked.
+// Only that time is measured. What the request itself costs the thread is kept out of it: the file exists
+// before the request is made, and the measurement starts when the thread has come to rest.
+// Returns the time at which the peer was parked.
+static std::chrono::steady_clock::time_point ParkHalfClosed(TestClient& parked, Recorder& rec, int port) {
+	Huge();
+	// The CPU time of the network thread can be read once it has made a callback.
+	TestClient ws;
+	Open(ws, rec, port);
+	size_t closed = rec.Closed();
+	ws.Close();
+	REQUIRE(rec.WaitClosed(closed + 1));
+
 	REQUIRE(parked.Connect(port, 4096));
 	REQUIRE(parked.Send(kHugeRequest));
 	parked.ShutdownSend();
-	std::this_thread::sleep_for(std::chrono::milliseconds(300));	// the socket is full, the FIN is read
-	long long before = ProcessCpuMs();
+	// The thread copies the file, fills the socket and reads the FIN: 300 ms at least, and then until it
+	// uses less than a tenth of 100 ms. A thread that never comes to rest is measured after 3 s all the same.
+	long long before = rec.cpu.Ms();
+	for (int i = 0; i < 30; i++) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		long long now = rec.cpu.Ms();
+		bool atRest = now - before < 10;
+		before = now;
+		if (atRest && i >= 2)
+			break;
+	}
+	// A parked connection costs the thread its periodic retries, a few percent of the time at most. A busy
+	// loop takes all the time the thread gets; where the socket calls are served by another process (wine)
+	// that is a part of the window only, so the bound is a tenth of it.
+	auto parkedAt = std::chrono::steady_clock::now();
 	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-	long long used = ProcessCpuMs() - before;
-	printf("half-closed peer that does not read: %lld ms of CPU in 1500 ms\n", used);
-	CHECK(used < 300);
+	long long used = rec.cpu.Ms() - before;
+	long long elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - parkedAt).count();
+	printf("half-closed peer that does not read: %lld ms of CPU on %s in %lld ms\n", used, rec.cpu.OfThread() ? "the network thread" : "all threads", elapsed);
+	CHECK(used < 150);
+	return parkedAt;
 }
 
 // Called when the peer of ParkHalfClosed has not read for longer than the 10 s a closing connection has to
@@ -1048,8 +1118,7 @@ int main() {
 	REQUIRE(idle.Send("GET / HTTP/1.1\r\nHost: loc"));
 
 	TestClient parked;
-	auto parkedAt = std::chrono::steady_clock::now();
-	ParkHalfClosed(parked, port);
+	auto parkedAt = ParkHalfClosed(parked, rec, port);
 
 	TestHttp(port);
 	TestWebRoot();

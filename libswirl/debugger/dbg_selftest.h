@@ -40,6 +40,8 @@
 	                 SetEventBreakpoints, SetActiveMask, Resume, Step, Reset, ...) to arm what happens next.
 	                 No client is connected, so a test that sets an event breakpoint also opens the gate of
 	                 its event, and closes it again (g_event_on, debugger.h).
+	                 No client is connected, so the test also sets the active mask (emu::SetActiveMask); it
+	                 starts as 0.
 
 	The machine tests run first, then the guest tests one after the other, each kind in the order of the
 	names. A test starts with the machine as the test before it left it.
@@ -64,6 +66,12 @@ typedef void (*MachineFn)();
 // Returns false to be called again at the next stop: the test armed an action (emu::Resume, emu::Step), or
 // waits for a stop that another thread causes. Returns true when the test is finished; it then has armed
 // nothing in this call, so that the next test begins parked on the same stop.
+// The driver starts no thread. A test that ends the emulator thread arranges the restart itself: a thread
+// it created waits for the lifetime Stopped (emu::GetRunState) and calls virtualDreamcast->Resume().
+// A test cannot arm a pause from a stop (emu::RequestPause does nothing while Parked): to stop a running
+// guest it sets an event breakpoint, or calls RequestPause() from a scheduler callback it registered or from
+// another thread. A service excursion while running is asked for by another thread through emu::Call; only
+// the test function itself, which runs on (E), must not call it.
 typedef bool (*GuestFn)(const emu::RunState& stop);
 
 // One registered test. Objects of it are defined by the two macros below, at namespace scope: the

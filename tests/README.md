@@ -4,6 +4,9 @@ A standalone CMake project. Every suite but one compiles the libswirl translatio
 emulator's own definitions and flags, from `reicast/cmake/config.cmake`) and links them against stubs for the
 rest. The system tests run the emulator itself, which the project builds for them.
 
+The suites of `debugger/` are CMake projects of their own, with their own flags, which this project adds: "The
+debugger's suites" below.
+
 ## Getting the vectors
 
 The test data are git submodules:
@@ -110,6 +113,8 @@ More about the suites:
                        captures, the C interface and the WebAssembly build (README.md, KNOWN_FAILURES.md)
     vendor/            the submodules
     files/             fixtures
+    debugger/          the debugger's modules that link without the emulator, one CMake project per directory:
+                       net/ (transport, embedded UI), disasm/ (disassemblers, README.md)
 
 ## The single-step vectors
 
@@ -295,6 +300,9 @@ A suite is a directory with a `CMakeLists.txt` that is added in `tests/CMakeList
   variables and `nulldc_add_missing_data_test(<name> <reason>)` for data that is not there (skipped, or failed
   with `NULLDC_TESTS_REQUIRE_DATA`); `nulldc_add_skipped_test(<name> <reason>)` for a test the host cannot run.
 
+A suite of the debugger is a directory of `tests/debugger` instead, named in the list of them in
+`tests/CMakeLists.txt`: a CMake project that also builds alone, see "The debugger's suites".
+
 A second way to run the SH4 vectors only has to fill an `SsSuite` (`common/ss_suite.h`): how the 4 instructions
 of a loaded vector are executed, whether instruction fetches are part of the expected bus order, and what that
 way of executing is known to fail, and to notify of, on top of the policy table. It gets its own baseline file.
@@ -320,3 +328,58 @@ hosts only.
 
 * `sh4_fpu/README.md`: the data, how a case is run, the groups and columns, the baselines, looking at a failure,
 * `sh4_fpu/KNOWN_FAILURES.md`: why the counts are below their totals, cause by cause.
+
+## The debugger's suites
+
+The modules of `libswirl/debugger` that link without the emulator have their tests under `tests/debugger`, one
+CMake project per directory. Each builds alone, with its own options (the head of its `CMakeLists.txt`):
+
+    cmake -S tests/debugger/net -B <build dir> -G Ninja && ninja -C <build dir> && ctest --test-dir <build dir>
+
+and this project adds them all, so that one `ctest` runs everything. They are not compiled with the emulator's
+flags: the debugger's sources have to build as standard C++20, without `-fpermissive`, and with warnings on. That
+is why `tests/CMakeLists.txt` adds them in front of `common/libswirl.cmake`, and why they come first in the
+output of `ctest`. Here their tests are named `debugger.<suite>.<name>`; alone, `<name>`.
+
+| test | what it runs | needs |
+|---|---|---|
+| `debugger.net.test_ws` `debugger.net.test_http` | the WebSocket handshake and framing of `dbg_net.cpp` against the vectors of RFC 6455; its HTTP side: request parsing, the Host and Origin rules, static files, path sanitising | nothing |
+| `debugger.net.test_fuzz` | random and mutated input to both parsers: no crash, no hang, no unbounded buffering, no byte from outside the web root | nothing |
+| `debugger.net.test_e2e` | `dbg::net::Server` over loopback, through its public interface, against the test's own client | nothing |
+| `debugger.net.test_webui` | the embedded UI: the bundle the build embedded is served file for file | nothing (the bundle is `debugger/net/bundle`) |
+| `debugger.net.interop_ws` | the server against the `ws` package, the WebSocket implementation of the devtools tooling | node, a dreamcast-devtools checkout with `node_modules` |
+| `debugger.net.embed_off` `embed_auto` `embed_mismatch` `embed_incomplete` `embed_rebuilt` `embed_corrupt` `embed_names` | the UI embed step of the emulator build: which bundle is picked, what stops the configure step or the build, what a rebuilt bundle does, which files are embedded | nothing |
+| `debugger.disasm.golden` | `dbg_disasm.cpp`: checked-in encodings of SH-4, ARM7 and the AICA DSP, and the invariants that need no tool | nothing |
+| `debugger.disasm.sh4_objdump` `debugger.disasm.sh4_objdump_selftest` | every SH-4 opcode against GNU objdump, and that comparison on dumps with a wrong field | python3, a SuperH objdump |
+| `debugger.disasm.sh4_opcode_table` | every SH-4 opcode against `hw/sh4/sh4_opcode_list.cpp` | python3 |
+| `debugger.disasm.arm7_objdump` `debugger.disasm.arm7_objdump_selftest` | 249,364 ARM encodings against GNU objdump, and that comparison on dumps with a changed field | python3, an ARM objdump |
+| `debugger.disasm.dsp_playground` | 100,193 DSP steps against the disassembler and assembler of the devtools playground | a dreamcast-devtools checkout with `node_modules` |
+
+What the tests of the last column look for, and the option that says where it is:
+
+* a dreamcast-devtools checkout with its packages installed (`node_modules`): `-DNULLDC_DEVTOOLS_DIR=<path>`,
+  default `devtools` in the repository or `../dreamcast-devtools` next to it, whichever is there. A suite built
+  alone has its own option for it (`-DDEVTOOLS_DIR=`, `-DDBG_NET_NODE_MODULES=`);
+* the objdumps: `-DSH_OBJDUMP=<sh-elf-objdump>` and `-DARM_OBJDUMP=<arm-eabi-objdump>`; without the option they
+  are looked for on the `PATH` and in the KallistiOS toolchain directories under `/opt/toolchains`;
+* `node` and `python3` on the `PATH`.
+
+A test that does not find its tool is skipped, and fails with `-DNULLDC_TESTS_REQUIRE_DATA=ON`, like a test
+without its data.
+
+`ctest -E '^debugger\.'` leaves them out, `ctest -R '^debugger\.net\.'` runs one suite.
+
+* `debugger/disasm/README.md`: what is compared with objdump, the opcode table and the playground, and every
+  difference that is accepted,
+* the head of `debugger/net/CMakeLists.txt`: the sanitizer builds and the bundle of the net suite.
+
+A new suite is a directory `tests/debugger/<suite>` with a `CMakeLists.txt` that starts with its own
+`cmake_minimum_required` and `project`, uses `CMAKE_CURRENT_SOURCE_DIR` / `CMAKE_CURRENT_BINARY_DIR` and names
+its tests `${NULLDC_TEST_PREFIX}<name>` (the prefix is empty when the suite is built alone). `tests/CMakeLists.txt`
+adds the directories it lists that are there. From this project a suite gets `NULLDC_DEVTOOLS_DIR` and
+`NULLDC_TESTS_REQUIRE_DATA`; it has to work without them.
+
+A suite of `tests/debugger` that needs more of the emulator than such a module, and compiles libswirl
+translation units as the other suites of this project do, is one of those suites ("Adding a suite"):
+`tests/CMakeLists.txt` adds it behind `common/libswirl.cmake`, and it names its tests `debugger.<suite>.<name>`
+itself.
