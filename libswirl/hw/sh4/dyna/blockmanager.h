@@ -111,6 +111,16 @@ RuntimeBlockInfo* DYNACALL bm_GetBlock(u32 addr);
 void bm_AddBlock(RuntimeBlockInfo* blk, bool lockRam);
 void bm_DiscardBlock(RuntimeBlockInfo* blk);
 
+//Discards every block that overlaps the page of the guest address, in any mirror: the blocks that have the address
+//as an instruction or as a delay slot are among them. Page protection and the pages marked as holding data stay.
+void bm_DiscardAddrPage(u32 addr);
+//Discards the blocks that end with a call or a return (false), or of those the ones that report it to the
+//debugger (true)
+void bm_DiscardFlowBlocks(bool instrumented_only);
+//The block that runs outside the block cache, 0: none. It is in no list: bm_GetBlock(void*) knows it, so that a
+//memory access of its code can be rewritten
+void bm_SetTempBlock(RuntimeBlockInfo* blk);
+
 void bm_Reset();
 void bm_Periodical_1s();
 void bm_Periodical_14k();
