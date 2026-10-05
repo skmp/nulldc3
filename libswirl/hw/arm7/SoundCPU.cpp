@@ -41,12 +41,17 @@ static void update_e68k(Arm7Context* ctx)
 {
 	if (!ctx->e68k_reg_M && ctx->aica_interr)
 	{
-		//Set the pending signal
-		ctx->e68k_reg_M = 1;
-		ctx->e68k_out = true;
 		ctx->e68k_reg_L = ctx->aica_reg_L;
 
-		ctx->backend->UpdateInterrupts();
+		//a request of level 0 does not interrupt, and L reads 0 behind it (console: fiqdiag d1.bin, d4.bin, d5.bin)
+		if (ctx->aica_reg_L != 0)
+		{
+			//Set the pending signal
+			ctx->e68k_reg_M = 1;
+			ctx->e68k_out = true;
+
+			ctx->backend->UpdateInterrupts();
+		}
 	}
 }
 
@@ -278,8 +283,7 @@ struct SoundCPU_impl : SoundCPU {
 
 	void InterruptChange(u32 bits, u32 L)
 	{
-		//a request of level 0 does not interrupt (console: fiqdiag)
-		ctx.aica_interr = bits != 0 && L != 0;
+		ctx.aica_interr = bits != 0;
 		if (ctx.aica_interr)
 			ctx.aica_reg_L = L;
 		update_e68k(&ctx);

@@ -45,7 +45,7 @@ arm7.directed            rsc                     16    16
 arm7.directed            ror                     26    26
 arm7.directed            mul-rd-rm               18    18
 arm7.directed            trap                     4     4
-arm7.directed            fiq                      8     7
+arm7.directed            fiq                      8     8
 arm7.directed            scilv                    3     3
 arm7.directed            reset                    4     4
 arm7.directed            power-on                 1     1
