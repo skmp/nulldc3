@@ -10,8 +10,8 @@ figures come out of it, both in percent of real time:
   speed       what the emulator prints when it ends: emulated time over wall time, from the first vblank on.
               It is what a person sees, and it falls with every moment the run waits for a core.
   CPU speed   emulated time over the CPU time of the process (user + system, every thread, from its start to
-              its end). It is what the run costs, and the figure to compare between two measurements: waiting
-              for a core is not in it. A busy machine still lowers it, by less.
+              its end). It is what the run costs: waiting for a core is not in it. A busy machine still lowers
+              it, by less.
 
 The runs of an engine are made one after the other and the median of each figure is reported, next to the lowest
 and the highest and the load of the machine in front of every run. The result goes to stdout as a table and,

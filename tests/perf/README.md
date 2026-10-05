@@ -27,12 +27,12 @@ A run is one process. It ends itself with `config:Exit.AfterSeconds`, and two fi
   does besides is in it: a run that waits for a core is slower by that wait.
 * the **speed by CPU time**: the emulated time of the run over the CPU time its process used, user and system,
   of all its threads and from its start to its end (`getrusage` of the child). It is what the run costs. Time
-  the process waits for a core is not in it, which makes it the figure to compare between two measurements; what
-  the other work on the machine does to a core that is running (the second thread of the core, the caches) still
-  is. Headless, one thread does the work, and a run that never waits for a core differs in the two only by the
-  start and the end of the process and by how the kernel's CPU clock runs against its wall clock. With a window
-  the thread of the user interface and the GL driver use CPU time as well, and the figure is well below the
-  speed.
+  the process waits for a core is not in it; what the other work on the machine does to a core that is running
+  still is, and `BASELINE.md` has how far that moved it on one machine. Headless, one thread does the work, and
+  a run that never waits for a core differs in the two only by the start and the end of the process and by how
+  the kernel's CPU clock runs against its wall clock (`BASELINE.md`: 1.08 CPU seconds per second on its
+  machine). With a window the thread of the user interface uses CPU time as well, and the figure is well below
+  the speed.
 
 Runs are made one after the other. The clock is pinned and there is no audio backend, so every run does the same
 work. A program that returns to the BIOS
@@ -50,5 +50,6 @@ Rules the script keeps:
   software rasteriser is refused, or with `--allow-software-gl` measured and labelled `gl-software`, never
   `gl-gpu`.
 * **The load of the machine is recorded**, not controlled. Figures from a busy machine are lower and wider, both
-  of them: compare measurements made at a similar load, and the range, not only the median. The load that is
-  recorded is the 1 minute average, which trails what the machine is doing by about that long.
+  of them (`BASELINE.md` has the same row at different loads), and the 1 minute average that is recorded trails
+  what the machine is doing and does not say which figure to expect. Two builds are compared by running them in
+  turn (`BASELINE.md`, "Comparing two binaries"), not by two measurements made at different times.
