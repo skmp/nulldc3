@@ -929,6 +929,43 @@ static void test_helpers()
 	m.dsp.StepOne(nullptr, &view);
 	check(view.mem_op == AICA_DSP_MEM_LOST && view.slot_taken == 1 && view.latch == 0x5555 && view.latch_copy == 0x5555, "the view of a step in a channel's slot");
 
+	//B is what the multiplier adds: with NEGB, the ACC of the step before taken away
+	m.dsp.RegWrite(0x3000 + 4 * 6, (uint32_t)(0x800 << 3));
+	inst = nop();
+	inst.XSEL = 1;
+	inst.IRA = 2;
+	inst.YSEL = 1;
+	inst.ZERO = 1;
+	put(m.dsp, 6, inst);
+
+	inst = nop();
+	inst.BSEL = 1;
+	inst.NEGB = 1;
+	put(m.dsp, 7, inst);
+
+	m.dsp.StepOne(nullptr, &view);
+	m.dsp.StepOne(nullptr, &view);
+	check(view.step == 7 && view.B == -0x020000 && view.ACC == -0x020000, "the view of a step with NEGB: B is ACC taken away");
+
+	//the address of the view is the byte in the wave RAM: the ring's base is in it, above 64K too
+	std::vector<uint8_t> wave(0x200000, 0);
+	AicaDsp ring;
+
+	ring.Init(wave.data(), (uint32_t)wave.size());
+	ring.RegWrite(0x2804, 0x123);
+	ring.RegWrite(0x3200 + 4 * 1, 0x30);
+	ring.MDEC_CT = 0x1234;
+	wave[0x123 * 2048 + 2 * 0x1264] = 0xCD;
+	wave[0x123 * 2048 + 2 * 0x1264 + 1] = 0xAB;
+
+	inst = nop();
+	inst.MRD = 1;
+	inst.MASA = 1;
+	put(ring, 0, inst);
+	ring.StepOne(nullptr, &view);
+	check(view.mem_op == AICA_DSP_MEM_READ && view.mem_addr == 0x123 * 2048 + 2 * 0x1264 && view.mem_data == 0xABCD
+		&& view.latch == 0xABCD, "the view of a read in a ring with RBP 0x123: word 0x30 + MDEC_CT of the ring, as a byte of the wave RAM");
+
 	//a core without wave RAM
 	AicaDsp bare;
 

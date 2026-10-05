@@ -10,7 +10,7 @@ aica.dsp.api                 instances                              16          
 aica.dsp.api                 registers                              51           51
 aica.dsp.api                 mixs                                   16           16
 aica.dsp.api                 rules                                  17           17
-aica.dsp.api                 helpers                                65           65
+aica.dsp.api                 helpers                                67           67
 aica.dsp.diff.random         random:programs                      1500         1500
 aica.dsp.diff.random         random:steps                      3072000      3072000
 aica.dsp.diff.random         random:run-samples                  24000        24000
