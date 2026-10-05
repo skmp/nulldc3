@@ -10,26 +10,24 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
-| D7 | `arm7.wren7.vendor` `cpsr` | 45 | 4 | 41 |
-| D7 | `arm7.wren7.bringup` `reset-state` | 4 | 0 | 4 |
+| D7 | `arm7.wren7.bringup` `reset-state` | 4 | 2 | 2 |
 
-Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 63/63, the r1 of the 45 vendor jobs, the 4000
-qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
+Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 63/63, the r1 and the CPSR of the 45 vendor jobs,
+the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
 
-### D7: the reset state
+### D7: where a reset finds the ARM
 
 On the console a reset (ARMRST) changes four things: PC = 0, the mode and I = F = 1 in CPSR (SVC, 0xD3),
-R14_svc = the address the ARM was at, SPSR_svc = the CPSR of that moment. Every other register keeps its
-value. `SoundCPU_impl::Reset` (`hw/arm7/SoundCPU.cpp`) zeroes all registers, loads VisualBoyAdvance's GBA
-stack pointers and leaves IRQs enabled: CPSR = 0x53.
+R14_svc = where the ARM was, SPSR_svc = the CPSR of that moment. Every other register keeps its value, and
+`SoundCPU_impl::ResetException` (`hw/arm7/SoundCPU.cpp`) does the same.
 
-* `cpsr`: the CPSR at the end of 41 vendor jobs differs from the console's in bit 7 (I) and in nothing else.
-  The 4 that pass (`LDM_5` to `LDM_8`) write the CPSR themselves.
-* `reset-state`: the third run in a row of the countdown kernel. Console: r0 = 0x008028B8 (left by the stub of
-  the run before), r14 = 0x001FE0CC (the stub's spin loop, where the reset came), SPSR = 0x600000D3, CPSR =
-  0x600000D3. Here: 0, 0, 0 and 0x60000053.
-* Only FIQ is ever raised (`ARM7Backend::UpdateInterrupts`), so I = 0 after reset has no consequence by
-  itself; a guest that reads CPSR, or relies on a register over a reset, sees the difference.
+`reset-state` is the third run in a row of the countdown kernel: r0 as the stub of the run before left it
+(0x008028B8), r14, SPSR and CPSR (both 0x600000D3). r0, SPSR and CPSR are the console's in all four jobs. r14 is
+not: the reset comes while the ARM sits in the done stub's `b spin` at 0x001FE0CC, at some point of the three
+bus cycles of that branch, and the console has two values for it. Of the 116 result blocks under
+`wren7-rtl/model/tests/hw` whose r14 is from such a reset, 89 have 0x001FE0CC and 27 have 0x001FE0D0. The
+interpreter executes whole instructions and has one value, the address of the instruction the ARM was at:
+0x001FE0CC. `hello_1` and `hello_1000` pass, `hello_100000` and `hello_1000000` have 0x001FE0D0 on the console.
 
 ## Known, and not shown by these tests
 
@@ -41,6 +39,7 @@ from an exception or gets an interrupt, and all 4000 random instructions pass.
 | D1 | return address of SWI and of the undefined instruction trap | R14 = address of the instruction + 4 (console: wren7's `swi` and `und` timing kernels take the time of a trap that returns to the next instruction) | + 8: `CPUSoftwareInterrupt` and `CPUUndefinedException` in `hw/arm7/arm7.cpp` add 4 to a PC that is already past the instruction, so `movs pc, lr` skips one instruction. `CPUFiq` is right |
 | D5 | interrupt controller | a request with level 0 (SCILV0-2) does not reach FIQ; reading L (0x2D00) releases nFIQ; writing M (0x2D04) bit 0 lets the next request in (console) | any enabled pending bit raises FIQ (`update_arm_interrupts` in `hw/aica/aica_mmio.cpp`); reading L does nothing, only the M write releases (`hw/arm7/SoundCPU.cpp`) |
 | D6 | SCILV0-2 | read back as 0 (console) | the stored value |
+| D7 | registers when the machine is switched on | not known: a console job starts with what the programs before it left | cleared, with VisualBoyAdvance's GBA stack pointers (R13 = 0x03007F00, R13_irq = 0x03007FA0, R13_svc = 0x03007FE0) and CPSR = 0x53 (`SoundCPU_impl::Reset` in `hw/arm7/SoundCPU.cpp`); the first reset puts that CPSR into SPSR_svc |
 | D8 | `STR` of R15 | the instruction's address + 12 (data sheet; console for STM) | + 8 in every word STR handler of `arm-new.h`; STM stores + 12 |
 | D9 | `STR Rd, [Rn, #x]!` with Rd == Rn | stores the old base (data sheet) | stores the new one: the pre-indexed handlers write the base back before the store (`arm-new.h`, `CASE_16(0x520)` and the like) |
 | D10 | TSTP, TEQP, CMPP, CMNP (Rd = R15 with S) | SPSR to CPSR, the PC is not written (data sheet) | take the Rd = R15 path and reload the PC, which skips an instruction |

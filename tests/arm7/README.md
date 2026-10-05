@@ -22,9 +22,9 @@ to the end marker with r1 = 0 as well, so a program has to show more than "no er
 
 * `programs`: the program gets to its end marker and has no error bit in r1,
 * `final-state`: r0-r14 and CPSR at the end marker are the ones `baseline.txt` pins for the program (the `pin`
-  rows). r1 with its bits 30 and 31 is what a Dreamcast answers too (`arm7.wren7.vendor`); the other registers
-  are what the interpreter leaves today, so a fix that changes them (the reset state, `KNOWN_FAILURES.md` D7)
-  needs `--update-baseline`,
+  rows). r1 with its bits 30 and 31 and the CPSR are what a Dreamcast answers too (`arm7.wren7.vendor`); the
+  other registers are what the interpreter leaves today, on a machine that is switched on for every program
+  (r13 is the stack pointer `SoundCPU_impl::Reset` loads), so a fix that changes them needs `--update-baseline`,
 * `control`: every program is run a second time on a core that skips every instruction, and that run must not
   pass the two checks above. A program for which it does fails the test whatever the baseline says, also when
   the baseline is being updated.
@@ -63,6 +63,7 @@ reset until the done stub raises MCIPD.SCPU; the stub saves the registers into a
 job's timeout is turned into an instruction budget (no instruction is shorter than 8 clocks of 22.5792 MHz), so
 a job that timed out on the console has to run out of budget here. Only what a job defines is compared: the
 console keeps the ARM registers over a reset, so the registers a job never writes hold what earlier jobs left.
+Here the machine is switched on for every job, and the registers are kept from repeat to repeat of a job.
 
 ## The baseline
 

@@ -183,7 +183,7 @@ int main(int argc, char** argv)
 			const Case& c = group.cases[i];
 			Arm7Context* ctx = arm7m_context();
 
-			arm7m_hold_reset();
+			arm7m_power_on();
 			arm7m_clear();
 			memcpy(arm7m_ram(), &c.opcode, 4);
 			arm7m_release_reset();

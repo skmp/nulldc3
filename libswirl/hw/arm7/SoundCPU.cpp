@@ -191,12 +191,35 @@ struct SoundCPU_impl : SoundCPU {
 		arm->InvalidateJitCache();
 	}
 
+	//ARMRST is released: the reset of the ARM7DI (data sheet 3.5, console: wren7-rtl model/tests/hw/bringup).
+	//R14_svc and SPSR_svc take the PC and the CPSR, the CPSR gets SVC mode with I and F set and the PC is 0.
+	//Every other register keeps its value
+	void ResetException()
+	{
+		u32 pc = ctx.regs[R15_ARM_NEXT].I;
+
+		ARM7Backend::CPUSwitchMode(&ctx, 0x13, true);
+		ctx.regs[14].I = pc;
+
+		ctx.regs[RN_PSR_FLAGS].FLG.NZCV = ctx.regs[RN_SPSR].PSR.NZCV;
+		ctx.armIrqEnable = false;
+		ctx.armFiqEnable = false;
+		ARM7Backend::CPUUpdateCPSR(&ctx);
+
+		ctx.regs[R15_ARM_NEXT].I = 0;
+		ctx.regs[15].I = 4;
+		ctx.regs[CYCL_CNT].I = 0;
+
+		arm->UpdateInterrupts();
+		arm->InvalidateJitCache();
+	}
+
 	void SetResetState(u32 state)
 	{
 		bool enabled = state == 0;
 
 		if (!ctx.enabled && enabled)
-			Reset(false);
+			ResetException();
 
 		ctx.enabled = enabled;
 	}

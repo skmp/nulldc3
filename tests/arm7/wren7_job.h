@@ -99,8 +99,8 @@ struct Wren7Run
 	std::vector<u8> readback;	//the read regions
 };
 
-//Runs the job as the console does: per repeat the ARM is held in reset, wave RAM is set up and the reset is
-//released. The timeout is turned into an instruction budget
+//Runs the job as the console does, on a machine that was just switched on: per repeat the ARM is held in reset,
+//wave RAM is set up and the reset is released. The timeout is turned into an instruction budget
 void wren7_run_job(const Wren7Job& job, Wren7Run& run);
 
 //The job ended the way it did on the console: both done with the same exit in the result block, or both not

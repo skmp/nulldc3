@@ -278,6 +278,9 @@ void wren7_run_job(const Wren7Job& job, Wren7Run& run)
 	run.ticks = 0;
 	run.readback.clear();
 
+	//a job does not depend on the jobs before it. From repeat to repeat the registers are kept, as on the console
+	arm7m_power_on();
+
 	for (u32 repeat = 0; repeat < job.repeat || repeat == 0; repeat++)
 	{
 		arm7m_hold_reset();

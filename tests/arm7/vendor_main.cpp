@@ -59,9 +59,10 @@ static void run_program(void* arg)
 	}
 }
 
+//Every program starts on a machine that was just switched on: a reset by itself keeps the registers
 static void load_program(const std::vector<u8>& image)
 {
-	arm7m_hold_reset();
+	arm7m_power_on();
 	arm7m_clear();
 	memcpy(arm7m_ram(), &image[0], image.size());
 	arm7m_release_reset();

@@ -27,7 +27,11 @@ u32 arm7m_cpsr();
 //Sets N, Z, C and V: bits 3 to 0 of nzcv, as they are in bits 31 to 28 of CPSR
 void arm7m_set_flags(u32 nzcv);
 
-//ARMRST, as the SH4 side drives it. The CPU is reset when it is released
+//The machine is reset, as the emulator resets its devices: the registers get their power on values and the ARM
+//is held in reset
+void arm7m_power_on();
+
+//ARMRST, as the SH4 side drives it. The CPU is reset when it is released, and keeps its registers over it
 void arm7m_hold_reset();
 void arm7m_release_reset();
 

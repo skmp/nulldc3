@@ -97,6 +97,11 @@ void arm7m_init()
 	scpu->Reset(false);
 }
 
+void arm7m_power_on()
+{
+	scpu->Reset(false);
+}
+
 u8* arm7m_ram()
 {
 	return ram;
