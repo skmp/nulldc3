@@ -1522,6 +1522,216 @@ static void gate_switch()
 
 
 /*
+	A delayed branch whose target is its own slot. The slot runs twice: as the slot, and then as the instruction
+	the branch arrived at, which is a block start and has a check of its own.
+*/
+struct OwnSlot
+{
+	const char* what;
+	u16 branch;		//at +4, to +6
+	bool t;			//T in front of it
+	bool taken;
+	u32 r3;			//relative to the program for jmp and jsr
+	bool pr;		//pr = the slot
+};
+
+static const OwnSlot own_slots[] = {
+	{ "bra", 0xAFFF, true, true, 0, false },
+	{ "bsr", 0xBFFF, true, true, 0, false },
+	{ "bt/s", 0x8DFF, true, true, 0, false },
+	{ "bf/s", 0x8FFF, false, true, 0, false },
+	{ "braf", 0x0323, true, true, 0xFFFFFFFE, false },
+	{ "bsrf", 0x0303, true, true, 0xFFFFFFFE, false },
+	{ "jmp", 0x432B, true, true, 6, false },
+	{ "jsr", 0x430B, true, true, 6, false },
+	{ "rts", 0x000B, true, true, 0, true },
+	{ "bt/s that is not taken", 0x8DFF, false, false, 0, false },
+	{ "bf/s that is not taken", 0x8FFF, true, false, 0, false },
+};
+
+#define OWN_BASE   G_buffer
+#define OWN_BRANCH (OWN_BASE + 4)
+#define OWN_SLOT   (OWN_BASE + 6)
+#define OWN_NEXT   (OWN_BASE + 8)
+#define OWN_END    (OWN_BASE + 14)
+
+static void own_start(Engine e, const OwnSlot& f, u32 passes)
+{
+	machine_reset(e);
+
+	machine_write16(OWN_BASE + 0, 0x7901);				//add #1, r9
+	machine_write16(OWN_BASE + 2, f.t ? 0x0018 : 0x0008);	//sett / clrt
+	machine_write16(OWN_BRANCH, f.branch);
+	machine_write16(OWN_SLOT, 0x7101);					//add #1, r1
+	machine_write16(OWN_NEXT, 0x7201);					//add #1, r2
+	machine_write16(OWN_BASE + 10, 0x4810);				//dt r8
+	machine_write16(OWN_BASE + 12, 0x8BF8);				//bf OWN_BASE
+	machine_write16(OWN_END, 0x0009);					//nop
+	machine_write16(OWN_END + 2, 0xAFFE);				//bra to itself
+	machine_write16(OWN_END + 4, 0x0009);
+
+	R(8) = passes;
+	R(3) = (f.branch & 0xF0DF) == 0x400B ? OWN_BASE + f.r3 : f.r3;
+	if (f.pr)
+		Sh4cntx._pr = OWN_SLOT;
+
+	machine_set_pc(OWN_BASE);
+}
+
+struct OwnHit
+{
+	u32 pc, id;
+	Regs regs;
+};
+
+static std::vector<OwnHit> own_hits(Engine e, const OwnSlot& f, u32 passes, const std::vector<u32>& at)
+{
+	std::vector<OwnHit> hits;
+	std::vector<u32> ids;
+
+	own_start(e, f, passes);
+
+	for (u32 i = 0; i < at.size(); i++)
+		ids.push_back(i + 1);
+	machine_breakpoints(ids.data(), at.data(), (u32)at.size());
+
+	knobs.host_stop_slice = 2000;
+
+	for (u32 i = 0; i < passes * 4 + 4; i++)
+	{
+		MachineStop s = machine_resume();
+
+		if (!s.debugger || s.cause != StopCause::Breakpoint)
+			break;
+
+		hits.push_back({ s.pc, s.id, regs() });
+
+		if (s.pc == OWN_END)
+			break;
+	}
+
+	return hits;
+}
+
+static void gate_ownslot()
+{
+	const u32 passes = 40;
+
+	for (const OwnSlot& f : own_slots)
+	{
+		//what the rules give per pass, with the last stop at the end
+		struct { const char* what; std::vector<u32> at; u32 per_pass; } cases[] = {
+			{ "nothing but the end", { OWN_END }, 0 },
+			{ "the slot", { OWN_SLOT, OWN_END }, f.taken ? 2u : 1u },
+			{ "the branch", { OWN_BRANCH, OWN_END }, 1 },
+			{ "the instruction behind the slot", { OWN_NEXT, OWN_END }, 1 },
+			{ "the branch, the slot and the instruction behind it", { OWN_BRANCH, OWN_SLOT, OWN_NEXT, OWN_END }, f.taken ? 3u : 2u },
+		};
+
+		for (auto& c : cases)
+		{
+			std::vector<OwnHit> want = own_hits(ENGINE_INTERP, f, passes, c.at);
+
+			//the interpreter's stops are those of the rules: the pair stops at its branch, with the slot's
+			//breakpoint as well, and the arrival at the slot's address stops there
+			bool rules = want.size() == c.per_pass * passes + 1 && want.back().pc == OWN_END
+				&& want.back().regs.r[1] == (f.taken ? 2 : 1) * passes && want.back().regs.r[2] == passes && want.back().regs.r[9] == passes;
+
+			if (c.at.size() == 2 && c.at[0] == OWN_SLOT && want.size() > 2)
+			{
+				rules = rules && want[0].pc == OWN_BRANCH && want[0].id == 1 && want[0].regs.r[1] == 0;
+
+				if (f.taken)
+					rules = rules && want[1].pc == OWN_SLOT && want[1].id == 1 && want[1].regs.r[1] == 1 && want[2].pc == OWN_BRANCH && want[2].regs.r[1] == 2;
+				else
+					rules = rules && want[1].pc == OWN_BRANCH && want[1].regs.r[1] == 1;
+			}
+
+			check(rules, "%s to its own slot, breakpoints on %s: the interpreter stops %u times per pass (%zu stops in %u passes), the slot ran %u times",
+				f.what, c.what, c.per_pass, want.size(), passes, want.empty() ? 0 : want.back().regs.r[1]);
+
+			for (Engine e : { ENGINE_JIT, ENGINE_FALLBACK })
+			{
+				std::vector<OwnHit> got = own_hits(e, f, passes, c.at);
+
+				size_t same = 0;
+
+				while (same < got.size() && same < want.size() && got[same].pc == want[same].pc && got[same].id == want[same].id
+					&& got[same].regs.same_all(want[same].regs))
+					same++;
+
+				check(got.size() == want.size() && same == want.size(),
+					"%s to its own slot, breakpoints on %s: the stops of the %s are the interpreter's, with their registers (%zu stops, %zu agree%s)", f.what,
+					c.what, engine_name(e), got.size(), same, e == ENGINE_FALLBACK && !machine_used_fallback() ? ", NOT on the fallback loop" : "");
+
+				if (same < got.size() && same < want.size())
+					note("%s, %s: stop %zu at %08X id %u r1 %u, the interpreter's at %08X id %u r1 %u", f.what, engine_name(e), same, got[same].pc, got[same].id,
+						got[same].regs.r[1], want[same].pc, want[same].id, want[same].regs.r[1]);
+			}
+		}
+
+		//a step on the branch runs the pair once and ends on the slot's address, which has run once
+		{
+			Regs behind[ENGINE_COUNT];
+			bool ok = true;
+
+			for (Engine e : all_engines)
+			{
+				own_start(e, f, passes);
+				machine_set_pc(OWN_BRANCH);
+				Sh4cntx.sr.T = f.t ? 1 : 0;
+
+				MachineStop s = machine_step();
+				behind[e] = regs();
+
+				ok = ok && is_step(s, f.taken ? OWN_SLOT : OWN_NEXT) && R(1) == 1 && R(2) == 0;
+
+				//the next step is the instruction at the slot's address
+				s = machine_step();
+				ok = ok && (f.taken ? is_step(s, OWN_NEXT) && R(1) == 2 && R(2) == 0 : is_step(s, OWN_NEXT + 2) && R(1) == 1 && R(2) == 1);
+			}
+
+			check(ok && behind[ENGINE_JIT].same_all(behind[ENGINE_INTERP]) && behind[ENGINE_FALLBACK].same_all(behind[ENGINE_INTERP]),
+				"%s to its own slot: a step on the branch runs its slot once and ends %s, on every engine (jit %08X r1 %u, interpreter %08X r1 %u, fallback %08X r1 %u)",
+				f.what, f.taken ? "on the slot's address" : "behind the slot", behind[ENGINE_JIT].pc, behind[ENGINE_JIT].r[1], behind[ENGINE_INTERP].pc,
+				behind[ENGINE_INTERP].r[1], behind[ENGINE_FALLBACK].pc, behind[ENGINE_FALLBACK].r[1]);
+		}
+
+		//time: the fallback charges the block that starts on the slot's address as the jit does
+		for (bool idleskip : { true, false })
+		{
+			MachineState st[2];
+
+			settings.dynarec.idleskip = idleskip;
+
+			for (int i = 0; i < 2; i++)
+			{
+				own_start(i == 0 ? ENGINE_JIT : ENGINE_FALLBACK, f, 0);		//2^32 passes
+				machine_set_sr(SR_MD);
+				knobs.irq_period = 3;
+				knobs.host_stop_slice = 200;
+
+				if (i == 1)
+					bps({ G_line });
+
+				MachineStop s = machine_resume();
+
+				st[i] = machine_state();
+
+				if (s.debugger || (i == 1 && !machine_used_fallback()))
+					st[i].pc = 0;
+			}
+
+			settings.dynarec.idleskip = true;
+
+			check(st[0] == st[1] && st[0].pc != 0, "%s to its own slot, %s: the state of the fallback loop behind 200 slices with interrupts is the jit's (%s)", f.what,
+				idleskip ? "fast" : "idleskip off", str(st[1]));
+		}
+	}
+}
+
+
+/*
 	B13 and B14: n instructions by stepping against the same n by running
 */
 
@@ -2326,6 +2536,7 @@ const Gate gates[] = {
 	{ "b10", "B10 no stale remainder after a written pc, a step, a reset", gate_b10 },
 	{ "b12", "B12 the interpreter fallback charges by decoder blocks", gate_b12 },
 	{ "switch", "the forced fallback selected and dropped while the guest runs: no slice end moves", gate_switch },
+	{ "ownslot", "a delayed branch to its own slot: the arrival at the slot's address is a block start with its check", gate_ownslot },
 	{ "b13", "B13 interpreter: n steps equal a run of n instructions", gate_b13 },
 	{ "b14", "B14 jit: n steps equal a run to the n-th instruction", gate_b14 },
 	{ "slot", "the interpreter between a conditional branch that is not taken and its slot: steps, arming, stops", gate_slot },

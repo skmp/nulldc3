@@ -592,6 +592,12 @@ static bool fallback_RunBlock(u32 max_opcodes, u32 end_pc, s32 cycles)
 
 		u32 op = IReadMem16(addr);
 
+		// A delayed branch that is taken is a control transfer wherever it goes, to its own slot as well: the
+		// address is then arrived at as a branch target, at the start of a block. bt/s and bf/s that are not
+		// taken leave their slot to this loop.
+		const bool taken_delayed = (OpDesc[op]->type & Delayslot) != 0
+			&& !(((op & 0xFF00) == 0x8D00 && sr.T == 0) || ((op & 0xFF00) == 0x8F00 && sr.T != 0));
+
 		next_pc = addr + 2;
 
 		ExecuteOpcode(op);
@@ -609,7 +615,7 @@ static bool fallback_RunBlock(u32 max_opcodes, u32 end_pc, s32 cycles)
 		}
 
 		// the block ends with a control transfer, or behind its last instruction
-		if (next_pc != addr + 2 || next_pc == block_end)
+		if (taken_delayed || next_pc != addr + 2 || next_pc == block_end)
 			return true;
 	}
 }
