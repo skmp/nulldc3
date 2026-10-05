@@ -36,6 +36,10 @@ void arm7m_set_flags(u32 nzcv);
 //is held in reset
 void arm7m_power_on();
 
+//The interrupt controller in front of nFIQ holds nothing: no request and no level from the AICA, nFIQ is
+//released, nothing is in service and L is 0
+bool arm7m_controller_idle();
+
 //ARMRST, as the SH4 side drives it. The CPU is reset when it is released, and keeps its registers over it
 void arm7m_hold_reset();
 void arm7m_release_reset();

@@ -178,6 +178,13 @@ void arm7m_power_on()
 	scpu->Reset(false);
 }
 
+bool arm7m_controller_idle()
+{
+	const Arm7Context& ctx = scpu->ctx;
+
+	return !ctx.aica_interr && ctx.aica_reg_L == 0 && !ctx.e68k_out && ctx.e68k_reg_L == 0 && ctx.e68k_reg_M == 0;
+}
+
 u8* arm7m_ram()
 {
 	return ram;

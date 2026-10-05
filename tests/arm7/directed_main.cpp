@@ -25,8 +25,8 @@
 	reset: what the release of ARMRST writes and what it leaves, out of four modes (the comment at reset_case() has
 	the source).
 
-	power-on: a sound CPU that was created and not reset yet holds what its reset gives it (the comment at
-	run_power_on() has why).
+	power-on: a sound CPU that was created and not reset yet holds what its reset gives it, and a reset of the
+	machine leaves nothing of the interrupt controller (the comments at run_power_on() have why).
 
 	Checks: adc, sbc, rsc, ror, mul-rd-rm, trap, fiq, scilv, reset, power-on. The test needs no data.
 */
@@ -562,8 +562,18 @@ static bool in_fiq()
 	return (arm7m_cpsr() & 0x1F) == MODE_FIQ;
 }
 
+//"mrs r1, cpsr", "bic r1, r1, #0x40" and "msr cpsr_c, r1" at FIQ_MAIN: FIQs on. The ARM is left in front of a sled
+//of "add r7, r7, #1"
+static void fiq_on()
+{
+	arm7m_context()->regs[R15_ARM_NEXT].I = FIQ_MAIN;
+
+	for (u32 i = 0; i < 3; i++)
+		arm7m_step();
+}
+
 //The prologue of k_blkphase.s: the levels, nothing pending, nothing in service, only the one sample interval
-//enabled, and FIQs on. The ARM is left in front of a sled of "add r7, r7, #1". Returns L as the prologue finds it
+//enabled, and FIQs on. Returns L as the prologue finds it
 static u32 fiq_prologue(u32 scilv0, u32 scilv1, u32 scilv2)
 {
 	u32 l = arm7m_read32(AICA_L);
@@ -574,17 +584,13 @@ static u32 fiq_prologue(u32 scilv0, u32 scilv1, u32 scilv2)
 	arm7m_write32(AICA_SCIRE, 0x7FF);
 	arm7m_write32(AICA_M, 1);
 	arm7m_write32(AICA_SCIEB, SAMPLE_INTERVAL);
-
-	arm7m_context()->regs[R15_ARM_NEXT].I = FIQ_MAIN;
-
-	for (u32 i = 0; i < 3; i++)
-		arm7m_step();
+	fiq_on();
 
 	return l;
 }
 
-//The machine is switched on with the program in wave RAM, and the program runs its prologue
-static void fiq_setup(u32 scilv0, u32 scilv1, u32 scilv2)
+//The machine is reset, and ARMRST released with the program in wave RAM
+static void fiq_load()
 {
 	static const u32 vector[] =
 	{
@@ -610,7 +616,12 @@ static void fiq_setup(u32 scilv0, u32 scilv1, u32 scilv2)
 		memcpy(arm7m_ram() + FIQ_SLED + 4 * i, &add_r7, 4);
 
 	arm7m_release_reset();
+}
 
+//The machine is reset, and the program runs its prologue
+static void fiq_setup(u32 scilv0, u32 scilv1, u32 scilv2)
+{
+	fiq_load();
 	fiq_prologue(scilv0, scilv1, scilv2);
 }
 
@@ -1020,6 +1031,102 @@ static void run_power_on()
 			"interrupt masks of its reset, or is not held in reset\n");
 }
 
+/*
+	The reset of the machine comes at any time: a guest asks for it (SB_SFRES) and the emulator resets its devices
+	where they are. It has to leave nothing of the interrupt controller in front of nFIQ: no request and no level
+	from the AICA, whose registers it clears, nFIQ released, nothing in service and 0 in L. The program that is
+	started behind it gets the interrupts it asks for and no other, whatever the program in front of it was in
+	the middle of.
+
+	Nothing of the console is in this: its jobs start behind an ARMRST, and none behind a reset of the machine.
+*/
+//The reset finds a request latched and nFIQ pulled: what the controller holds behind it
+static void power_on_controller(std::string& text)
+{
+	fiq_setup(0x80, 0, 0);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	arm7m_power_on();
+
+	if (!arm7m_controller_idle())
+		text += " the interrupt controller holds a request, a level, nFIQ or a service;";
+}
+
+//The reset finds the handler between its read of L and its write of M. The next program sets the level and the
+//enable and writes M in its handler only, as the ARM crt0 of KallistiOS does
+static void power_on_in_service(std::string& text)
+{
+	fiq_setup(0x80, 0, 0);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	arm7m_read32(AICA_L);
+
+	fiq_load();
+	arm7m_write32(AICA_SCILV0, 0x80);
+	arm7m_write32(AICA_SCIEB, SAMPLE_INTERVAL);
+	fiq_on();
+
+	if (!sample_interrupts(text))
+		text += " the program behind the reset does not get its interrupt;";
+}
+
+//The reset finds the handler in front of its read of L, with the request still pending. The next program enables
+//nothing
+static void power_on_nfiq(std::string& text)
+{
+	char number[64];
+
+	fiq_setup(0xFF, 0xFF, 0xFF);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	fiq_load();
+	fiq_on();
+	arm7m_step();
+
+	if (in_fiq())
+	{
+		text += " the program behind the reset gets an interrupt it has no request for;";
+		return;
+	}
+
+	u32 l = arm7m_read32(AICA_L);
+
+	if (l != 0)
+	{
+		snprintf(number, sizeof(number), " L reads %X, has to be 0;", l);
+		text += number;
+	}
+
+	arm7m_write32(AICA_M, 1);
+	arm7m_step();
+
+	if (in_fiq())
+		text += " the program behind the reset gets an interrupt behind its write of M and has no request for it;";
+}
+
+static const Scenario power_on_scenarios[] =
+{
+	{ "reset of the machine with a request latched: the controller", &power_on_controller },
+	{ "reset of the machine between the L read and the M write", &power_on_in_service },
+	{ "reset of the machine with nFIQ pulled", &power_on_nfiq },
+};
+
 static void run_scenario(void* arg)
 {
 	ScenarioRun* run = (ScenarioRun*)arg;
@@ -1136,7 +1243,10 @@ int main(int argc, char** argv)
 		run_scenarios("reset", reset_scenarios, sizeof(reset_scenarios) / sizeof(reset_scenarios[0]));
 
 	if (arm7_selected("power-on"))
+	{
 		run_power_on();
+		run_scenarios("power-on", power_on_scenarios, sizeof(power_on_scenarios) / sizeof(power_on_scenarios[0]));
+	}
 
 	return arm7_suite_end();
 }

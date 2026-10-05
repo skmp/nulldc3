@@ -10,7 +10,7 @@ what is written to them, and a sample passes only when a test says so (`arm7_mac
 | test | what it runs | data |
 |---|---|---|
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast, from reset to their end marker: no error bit in r1 (`r1 & 0x3FFFFFFF == 0`) and the pinned r0-r14 and CPSR at the end | `tests/vendor/arm7di-tests-dreamcast` (submodule) |
-| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), the logical operations with a ROR by a register amount of 0, of 32 and around them, MUL and MLA with Rd == Rm, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA and what SCILV0-2 read back, what a reset writes and what it leaves, what a sound CPU holds before its first reset | none |
+| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), the logical operations with a ROR by a register amount of 0, of 32 and around them, MUL and MLA with Rd == Rm, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA and what SCILV0-2 read back, what a reset writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
 | `arm7.wren7.vendor` | the same programs as console jobs: r1 and CPSR against the console's | wren7-rtl |
 | `arm7.wren7.qemu_diff` | 4 x 1000 random instructions (data processing, MUL/MLA, LDR/STR, LDM/STM, SWP): registers, flags and memory of every case against the console's | wren7-rtl |
 | `arm7.wren7.mulsem` | 1024 multiplier inputs: MUL(S)/MLA(S) results and flags, and the Rd == Rm forms, against the console's | wren7-rtl |
@@ -70,7 +70,9 @@ first case has the CPSR that reset found.
 
 The emulator resets the AICA in front of the sound CPU, and the reset of the AICA releases ARMRST. The check
 `power-on` is about what that first release finds: a sound CPU that was created and not reset yet has to hold
-what its reset gives it, with the ARM held in reset (`arm7m_created_reset()`).
+what its reset gives it, with the ARM held in reset (`arm7m_created_reset()`). Its other cases reset the machine
+in the middle of a FIQ handler, as a guest can with SB_SFRES: nothing of the interrupt controller is left
+(`arm7m_controller_idle()`), and the program that is started next gets the interrupts it asks for and no other.
 
 ## The wren7 console suites
 

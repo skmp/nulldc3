@@ -10,10 +10,30 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
+| D5 | `arm7.directed` `power-on` | 4 | 1 | 3 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 2 | 2 |
 
-Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 127/127, the r1 and the CPSR of the 45 vendor jobs,
-the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
+Everything else passes: `arm7.vendor` 45/45, the other 127 cases of `arm7.directed`, the r1 and the CPSR of the
+45 vendor jobs, the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
+
+### D5: the reset of the machine leaves the interrupt controller as it was
+
+A guest resets the machine with SB_SFRES (`hw/holly/sb.cpp`), and the emulator resets its devices where they
+are (`SuperH4_impl::Reset`, `hw/sh4/SuperH4_impl.cpp`). `AicaDevice::Reset` clears the registers of the AICA, the
+requests among them. `SoundCPU_impl::Reset` (`hw/arm7/SoundCPU.cpp`) resets the ARM and nothing of the controller
+in front of nFIQ: the request and its level as the AICA last gave them (`aica_interr`, `aica_reg_L`), nFIQ
+(`e68k_out`), the service (`e68k_reg_M`) and L (`e68k_reg_L`) stay.
+
+The three `power-on` cases that fail reset the machine in the middle of a FIQ handler:
+
+* with a request latched: all five are still there behind the reset,
+* between the handler's read of L and its write of M: the service is still open, and the program that is
+  started next gets no FIQ until it writes bit 0 of M. One that writes M in its handler only, as the ARM crt0 of
+  KallistiOS does, gets none at all,
+* in front of the read of L: nFIQ is still pulled, and the next program is interrupted as soon as it turns FIQs
+  on, with nothing enabled and nothing pending.
+
+No console capture is behind these: a reset of the machine has to leave a controller that holds nothing.
 
 ### D7: where a reset finds the ARM
 
