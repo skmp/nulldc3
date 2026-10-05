@@ -48,7 +48,7 @@ struct AICARTC_impl : MMIODevice
 
 	u32 GetRTC_now()
 	{
-		// config:Dreamcast.RTC pins the clock: every run starts at that second, whatever the time of the host is
+		// config:Debug.FixedRtc or config:Dreamcast.RTC pins the clock: every run starts at that second, whatever the time of the host is
 		u32 pinned = aica_hash.pinned_rtc != nullptr ? aica_hash.pinned_rtc() : 0;
 		if (pinned != 0)
 			return (u32)((20 * 365 + 5) * 24 * 60 * 60 + pinned);

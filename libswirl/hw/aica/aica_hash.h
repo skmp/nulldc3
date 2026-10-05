@@ -26,7 +26,8 @@
 	           backend with SH4DBG_CTX_AT_SLICE (hw/sh4/sh4_if.h), on any other it stays the FNV offset basis
 
 	Two runs of one binary with the same program and settings print the same line when the run does not depend
-	on the host: config:Dreamcast.RTC pins the real-time clock, audio:backend=none keeps the audio device out.
+	on the host: config:Debug.FixedRtc pins the real-time clock (config:Dreamcast.RTC is the same setting and is
+	read when Debug.FixedRtc is not set), audio:backend=none keeps the audio device out.
 
 	The AICA has the state and the places where it is folded. What needs the rest of the emulator (the
 	configuration, the sound CPU, the SH4, the scheduler) is aica_hash.cpp, which enters its functions below when
@@ -45,7 +46,7 @@ struct AicaHash
 	// From aica_hash.cpp; null without it
 	void (*configure)();					// when the AICA is initialised: reads config:Debug.AicaHash
 	void (*tick)(const u8* aica_reg);		// at the end of every AICA tick while ticks_wanted is not 0
-	u32 (*pinned_rtc)();					// config:Dreamcast.RTC: seconds since 1970, 0 for the clock of the host
+	u32 (*pinned_rtc)();					// config:Debug.FixedRtc, else config:Dreamcast.RTC: seconds since 1970, 0 for the clock of the host
 };
 
 extern AicaHash aica_hash;

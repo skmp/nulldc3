@@ -1,17 +1,22 @@
 /*
-	Test driver for the sound generator of the AICA (libswirl/hw/aica/sgc_if.cpp), linked without the rest of
-	the emulator: what it references from there is at the end of this file.
+	Test driver for the sound generator of the AICA (libswirl/hw/aica/sgc_if.cpp) and for the settings of the
+	sound regression harness (libswirl/hw/aica/aica_hash.cpp), linked without the rest of the emulator: what
+	they reference from there is at the end of this file.
 
 	aica_test channels    the loop flag of a channel: clear until the channel passes a loop end, whatever the
 	                      memory the generator was created in held, and the same bit for the guest and for
 	                      the debugger
+	aica_test rtc         the keys of the configuration that pin the real-time clock
 
 	Exit code 0 when every check held.
 */
+#include "cfg/cfg.h"
 #include "hw/aica/aica_hash.h"
 #include "hw/aica/aica_mmio.h"
 #include "hw/aica/dsp_backend.h"
 #include "hw/aica/sgc_if.h"
+#include "hw/sh4/sh4_if.h"
+#include "hw/sh4/sh4_sched.h"
 #include "serialize.h"
 #include "stdclass.h"
 #include "types.h"
@@ -20,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <new>
 #include <string>
 #include <vector>
@@ -196,6 +202,36 @@ namespace
 
 		delete sgc;
 	}
+
+	// The configuration the emulator's units read: "section:key" and its number
+	std::map<std::string, s32> config;
+
+	void TestRtc()
+	{
+		// 2000-01-01 00:00:00, in seconds since 1970
+		const u32 second = 946684800;
+
+		if (!Check(aica_hash.pinned_rtc != nullptr, "the harness entered its functions"))
+			return;
+
+		Check(aica_hash.pinned_rtc() == 0, "no key: the clock is the host's, not pinned to %u", aica_hash.pinned_rtc());
+
+		config = { { "config:Debug.FixedRtc", (s32)second } };
+		Check(aica_hash.pinned_rtc() == second, "config:Debug.FixedRtc pins the clock: %u", aica_hash.pinned_rtc());
+
+		config = { { "config:Dreamcast.RTC", (s32)second } };
+		Check(aica_hash.pinned_rtc() == second, "config:Dreamcast.RTC pins the clock: %u", aica_hash.pinned_rtc());
+
+		config = { { "config:Debug.FixedRtc", (s32)second }, { "config:Dreamcast.RTC", (s32)second + 60 } };
+		Check(aica_hash.pinned_rtc() == second, "both keys: config:Debug.FixedRtc goes first: %u", aica_hash.pinned_rtc());
+
+		config = { { "config:Debug.FixedRtc", 0 }, { "config:Dreamcast.RTC", (s32)second } };
+		Check(aica_hash.pinned_rtc() == second, "config:Debug.FixedRtc is 0: config:Dreamcast.RTC pins the clock: %u", aica_hash.pinned_rtc());
+
+		// the keys belong to the section config
+		config = { { "Debug:FixedRtc", (s32)second }, { "Dreamcast:RTC", (s32)second }, { "Debug:Debug.FixedRtc", (s32)second } };
+		Check(aica_hash.pinned_rtc() == 0, "the keys in another section pin nothing: %u", aica_hash.pinned_rtc());
+	}
 }
 
 int main(int argc, char** argv)
@@ -204,9 +240,11 @@ int main(int argc, char** argv)
 
 	if (mode == "channels" && argc == 2)
 		TestChannels();
+	else if (mode == "rtc" && argc == 2)
+		TestRtc();
 	else
 	{
-		fprintf(stderr, "usage: aica_test channels\n");
+		fprintf(stderr, "usage: aica_test channels | rtc\n");
 		return 2;
 	}
 
@@ -215,11 +253,24 @@ int main(int argc, char** argv)
 }
 
 
-// What sgc_if.cpp references from the rest of the emulator
+// What sgc_if.cpp and aica_hash.cpp reference from the rest of the emulator
 
 settings_t settings;
 SuperH4* sh4_cpu;
+Sh4RCB* p_sh4rcb;
 AicaHash aica_hash;
+
+s32 cfgLoadInt(const wchar* section, const wchar* key, s32 def)
+{
+	auto found = config.find(std::string(section) + ":" + key);
+
+	return found != config.end() ? found->second : def;
+}
+
+u64 sh4_sched_now64()
+{
+	return 0;
+}
 
 bool rc_serialize(void* src, unsigned int src_size, void** dest, unsigned int* total_size)
 {

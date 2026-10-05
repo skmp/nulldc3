@@ -69,9 +69,15 @@ static void aica_hash_tick(const u8* aica_reg)
 	}
 }
 
+// Two keys name the second the clock is pinned to. Debug.FixedRtc goes first; a key that is 0 or missing pins nothing
 static u32 aica_hash_pinned_rtc()
 {
-	return (u32)cfgLoadInt("config", "Dreamcast.RTC", 0);
+	u32 pinned = (u32)cfgLoadInt("config", "Debug.FixedRtc", 0);
+
+	if (pinned == 0)
+		pinned = (u32)cfgLoadInt("config", "Dreamcast.RTC", 0);
+
+	return pinned;
 }
 
 // aica_hash is zero before any constructor runs: this only adds the functions
