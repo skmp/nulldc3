@@ -62,6 +62,14 @@ else()
   message(WARNING "${NULLDC_ARM7_TESTS_MISSING}\nThe arm7.* tests that need them do not run.")
 endif()
 
+if(EXISTS "${CMAKE_SOURCE_DIR}/../../caique-rtl")
+  get_filename_component(nulldc_caique_default "${CMAKE_SOURCE_DIR}/../../caique-rtl" ABSOLUTE)
+else()
+  set(nulldc_caique_default "")
+endif()
+set(NULLDC_CAIQUE_DIR "${nulldc_caique_default}"
+    CACHE PATH "caique-rtl checkout (AICA sample model), empty: the tests that need it are skipped")
+
 if(NULLDC_WREN7_DIR AND EXISTS "${NULLDC_WREN7_DIR}")
   set(NULLDC_HAVE_WREN7 ON)
 else()
@@ -70,6 +78,24 @@ else()
       "no wren7-rtl checkout (NULLDC_WREN7_DIR is \"${NULLDC_WREN7_DIR}\"), configure with -DNULLDC_WREN7_DIR=<path to wren7-rtl>")
   message(STATUS "${NULLDC_WREN7_MISSING}")
   message(STATUS "The tests that replay the wren7 console suites do not run.")
+endif()
+
+# What the AICA DSP tests compile of caique-rtl: its sample model
+set(NULLDC_HAVE_CAIQUE OFF)
+
+if(NOT NULLDC_CAIQUE_DIR OR NOT EXISTS "${NULLDC_CAIQUE_DIR}")
+  set(NULLDC_CAIQUE_MISSING
+      "no caique-rtl checkout (NULLDC_CAIQUE_DIR is \"${NULLDC_CAIQUE_DIR}\"), configure with -DNULLDC_CAIQUE_DIR=<path to caique-rtl>")
+elseif(NOT EXISTS "${NULLDC_CAIQUE_DIR}/model/sample-model/aica_model.cpp")
+  set(NULLDC_CAIQUE_MISSING
+      "${NULLDC_CAIQUE_DIR} has no model/sample-model/aica_model.cpp: NULLDC_CAIQUE_DIR is not a caique-rtl checkout")
+else()
+  set(NULLDC_HAVE_CAIQUE ON)
+endif()
+
+if(NOT NULLDC_HAVE_CAIQUE)
+  message(STATUS "${NULLDC_CAIQUE_MISSING}")
+  message(STATUS "The tests that compare the AICA DSP core with the caique model do not run.")
 endif()
 
 enable_testing()
