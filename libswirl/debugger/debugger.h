@@ -7,12 +7,22 @@
 #pragma once
 #include "types.h"
 #include <atomic>
+
+// See the note on picoTCP below.
+#ifdef dbg
+#error debugger.h cannot be used in a file that includes a picoTCP header: picoTCP defines dbg as a macro
+#endif
+
 #include "dbg_events.h"
 
 /*
 	The debugger as the rest of the emulator sees it. Emulator code includes this header and no other file of
 	libswirl/debugger. Without NULLDC_DEBUGGER everything below is an empty inline stand-in: call sites are
 	written once, without #if, and compile to nothing.
+
+	A file that includes a picoTCP header cannot include this header, in either order, with or without
+	NULLDC_DEBUGGER: picoTCP's arch headers (pico_posix.h, pico_msvc.h) define dbg as a macro, which replaces
+	the name of the namespace below and every dbg:: that DBG_EVENT expands to.
 
 	Threads
 	  (U) main / UI thread
@@ -51,9 +61,10 @@ enum DbgSh4Flow {
 	DBG_SH4_FLOW_RTE  = 3,
 };
 
-// Lets the compiler check the arguments of a printf-style function against its format.
+// Lets the compiler check the arguments of a printf-style function against its format. The archetype is
+// spelled __printf__ because printf is a macro on some of the tree's platforms (types.h).
 #if defined(__GNUC__)
-#define DBG_PRINTF_LIKE(fmt, args) __attribute__((format(printf, fmt, args)))
+#define DBG_PRINTF_LIKE(fmt, args) __attribute__((format(__printf__, fmt, args)))
 #else
 #define DBG_PRINTF_LIKE(fmt, args)
 #endif
