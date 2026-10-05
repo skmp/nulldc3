@@ -45,6 +45,7 @@ void SleepMs(unsigned count) {
 cResetEvent::cResetEvent() {
 	pthread_mutex_init(&mutx, NULL);
 	pthread_cond_init(&cond, NULL);
+	state = false;	// not signalled: the first Wait() waits for a Set()
 }
 cResetEvent::~cResetEvent() {
 }
