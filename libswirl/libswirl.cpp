@@ -494,7 +494,8 @@ void LoadCustom()
     char* p = reios_id + strlen(reios_id) - 1;
     while (p >= reios_id && *p == ' ')
         * p-- = '\0';
-    if (*p == '\0')
+    // an id that is empty, or was nothing but blanks, has no byte to look at
+    if (p < reios_id || *p == '\0')
         return;
 #elif DC_PLATFORM == DC_PLATFORM_NAOMI || DC_PLATFORM == DC_PLATFORM_ATOMISWAVE
     char* reios_id = naomi_game_id;
