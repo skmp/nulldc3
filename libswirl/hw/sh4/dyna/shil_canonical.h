@@ -674,10 +674,7 @@ shil_opc(cvt_f2i_t)
 shil_canonical
 (
 u32,f1,(f32 f1),
-	if (f1 > 2147483520.0f) // IEEE 754: 0x4effffff
-		return 0x7fffffff;
-	else
-		return (s32)f1;
+	return ftrc32(f1);
 )
 
 shil_compile

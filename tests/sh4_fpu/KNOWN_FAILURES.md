@@ -13,13 +13,13 @@ A fix takes its entry out of this file and updates the baselines in the same com
 
 | | cases | traps | value-i | value-d | flags-i | flags-d | agree | native | crash |
 |---|---|---|---|---|---|---|---|---|---|
-| `sh4.fpu.scalar` | 225,036 | 19,633 | 188,128 | 188,140 | 109,153 | 109,153 | 224,910 | 113,946 | 0 |
+| `sh4.fpu.scalar` | 225,036 | 19,633 | 188,189 | 188,189 | 109,153 | 109,153 | 224,924 | 113,946 | 0 |
 | `sh4.fpu.vector` | 1,371,226 | 1,617 | 660,047 | 641,389 | 13,254 | 13,254 | 1,112,265 | 1,370,977 | 150 |
 
 ## 1. There is no FPU exception
 
 **Groups:** every `.trap` group, `value` is 0 of the total in all of them. Scalar 19,633 records, vector 1,567 of
-the 1,617 trap records (the other 50 are in 9.).
+the 1,617 trap records (the other 50 are in 8.).
 
 On the hardware (console; manual 6.5) an instruction raises the FPU exception (EXPEVT 0x120) and leaves its
 destination as it is when
@@ -34,12 +34,12 @@ devcast carries the instruction out and goes on: `sh4_ex_FPU` exists only in a c
 (`hw/sh4/sh4_interrupts.h`), neither engine can raise it.
 
     FADD.dn0.rn.trap   part 1 FADD #8 [+dmin +1.5], FPSCR 00000000: FR0 is 3FC00000, hardware 00000001 (not written), FPSCR 00020000
-    FTRC.dn0.rn.trap   part 1 FTRC #27556 [+inf], FPSCR 00000800: FPUL is 7FFFFF80, hardware 5A5A5A5A (not written), FPSCR 00010840
+    FTRC.dn0.rn.trap   part 1 FTRC #27556 [+inf], FPSCR 00000800: FPUL is 7FFFFFFF, hardware 5A5A5A5A (not written), FPSCR 00010840
 
 ## 2. FPSCR's cause and flag fields are never written
 
 **Groups:** the `flags` columns of nearly every group. Scalar: 115,883 records are not the hardware's FPSCR,
-vector: 1,357,822 cases (and 150 of 9.).
+vector: 1,357,822 cases (and 150 of 8.).
 
 On the hardware (console; manual 6.5) every instruction that computes rewrites the cause field (an exact
 result clears it) and ORs what it raises into the flag field, also when it traps. devcast writes neither in
@@ -126,27 +126,7 @@ rounding and returns zero.
     FMUL.dn1.rn.normal     part 2 FMUL #10594, 15FFFFFF * AA000000: FR0 is 80000000, hardware 80800000
     FCNVDS.dn1.rn.normal   part 2 FCNVDS #69634, DR0 380FFFFF E214AE4B: FPUL is 00000000, hardware 00800000
 
-## 6. FTRC out of range and of a NaN
-
-**Groups:** `FTRC.*.normal` and `FTRC.*.inf` (12 records, both engines), `FTRC.*.nan` (12 records, interpreter),
-`FTRC.D.*.nan` (37 records, both engines: the dynarec calls the interpreter's handler with PR = 1).
-
-On the hardware (console) FTRC of +max and of +inf is 0x7FFFFFFF, and of every NaN, of either sign and kind,
-0x80000000.
-
-* Single precision, both engines: the operand is first cut to 2147483520.0f (`std::min` in the interpreter,
-  `minss` with `cvtf2i_pos_saturation` in the x64 backend), whose integer is 0x7FFFFF80, and that is the
-  result for +max and +inf.
-* Interpreter, single and double: a NaN with a clear sign bit gives 0x7FFFFFFF. The host's conversion returns
-  0x80000000, and the handler takes that for a positive overflow when the operand's sign bit is clear. The
-  records of the one NaN with the sign bit set (part 3) pass.
-
-    FTRC.dn0.rn.normal   part 1 FTRC #27551 [+max]: FPUL is 7FFFFF80, hardware 7FFFFFFF
-    FTRC.dn0.rn.nan      part 1 FTRC #27544 [qNaN]: FPUL is 7FFFFFFF (interpreter), hardware 80000000
-
-The console has no record of a negative number below the range.
-
-## 7. DN = 0, double precision FDIV: a denormal with nothing in its high word
+## 6. DN = 0, double precision FDIV: a denormal with nothing in its high word
 
 **Groups:** `FDIV.D.dn0.rn.denormal` 57 of 139, `FDIV.D.dn0.rz.denormal` 18 of 46.
 
@@ -157,7 +137,7 @@ result's sign, with no cause at all and without the FPU error. The host divides 
     FDIV.D.dn0.rn.denormal   part 1 FDIV.D #32082 [+dmin +0]: DR0 is 7FF00000 00000000, hardware +0
     FDIV.D.dn0.rn.denormal   part 1 FDIV.D #32166 [+dmin +dmin]: DR0 is 3FF00000 00000000, hardware +0
 
-## 8. FIPR and FTRV are host float arithmetic
+## 7. FIPR and FTRV are host float arithmetic
 
 **Groups:** every `FIPR.dn1.*`, `FTRV.dn1.*` and `FIPR.console.values.*` group, and 8 records of
 `FIPR.console.specials.dn1`: 465,255 / 483,924 cases with a wrong sum, next to what 3. and 4. explain.
@@ -199,7 +179,7 @@ product round to zero is much worse than round to nearest: the hardware cuts onc
     FIPR.dn1.rn.zero     zero #23: every product is -0: FR11 is 80000000, hardware 00000000
     FIPR.dn1.rz.overflow overflow #0: FR7 is 7F38FF6F, hardware 7F7FFFFF
 
-## 9. FIPR with PR = 1 ends the emulator
+## 8. FIPR with PR = 1 ends the emulator
 
 **Groups:** `FIPR.console.specials.pr1` (100) and `FIPR.console.specials.pr1.trap` (50): `crash` 150, `value` and
 `flags` 0, in both engines (with PR = 1 the dynarec calls the interpreter's handler).
@@ -211,7 +191,7 @@ FSCA and FSRRA print a line and do nothing, which is what the hardware does: `FT
 `FSCA.console.specials.pr1` and `FSRRA.console.specials.pr1` pass value and flags (their `.trap` groups fail
 by 1.).
 
-## 10. FSRRA is 1 / sqrtf(x)
+## 9. FSRRA is 1 / sqrtf(x)
 
 **Groups:** `FSRRA.dn1.*.normal`, `.one-to-four`, `.simple`, `FSRRA.console.*` and the scalar `FSRRA.*.normal`:
 159,900 vector cases and 10 scalar records.
@@ -233,7 +213,7 @@ roundings: `1 / sqrtf(x)` in the interpreter, `sqrtss` and `divss` in the x64 ba
 The zeros pass (`FSRRA.dn1.*.zero`: an infinity of the zero's sign), as does +inf. A negative number, -inf and
 a NaN are 3., a denormal 4.
 
-## 11. FSCA is a table of the round to nearest results
+## 10. FSCA is a table of the round to nearest results
 
 **Groups:** `FSCA.dn1.rz.angle` 33,084 of 65,536, `FSCA.dn1.rz.upper` 4,110 of 8,192, `FSCA.console.values.rz` 446
 of 1,024, 28 of `FSCA.console.specials.dn1`; and `FSCA.dn1.rn.angle` 2 of 65,536, `FSCA.console.values.rn` 3, 8
@@ -255,14 +235,12 @@ FPUL[31:16] is ignored by both (`FSCA.dn1.rn.upper` passes).
 
 `agree` is below the total in these groups only:
 
-* `FIPR.*` and `FTRV.*`, 258,899 cases: the order of the additions (8.). The classes with one or three
+* `FIPR.*` and `FTRV.*`, 258,899 cases: the order of the additions (7.). The classes with one or three
   products per sum agree in every case (`vec3`, `single`, `diagonal`).
 * `FIPR.console.specials.*`, 62 records, and some of the above: which NaN comes out when several operands are
   NaNs (`fipr_specials.txt:40`: interpreter 7FC00000, dynarec 7FFFFFFF, hardware 7FBFFFFF).
 * `FMAC.*.nan` and `FMAC.dn0.rn.trap`, 112 records, the same: [+inf +0 qNaN] is FFC00000 in the interpreter
   (the invalid product first) and 7FC00001 in the dynarec (the addend's NaN).
-* `FTRC.*.nan` and `FTRC.dn0.rn.trap`, 14 records: the interpreter's 0x7FFFFFFF for a NaN (6.), where the x64
-  backend's single precision code gives the hardware's 0x80000000.
 
 ## What the records do not show
 

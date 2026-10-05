@@ -5,7 +5,8 @@
 	have none of these: no ADDC whose sum is 0xFFFFFFFF with T set, for one, and add r1,r1 in every delay slot,
 	which leaves T and PR as they are. And what the single-step vectors expect another way than an SH4 does it:
 	the loads of FPSCR (they store bits that the register does not have), RTE to the other register bank (they
-	run the delay slot on the bank of the old SR) and TRAPA (they have it as a nop).
+	run the delay slot on the bank of the old SR), TRAPA (they have it as a nop) and FTRC of a NaN and of a
+	number above the range (they have the results of their generator's host).
 
 	sh4_directed_gen <dir> writes vector files in the format of the single-step vectors and under their file
 	names (ss_format.h), so the suites run them as they run those and the policy table applies as it is. A vector
@@ -587,6 +588,59 @@ static const FpscrLoad fpscr_loads[] =
 	{ "0100mmmm01100110_sz0_pr0", OP_LDSL_R3_FPSCR, 0x00440003, 0x00040003 },
 };
 
+//// FTRC FRm,FPUL and FTRC DRm,FPUL: the number cut to an integer, toward zero. 2^31 and everything above it,
+//// +inf too, gives H'7FFFFFFF, everything below -2^31 and -inf H'80000000, and so does every NaN, of either sign
+//// (SH7091 programming manual 10.46: the ranges are told by the bits, a single above H'4EFFFFFF and a double
+//// with a high word above H'41DFFFFF are out of range). A console gives 7FFFFFFF for +max and +inf, 80000000
+//// for -inf and for quiet and signalling NaNs, and -3 for -3.0 (shrike4-rtl, tools/hw/fpdn, FTRC and FTRC.D);
+//// the edges of the range and a NaN with the sign bit set in single precision are the manual's. The single is in
+//// FR3, the double in DR2 (FR2 the high word, FR3 the low one)
+
+struct Ftrc
+{
+	bool pr;			//FTRC DR2,FPUL with FPSCR.PR = 1
+	u32 high;			//the single, or the high word of the double
+	u32 low;
+	u32 fpul_after;
+};
+
+#define OP_FTRC_FR3 0xF33D
+#define OP_FTRC_DR2 0xF23D
+
+#define FPSCR_PR 0x00080000
+
+static const Ftrc ftrcs[] =
+{
+	//double  high        low         FPUL after
+	{ false,  0x3FC00000, 0,          0x00000001 },		//1.5
+	{ false,  0xBFC00000, 0,          0xFFFFFFFF },		//-1.5
+	{ false,  0xC0400000, 0,          0xFFFFFFFD },		//-3
+	{ false,  0x4EFFFFFF, 0,          0x7FFFFF80 },		//the largest single below 2^31
+	{ false,  0x4F000000, 0,          0x7FFFFFFF },		//2^31
+	{ false,  0x7F7FFFFF, 0,          0x7FFFFFFF },		//the largest number
+	{ false,  0x7F800000, 0,          0x7FFFFFFF },		//+inf
+	{ false,  0xCF000000, 0,          0x80000000 },		//-2^31
+	{ false,  0xCF000001, 0,          0x80000000 },		//the next one below it
+	{ false,  0xFF800000, 0,          0x80000000 },		//-inf
+	{ false,  0x7F800001, 0,          0x80000000 },		//NaNs
+	{ false,  0x7FBFFFFF, 0,          0x80000000 },
+	{ false,  0x7FC00000, 0,          0x80000000 },
+	{ false,  0xFFC00000, 0,          0x80000000 },
+	{ true,   0x3FF80000, 0x00000000, 0x00000001 },		//1.5
+	{ true,   0xC0080000, 0x00000000, 0xFFFFFFFD },		//-3
+	{ true,   0x41DFFFFF, 0xFFFFFFFF, 0x7FFFFFFF },		//the largest double below 2^31
+	{ true,   0x41E00000, 0x00000000, 0x7FFFFFFF },		//2^31
+	{ true,   0x7FEFFFFF, 0xFFFFFFFF, 0x7FFFFFFF },		//the largest number
+	{ true,   0x7FF00000, 0x00000000, 0x7FFFFFFF },		//+inf
+	{ true,   0xC1DFFFFF, 0xFFE00000, 0x80000001 },		//-(2^31 - 0.5)
+	{ true,   0xC1E00000, 0x00000000, 0x80000000 },		//-2^31
+	{ true,   0xC1E00001, 0x00000000, 0x80000000 },		//a high word below the range
+	{ true,   0xFFF00000, 0x00000000, 0x80000000 },		//-inf
+	{ true,   0x7FF00000, 0x00000001, 0x80000000 },		//NaNs
+	{ true,   0x7FF80000, 0x00000000, 0x80000000 },
+	{ true,   0xFFF00000, 0x80000000, 0x80000000 },
+};
+
 //Every register has a value that no other one has, so an instruction that touches the wrong one shows
 static void base_state(SsState& s)
 {
@@ -835,6 +889,30 @@ static void make_fpscr_vector(const FpscrLoad& l, SsTest& t)
 	}
 }
 
+static void make_ftrc_vector(const Ftrc& f, SsTest& t)
+{
+	begin_vector(t);
+
+	if (f.pr)
+	{
+		t.initial.s.FPSCR = FPSCR_BASE | FPSCR_PR;
+		t.initial.s.FP0[2] = f.high;
+		t.initial.s.FP0[3] = f.low;
+	}
+	else
+	{
+		t.initial.s.FP0[3] = f.high;
+	}
+
+	t.final_.s = t.initial.s;
+
+	t.final_.s.FPUL = f.fpul_after;
+
+	t.opcodes.op[SS_TEST_INSTRUCTION] = f.pr ? OP_FTRC_DR2 : OP_FTRC_FR3;
+
+	end_vector(t, PC_BASE + 6);
+}
+
 int main(int argc, char** argv)
 {
 	if (argc != 2)
@@ -901,6 +979,15 @@ int main(int argc, char** argv)
 
 		make_fpscr_vector(fpscr_loads[l], t);
 		files[fpscr_loads[l].file].push_back(t);
+		vectors++;
+	}
+
+	for (size_t f = 0; f < sizeof(ftrcs) / sizeof(ftrcs[0]); f++)
+	{
+		SsTest t;
+
+		make_ftrc_vector(ftrcs[f], t);
+		files[ftrcs[f].pr ? "1111mmm000111101_sz0_pr1" : "1111mmmm00111101_sz0_pr0"].push_back(t);
 		vectors++;
 	}
 

@@ -749,10 +749,12 @@ public:
 				break;
 
 			case shop_cvt_f2i_t:
+				// cvttss2si gives 0x80000000 for a NaN and out of range: FTRC's results, but for 2^31 and above
+				cvttss2si(regalloc.MapRegister(op.rd), regalloc.MapXRegister(op.rs1));
 				mov(rcx, (uintptr_t)&cvtf2i_pos_saturation);
-				movss(xmm0, dword[rcx]);
-				minss(xmm0, regalloc.MapXRegister(op.rs1));
-				cvttss2si(regalloc.MapRegister(op.rd), xmm0);
+				ucomiss(regalloc.MapXRegister(op.rs1), dword[rcx]);
+				mov(eax, 0x7fffffff);
+				cmovae(regalloc.MapRegister(op.rd), eax);
 				break;
 			case shop_cvt_i2f_n:
 			case shop_cvt_i2f_z:
@@ -1347,7 +1349,7 @@ private:
 
 const u32 BlockCompiler::float_sign_mask = 0x80000000;
 const u32 BlockCompiler::float_abs_mask = 0x7fffffff;
-const f32 BlockCompiler::cvtf2i_pos_saturation = 2147483520.0f;		// IEEE 754: 0x4effffff;
+const f32 BlockCompiler::cvtf2i_pos_saturation = 2147483648.0f;		// 2^31, IEEE 754: 0x4f000000: FTRC is 0x7fffffff from here on
 void *BlockCompiler::mem_handlers[8];
 
 void X64RegAlloc::Preload(u32 reg, Xbyak::Operand::Code nreg)

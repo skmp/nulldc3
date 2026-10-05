@@ -287,18 +287,9 @@ static const char* why_value(const FpuCase& c, const FpuRegs& left, u32 engine)
 	const FpuRegs& hardware = c.after;
 	const bool dn = (c.before.fpscr & FPU_FPSCR_DN) != 0;
 
+	//an integer: nothing below applies
 	if (op == P_FTRC_S || op == P_FTRC_D)
-	{
-		bool nan = (op == P_FTRC_S ? class_single(c.before.fr[0]) : class_double(c.before.fr[0], c.before.fr[1])) == CLASS_NAN;
-
-		if (nan && hardware.fpul == 0x80000000 && left.fpul == 0x7FFFFFFF)
-			return "FTRC of a NaN is 7FFFFFFF, the hardware's is 80000000";
-
-		if (hardware.fpul == 0x7FFFFFFF && left.fpul == 0x7FFFFF80)
-			return "FTRC of a number above the range (+inf too) is 7FFFFF80, the hardware's is 7FFFFFFF";
-
 		return 0;
-	}
 
 	if (!same_result(result, left, hardware) && nan_result(op, result, left) && sh4_nan_result(result, hardware))
 		return "NaN result: the host's bit pattern, the hardware's is always 7FBFFFFF / 7FF7FFFF FFFFFFFF";

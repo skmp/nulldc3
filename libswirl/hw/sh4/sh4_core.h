@@ -7,6 +7,7 @@
 #pragma once
 #include "types.h"
 #include "sh4_if.h"
+#include <string.h>
 
 
 #define r Sh4cntx.r
@@ -148,4 +149,37 @@ static INLINE f64 fixNaN64(f64 f)
 	// fast-math
 //	return (*(u64 *)&f & 0x7fffffffffffffffll) <= 0x7f80000000000000ll ? f : 0x7ff7ffffffffffffll;
 	return f;
+}
+
+// SH7091 FTRC: 2^31 and above, +inf -> 0x7FFFFFFF; -2^31 and below, -inf, every NaN -> 0x80000000 (programming manual 10.46)
+static INLINE u32 ftrc32(f32 f)
+{
+	u32 hex;
+	memcpy(&hex, &f, sizeof(hex));
+
+	u32 magnitude = hex & 0x7FFFFFFF;
+
+	if (magnitude > 0x7F800000)
+		return 0x80000000;
+
+	if (magnitude >= 0x4F000000)
+		return (hex >> 31) ? 0x80000000 : 0x7FFFFFFF;
+
+	return (u32)(s32)f;
+}
+
+static INLINE u32 ftrc64(f64 f)
+{
+	u64 hex;
+	memcpy(&hex, &f, sizeof(hex));
+
+	u64 magnitude = hex & 0x7FFFFFFFFFFFFFFFull;
+
+	if (magnitude > 0x7FF0000000000000ull)
+		return 0x80000000;
+
+	if (magnitude >= 0x41E0000000000000ull)
+		return (hex >> 63) ? 0x80000000 : 0x7FFFFFFF;
+
+	return (u32)(s32)f;
 }

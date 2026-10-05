@@ -634,27 +634,12 @@ sh4op(i1111_nnnn_0011_1101)
 	if (fpscr.PR == 0)
 	{
 		u32 n = GetN(op);
-		fpul = (u32)(s32)std::min(fr[n], 2147483520.0f);     // IEEE 754: 0x4effffff
-
-		// Intel CPUs convert out of range float numbers to 0x80000000. Manually set the correct sign
-		if (fpul == 0x80000000)
-		{
-			if (*(int *)&fr[n] > 0) // Using integer math to avoid issues with Inf and NaN
-				fpul--;
-		}
+		fpul = ftrc32(fr[n]);
 	}
 	else
 	{
 		u32 n = (op >> 9) & 0x07;
-		f64 f = GetDR(n);
-		fpul = (u32)(s32)f;
-
-		// Intel CPUs convert out of range float numbers to 0x80000000. Manually set the correct sign
-		if (fpul == 0x80000000)
-		{
-			if (*(s64 *)&f > 0)     // Using integer math to avoid issues with Inf and NaN
-				fpul--;
-		}
+		fpul = ftrc64(GetDR(n));
 	}
 }
 

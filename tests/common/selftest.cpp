@@ -560,12 +560,33 @@ static void test_policy()
 	CHECK(ss_policy_filter(*fadd_d, t) == SSF_NONE);
 	t.initial.s.FP0[4] = t.final_.s.FP0[4] = 0;
 
-	//ftrc fr5,fpul
+	//ftrc fr5,fpul of a NaN and of a number above the range: filtered unless the vector expects what an SH4 gives
+	const u32 fpul = t.final_.s.FPUL;
+
 	t.opcodes.op[1] = 0xF53D;
 	t.initial.s.FP0[5] = 0x7FC12345;
+	t.final_.s.FPUL = 0;
 	CHECK(ss_policy_filter(*ftrc, t) == SSF_HOST_NAN);
-	t.initial.s.FP0[5] = 0x4F000000;
+	t.final_.s.FPUL = 0x80000000;
 	CHECK(ss_policy_filter(*ftrc, t) == SSF_NONE);
+
+	t.initial.s.FP0[5] = 0x4F000000;
+	t.final_.s.FPUL = 0x7FFFFF80;
+	CHECK(ss_policy_filter(*ftrc, t) == SSF_FTRC_RANGE);
+	CHECK(ss_policy_filter(*ftrc, t, 1 << SSF_FTRC_RANGE) == SSF_NONE);
+	t.initial.s.FP0[5] = 0x7F800000;
+	CHECK(ss_policy_filter(*ftrc, t) == SSF_FTRC_RANGE);
+	t.final_.s.FPUL = 0x7FFFFFFF;
+	CHECK(ss_policy_filter(*ftrc, t) == SSF_NONE);
+
+	t.initial.s.FP0[5] = 0x4EFFFFFF;	//the largest number in range
+	t.final_.s.FPUL = 0x7FFFFF80;
+	CHECK(ss_policy_filter(*ftrc, t) == SSF_NONE);
+	t.initial.s.FP0[5] = 0xCF800000;	//below the range
+	t.final_.s.FPUL = 0x80000000;
+	CHECK(ss_policy_filter(*ftrc, t) == SSF_NONE);
+
+	t.final_.s.FPUL = fpul;
 
 	//FPSCR bits that an SH4 does not have
 	const SsFilePolicy* lds_fpscr = ss_policy_find("0100mmmm01101010_sz0_pr0");

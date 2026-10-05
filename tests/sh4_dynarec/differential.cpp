@@ -86,16 +86,12 @@ static const char known_fd[] =
 static const char known_sum_order[] =
 	"sum of 4 products: the interpreter adds them one by one, ((p0 + p1) + p2) + p3, the x64 backend in pairs, "
 	"(p0 + p1) + (p2 + p3). Every sum is rounded, and saturates when rounding to zero";
-static const char known_ftrc_nan[] =
-	"FTRC of a NaN with the sign bit clear: 7FFFFFFF in the interpreter (it corrects the host's 80000000 by the sign bit "
-	"of the operand), 80000000 in the x64 backend (cvttss2si as it is)";
 
 static const DiffKnown known[] =
 {
 	{ 0, SSP_FPU, DK_NOTIFY, known_fd },
 	{ "1111nn0111111101_sz0_pr0", 0, DK_STATE, known_sum_order },
 	{ "1111nnmm11101101_sz0_pr0", 0, DK_STATE, known_sum_order },
-	{ "1111mmmm00111101_sz0_pr0", 0, DK_STATE, known_ftrc_nan },
 };
 
 struct DiffCounts

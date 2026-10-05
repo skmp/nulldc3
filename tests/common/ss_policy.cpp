@@ -320,15 +320,31 @@ static bool result_is_nan(const SsFilePolicy& policy, const SsTest& test)
 	return false;
 }
 
+//FTRC of a NaN that is not expected to give what an SH4 gives for every NaN
 static bool ftrc_of_nan(const SsFilePolicy& policy, const SsTest& test)
 {
 	const u32* fp = test.initial.s.FP0;
 	u32 m = (ss_opcode(test) >> 8) & 0xF;
 
+	if (test.final_.s.FPUL == 0x80000000)
+		return false;
+
 	if (policy.flags & SSP_DOUBLE)
 		return is_nan64(fp[m & 0xE], fp[(m & 0xE) + 1]);
 
 	return is_nan32(fp[m]);
+}
+
+//Single precision FTRC of 2^31 or more (+inf too) that is not expected to give what an SH4 gives. The generator
+//cuts the operand to 2147483520.0f first, whose integer is 7FFFFF80
+static bool ftrc_above_range(const SsFilePolicy& policy, const SsTest& test)
+{
+	u32 operand = test.initial.s.FP0[(ss_opcode(test) >> 8) & 0xF];
+
+	if ((policy.flags & SSP_DOUBLE) || test.final_.s.FPUL == 0x7FFFFFFF)
+		return false;
+
+	return operand >= 0x4F000000 && operand <= 0x7F800000;
 }
 
 //R0-R7 are banked by SR.RB in privileged mode, user mode has bank 0
@@ -401,6 +417,9 @@ SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, 
 	if (APPLIES(SSF_HOST_NAN) && (policy.flags & SSP_FTRC) && ftrc_of_nan(policy, test))
 		return SSF_HOST_NAN;
 
+	if (APPLIES(SSF_FTRC_RANGE) && (policy.flags & SSP_FTRC) && ftrc_above_range(policy, test))
+		return SSF_FTRC_RANGE;
+
 	if (APPLIES(SSF_FPSCR_BITS) && (test.final_.s.FPSCR & ~SS_FPSCR_BITS) != 0)
 		return SSF_FPSCR_BITS;
 
@@ -435,6 +454,7 @@ const char* ss_filter_name(SsFilterReason reason)
 	case SSF_HOST_NAN:     return "host-nan";
 	case SSF_FPSCR_BITS:   return "fpscr-bits";
 	case SSF_RTE_BANK:     return "rte-bank";
+	case SSF_FTRC_RANGE:   return "ftrc-range";
 	default:               return "?";
 	}
 }
@@ -458,13 +478,16 @@ const char* ss_filter_description(SsFilterReason reason)
 		       "is reset by it when SR.BL=1";
 	case SSF_HOST_NAN:
 		return "the instruction produces a NaN (or converts one with FTRC). The expected value is the default NaN of the "
-		       "ARM64 host that generated the vectors (FTRC of a NaN: 0), not the SH4's";
+		       "ARM64 host that generated the vectors (FTRC of a NaN: 0), not the SH4's (FTRC of a NaN: 80000000)";
 	case SSF_FPSCR_BITS:
 		return "the vector expects unimplemented FPSCR bits stored (LDS / LDS.L to FPSCR of a value with bits 22-31 set). "
 		       "An SH4 has the low 22 bits only, the others read 0";
 	case SSF_RTE_BANK:
 		return "RTE to the other register bank: the vector runs the delay slot on the bank of the old SR. An SH4 runs it "
 		       "with the SR that RTE restores, on the new bank";
+	case SSF_FTRC_RANGE:
+		return "single precision FTRC of 2^31 or more, +inf too. The vector has 7FFFFF80: its generator cuts the operand to "
+		       "2147483520.0f first. An SH4 gives 7FFFFFFF";
 	default:
 		return "";
 	}

@@ -32,7 +32,7 @@ way.
 | `sh4.singlestep.interp` | every single-step vector through the SH4 interpreter, gated on `sh4_singlestep/baseline.txt` | `vendor/sh4-tests` |
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
-| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses, RTE with a delay slot that reads what it restores, loads of FPSCR, TRAPA) | none |
+| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses, RTE with a delay slot that reads what it restores, loads of FPSCR, TRAPA, FTRC at the edges of its range and of NaNs) | none |
 | `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them, the host rounding mode of every FPSCR.RM, the host FP mode of a thread that starts to run the CPU, the exception registers of TRAPA | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | ADC, SBC and RSC at the edges with the carry clear and set, hand-written results | none |
@@ -98,6 +98,7 @@ an SH4 does not do are filtered, each with a reason:
 | `host-nan` | the instruction produces a NaN, or converts one with FTRC: the expected value is the host's |
 | `fpscr-bits` | the vector expects unimplemented FPSCR bits stored: LDS / LDS.L to FPSCR of a value with bits 22-31 set. An SH4 has the low 22 bits, the others read 0 |
 | `rte-bank` | RTE to the other register bank: the vector runs the delay slot on the bank of the old SR, an SH4 on the bank of the SR that RTE restores |
+| `ftrc-range` | single precision FTRC of 2^31 or more, +inf too: the vector has 7FFFFF80 (its generator cuts the operand to 2147483520.0f first), an SH4 gives 7FFFFFFF |
 
 Nothing else is skipped. The report has one line per file: total / run / pass-exact / pass-lenient / failed /
 filtered by reason, and a line for its notified vectors if it has any, then the totals and, for every file with
@@ -186,6 +187,12 @@ bits that FPSCR does not have, and expect them stored (`fpscr-bits`). The file h
 FFFFFFFF leaves 003FFFFF, which is what a console reads back, values with only the missing bits leave 0, a
 value without them is stored as it is, and the reserved RM = 2 and 3 are stored. A load that changes FR leaves
 FR0-FR15 and XF0-XF15 swapped.
+
+FTRC of a NaN is 0 in the single-step vectors and FTRC of a single of 2^31 or more is 7FFFFF80 (`host-nan`,
+`ftrc-range`). The file has FTRC in single and in double precision (27 vectors) on numbers in range (it cuts toward
+zero), on the last number below 2^31 and on 2^31, the largest number and +inf (7FFFFFFF from 2^31 on), on -2^31,
+the next number below it and -inf (80000000) and on NaNs of both kinds and signs (80000000). That is the manual's
+FTRC, and what a console answers for +max, the infinities and the NaNs (`sh4.fpu.scalar` has those records).
 
 What an instruction leaves is written down from its definition in the SH-4 software manual, nothing of it comes
 from an emulator.

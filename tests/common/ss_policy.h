@@ -21,6 +21,7 @@ enum SsFilterReason
 	SSF_HOST_NAN,		//the expected FPU result is the generator host's NaN
 	SSF_FPSCR_BITS,		//the expected FPSCR has bits that an SH4 does not implement
 	SSF_RTE_BANK,		//RTE to the other register bank, the delay slot is expected on the bank of the old SR
+	SSF_FTRC_RANGE,		//FTRC of 2^31 or more, the expected result is not 7FFFFFFF
 
 	SSF_COUNT
 };
@@ -30,7 +31,7 @@ enum SsFilterReason
 #define SSP_PRIVILEGED	0x0002	//privileged instruction: illegal in user mode
 #define SSP_TRAPA		0x0004	//TRAPA
 #define SSP_FP_RESULT	0x0008	//FP arithmetic: a NaN result has a host specific encoding
-#define SSP_FTRC		0x0010	//FTRC: the result for a NaN is host specific
+#define SSP_FTRC		0x0010	//FTRC: the result for a NaN and for a number above the range is the generator's
 #define SSP_DOUBLE		0x0020	//FP operands are doubles (DRn = FR[2n]:FR[2n+1])
 #define SSP_MAY_CRASH	0x0040	//known defect that ends in die()/verify(), see known
 #define SSP_RTE			0x0080	//RTE: the delay slot runs with the SR that is restored

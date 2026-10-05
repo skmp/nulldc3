@@ -14,7 +14,7 @@ Measured on x86-64 (GCC 13, a CPU with SSE3 and FMA, without AVX-512), x64 backe
 |---|---|
 | run | 91,989 |
 | identical | 79,467 |
-| different | 12,144 (crash 0, path 0, bus 0, state 261, notify 11,883) |
+| different | 12,144 (crash 0, path 0, bus 0, state 260, notify 11,884) |
 | both-crash | 378 |
 | both-notify | 0: no vector on which both engines carry on from a notification of the emulator code |
 | native | 76,038: the instruction under test is native code in the dynarec. 35 files have none |
@@ -28,8 +28,7 @@ A vector with more than one difference is counted under the first of crash, path
 |---|---|---|---|---|
 | `1111nn0111111101` | FTRV XMTRX,FVn | state | 196 | order of the sum of products |
 | `1111nnmm11101101` | FIPR FVm,FVn | state | 64 | order of the sum of products |
-| `1111mmmm00111101` | FTRC FRm,FPUL | state | 1 | NaN operand |
-| 66 files, every FPU instruction | | notify | 11,883 | SR.FD is only looked at by the interpreter |
+| 66 files, every FPU instruction | | notify | 11,884 | SR.FD is only looked at by the interpreter |
 
 **FTRV and FIPR, order of the sum of products.** The interpreter adds the four products one by one,
 `((p0 + p1) + p2) + p3` (`sh4_fpu.cpp`). The x64 backend multiplies with `mulps` and adds in pairs,
@@ -39,17 +38,12 @@ round to zero, so the order shows: 233 of the 260 vectors differ by one unit in 
 the other 27 by more (opposite signs, or a saturated partial sum against a small or zero result). Neither order is
 the SH4's, see the note on these two files in `tests/common/ss_policy.cpp`.
 
-**FTRC of a NaN.** For a NaN with the sign bit clear the interpreter returns 7FFFFFFF: the host conversion gives
-80000000 and the handler corrects it by the sign bit of the operand. The x64 backend (`shop_cvt_f2i_t`) uses
-`minss` and `cvttss2si` and leaves 80000000. One vector has such an operand (#383). A NaN with the sign bit set gives
-80000000 in both, and with FPSCR.PR=1 the dynarec runs the interpreter's handler.
-
 **SR.FD.** `ExecuteOpcode` (`sh4_interpreter.cpp`) checks SR.FD in front of every FPU instruction. In the NO_MMU
 build `RaiseFPUDisableException` is a `msgboxf("Full MMU support needed")` and the instruction is executed anyway.
 The dynarec never looks at SR.FD, neither in the code it generates nor when it calls an interpreter handler
 (`shop_ifb` calls the handler, not `ExecuteOpcode`). Results are the same, the notification is the difference:
-11,883 vectors. Another 144 vectors with SR.FD=1 are counted under what differs first in them (state: FTRV 100,
-FIPR 43, FTRC 1).
+11,884 vectors. Another 143 vectors with SR.FD=1 are counted under what differs first in them (state: FTRV 100,
+FIPR 43).
 
 ### Both-crash
 
@@ -78,9 +72,9 @@ Same vectors, filter and comparison as `sh4.singlestep.interp`.
 
 | | interpreter | dynarec |
 |---|---|---|
-| run | 73,851 | 73,851 |
-| pass-exact | 73,357 | 73,338 |
-| pass-lenient | 73,516 | 73,516 |
+| run | 73,800 | 73,800 |
+| pass-exact | 73,306 | 73,287 |
+| pass-lenient | 73,465 | 73,465 |
 | failed | 335 (248 crash) | 335 (248 crash) |
 
 The files in which the dynarec passes fewer vectors than the interpreter:
@@ -90,12 +84,12 @@ The files in which the dynarec passes fewer vectors than the interpreter:
 | `1111nn0111111101` | FTRV XMTRX,FVn | 242 | 95 / 211 | 85 / 211 | order of the sum of products, above |
 | `1111nnmm11101101` | FIPR FVm,FVn | 223 | 178 / 215 | 169 / 215 | order of the sum of products, above |
 
-The FTRC and SR.FD differences do not show here: those vectors are filtered (`host-nan`, `fpu-disabled`). Everything
-else the dynarec does not pass, the interpreter does not pass either (`tests/common/ss_policy.cpp`).
+The SR.FD difference does not show here: those vectors are filtered (`fpu-disabled`). Everything else the dynarec
+does not pass, the interpreter does not pass either (`tests/common/ss_policy.cpp`).
 
 ## sh4.directed.*
 
-The hand-written vectors of `tests/sh4_directed` (229 in 30 files). What they expect is the SH-4 software manual's
+The hand-written vectors of `tests/sh4_directed` (256 in 32 files). What they expect is the SH-4 software manual's
 description of the instruction, and for the two things of the last section here what that section says. Both engines
 pass all of them, and `sh4.directed.differential` finds no difference.
 
@@ -104,6 +98,10 @@ of the call, `lds r4,pr` in it is the later write and stays), RTS returns to the
 in the delay slot), JMP, BRAF and BSRF go by the register they are entered with (`mov r4,r3` in the delay slot of a
 jump through R3), BT/S and BF/S test the T they are entered with, and the delay slot of RTE runs with the SR that
 RTE restores (`mov r0,r8` in it reads R0 of the new bank, `movt r8` the new T).
+
+FTRC, single and double precision: 2^31 and above and +inf give 7FFFFFFF, -2^31 and below, -inf and every NaN
+80000000, in the interpreter and in the x64 backend's code (`shop_cvt_f2i_t`: `cvttss2si`, and 7FFFFFFF from
+2147483648.0f on).
 
 ## Not measured on a console
 
