@@ -371,6 +371,10 @@ void dbg_sh4_OnException()
 {
 	if (dbg_sh4_stepout)
 		st.so_level++;
+
+	// The handler runs in front of the instruction that a resume was made for: when it returns there, the
+	// instruction has not executed and its check stops
+	st.exempt = false;
 }
 
 bool dbg_sh4_StopPending()

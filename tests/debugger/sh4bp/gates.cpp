@@ -2947,6 +2947,84 @@ static void gate_midpair()
 
 
 /*
+	The resume exemption when an interrupt is accepted in front of the instruction of the stop. A step-out can
+	stop behind the block (the interpreter: the instruction) that used the slice up: the loop that is entered
+	for the resume then does the end-of-slice work first, and an interrupt that this accepts has its handler
+	run in front of the instruction. When the handler returns to it, it has not executed: it stops again.
+*/
+static void gate_vector()
+{
+	for (bool idleskip : { true, false })
+	{
+		settings.dynarec.idleskip = idleskip;
+
+		for (Engine e : all_engines)
+		{
+			const char* en = engine_name(e);
+			const char* timing = idleskip ? "fast" : "idleskip off";
+
+			machine_reset(e);
+			machine_set_sr(SR_MD);
+			machine_set_pc(G_work);
+
+			R(10) = 0xFFFFFFFF;
+			R(12) = 1;
+			R(14) = 0;
+
+			//a step-out of the leaf at every arrival, until one ends with the slice used up
+			bool found = false;
+			MachineStop s;
+
+			for (u32 i = 0; i < 20000 && !found; i++)
+			{
+				bps({ G_leaf_mid });
+				s = machine_resume();
+
+				if (!is_bp(s, 1, G_leaf_mid))
+					break;
+
+				bps({ });
+				s = machine_step_out();
+
+				if (!s.debugger || s.cause != StopCause::Step)
+					break;
+
+				found = machine_state().counter <= 0;
+			}
+
+			if (!check(found, "%s, %s: a step-out of the leaf ends behind the block that used its slice up (%08X, counter %d)", en, timing, s.pc,
+				machine_state().counter))
+				continue;
+
+			//the instruction of the stop is armed, and the slice end that the resume begins with requests the
+			//interrupt
+			const u32 at = s.pc;
+			const Regs before = regs();
+			const u32 handled = machine_read32(G_irqcnt);
+
+			bps({ at });
+			knobs.irq_period = 1;
+
+			s = machine_resume();
+
+			check(is_bp(s, 1, at) && regs().same_int(before) && machine_read32(G_irqcnt) == handled + 1,
+				"%s, %s: the handler of an interrupt that the resume accepted in front of the instruction of the stop returns to it, and it stops again, not executed (stop at %08X, %u interrupts handled, pass %u, at the first stop %08X pass %u)",
+				en, timing, s.pc, machine_read32(G_irqcnt) - handled, R(9), at, before.r[9]);
+
+			//the resume of that stop runs it
+			knobs.irq_period = 0;
+			bps({ at, G_leaf_mid });
+			s = machine_resume();
+
+			check(is_bp(s, 2, G_leaf_mid) || (is_bp(s, 1, at) && R(9) != before.r[9]), "%s, %s: and the resume of that stop runs it (%08X)", en, timing, s.pc);
+		}
+	}
+
+	settings.dynarec.idleskip = true;
+}
+
+
+/*
 	An event breakpoint on the machine's vblank. The stop is where the slice of the event ends; a SLEEP wait is
 	cut short by it, and an interrupt that is accepted on the way out of the stop returns behind the SLEEP.
 */
@@ -3278,6 +3356,7 @@ const Gate gates[] = {
 	{ "b14", "B14 jit: n steps equal a run to the n-th instruction", gate_b14 },
 	{ "slot", "the interpreter between a conditional branch that is not taken and its slot: steps, arming, stops", gate_slot },
 	{ "midpair", "a slot armed in a stop between its branch and it: the slot runs, the arrival at its address behind it stops", gate_midpair },
+	{ "vector", "an interrupt accepted in front of the instruction of a stop: it stops again when the handler returns to it", gate_vector },
 	{ "arm", "page discards on arming, blocks over two pages, category mask, breakpoints added in a stop", gate_arm },
 	{ "event", "an event breakpoint on the vblank of the machine: at a slice end, in a SLEEP wait, with an interrupt request", gate_event },
 };
