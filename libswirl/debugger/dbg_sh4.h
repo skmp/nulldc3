@@ -9,7 +9,7 @@
 #include "dbg_emu.h"
 
 /*
-	dbg::sh4: the state behind SH4 code breakpoints and steps (dbg_sh4.cpp) — the armed set and its page bitmap,
+	dbg::sh4: the state behind SH4 code breakpoints and steps (dbg_sh4.cpp): the armed set and its page bitmap,
 	the resume exemption, the owed remainder of an interrupted block, temporary breakpoints, step-over and
 	step-out. The SH4 backends reach it through the dbg_sh4_* functions of debugger.h; this header is what
 	run control (dbg::emu) and register writes call.

@@ -14,8 +14,8 @@
 #endif
 
 /*
-	dbg::emu: the debugger on the emulator thread — lifetime, the call queue, the slice hook, the stop latch,
-	the park loop and the sequencing of run control (dbg_emu.cpp) — and the types every debugger module
+	dbg::emu: the debugger on the emulator thread (lifetime, the call queue, the slice hook, the stop latch,
+	the park loop and the sequencing of run control: dbg_emu.cpp), and the types every debugger module
 	shares. Debugger sources include this header; emulator code includes debugger.h, which has the threads,
 	the lifetime states and the contexts this header refers to.
 
