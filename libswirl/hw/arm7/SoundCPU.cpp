@@ -251,7 +251,15 @@ struct SoundCPU_impl : SoundCPU {
 		bool enabled = state == 0;
 
 		if (!ctx.enabled && enabled)
+		{
 			ResetException();
+
+			//The reset ends a service in progress, as a write of bit 0 of M does: the program that is started gets its
+			//interrupts whatever the one before it was in the middle of. Not measured on a console (no job there
+			//finds a request in service); software depends on it, the ARM crt0 of KallistiOS writes M in its FIQ
+			//handler only. L and the registers of the AICA stay (console: fiqdiag d1.bin to d5.bin), and nFIQ does
+			e68k_AcceptInterrupt(&ctx);
+		}
 
 		ctx.enabled = enabled;
 	}
