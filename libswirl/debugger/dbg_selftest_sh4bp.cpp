@@ -19,7 +19,10 @@
 	tests/debugger/sh4bp/selftest.sh compares.
 
 	Every test begins with a reset of the machine, so that nothing of the guest that ran before it is left,
-	and the guest programs take no interrupt: they run with SR.IMASK = 15.
+	and the guest programs take no interrupt: they run with SR.IMASK = 15. The tests sh4bpboot.* are B3, B6 and
+	B7 on the booted guest with its interrupts live, with the state at a fixed vblank compared between two
+	sessions ("The booted guest" below). The timing mode of a session is the configured one too: a session with
+	config:Dynarec.idleskip=no is these gates with idleskip off.
 
 	Times are compared as differences between two stops of one run. In a session with the forced fallback
 	the loop that runs the guest, and with it the slice counter that tells the time, changes with the
@@ -37,8 +40,14 @@
 #include "hw/sh4/sh4_opcode_list.h"
 #include "hw/sh4/sh4_sched.h"
 
+#if FEAT_SHREC != DYNAREC_NONE
+#include "hw/sh4/dyna/blockmanager.h"
+#endif
+
 #include "../../tests/debugger/sh4bp/guest.inc"
 
+#include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <thread>
@@ -306,6 +315,949 @@ bool Entered(u32& at)
 
 	return Go();
 }
+
+
+/*
+	The booted guest: sh4bpboot.b3, sh4bpboot.b6, sh4bpboot.b7 and their twins sh4bpbase.*
+
+	B3, B6 and B7 are also made on the guest of the session as reios boots it, with its interrupts live. What
+	they compare there is the state of the machine at a fixed vblank: scheduler time, the slice counter, the
+	pc, a hash of the SH4 context and a hash of main memory.
+
+	A run is a reset, main memory cleared (the boot loads the guest into it again) and the guest resumed up to
+	its vblank kBootVblanks. An event breakpoint on dc.holly.core.vblank counts the vblanks. It stops the guest
+	at every one of them, where the slice of the vblank ends. Time counts from the reset. What a case tests it
+	arms in the stop of vblank kBootWindow, so that all runs are one run up to there. A test is a row of runs,
+	one for each of its cases, and prints the state that each ended in as "note: cmp boot.<gate>.<case> <state>".
+
+	A reset does not put the whole machine back: the scheduler keeps its time, the devices their place in it and
+	some of their registers. A run therefore has no baseline in its own session. Its baseline is the run at the
+	same place of a second session, which makes the same row of runs with nothing of the cases in them: the
+	tests sh4bpbase.*, to be selected in place of sh4bpboot.*. Both sessions come to every reset with the same
+	machine, as long as the runs in front of it changed nothing for the guest, and what they print for a run
+	has to be equal. tests/debugger/sh4bp/selftest.sh runs the sessions and compares them: two sessions of
+	baselines have to agree, and a session of cases that differs from them is run twice more and fails when it
+	differs again, because runs of one guest can also differ for reasons that are not the debugger's.
+	These tests are not under the name sh4bp: a session of theirs holds nothing but the runs, which no thread
+	of the host has a say in.
+
+	What a case stops at are addresses of the guest's own path: the instructions of kBootSteps single steps
+	from the stop of vblank kBootWindow, taken in a run of their own that every session begins with, sorted
+	into what the gate asks for with the opcodes and, on a recompiler, with the blocks that are cached for them.
+
+	A vblank that finds the guest waiting in a SLEEP cuts the wait short, and how the backend loop goes on from
+	there to the park depends on whether the SLEEP has a breakpoint: with one it does not run the rest of its
+	slice out. That is a skew of the stop of the event breakpoint, not of the breakpoint on the SLEEP, and it
+	makes the two runs differ. The case that stops at SLEEPs therefore counts no vblanks behind kBootWindow.
+	Its run, and the one of its baseline, end at the kBootInterrupts-th interrupt that the guest accepts from
+	there on: a breakpoint on the interrupt vector, armed in the stop of kBootWindow, stops at every one of
+	them, behind the wait that the interrupt ended.
+
+	In a session with the forced fallback the interpreter fallback runs the guest while a breakpoint is active,
+	and its FPU arithmetic is not the JIT's. Every run there has a breakpoint on the entry point of the guest
+	from the stop of kBootWindow on, where the guest does not come back to: from there to its end the run is
+	the fallback loop's, the baselines included. selftest.sh prints how those compare with the JIT's (B12).
+*/
+const u32 kBootVblanks = 400;		// the vblank the state is compared at
+const u32 kBootWindow = 300;		// the vblank a case arms at
+const u32 kBootInterrupts = 200;	// the accepted interrupt behind it that the case with the SLEEPs is compared at
+const u32 kBootSteps = 12000;		// the steps the path is sampled with
+const u32 kStopBudget = 20000;		// a case that stops at breakpoints, or pauses, disarms behind this many stops
+const u32 kCallBudget = 2000;		// the calls of the case with service excursions
+const u32 kOutChain = 4;			// step-outs asked for between two vblanks
+const u32 kVblankId = 1000;			// the id of the event breakpoint
+const u32 kResetVector = 0xA0000000;	// where a run starts
+const u16 kSleepOp = 0x001B;
+
+struct BootState
+{
+	u64 time;		// scheduler time since the reset
+	int slice;		// cycles left in the running slice
+	u32 pc;
+	u64 ctx;		// every register a guest sees, and the pending interrupts
+	u64 ram;		// main memory
+};
+
+const char* Text(const BootState& s)
+{
+	static char text[4][128];
+	static u32 next;
+
+	char* out = text[next++ & 3];
+
+	snprintf(out, sizeof(text[0]), "time %llu slice %d pc %08X context %016llX memory %016llX", (unsigned long long)s.time, s.slice, s.pc,
+		(unsigned long long)s.ctx, (unsigned long long)s.ram);
+
+	return out;
+}
+
+struct AddrSet
+{
+	u32 addr[24];
+	u32 n;
+	bool none;		// a session of this kind has no such address
+
+	void Add(u32 a)
+	{
+		for (u32 i = 0; i < n; i++)
+		{
+			if (addr[i] == a)
+				return;
+		}
+
+		if (n < sizeof(addr) / sizeof(addr[0]))
+			addr[n++] = a;
+	}
+
+	void Add(const AddrSet& o)
+	{
+		for (u32 i = 0; i < o.n; i++)
+			Add(o.addr[i]);
+	}
+
+	void Remove(u32 a)
+	{
+		for (u32 i = 0; i < n; i++)
+		{
+			if (addr[i] == a)
+				addr[i--] = addr[--n];
+		}
+	}
+
+	// up to `want` of the `count` candidates, spread over them
+	void Spread(const u32* from, u32 count, u32 want)
+	{
+		for (u32 k = 0; k < want && k < count; k++)
+			Add(from[count <= want ? k : (2 * k + 1) * count / (2 * want)]);
+	}
+};
+
+/*
+	What a case does in its run:
+	  BOOT_WINDOW  parked at the vblank kBootWindow: it arms what it tests
+	  BOOT_STOP    a stop behind that one and in front of the end of the run, whatever its cause. The guest is
+	               resumed behind it unless the case arms a step (BootStep) or ends the run (boot_abort)
+	  BOOT_END     parked where the run ends, the state is taken. A case whose other thread did not get to act
+	               in this run says so (boot_void): the run then prints no state, and its session is run again
+	  BOOT_RESULT  the check of the case, on what it counted
+*/
+enum BootAt { BOOT_WINDOW, BOOT_STOP, BOOT_END, BOOT_RESULT };
+
+typedef void (*BootFn)(BootAt at, const emu::RunState& stop);
+
+// Where a run ends: at the vblank kBootVblanks, or at the interrupt kBootInterrupts behind the vblank kBootWindow
+enum BootMode { BOOT_VBLANKS, BOOT_INTERRUPTS, BOOT_MODES };
+
+struct BootCase
+{
+	const char* what;
+	BootFn fn;
+	const AddrSet* set;		// what the case arms: it is left out when there is nothing in it
+	const char* missing;	// the name of the set, when the path of a guest can lack it
+	bool native;			// not in a session with the forced fallback
+	BootMode mode;
+};
+
+// a run
+u32 boot_phase;				// 0: none, 1: the reset is made, 2: the guest runs
+BootMode boot_mode;
+u32 boot_vblanks;
+u32 boot_vector;			// the interrupt vector with its breakpoint, 0: none
+u32 boot_interrupts;		// stops at it
+u64 boot_sched0;
+bool boot_bare;				// a run that never keeps the fallback loop: the one that takes the path
+bool boot_fallback;			// the run keeps the fallback loop from here on, with a breakpoint on the entry point
+bool boot_armed, boot_abort, boot_void;
+bool boot_ok;				// the run got to its end, boot_state is the state there
+bool boot_loop;				// and the fallback loop ran the guest
+BootState boot_state;
+
+// the case of a run, and what it counts
+const BootCase* boot_case;
+u32 boot_stops, boot_pauses, boot_calls, boot_outs, boot_ended, boot_chain;
+
+// the path
+u32 prof_pc[kBootSteps];
+u16 prof_op[kBootSteps];
+u32 prof_n;
+bool prof_known;
+u32 boot_hot;
+AddrSet set_never, set_plain, set_pair, set_slot, set_sleep, set_idle, set_cut, set_all;
+AddrSet seen_sleep;
+
+/*
+	A helper thread stands for another thread of the debugger: it asks for pauses or makes calls while the guest
+	runs. It works for one generation, the one it was started in, and is not waited for: a call of its that
+	is still queued when the generation ends does nothing when it is taken.
+*/
+std::atomic<u32> helper_gen;
+std::atomic<bool> helper_ready;
+
+// Returns when the thread runs: the stretch of the guest that it is for can be short
+void HelperStart(void (*body)(u32 gen))
+{
+	helper_ready = false;
+	std::thread(body, helper_gen.load()).detach();
+
+	while (!helper_ready)
+		std::this_thread::yield();
+}
+
+void HelperEnd()
+{
+	helper_gen++;
+}
+
+bool HelperLive(u32 gen)
+{
+	return helper_gen.load() == gen;
+}
+
+bool SessionFallback()
+{
+	emu::Sh4EngineInfo info = { };
+
+	return emu::GetSh4Engine(&info) && info.fallback;
+}
+
+// The event breakpoint on the vblank. No client is connected: the gate of the event is the test's to open
+void Vblank(bool on)
+{
+	u32 id = kVblankId;
+	u8 event = (u8)EV_CORE_VBLANK;
+
+	emu::SetEventBreakpoints(&id, &event, on ? 1 : 0);
+	g_event_on[EV_CORE_VBLANK].store(on ? 1 : 0);
+}
+
+// The breakpoints of a run: these addresses with the ids 1, 2, ..., and behind them the ones on the interrupt
+// vector and on the entry point when the run has them
+void BootArm(const u32* addrs, u32 n)
+{
+	u32 ids[sizeof(AddrSet::addr) / sizeof(u32) + 2], a[sizeof(AddrSet::addr) / sizeof(u32) + 2];
+	u32 count = 0;
+
+	for (; count < n; count++)
+	{
+		ids[count] = count + 1;
+		a[count] = addrs[count];
+	}
+
+	if (boot_vector)
+	{
+		ids[count] = count + 1;
+		a[count] = boot_vector;
+		count++;
+	}
+
+	if (boot_fallback)
+	{
+		ids[count] = count + 1;
+		a[count] = kEntry;
+		count++;
+	}
+
+	emu::SetSh4Breakpoints(ids, a, count);
+}
+
+void BootArm(const AddrSet& set)
+{
+	BootArm(set.addr, set.n);
+}
+
+// A step that a case arms. false: it is refused, and the guest is resumed
+bool BootStep(StepKind kind)
+{
+	if (emu::Step(Target::Sh4, kind, nullptr) != 0)
+		return false;
+
+	boot_armed = true;
+	return true;
+}
+
+BootState BootCapture()
+{
+	Sh4Context& c = Ctx();
+	emu::Sh4EngineInfo info = { };
+	BootState s;
+
+	emu::GetSh4Engine(&info);
+
+	s.time = sh4_sched_now64() - boot_sched0;
+	s.slice = info.sliceCyclesLeft;
+	s.pc = c.pc;
+
+	u32 misc[] = { c.gbr, c.ssr, c.spc, c.sgr, c.dbr, c.vbr, c._pr, c.fpul, c.pc, c.sr.status, c.sr.T, c.fpscr.full, c.interrupt_pend };
+	u64 h = Fnv(kFnvBasis, c.xffr, sizeof(c.xffr));
+
+	h = Fnv(h, c.r, sizeof(c.r));
+	h = Fnv(h, &c.mac, sizeof(c.mac));
+	h = Fnv(h, c.r_bank, sizeof(c.r_bank));
+	s.ctx = Fnv(h, misc, sizeof(misc));
+
+	// main memory, eight bytes at a time
+	const u8* ram = Ram(G_BASE & ~RAM_MASK);
+
+	h = kFnvBasis;
+
+	for (u32 i = 0; i < RAM_SIZE; i += 8)
+	{
+		u64 v;
+
+		memcpy(&v, ram + i, 8);
+		h = (h ^ v) * 0x100000001B3ull;
+		h ^= h >> 32;
+	}
+
+	s.ram = h;
+
+	return s;
+}
+
+// Where the runs of a mode end, for the text of a check
+const char* Where(BootMode mode)
+{
+	static char text[BOOT_MODES][64];
+
+	if (mode == BOOT_VBLANKS)
+		snprintf(text[mode], sizeof(text[mode]), "vblank %u", kBootVblanks);
+	else
+		snprintf(text[mode], sizeof(text[mode]), "interrupt %u behind vblank %u", kBootInterrupts, kBootWindow);
+
+	return text[mode];
+}
+
+void BootEnd(bool ok)
+{
+	HelperEnd();
+	Vblank(false);
+	emu::SetSh4Breakpoints(nullptr, nullptr, 0);
+	emu::SetActiveMask(~0u);
+
+	boot_ok = ok;
+	boot_abort = false;
+	boot_phase = 0;
+}
+
+// One run of the booted guest. false: it armed what goes on and wants the next stop. true: the run is over,
+// the guest is parked, nothing is armed. The first call of a run does not look at its stop
+bool BootRun(const emu::RunState& stop, BootFn fn, BootMode mode)
+{
+	if (boot_phase == 0)
+	{
+		emu::SetSh4Breakpoints(nullptr, nullptr, 0);
+		emu::SetActiveMask(~0u);
+		Vblank(false);
+
+		boot_mode = mode;
+		boot_vector = 0;
+		boot_void = false;
+		boot_phase = 1;
+		emu::Reset();
+		return false;
+	}
+
+	if (boot_phase == 1)
+	{
+		if (stop.cause != StopCause::Reset || Ctx().pc != kResetVector)
+		{
+			Check(false, "a run of the booted guest starts parked at the reset vector (\"%s\", pc %08X)", StopCauseName(stop.cause), Ctx().pc);
+			BootEnd(false);
+			return true;
+		}
+
+		memset(Ram(G_BASE & ~RAM_MASK), 0, RAM_SIZE);
+
+		boot_sched0 = sh4_sched_now64();
+		boot_vblanks = 0;
+		boot_fallback = false;
+
+		Vblank(true);
+
+		boot_phase = 2;
+		Go();
+		return false;
+	}
+
+	const bool vblank = stop.cause == StopCause::Event && stop.breakpointId == kVblankId;
+
+	if (stop.lifetime != Lifetime::Parked
+		|| !(vblank || stop.cause == StopCause::Breakpoint || stop.cause == StopCause::Pause || stop.cause == StopCause::Step))
+	{
+		Check(false, "the booted guest runs to %s (a stop with \"%s\" behind vblank %u, pc %08X)", Where(boot_mode),
+			StopCauseName(stop.cause), boot_vblanks, Ctx().pc);
+		BootEnd(false);
+		return true;
+	}
+
+	// a stop of the breakpoint on the interrupt vector
+	const bool interrupt = boot_vector != 0 && stop.cause == StopCause::Breakpoint && sh4::MaskAddr(Ctx().pc) == sh4::MaskAddr(boot_vector);
+	const bool window = vblank && boot_vblanks + 1 == kBootWindow;
+
+	if (vblank)
+	{
+		u16 op;
+
+		boot_vblanks++;
+
+		// an event breakpoint cuts a SLEEP wait short and leaves the pc on the SLEEP
+		if (mem::Read16(Target::Sh4, Ctx().pc, &op) && op == kSleepOp)
+			seen_sleep.Add(Ctx().pc);
+	}
+
+	if (interrupt)
+		boot_interrupts++;
+
+	if (boot_mode == BOOT_VBLANKS ? (vblank && boot_vblanks == kBootVblanks) : (interrupt && boot_interrupts == kBootInterrupts))
+	{
+		emu::Sh4EngineInfo info = { };
+
+		boot_state = BootCapture();
+		boot_loop = emu::GetSh4Engine(&info) && info.fallbackLoop;
+
+		if (fn)
+			fn(BOOT_END, stop);
+
+		BootEnd(true);
+		return true;
+	}
+
+	boot_armed = false;
+
+	if (window)
+	{
+		// from here on a run to an interrupt has its stops at the interrupt vector, and none at a vblank
+		if (boot_mode == BOOT_INTERRUPTS)
+		{
+			Vblank(false);
+
+			boot_vector = Ctx().vbr + 0x600;
+			boot_interrupts = 0;
+		}
+
+		boot_fallback = !boot_bare && SessionFallback();
+
+		BootArm(nullptr, 0);
+	}
+
+	if (fn && boot_vblanks >= kBootWindow && !interrupt)
+		fn(window ? BOOT_WINDOW : BOOT_STOP, stop);
+
+	if (boot_abort)
+	{
+		BootEnd(false);
+		return true;
+	}
+
+	if (!boot_armed)
+		Go();
+
+	return false;
+}
+
+// The path of the guest: single steps from the stop of the window vblank
+void BootProfileFn(BootAt at, const emu::RunState&)
+{
+	u16 op;
+
+	if (at == BOOT_END || at == BOOT_RESULT)
+		return;
+
+	if (at == BOOT_WINDOW)
+		prof_n = 0;
+
+	if (prof_n < kBootSteps && mem::Read16(Target::Sh4, Ctx().pc, &op) && BootStep(StepKind::Into))
+	{
+		prof_pc[prof_n] = Ctx().pc;
+		prof_op[prof_n] = op;
+		prof_n++;
+		return;
+	}
+
+	boot_abort = true;
+}
+
+bool IsPlainOp(u16 op)
+{
+	return op != kSleepOp && (OpDesc[op]->type & (WritesPC | WritesSR | WritesFPSCR | Invalid)) == 0;
+}
+
+// Sorts the path into the sets of the cases
+void BootSets()
+{
+	static u32 addr[kBootSteps], times[kBootSteps], list[kBootSteps];
+	static u16 ops[kBootSteps];
+	u32 n = 0, count;
+
+	// the addresses of the path in the order they came up, and how often each came up
+	for (u32 i = 0; i < prof_n; i++)
+	{
+		u32 j = 0;
+
+		while (j < n && addr[j] != prof_pc[i])
+			j++;
+
+		if (j == n)
+		{
+			addr[n] = prof_pc[i];
+			ops[n] = prof_op[i];
+			times[n++] = 0;
+		}
+
+		times[j]++;
+	}
+
+	// boot code: the guest does not come back to its entry point
+	set_never.Add(kEntry);
+
+	// instructions that end no block, and the one of them that came up most often
+	count = 0;
+	boot_hot = 0;
+
+	for (u32 j = 0, most = 0; j < n; j++)
+	{
+		if (!IsPlainOp(ops[j]))
+			continue;
+
+		list[count++] = addr[j];
+
+		if (times[j] > most)
+		{
+			most = times[j];
+			boot_hot = addr[j];
+		}
+	}
+
+	set_plain.Spread(list, count, 4);
+
+	// two instructions in a row, which one block holds: the pair in the middle of the path
+	count = 0;
+
+	for (u32 i = 0; i + 1 < prof_n; i++)
+	{
+		if (prof_pc[i + 1] == prof_pc[i] + 2 && IsPlainOp(prof_op[i]) && IsPlainOp(prof_op[i + 1]))
+			list[count++] = prof_pc[i];
+	}
+
+	if (count != 0)
+	{
+		set_pair.Add(list[count / 2]);
+		set_pair.Add(list[count / 2] + 2);
+	}
+
+	// delay slots: a breakpoint on one stops in front of its branch
+	count = 0;
+
+	for (u32 j = 0; j < n; j++)
+	{
+		if ((OpDesc[ops[j]]->type & Delayslot) != 0)
+			list[count++] = addr[j] + 2;
+	}
+
+	set_slot.Spread(list, count, 4);
+
+	// SLEEPs: on the path, and where a vblank found the guest waiting
+	count = 0;
+
+	for (u32 j = 0; j < n; j++)
+	{
+		if (ops[j] == kSleepOp)
+			list[count++] = addr[j];
+	}
+
+	set_sleep.Spread(list, count, 2);
+	set_sleep.Spread(seen_sleep.addr, seen_sleep.n, 2);
+
+	// what only the blocks tell: the idle class of the decoder's cost, and the blocks that a size limit ended
+	set_idle.none = set_cut.none = true;
+
+#if FEAT_SHREC != DYNAREC_NONE
+	if (!IsInterpreter())
+	{
+		u32 cuts = 0;
+
+		set_cut.none = false;
+		set_idle.none = !settings.dynarec.idleskip;
+		count = 0;
+
+		for (u32 j = 0; j < n; j++)
+		{
+			// the cache is looked up for code in main memory
+			RuntimeBlockInfo* blk = addr[j] < 0xE0000000 && ((addr[j] >> 26) & 7) == 3 ? bm_GetBlock(addr[j]) : nullptr;
+			u16 last, before;
+
+			if (blk == nullptr || sh4::MaskAddr(blk->addr) != sh4::MaskAddr(addr[j]))
+				continue;
+
+			// with idleskip every block costs one cycle but the ones of the idle class
+			if (settings.dynarec.idleskip && blk->guest_cycles > 1)
+				list[count++] = blk->addr + (blk->guest_opcodes > 2 ? 2 : 0);
+
+			// a block that goes on into the next one behind an instruction that ends no block
+			if (cuts < 2 && blk->BlockType == BET_StaticJump && blk->BranchBlock == blk->addr + blk->sh4_code_size && blk->guest_opcodes >= 64
+				&& mem::Read16(Target::Sh4, blk->addr + blk->sh4_code_size - 2, &last) && IsPlainOp(last)
+				&& mem::Read16(Target::Sh4, blk->addr + blk->sh4_code_size - 4, &before) && IsPlainOp(before))
+			{
+				set_cut.Add(blk->addr + 4);
+				set_cut.Add(blk->addr + blk->sh4_code_size);
+				set_cut.Add(blk->addr + blk->sh4_code_size + 4);
+				cuts++;
+			}
+		}
+
+		set_idle.Spread(list, count, 4);
+	}
+#endif
+
+	// the interrupt vector is where the runs that end at an interrupt have their own breakpoint
+	for (AddrSet* set : { &set_plain, &set_pair, &set_slot, &set_sleep, &set_idle, &set_cut })
+	{
+		for (u32 j = 0; j < n; j++)
+		{
+			if (sh4::MaskAddr(addr[j]) == sh4::MaskAddr(Ctx().vbr + 0x600))
+				set->Remove(addr[j]);
+		}
+	}
+
+	set_all.Add(set_sleep);
+	set_all.Add(set_idle);
+	set_all.Add(set_slot);
+	set_all.Add(set_plain);
+	set_all.Add(set_pair);
+	set_all.Add(set_cut);
+
+	Note("the path of the booted guest behind vblank %u: %u steps, %u addresses. Taken from it: %u instructions that end no block, %u in a row, %u delay slots, %u SLEEPs, %u in blocks of the idle class, %u in and behind blocks that a size limit ended",
+		kBootWindow, prof_n, n, set_plain.n, set_pair.n, set_slot.n, set_sleep.n, set_idle.n, set_cut.n);
+}
+
+// The path, taken once in a session, on the backend's own loop. false: armed
+bool BootProfile(const emu::RunState& stop)
+{
+	if (prof_known)
+		return true;
+
+	boot_bare = true;
+
+	if (!BootRun(stop, BootProfileFn, BOOT_VBLANKS))
+		return false;
+
+	boot_bare = false;
+	prof_known = true;
+
+	BootSets();
+
+	return true;
+}
+
+// A test: the runs of its cases, one after the other, or with `baseline` the same runs with nothing of the
+// cases in them. Every session begins with the run that takes the path. false: armed. true: the test is over
+bool BootSuite(const emu::RunState& stop, const char* gate, const BootCase* cases, u32 count, bool baseline)
+{
+	static u32 index;
+	static bool begun;
+
+	if (!BootProfile(stop))
+		return false;
+
+	for (; index < count; index++)
+	{
+		const BootCase& c = cases[index];
+
+		if (!begun)
+		{
+			if (c.native && SessionFallback())
+				continue;
+
+			if (c.set && c.set->n == 0)
+			{
+				if (!c.set->none)
+					Note("the path of the booted guest has no %s", c.missing);
+
+				continue;
+			}
+
+			boot_case = &c;
+			begun = true;
+		}
+
+		if (!BootRun(stop, baseline ? nullptr : c.fn, c.mode))
+			return false;
+
+		begun = false;
+
+		if (!boot_ok)
+			continue;
+
+		if (SessionFallback())
+			Check(boot_loop, "booted guest, %s: the fallback loop ran the guest to %s", c.what, Where(c.mode));
+		else
+			Check(true, "booted guest, %s: the run got to %s", c.what, Where(c.mode));
+
+		if (boot_void)
+			Note("booted guest, %s: the other thread came too late in this run, it has no state", c.what);
+		else
+			Note("cmp boot.%s.%u %s", gate, index, Text(boot_state));
+
+		if (!baseline && !boot_void)
+			c.fn(BOOT_RESULT, stop);
+	}
+
+	index = 0;
+	return true;
+}
+
+/*
+	The cases
+*/
+
+// Armed addresses that answer continue: not reached, or reached with the category muted
+void BootQuietFn(BootAt at, const emu::RunState& stop)
+{
+	switch (at)
+	{
+	case BOOT_WINDOW:
+		boot_stops = 0;
+		BootArm(*boot_case->set);
+
+		if (boot_case->set != &set_never)
+			emu::SetActiveMask(~CategoryBit(Category::Sh4));
+		break;
+
+	case BOOT_STOP:
+		boot_stops += stop.cause == StopCause::Breakpoint;
+		break;
+
+	case BOOT_END:
+		break;
+
+	case BOOT_RESULT:
+		Check(boot_stops == 0, "booted guest, %s: no stop", boot_case->what);
+		break;
+	}
+}
+
+// A stop and a resume at every arrival; behind kStopBudget of them the addresses are disarmed, in the stop
+void BootStopFn(BootAt at, const emu::RunState& stop)
+{
+	switch (at)
+	{
+	case BOOT_WINDOW:
+		boot_stops = 0;
+		BootArm(*boot_case->set);
+		break;
+
+	case BOOT_STOP:
+		if (stop.cause == StopCause::Breakpoint && ++boot_stops == kStopBudget)
+			BootArm(nullptr, 0);
+		break;
+
+	case BOOT_END:
+		break;
+
+	case BOOT_RESULT:
+		Check(boot_stops != 0, "booted guest, stop + resume at %s: %u stops at %u addresses", boot_case->what, boot_stops, boot_case->set->n);
+		break;
+	}
+}
+
+// Pauses that another thread asks for, as fast as they are taken: at the slice ends of the backend loop
+void PauseHelper(u32 gen)
+{
+	while (HelperLive(gen))
+	{
+		emu::RequestPause();
+		helper_ready = true;
+	}
+}
+
+void BootPauseFn(BootAt at, const emu::RunState& stop)
+{
+	switch (at)
+	{
+	case BOOT_WINDOW:
+		boot_pauses = 0;
+		HelperStart(PauseHelper);
+		break;
+
+	case BOOT_STOP:
+		if (stop.cause == StopCause::Pause && ++boot_pauses == kStopBudget)
+			HelperEnd();
+		break;
+
+	case BOOT_END:
+		boot_void = boot_pauses == 0;
+		break;
+
+	case BOOT_RESULT:
+		Check(boot_pauses != 0, "booted guest, pause + resume at slice ends: %u pauses", boot_pauses);
+		break;
+	}
+}
+
+// Service excursions: calls of another thread that arm and disarm addresses while the guest runs. None of
+// them stops: the category is muted, and in a session with the fallback, where a muted category would end the
+// fallback loop, the address is one that is not reached. On (E), in the park context
+void BootToggle()
+{
+	const bool on = (++boot_calls & 1) != 0 && boot_calls < kCallBudget;
+
+	if (boot_calls == kCallBudget)
+		HelperEnd();
+
+	if (on)
+		BootArm(SessionFallback() ? set_never : set_all);
+	else
+		BootArm(nullptr, 0);
+}
+
+void CallHelper(u32 gen)
+{
+	while (HelperLive(gen))
+	{
+		helper_ready = true;
+
+		emu::Call(emu::CC_TABLE, [gen] {
+			if (HelperLive(gen))
+				BootToggle();
+		});
+	}
+}
+
+void BootCallFn(BootAt at, const emu::RunState& stop)
+{
+	switch (at)
+	{
+	case BOOT_WINDOW:
+		boot_calls = boot_stops = 0;
+
+		if (!SessionFallback())
+			emu::SetActiveMask(~CategoryBit(Category::Sh4));
+
+		HelperStart(CallHelper);
+		break;
+
+	case BOOT_STOP:
+		boot_stops += stop.cause == StopCause::Breakpoint;
+		break;
+
+	case BOOT_END:
+		boot_void = boot_calls == 0;
+		break;
+
+	case BOOT_RESULT:
+		Check(boot_calls != 0 && boot_stops == 0, "booted guest, addresses armed and disarmed in service excursions: %u calls, no stop", boot_calls);
+		break;
+	}
+}
+
+// B6: an address of a hot block, armed by a call of another thread while the guest runs, disarmed in its tenth stop
+void ArmHelper(u32 gen)
+{
+	const u32 hot = boot_hot;
+
+	// the call is made as soon as the guest runs: this loop does not give the processor away
+	while (HelperLive(gen) && emu::GetRunState().lifetime != Lifetime::Running)
+		helper_ready = true;
+
+	while (HelperLive(gen))
+	{
+		int rv = emu::Call(emu::CC_TABLE, [gen, hot] {
+			if (HelperLive(gen))
+			{
+				boot_calls++;
+				BootArm(&hot, 1);
+			}
+		});
+
+		if (rv == 0)
+			break;
+	}
+}
+
+void BootHotFn(BootAt at, const emu::RunState& stop)
+{
+	switch (at)
+	{
+	case BOOT_WINDOW:
+		boot_calls = boot_stops = 0;
+		HelperStart(ArmHelper);
+		break;
+
+	case BOOT_STOP:
+		if (stop.cause == StopCause::Breakpoint && ++boot_stops == 10)
+			BootArm(nullptr, 0);
+		break;
+
+	case BOOT_END:
+		boot_void = boot_stops < 10;
+		break;
+
+	case BOOT_RESULT:
+		Check(boot_calls == 1 && boot_stops == 10, "booted guest, %s: armed at %08X by %u call, %u stops", boot_case->what, boot_hot, boot_calls, boot_stops);
+		break;
+	}
+}
+
+// B7: a step-out is asked for in the stop of every vblank, and again where one ended, kOutChain times between two
+// vblanks. Each is pending until the function it was asked in returns, a handler included, or until the next vblank
+void BootOutFn(BootAt at, const emu::RunState& stop)
+{
+	switch (at)
+	{
+	case BOOT_WINDOW:
+		boot_outs = boot_ended = boot_chain = 0;
+		// no break here by design
+
+	case BOOT_STOP:
+		boot_ended += stop.cause == StopCause::Step;
+
+		if (stop.cause == StopCause::Event)
+			boot_chain = 0;
+
+		if (boot_chain < kOutChain && BootStep(StepKind::Out))
+		{
+			boot_chain++;
+			boot_outs++;
+		}
+		break;
+
+	case BOOT_END:
+		break;
+
+	case BOOT_RESULT:
+		Check(boot_outs != 0, "booted guest, %s: %u asked for, %u ended at a return", boot_case->what, boot_outs, boot_ended);
+		break;
+	}
+}
+
+const BootCase b3_boot[] = {
+	{ "an armed address that is not reached", BootQuietFn, &set_never, nullptr, false, BOOT_VBLANKS },
+	{ "the addresses of every case below, the category muted", BootQuietFn, &set_all, "instruction", true, BOOT_VBLANKS },
+	{ "instructions that end no block", BootStopFn, &set_plain, "instruction that ends no block", false, BOOT_VBLANKS },
+	{ "two instructions in a row, in one block", BootStopFn, &set_pair, "two such instructions in a row", false, BOOT_VBLANKS },
+	{ "delay slots", BootStopFn, &set_slot, "delayed branch", false, BOOT_VBLANKS },
+	{ "SLEEPs", BootStopFn, &set_sleep, "SLEEP", false, BOOT_INTERRUPTS },
+	{ "instructions in blocks of the idle class", BootStopFn, &set_idle, "block of the idle class", false, BOOT_VBLANKS },
+	{ "blocks that a size limit ended, and the instructions behind them", BootStopFn, &set_cut, "block that a size limit ended", false, BOOT_VBLANKS },
+	{ "pauses", BootPauseFn, nullptr, nullptr, false, BOOT_VBLANKS },
+	{ "service excursions", BootCallFn, nullptr, nullptr, false, BOOT_VBLANKS },
+};
+
+const BootCase b6_boot[] = {
+	{ "an address armed by a call while its block is hot, disarmed in its tenth stop", BootHotFn, &set_plain, "instruction that ends no block", false, BOOT_VBLANKS },
+};
+
+const BootCase b7_boot[] = {
+	{ "step-outs pending from every vblank on", BootOutFn, nullptr, nullptr, false, BOOT_VBLANKS },
+};
+
+#define BOOT_TESTS(gate) \
+	DBG_SELFTEST_GUEST(sh4bpboot_##gate, "sh4bpboot." #gate) { return BootSuite(stop, #gate, gate##_boot, sizeof(gate##_boot) / sizeof(gate##_boot[0]), false); } \
+	DBG_SELFTEST_GUEST(sh4bpbase_##gate, "sh4bpbase." #gate) { return BootSuite(stop, #gate, gate##_boot, sizeof(gate##_boot) / sizeof(gate##_boot[0]), true); }
+
+BOOT_TESTS(b3)
+BOOT_TESTS(b6)
+BOOT_TESTS(b7)
 
 
 /*

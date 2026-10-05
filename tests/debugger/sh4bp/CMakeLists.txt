@@ -34,9 +34,16 @@ endif()
 
 set(sh4bp_gates b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b12 b13 b14 slot arm event)
 
+# the configurations that the gates on the booted guest are made in: engine, and "off" for idleskip off
+set(sh4bp_boots jit interpreter fallback jit-idleskip-off fallback-idleskip-off)
+
 # The tests run the blocks of the x64 backend through its main loop
 if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})))
-  foreach(gate ${sh4bp_gates} selftest b11)
+  set(sh4bp_boot_tests "")
+  foreach(boot ${sh4bp_boots})
+    list(APPEND sh4bp_boot_tests boot.${boot})
+  endforeach()
+  foreach(gate ${sh4bp_gates} selftest ${sh4bp_boot_tests} b11)
     add_test(NAME debugger.sh4bp.${gate}
       COMMAND ${CMAKE_COMMAND} -E echo "SKIPPED: the sh4bp gates need an x86-64 build with the SH4 recompiler")
     set_tests_properties(debugger.sh4bp.${gate} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
@@ -237,7 +244,7 @@ endforeach()
 #
 #	libswirl/debugger/dbg_selftest_sh4bp.cpp runs in the emulator, on its park loop. Here the same tests run on
 #	the stand-in for run control: a session per engine, and the comparison of what the sessions print for one
-#	another.
+#	another. The tests on the booted guest are sessions of their own (selftest_boot.cmake).
 #
 
 add_executable(sh4bp_selftest
@@ -252,6 +259,20 @@ target_link_libraries(sh4bp_selftest PRIVATE nulldc_sh4bp)
 add_test(NAME debugger.sh4bp.selftest
   COMMAND ${CMAKE_COMMAND} -DSELFTEST=$<TARGET_FILE:sh4bp_selftest> -P "${CMAKE_CURRENT_SOURCE_DIR}/selftest_compare.cmake")
 set_tests_properties(debugger.sh4bp.selftest PROPERTIES TIMEOUT 600)
+
+# The gates on the booted guest: sessions of the tests sh4bpboot against sessions of their twins sh4bpbase
+foreach(boot ${sh4bp_boots})
+  string(REPLACE "-idleskip-off" "" engine "${boot}")
+  set(idleskip on)
+  if(NOT engine STREQUAL boot)
+    set(idleskip off)
+  endif()
+
+  add_test(NAME debugger.sh4bp.boot.${boot}
+    COMMAND ${CMAKE_COMMAND} -DSELFTEST=$<TARGET_FILE:sh4bp_selftest> -DENGINE=${engine} -DIDLESKIP=${idleskip}
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/selftest_boot.cmake")
+  set_tests_properties(debugger.sh4bp.boot.${boot} PROPERTIES TIMEOUT 900)
+endforeach()
 
 
 ## The cost for a guest that uses nothing of the mechanism (gate B11) ##
