@@ -10,7 +10,7 @@ what is written to them, and a sample passes only when a test says so (`arm7_mac
 | test | what it runs | data |
 |---|---|---|
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast, from reset to their end marker: no error bit in r1 (`r1 & 0x3FFFFFFF == 0`) and the pinned r0-r14 and CPSR at the end | `tests/vendor/arm7di-tests-dreamcast` (submodule) |
-| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA and what SCILV0-2 read back | none |
+| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), the logical operations with a ROR by a register amount of 0, of 32 and around them, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA and what SCILV0-2 read back | none |
 | `arm7.wren7.vendor` | the same programs as console jobs: r1 and CPSR against the console's | wren7-rtl |
 | `arm7.wren7.qemu_diff` | 4 x 1000 random instructions (data processing, MUL/MLA, LDR/STR, LDM/STM, SWP): registers, flags and memory of every case against the console's | wren7-rtl |
 | `arm7.wren7.mulsem` | 1024 multiplier inputs: MUL(S)/MLA(S) results and flags, and the Rd == Rm forms, against the console's | wren7-rtl |
@@ -38,6 +38,11 @@ without the carry in passes all of them. `directed_main.cpp` has tables of singl
 immediate operand, with and without S) with the operands, the flags going in and what Rd and N, Z, C, V have
 to be afterwards, written down from the definition of the instruction and not taken from an emulator. A new
 case is a row in a table and `arm7_directed --update-baseline`.
+
+Three of the 4000 random instructions have a ROR by a register whose low byte is 0 with a C that shows what
+becomes of it: a TST and two TEQ. The check `ror` has that amount, 32, and amounts around them for every logical
+operation: operand 2 and the carry of the shifter are the data sheet's (4.4.2), and C behind an amount of 0 is
+what the console left in those three.
 
 None of the 55 console jobs that run here returns from an exception. The check `trap` has SWI and the
 undefined instruction trap with `movs pc, lr` in their vector, one trap and 8 in a row: R14 of the mode the

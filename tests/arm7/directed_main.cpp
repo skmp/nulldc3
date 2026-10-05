@@ -14,10 +14,13 @@
 	trap: SWI and the undefined instruction trap, with what R14 holds in the trap's mode and where "movs pc, lr" in
 	the vector goes on (the tables below have the source).
 
+	ror: the logical operations with a ROR by a register as operand 2, with an amount of 0, of 32 and around them
+	(the table has the source).
+
 	fiq, scilv: the interrupt controller of the AICA in front of nFIQ, driven through its registers as a guest
 	drives it, and what SCILV0-2 read back (the comment at fiq_setup() has the source).
 
-	Checks: adc, sbc, rsc, trap, fiq, scilv. The test needs no data.
+	Checks: adc, sbc, rsc, ror, trap, fiq, scilv. The test needs no data.
 */
 #include "arm7_machine.h"
 #include "arm7_suite.h"
@@ -159,6 +162,152 @@ static const Group groups[] =
 static void step(void*)
 {
 	arm7m_step();
+}
+
+/*
+	One instruction, executed from the reset state with r0 to r3 and the flags of the case. Rd is r2 in every case.
+	flags_mask: the flags that are compared.
+*/
+struct Insn
+{
+	u32 opcode;
+	u32 r[4];
+	u32 flags;
+	u32 rd_after;
+	u32 flags_after;
+	u32 flags_mask;
+};
+
+static void run_insn(const char* check, u32 index, const Insn& in)
+{
+	Arm7Context* ctx = arm7m_context();
+
+	arm7m_power_on();
+	arm7m_clear();
+	memcpy(arm7m_ram(), &in.opcode, 4);
+	arm7m_release_reset();
+
+	for (u32 r = 0; r < 4; r++)
+		ctx->regs[r].I = in.r[r];
+
+	arm7m_set_flags(in.flags);
+
+	char what[64];
+
+	snprintf(what, sizeof(what), "%s case %u (%08X)", check, index, in.opcode);
+
+	TestGuardResult guard = arm7_guarded(what, &step, 0);
+
+	u32 rd = ctx->regs[2].I;
+	u32 flags = (arm7m_cpsr() >> 28) & in.flags_mask;
+
+	//the other registers stay and the next instruction is the one behind it
+	bool rest = ctx->regs[0].I == in.r[0] && ctx->regs[1].I == in.r[1] && ctx->regs[3].I == in.r[3] && ctx->regs[R15_ARM_NEXT].I == 4;
+	bool pass = guard == TGR_OK && rd == in.rd_after && flags == in.flags_after && rest;
+
+	arm7_count(check, pass);
+
+	if (pass || guard != TGR_OK)
+		return;
+
+	fprintf(arm7_report, "%s case %u: %08X with r0 %08X, r1 %08X, r2 %08X, r3 %08X, NZCV %X:", check, index, in.opcode, in.r[0], in.r[1],
+		in.r[2], in.r[3], in.flags);
+
+	if (rd != in.rd_after)
+		fprintf(arm7_report, " r2 is %08X, has to be %08X;", rd, in.rd_after);
+
+	if (flags != in.flags_after)
+		fprintf(arm7_report, " NZCV is %X, has to be %X (the flags of %X);", flags, in.flags_after, in.flags_mask);
+
+	if (!rest)
+		fprintf(arm7_report, " r0 %08X, r1 %08X, r3 %08X, next instruction at %08X;", ctx->regs[0].I, ctx->regs[1].I, ctx->regs[3].I,
+			ctx->regs[R15_ARM_NEXT].I);
+
+	fprintf(arm7_report, "\n");
+}
+
+/*
+	ROR by a register. Only the low byte of Rs is the amount. With 0 in it operand 2 is Rm and the carry of the
+	shifter is C as it comes in, as for every shift type. ROR by 32 gives Rm as well, with bit 31 of Rm as the
+	carry, and an amount above 32 counts as the amount less 32 (ARM7DI data sheet 4.4.2). The logical operations
+	take C from the shifter when they have S, and leave V.
+
+	The console has the amount of 0 in three of the random instructions of wren7-rtl's qemu_diff
+	(model/tests/hw/qemu_diff): case 133 and 820 of s2 and case 389 of s3, a TEQ, a TST and a TEQ with C set going
+	in and bit 31 of Rm clear. C is still set behind all three. The table has every logical operation.
+
+	Rd = r2, Rn = r0, Rm = r1, Rs = r3.
+*/
+#define ANDS_ROR 0xE0102371
+#define EORS_ROR 0xE0302371
+#define TST_ROR  0xE1100371
+#define TEQ_ROR  0xE1300371
+#define ORRS_ROR 0xE1902371
+#define MOVS_ROR 0xE1B02371
+#define MOV_ROR  0xE1A02371
+#define BICS_ROR 0xE1D02371
+#define MVNS_ROR 0xE1F02371
+
+struct RorCase
+{
+	u32 opcode;
+	u32 rn;
+	u32 rm;
+	u32 rs;
+	u32 flags;
+	u32 rd_after;		//RD_BEFORE for TST and TEQ
+	u32 flags_after;
+};
+
+static const RorCase ror[] =
+{
+	//           Rn          Rm          Rs          in                  Rd after    after
+	//amount 0, C set, bit 31 of Rm clear: C stays
+	{ MOVS_ROR, 0x11111111, 0x7FFFFFFF, 0x00000100, FN | FZ | FC | FV, 0x7FFFFFFF, FC | FV },
+	{ MVNS_ROR, 0x11111111, 0x7FFFFFFF, 0x00000000, FZ | FC,           0x80000000, FN | FC },
+	{ ANDS_ROR, 0xFFFFFFFF, 0x7FFFFFFF, 0x00000100, FN | FZ | FC,      0x7FFFFFFF, FC },
+	{ EORS_ROR, 0x7FFFFFFF, 0x7FFFFFFF, 0xFFFFFF00, FN | FC | FV,      0x00000000, FZ | FC | FV },
+	{ ORRS_ROR, 0x00000000, 0x7FFFFFFF, 0x00000100, FN | FZ | FC,      0x7FFFFFFF, FC },
+	{ BICS_ROR, 0xFFFFFFFF, 0x7FFFFFFF, 0x00000000, FZ | FC,           0x80000000, FN | FC },
+	{ TST_ROR,  0xFFFFFFFF, 0x7FFFFFFF, 0x00000100, FN | FZ | FC,      RD_BEFORE,  FC },
+	{ TEQ_ROR,  0x7FFFFFFF, 0x7FFFFFFF, 0x00000000, FN | FC,           RD_BEFORE,  FZ | FC },
+
+	//amount 0, C clear, bit 31 of Rm set: C stays
+	{ MOVS_ROR, 0x11111111, 0x80000000, 0x00000100, FZ | FV,           0x80000000, FN | FV },
+	{ MVNS_ROR, 0x11111111, 0x80000000, 0x00000000, FN | FZ,           0x7FFFFFFF, 0 },
+	{ ANDS_ROR, 0xFFFFFFFF, 0x80000000, 0x00000100, FZ,                0x80000000, FN },
+	{ EORS_ROR, 0x00000000, 0x80000000, 0x00000000, FZ | FV,           0x80000000, FN | FV },
+	{ ORRS_ROR, 0x00000001, 0x80000000, 0x00000100, FZ,                0x80000001, FN },
+	{ BICS_ROR, 0x80000000, 0x80000000, 0x00000000, FN,                0x00000000, FZ },
+	{ TST_ROR,  0x80000000, 0x80000000, 0x00000100, FZ,                RD_BEFORE,  FN },
+	{ TEQ_ROR,  0x80000000, 0x80000000, 0x00000000, FN | FV,           RD_BEFORE,  FZ | FV },
+
+	//amount 32, and 64: Rm, C is bit 31 of Rm
+	{ MOVS_ROR, 0x11111111, 0x7FFFFFFF, 0x00000020, FN | FZ | FC,      0x7FFFFFFF, 0 },
+	{ MOVS_ROR, 0x11111111, 0x80000000, 0x00000120, FZ,                0x80000000, FN | FC },
+	{ ORRS_ROR, 0x00000000, 0x7FFFFFFF, 0x00000020, FN | FC,           0x7FFFFFFF, 0 },
+	{ TST_ROR,  0xFFFFFFFF, 0x80000000, 0x00000040, FZ,                RD_BEFORE,  FN | FC },
+
+	//amount 1 and 4, and 33 and 36: C is the last bit that is rotated out
+	{ MOVS_ROR, 0x11111111, 0x00000001, 0x00000101, FZ,                0x80000000, FN | FC },
+	{ ORRS_ROR, 0x00000000, 0x00000002, 0x00000021, FN | FC,           0x00000001, 0 },
+	{ EORS_ROR, 0x00000000, 0x80000001, 0x00000004, FV,                0x18000000, FV },
+	{ BICS_ROR, 0xFFFFFFFF, 0x0000000F, 0x00000024, FN | FZ,           0x0FFFFFFF, FC },
+
+	//without S the flags stay
+	{ MOV_ROR,  0x11111111, 0x80000000, 0x00000100, FZ | FV,           0x80000000, FZ | FV },
+	{ MOV_ROR,  0x11111111, 0x7FFFFFFF, 0x00000000, FN | FC,           0x7FFFFFFF, FN | FC },
+};
+
+static void run_ror()
+{
+	for (u32 i = 0; i < sizeof(ror) / sizeof(ror[0]); i++)
+	{
+		const RorCase& c = ror[i];
+		Insn in = { c.opcode, { c.rn, c.rm, RD_BEFORE, c.rs }, c.flags, c.rd_after, c.flags_after, FN | FZ | FC | FV };
+
+		run_insn("ror", i, in);
+	}
 }
 
 /*
@@ -678,6 +827,9 @@ int main(int argc, char** argv)
 			fprintf(arm7_report, "\n");
 		}
 	}
+
+	if (arm7_selected("ror"))
+		run_ror();
 
 	if (arm7_selected("trap"))
 		run_traps();
