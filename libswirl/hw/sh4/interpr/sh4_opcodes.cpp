@@ -1010,7 +1010,9 @@ sh4op(i1100_0011_iiii_iiii)
 	auto sh4mmr = sh4_cpu->sh4mmr.get();
 
 	//printf("trapa 0x%X\n",(GetImm8(op) << 2));
-	CCN_TRA = (GetImm8(op) << 2);
+	//TRA belongs to the exception: with SR.BL = 1 there is none, Do_Exception resets the CPU
+	if (sr.BL == 0)
+		CCN_TRA = (GetImm8(op) << 2);
 	Do_Exception(next_pc,0x160,0x100);
 }
 

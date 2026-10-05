@@ -4,8 +4,8 @@
 	changes what the branch uses: T, the register it jumps through, PR. The single-step vectors are random and
 	have none of these: no ADDC whose sum is 0xFFFFFFFF with T set, for one, and add r1,r1 in every delay slot,
 	which leaves T and PR as they are. And what the single-step vectors expect another way than an SH4 does it:
-	the loads of FPSCR (they store bits that the register does not have) and RTE to the other register bank (they
-	run the delay slot on the bank of the old SR).
+	the loads of FPSCR (they store bits that the register does not have), RTE to the other register bank (they
+	run the delay slot on the bank of the old SR) and TRAPA (they have it as a nop).
 
 	sh4_directed_gen <dir> writes vector files in the format of the single-step vectors and under their file
 	names (ss_format.h), so the suites run them as they run those and the policy table applies as it is. A vector
@@ -514,6 +514,41 @@ static const Rte rtes[] =
 	{ SR_BASE | SR_RB | FT, 0x500000F0, RTE_TARGET, OP_MOVT_R8,   0 },
 };
 
+//// TRAPA #imm with SR.BL = 0: SSR = SR, SPC = the address behind TRAPA, SGR = R15, SR.MD = RB = BL = 1 and the
+//// rest of SR as it is, PC = VBR + H'100 (TRA and EXPEVT are not part of a vector). A console does that
+//// (shrike4-rtl, tools/hw/exceptions-intc/results_run1.txt, trapa and fd_*: SPC = TRAPA + 2, SGR = R15, the entry
+//// SR is SSR with MD, RB and BL set and FD kept).
+//// With SR.BL = 1 a general exception is a manual reset of the CPU: SR = MD RB BL set, FD clear, IMASK = 1111,
+//// VBR = 0, FPSCR = H'00040001, PC = H'A0000000 (SH7091 hardware manual 5.5.3, 5.6.1 (2) and table 2.1). No
+//// console was measured for it. What the manual leaves undefined after a reset (the other registers, and M, Q, S
+//// and T of SR, which a vector has clear going in) is expected as it was, in the bank that SR.RB = 1 selects.
+//// TRAPA is at PC_BASE + 2, the two instructions behind it are run from where it goes
+
+struct Trapa
+{
+	u32 sr;				//SR going in
+	u32 fpscr;			//FPSCR going in
+	bool reset;			//SR.BL going in
+};
+
+#define OP_TRAPA_5A 0xC35A
+
+#define SR_AFTER_ENTRY 0x70000000	//MD, RB and BL are set, the rest stays
+#define SR_AFTER_RESET 0x700000F0
+#define RESET_PC 0xA0000000
+
+static const Trapa trapas[] =
+{
+	//SR in      FPSCR in    reset
+	{ 0x400000F0, FPSCR_BASE, false },		//bank 0: the handler is entered on bank 1
+	{ 0x600000F1, FPSCR_BASE, false },		//bank 1 and T: T stays
+	{ 0x400080F0, FPSCR_BASE, false },		//FD stays
+	{ 0x40000000, FPSCR_BASE, false },		//IMASK stays
+	{ 0x500000F0, FPSCR_BASE, true },		//bank 0: the reset selects bank 1
+	{ 0x70008000, FPSCR_BASE, true },		//FD and IMASK are the reset's
+	{ 0x500000F0, 0x00140000, true },		//FPSCR is the reset's
+};
+
 //// LDS Rm,FPSCR and LDS.L @Rm+,FPSCR: FPSCR has 22 bits (FR SZ PR DN, cause, enable, flag, RM), the 10 above them
 //// read 0 and are not written. A console reads 003FFFFF back after it loaded FFFFFFFF (shrike4-rtl,
 //// tools/hw/exceptions-intc/results_run1.txt, "A masks"). FR selects the FP bank: loading another FR than the
@@ -714,6 +749,54 @@ static void make_rte_vector(const Rte& r, SsTest& t)
 	end_vector(t, r.spc);
 }
 
+static void make_trapa_vector(const Trapa& c, SsTest& t)
+{
+	begin_vector(t);
+
+	t.initial.s.SR = c.sr;
+	t.initial.s.FPSCR = c.fpscr;
+
+	t.final_.s = t.initial.s;
+
+	u32 next;
+
+	if (c.reset)
+	{
+		t.final_.s.SR = SR_AFTER_RESET;
+		t.final_.s.VBR = 0;
+		t.final_.s.FPSCR = FPSCR_BASE;
+
+		next = RESET_PC;
+	}
+	else
+	{
+		t.final_.s.SR = c.sr | SR_AFTER_ENTRY;
+		t.final_.s.SSR = c.sr;
+		t.final_.s.SPC = PC_BASE + 4;
+		t.final_.s.SGR = t.initial.s.R[15];
+
+		next = t.initial.s.VBR + 0x100;
+	}
+
+	//R is the bank that is active, R_ the other one
+	if (sr_bank(c.sr) != sr_bank(t.final_.s.SR))
+	{
+		for (u32 i = 0; i < 8; i++)
+		{
+			t.final_.s.R[i] = t.initial.s.R_[i];
+			t.final_.s.R_[i] = t.initial.s.R[i];
+		}
+	}
+
+	t.opcodes.op[SS_TEST_INSTRUCTION] = OP_TRAPA_5A;
+
+	//nop and TRAPA, then two instructions from where it goes
+	end_vector(t, next + 2);
+
+	t.cycles.c[2].fetch_addr = next;
+	t.cycles.c[2].fetch_val = t.opcodes.op[4];
+}
+
 static void make_fpscr_vector(const FpscrLoad& l, SsTest& t)
 {
 	begin_vector(t);
@@ -800,6 +883,15 @@ int main(int argc, char** argv)
 
 		make_rte_vector(rtes[r], t);
 		files["0000000000101011_sz0_pr0"].push_back(t);
+		vectors++;
+	}
+
+	for (size_t c = 0; c < sizeof(trapas) / sizeof(trapas[0]); c++)
+	{
+		SsTest t;
+
+		make_trapa_vector(trapas[c], t);
+		files["11000011iiiiiiii_sz0_pr0"].push_back(t);
 		vectors++;
 	}
 

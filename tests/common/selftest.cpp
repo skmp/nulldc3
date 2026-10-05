@@ -511,6 +511,15 @@ static void test_policy()
 
 	CHECK(ss_policy_filter(*trapa, t) == SSF_TRAPA_NOP);
 
+	//a TRAPA that goes to its handler is not the nop of the single-step vectors
+	t.cycles.c[2].fetch_addr = 0x8C0F3100;
+	t.final_.s.SR = 0x70000000;
+	CHECK(ss_policy_filter(*trapa, t) == SSF_NONE);
+	t.cycles.c[2].fetch_addr = t.initial.s.PC + 4;
+	CHECK(ss_policy_filter(*trapa, t) == SSF_NONE);
+	t.final_.s.SR = 0;
+	CHECK(ss_policy_filter(*trapa, t) == SSF_TRAPA_NOP);
+
 	//more than one reason: the first one, and the next one when that is left out
 	const SsFilePolicy* ldc_l_sr = ss_policy_find("0100mmmm00000111_sz0_pr0");
 

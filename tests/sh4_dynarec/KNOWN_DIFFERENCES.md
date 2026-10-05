@@ -13,9 +13,9 @@ Measured on x86-64 (GCC 13, a CPU with SSE3 and FMA, without AVX-512), x64 backe
 | | vectors |
 |---|---|
 | run | 91,989 |
-| identical | 79,220 |
+| identical | 79,467 |
 | different | 12,144 (crash 0, path 0, bus 0, state 261, notify 11,883) |
-| both-crash | 625 |
+| both-crash | 378 |
 | both-notify | 0: no vector on which both engines carry on from a notification of the emulator code |
 | native | 76,038: the instruction under test is native code in the dynarec. 35 files have none |
 | filtered | 24,511 (unaligned 23,524, odd-pc 987) |
@@ -58,8 +58,7 @@ Both engines end in the same `die()` / `verify()` / unaligned access. They agree
 | file | instruction | vectors | where |
 |---|---|---|---|
 | `0000nnnn10110011` | OCBWB @Rn | 248 | `verify(OIX_ADDR[index] == (addr & ~31))`, the operand cache as RAM hack (address bit 25). The dynarec runs the interpreter's handler |
-| `11000011iiiiiiii` | TRAPA #imm | 247 | `verify(sr.BL == 0)` in `Do_Exception` with SR.BL=1. The dynarec runs the interpreter's handler |
-| `11000011iiiiiiii` | TRAPA #imm | 130 | VBR + 0x100 is odd: the fetch of the handler is an unaligned access |
+| `11000011iiiiiiii` | TRAPA #imm | 130 | SR.BL=0 and VBR + 0x100 is odd: the fetch of the handler is an unaligned access. The dynarec runs the interpreter's handler |
 
 ### Not seen by the differential
 
@@ -96,8 +95,9 @@ else the dynarec does not pass, the interpreter does not pass either (`tests/com
 
 ## sh4.directed.*
 
-The hand-written vectors of `tests/sh4_directed` (222 in 29 files). What they expect is the SH-4 software manual's
-description of the instruction. Both engines pass all of them, and `sh4.directed.differential` finds no difference.
+The hand-written vectors of `tests/sh4_directed` (229 in 30 files). What they expect is the SH-4 software manual's
+description of the instruction, and for the two things of the last section here what that section says. Both engines
+pass all of them, and `sh4.directed.differential` finds no difference.
 
 The delay slots: BSR, BSRF and JSR write PR in front of the delay slot (`sts pr,r5` in it reads the return address
 of the call, `lds r4,pr` in it is the later write and stays), RTS returns to the PR it is entered with (`lds r4,pr`
@@ -107,8 +107,8 @@ RTE restores (`mov r0,r8` in it reads R0 of the new bank, `movt r8` the new T).
 
 ## Not measured on a console
 
-What both engines do alike where the manual says "reserved" and no console was measured. A test pins it, a
-measurement may still move it.
+What both engines do alike where the manual does not say, or says something that no console was measured for. A
+test pins it, a measurement may still move it.
 
 **FPSCR.RM = 2 and 3.** LDS and LDS.L store them like every other value (FPSCR keeps its low 22 bits, which a
 console was measured for: FFFFFFFF reads back as 003FFFFF). The chip is not measured for RM >= 2. Both engines round by
@@ -116,3 +116,14 @@ RM bit 0, RM = 2 to nearest and RM = 3 to zero: that is what the RTL (`rtl/v1/v1
 soft-float reference (`tb/sh4_fpdn.h`, `rz = fpscr & 1`) of shrike4-rtl do. `FPSCR_RM_ZERO` in `hw/sh4/sh4_if.h` is the
 one place that decides it, for the host FP mode (`SetFloatStatusReg`) and for the decoder; `sh4.core` checks the host
 mode of all four RM values and `sh4.directed.*` that a block that starts with RM = 2 or 3 is compiled.
+
+**A general exception with SR.BL = 1.** The manual has it as a manual reset of the CPU (SH7091 hardware manual
+5.5.3 and 5.6.1 (2)): EXPEVT = H'020, VBR = 0, SR with MD, RB and BL set, FD clear and IMASK = 1111, a branch to
+H'A0000000, and "the registers of the other modules retain their contents". A console cannot be measured for it, it
+reboots into the BIOS. `Do_Exception` (`hw/sh4/sh4_interrupts.cpp`) writes what table 2.1 defines after a reset (SR =
+700000F0, VBR, FPSCR = 00040001, PC) and EXPEVT, and keeps everything else: the general registers of both banks,
+GBR, SSR, SPC, SGR, DBR, MACH, MACL, PR, FPUL and the FP registers (undefined after a reset in the manual), TRA, and
+MMUCR, CCR and the on-chip modules. That is also what shrike4-rtl predicts (`rtl/v1/spec/exceptions-intc.md` 3.4,
+3.16). In the NO_MMU build TRAPA is the only general exception there is, so TRAPA with SR.BL = 1 is the one way
+into it; with a BIOS the BIOS starts again, without one reios boots the program again (its hook is at A0000000).
+`sh4.directed.*` have three such TRAPAs, `sh4.core` the EXPEVT and TRA of them.

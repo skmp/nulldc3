@@ -353,13 +353,20 @@ static bool rte_slot_on_old_bank(const SsTest& test)
 	return old_bank && !new_bank;
 }
 
+//TRAPA as the single-step vectors have it: SR stays and the instruction behind it is run. A TRAPA that is taken
+//goes to the handler with SR.BL set, or resets the CPU when SR.BL was set
+static bool trapa_recorded_as_nop(const SsTest& test)
+{
+	return test.final_.s.SR == test.initial.s.SR && test.cycles.c[SS_TEST_INSTRUCTION + 1].fetch_addr == test.initial.s.PC + 4;
+}
+
 SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, u32 ignore)
 {
 	const SsState& initial = test.initial.s;
 
 #define APPLIES(reason) ((ignore & (1 << (reason))) == 0)
 
-	if (APPLIES(SSF_TRAPA_NOP) && (policy.flags & SSP_TRAPA))
+	if (APPLIES(SSF_TRAPA_NOP) && (policy.flags & SSP_TRAPA) && trapa_recorded_as_nop(test))
 		return SSF_TRAPA_NOP;
 
 	//exceptions of the instruction itself come before the ones of its data access
@@ -447,7 +454,8 @@ const char* ss_filter_description(SsFilterReason reason)
 	case SSF_PRIVILEGED:
 		return "privileged instruction with SR.MD=0. The vectors execute it, an SH4 raises an illegal instruction exception";
 	case SSF_TRAPA_NOP:
-		return "TRAPA is recorded as a nop: no SSR/SPC/SR/TRA/EXPEVT change, PC+2";
+		return "TRAPA is recorded as a nop: no SSR/SPC/SR/TRA/EXPEVT change, PC+2. An SH4 takes the TRAPA exception, or "
+		       "is reset by it when SR.BL=1";
 	case SSF_HOST_NAN:
 		return "the instruction produces a NaN (or converts one with FTRC). The expected value is the default NaN of the "
 		       "ARM64 host that generated the vectors (FTRC of a NaN: 0), not the SH4's";

@@ -32,8 +32,8 @@ way.
 | `sh4.singlestep.interp` | every single-step vector through the SH4 interpreter, gated on `sh4_singlestep/baseline.txt` | `vendor/sh4-tests` |
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
-| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses, RTE with a delay slot that reads what it restores, loads of FPSCR) | none |
-| `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them, the host rounding mode of every FPSCR.RM, the host FP mode of a thread that starts to run the CPU | none |
+| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses, RTE with a delay slot that reads what it restores, loads of FPSCR, TRAPA) | none |
+| `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them, the host rounding mode of every FPSCR.RM, the host FP mode of a thread that starts to run the CPU, the exception registers of TRAPA | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | ADC, SBC and RSC at the edges with the carry clear and set, hand-written results | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
@@ -64,7 +64,7 @@ More about the suites:
                        KNOWN_DIFFERENCES.md)
     sh4_directed/      hand-written vectors for all of the above
     sh4_core/          the SH4 on SuperH4_impl: what is not one instruction on a vector state (reset, the host
-                       FP mode, also across threads)
+                       FP mode, also across threads, EXPEVT and TRA)
     arm7/              the ARM7 interpreter: vendor programs, directed cases, wren7 console suites (README.md,
                        KNOWN_FAILURES.md)
     vendor/            the submodules
@@ -94,7 +94,7 @@ an SH4 does not do are filtered, each with a reason:
 | `odd-pc` | instruction fetch from an odd address |
 | `fpu-disabled` | FPU instruction with SR.FD=1 (executed by the vectors, FPU disable exception on an SH4) |
 | `privileged` | privileged instruction with SR.MD=0 (executed by the vectors, illegal instruction on an SH4) |
-| `trapa-nop` | TRAPA, recorded as a nop |
+| `trapa-nop` | TRAPA that is recorded as a nop: SR stays and the instruction behind it is run. All 500 of the single-step vectors |
 | `host-nan` | the instruction produces a NaN, or converts one with FTRC: the expected value is the host's |
 | `fpscr-bits` | the vector expects unimplemented FPSCR bits stored: LDS / LDS.L to FPSCR of a value with bits 22-31 set. An SH4 has the low 22 bits, the others read 0 |
 | `rte-bank` | RTE to the other register bank: the vector runs the delay slot on the bank of the old SR, an SH4 on the bank of the SR that RTE restores |
@@ -174,6 +174,13 @@ vectors that return to the other bank expect the `add r1,r1` of the delay slot o
 `mov r0,r8` in the delay slot, and RTE to another T with `movt r8` in it (9 vectors): r8 gets R0 of the new bank and
 the new T, which is what a console's delay slot reads.
 
+TRAPA is a nop in the single-step vectors (`trapa-nop`). The file has it (7 vectors) with SR.BL = 0, where it
+is the exception a console takes (SSR, SPC and SGR are saved, MD, RB and BL are set and the rest of SR stays, T,
+FD and IMASK among it, and the handler at VBR + H'100 is run on bank 1), and with SR.BL = 1, where the manual has a
+manual reset of the CPU: SR = 700000F0, VBR = 0, FPSCR = 00040001 and the code at A0000000 is run. No console was
+measured for the reset, and the vectors expect every register the manual leaves undefined after it as it was;
+`sh4_dynarec/KNOWN_DIFFERENCES.md` has that under what is not measured.
+
 All but one of the single-step vectors of LDS Rm,FPSCR and LDS.L @Rm+,FPSCR that can be run load a value with
 bits that FPSCR does not have, and expect them stored (`fpscr-bits`). The file has the loads instead (13 vectors):
 FFFFFFFF leaves 003FFFFF, which is what a console reads back, values with only the missing bits leave 0, a
@@ -213,6 +220,9 @@ the baseline is committed, and a defect goes into the `known` list of the suite 
   thread does before it runs the CPU, has to be in the mode of FPSCR: a thread that is there before another one
   resets, a thread that is started after the guest loaded FPSCR on the one before it, a thread that is started after
   a state was loaded, and it has to follow the FPSCR loads that come after.
+* TRAPA, for the two registers of it that are not part of a vector state: with SR.BL = 0 EXPEVT = 160 and TRA =
+  imm << 2 next to SSR, SPC, SGR, SR and PC, with SR.BL = 1 EXPEVT = 020, TRA as it was, and SR, VBR, FPSCR, PC and
+  the host FP mode of a reset.
 
 A check that does not hold is printed with its line, and the test fails.
 

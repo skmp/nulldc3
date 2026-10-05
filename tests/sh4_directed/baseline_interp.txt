@@ -33,3 +33,4 @@
 10001101dddddddd_sz0_pr0       6     6     6       6        0
 10001111dddddddd_sz0_pr0       6     6     6       6        0
 1011dddddddddddd_sz0_pr0       2     2     2       2        0
+11000011iiiiiiii_sz0_pr0       7     7     7       7        0

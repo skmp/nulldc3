@@ -13,6 +13,9 @@
 	The host FP mode and threads. The mode belongs to a thread, and the emulator resets, loads states and runs
 	the CPU on more than one: the thread that starts to run the CPU has to end up in the mode of FPSCR, whichever
 	thread wrote FPSCR last.
+
+	TRAPA. EXPEVT and TRA are module registers and not part of a vector state, the directed vectors have the
+	rest of it.
 */
 #include "sh4_env.h"
 
@@ -32,6 +35,7 @@
 
 //hw/sh4/sh4_core.h declares these, along with macros for r, sr, pr, ... that are better kept out of here
 void UpdateFPSCR();
+bool UpdateSR();
 void sh4_host_fp_resync();
 
 //hw/sh4/sh4_core_regs.cpp: the FPSCR.RM and DN the host FP mode was last set for. A save state carries them
@@ -338,6 +342,76 @@ static void test_host_fp_threads(SuperH4* cpu)
 	CHECK(!mode.flush_to_zero);
 }
 
+//// TRAPA
+
+static void set_sr(u32 value)
+{
+	sh4_sr_SetFull(value);
+	UpdateSR();
+}
+
+static void test_trapa(SuperH4* cpu)
+{
+	SuperH4Mmr* sh4mmr = cpu->sh4mmr.get();		//the CCN_ macros look for it
+	Sh4Context& ctx = Sh4cntx;
+
+	//SR.BL = 0, the TRAPA exception: EXPEVT = H'160 and TRA = imm << 2, as a console has them
+	cpu->Reset(false);
+	set_sr(0x400000F1);
+
+	ctx.vbr = 0x8C0F3000;
+	ctx.r[15] = 0x8C00F000;
+	ctx.pc = 0x8C010004;	//the address behind TRAPA
+
+	CCN_EXPEVT = 0;
+	CCN_TRA = 0;
+
+	ExecuteOpcode(0xC35A);
+
+	CHECK_REG("EXPEVT", CCN_EXPEVT, 0x160);
+	CHECK_REG("TRA", CCN_TRA, 0x168);
+	CHECK_REG("SSR", ctx.ssr, 0x400000F1);
+	CHECK_REG("SPC", ctx.spc, 0x8C010004);
+	CHECK_REG("SGR", ctx.sgr, 0x8C00F000);
+	CHECK_REG("SR", sh4_sr_GetFull(), 0x700000F1);
+	CHECK_REG("PC", ctx.pc, 0x8C0F3100);
+
+	//SR.BL = 1: a general exception is a manual reset of the CPU. EXPEVT = H'020, SR, VBR, FPSCR and PC are the
+	//reset's (SH7091 hardware manual 5.5.3, 5.6.1 (2), table 2.1). No console was measured for it: TRA and the
+	//registers of the exception that is not taken are expected as they were
+	set_sr(0x50008001);
+	load_fpscr(0x00140000);
+
+	ctx.vbr = 0x8C0F3000;
+	ctx.ssr = 0x11111111;
+	ctx.spc = 0x22222222;
+	ctx.sgr = 0x33333333;
+	ctx.pc = 0x8C010004;
+
+	CCN_EXPEVT = 0x160;
+	CCN_TRA = 0x168;
+
+	ExecuteOpcode(0xC3FF);
+
+	CHECK_REG("EXPEVT", CCN_EXPEVT, 0x020);
+	CHECK_REG("TRA", CCN_TRA, 0x168);
+	CHECK_REG("SR", sh4_sr_GetFull(), 0x700000F0);		//M, Q, S, T: undefined after a reset, here 0 as after Reset
+	CHECK_REG("VBR", ctx.vbr, 0);
+	CHECK_REG("FPSCR", ctx.fpscr.full, 0x00040001);
+	CHECK_REG("PC", ctx.pc, 0xA0000000);
+	CHECK_REG("SSR", ctx.ssr, 0x11111111);
+	CHECK_REG("SPC", ctx.spc, 0x22222222);
+	CHECK_REG("SGR", ctx.sgr, 0x33333333);
+
+	bool round_to_zero, flush_to_zero;
+
+	if (host_fp_mode(round_to_zero, flush_to_zero))
+	{
+		CHECK(round_to_zero);
+		CHECK(flush_to_zero);
+	}
+}
+
 int main()
 {
 	sh4_env_init();
@@ -348,6 +422,7 @@ int main()
 	test_reset(cpu, true);
 	test_rounding_mode(cpu);
 	test_host_fp_threads(cpu);
+	test_trapa(cpu);
 
 	bool round_to_zero, flush_to_zero;
 

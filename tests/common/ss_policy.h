@@ -17,7 +17,7 @@ enum SsFilterReason
 	SSF_ODD_PC,			//instruction fetch from an odd address
 	SSF_FPU_DISABLED,	//FPU instruction with SR.FD=1
 	SSF_PRIVILEGED,		//privileged instruction with SR.MD=0
-	SSF_TRAPA_NOP,		//TRAPA, recorded as a nop
+	SSF_TRAPA_NOP,		//TRAPA that is recorded as a nop
 	SSF_HOST_NAN,		//the expected FPU result is the generator host's NaN
 	SSF_FPSCR_BITS,		//the expected FPSCR has bits that an SH4 does not implement
 	SSF_RTE_BANK,		//RTE to the other register bank, the delay slot is expected on the bank of the old SR
