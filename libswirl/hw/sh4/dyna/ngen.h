@@ -100,10 +100,16 @@ u32 DYNACALL rdv_DoInterrupts_pc(u32 pc);
 }
 #endif
 
+//Compiles a block at the pc that does not enter the block cache and runs it once, with the end-of-slice work
+//behind it if the slice ran out: a single step, or the rest of a block that a debugger check interrupted.
+//Only with ngen_features::DebugChecks
+void rdv_RunTempBlock(const DecodeLimits* limits);
+
 
 //Stuff to be implemented per dynarec core
 
 typedef void (*MainloopFnPtr_t) (void*);
+typedef void (*RunBlockFnPtr_t) (void*);
 
 //Canonical callback interface
 enum CanonicalParamType
@@ -140,9 +146,24 @@ struct NGenBackend
 
 	virtual bool Rewrite(rei_host_context_t* ctx) = 0;
 
+	// The slice counter of Mainloop: the cycles left until it calls UpdateSystem. A backend with
+	// ngen_features::DebugChecks keeps the counter when Mainloop returns and continues from it when Mainloop or
+	// RunBlock is entered again. 0 from a backend that does not expose it
+	virtual int SliceCyclesLeft() { return 0; }
+
+	// Sets that counter to SH4_TIMESLICE, for a machine reset
+	virtual void ResetSlice() { }
+
 	// assembly exports
 
+	// With ngen_features::DebugChecks: entered with a slice counter that is not positive, it does the
+	// end-of-slice work before the first block
 	MainloopFnPtr_t Mainloop;
+
+	// Runs the block at this (executable) address once, then does what Mainloop does behind a block: the
+	// end-of-slice work if the slice ran out. The block is not in the block cache and is not linked to.
+	// Only with ngen_features::DebugChecks, 0 otherwise
+	RunBlockFnPtr_t RunBlock = 0;
 
 	//Value to be returned when the block manager failed to find a block,
 	//should call rdv_FailedToFindBlock and then jump to the return value

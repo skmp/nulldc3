@@ -23,6 +23,7 @@
 #include "hw/sh4/sh4_core.h"
 #include "hw/sh4/sh4_mem.h"
 #include "hw/sh4/sh4_rom.h"
+#include "debugger/debugger.h"
 #include "profiler/profiler.h"
 #include "oslib/oslib.h"
 #include "x64_regalloc.h"
@@ -39,8 +40,14 @@ struct DynaRBI : RuntimeBlockInfo
 };
 
 extern "C" {
-	int cycle_counter;
+	// The slice counter: cycles left until the next UpdateSystem. It is kept when the main loop is left and
+	// entered again, so that leaving and entering it is not visible to the guest; a machine reset sets it.
+	int cycle_counter = SH4_TIMESLICE;
 }
+
+// The exit of the main loop: restores the callee saved registers and returns to the caller of Mainloop or
+// RunBlock. Jumped to with the stack as the main loop has it between two blocks.
+static const void* mainloop_exit;
 
 double host_cpu_time;
 u64 guest_cpu_cycles;
@@ -131,7 +138,7 @@ public:
 
 	//TODO: FIXME THIS DOES NOT CONFORM TO NGEN SPEC AROUND INTERRUPT HANDLING
 	void build_mainloop() {
-		Xbyak::Label run_loop, slice_loop, end_loop;
+		Xbyak::Label run_loop, slice_loop, slice_end, end_loop;
 		// Store callee saved registers (64 bytes) + align stack
 		push(rbx);
 		push(rbp);
@@ -143,7 +150,11 @@ public:
 		push(r15);
 		sub(rsp, STACK_ALIGN);
 
-		mov(dword[rip + &cycle_counter], SH4_TIMESLICE);
+		// The loop can have been left behind the block that used the slice up, in front of the test of the
+		// counter (a flow report of the debugger stopped there): the end-of-slice work comes first then
+		mov(ecx, dword[rip + &cycle_counter]);
+		test(ecx, ecx);
+		jle(slice_end, T_NEAR);
 
 		L(run_loop);  // -- run_loop
 			mov(rax, qword[rip + &p_sh4rcb]);
@@ -164,6 +175,7 @@ public:
 				test(ecx, ecx);
 			jg(slice_loop);                      // Continue if the cycle counter is still >0
 
+			L(slice_end);  // -- slice_end
 			add(ecx, SH4_TIMESLICE);
 			mov(dword[rip + &cycle_counter], ecx);  // Update cycle counter back (+slice)
 
@@ -174,6 +186,7 @@ public:
 		jmp(run_loop);
 
 		L(end_loop);  // -- end_loop
+		mainloop_exit = getCurr();
 		add(rsp, STACK_ALIGN); // Restore to previous state
 		pop(r15);
 		pop(r14);
@@ -184,6 +197,42 @@ public:
 		pop(rbp);
 		pop(rbx);
 		ret();
+
+		// Align end for perf
+		while (getSize() & 15)
+			nop();
+
+		ready();
+		emit_Skip((u32)getSize());
+	}
+
+	// One pass of the main loop's slice_loop for a block that is not in the block cache: runs it, then does the
+	// end-of-slice work if the slice ran out. It has the frame of the main loop, so that the block can leave
+	// through mainloop_exit as any other.
+	void build_runblock() {
+		Xbyak::Label slice_left;
+
+		push(rbx);
+		push(rbp);
+		push(rdi);
+		push(rsi);
+		push(r12);
+		push(r13);
+		push(r14);
+		push(r15);
+		sub(rsp, STACK_ALIGN);
+
+		call(call_regs[0].cvt64());          // The block
+		mov(ecx, dword[rip + &cycle_counter]);
+		test(ecx, ecx);
+		jg(slice_left);
+
+		add(ecx, SH4_TIMESLICE);
+		mov(dword[rip + &cycle_counter], ecx);
+		call(UpdateSystem_INTC);
+
+		L(slice_left);
+		jmp(mainloop_exit);
 
 		// Align end for perf
 		while (getSize() & 15)
@@ -234,6 +283,39 @@ public:
 
 				GenCall(OpDesc[op.rs3._imm]->oph);
 				break;
+
+#if defined(NULLDC_DEBUGGER)
+			case shop_dbg_check:
+				{
+					// The register allocator flushes for this op: every register is in the context, and none is
+					// cached across the call. The pc is an argument, the debugger writes it when it stops.
+					mov(call_regs[0], op.rs1._imm);
+					mov(call_regs[1], op.rs2._imm);
+					mov(call_regs[2], block->addr + block->sh4_code_size);
+
+					GenCall(dbg_sh4_Check);
+
+					Xbyak::Label no_stop;
+					test(eax, eax);
+					jz(no_stop);
+
+					// A stop in front of the instruction: the cycles of the instructions that did not run go back
+					// to the slice counter, and the main loop is left without its end-of-slice work
+					if (op.rs2._imm != 0)
+					{
+						#ifdef FEAT_NO_RWX_PAGES
+						mov(rax, (uintptr_t)&cycle_counter);
+						add(dword[rax], op.rs2._imm);
+						#else
+						add(dword[rip + &cycle_counter], op.rs2._imm);
+						#endif
+					}
+					GenLeaveMainloop();
+
+					L(no_stop);
+				}
+				break;
+#endif
 
 			case shop_jcond:
 			case shop_jdyn:
@@ -846,13 +928,37 @@ public:
 				//next_pc = next_pc_value;
 				mov(dword[rax], block->NextBlock);
 			}
-
-			GenCall(UpdateINTC);
 			break;
 
 		default:
 			die("Invalid block end type");
 		}
+
+		const bool update_intc = block->BlockType == BET_DynamicIntr || block->BlockType == BET_StaticIntr;
+
+#if defined(NULLDC_DEBUGGER)
+		if (block->dbg_flow)
+		{
+			// A step-out is pending: the call or return and its slot have run, next_pc is where it goes. A return
+			// from exception reports in front of its interrupt check, which is still made when the report stops:
+			// if it lets an interrupt in, the stop is at the handler.
+			mov(call_regs[0], block->dbg_flow);
+			GenCall(dbg_sh4_CheckFlow);
+
+			Xbyak::Label no_stop;
+			test(eax, eax);
+			jz(no_stop);
+
+			if (update_intc)
+				GenCall(UpdateINTC);
+			GenLeaveMainloop();
+
+			L(no_stop);
+		}
+#endif
+
+		if (update_intc)
+			GenCall(UpdateINTC);
 
 		add(rsp, STACK_ALIGN);
 		ret();
@@ -863,6 +969,14 @@ public:
 		block->host_code_size = (u32)getSize();
 
 		emit_Skip((u32)getSize());
+	}
+
+	// Leaves the block and the main loop from inside a block: drops the frame of the block and the return
+	// address into the main loop. The stack then is as the main loop has it between two blocks.
+	void GenLeaveMainloop()
+	{
+		add(rsp, STACK_ALIGN + 8);
+		jmp(mainloop_exit);
 	}
 
 	void GenReadMemoryImmediate(const shil_opcode& op) {
@@ -1486,6 +1600,12 @@ struct X64NGenBackend : NGenBackend
 			comp.build_mainloop();
 		}
 
+		{
+			this->RunBlock = (RunBlockFnPtr_t)emit_GetCCPtr();
+			BlockCompiler comp(emit_GetCCPtr());
+			comp.build_runblock();
+		}
+
 		// To prevent code cache reset from wiping these out.
 		emit_SetBaseAddr();
 
@@ -1526,6 +1646,28 @@ struct X64NGenBackend : NGenBackend
 	{
 		dst->InterpreterFallback = false;
 		dst->OnlyDynamicEnds = false;
+
+		// The check, its stop path, RunBlock and the flow report are stated where they have been run: with the
+		// System V calling convention. Elsewhere the debugger uses the interpreter fallback (hw/sh4/sh4_dbg.h).
+#if defined(NULLDC_DEBUGGER) && !defined(_WIN32)
+		dst->DebugChecks = true;
+#else
+		dst->DebugChecks = false;
+#endif
+
+		// Between two blocks every register is in the context and the epilogue has written the pc. Inside a
+		// block UpdateSystem is only called by SLEEP, in front of which the register allocator flushes.
+		dst->CtxAtSlice = true;
+	}
+
+	int SliceCyclesLeft()
+	{
+		return cycle_counter;
+	}
+
+	void ResetSlice()
+	{
+		cycle_counter = SH4_TIMESLICE;
 	}
 	
 };
