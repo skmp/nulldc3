@@ -457,8 +457,9 @@ struct SuperH4Backend {
     /*
         Debugger support. It is called on the emulator thread between two calls of Loop(), when no guest
         code of this backend is on the host stack. DebugCaps() and SliceCyclesLeft() are also called from
-        inside UpdateSystem() and, while no emulator thread exists, by the thread that holds the debugger's
-        lifetime lock. The defaults are those of a backend that implements none of it.
+        inside UpdateSystem(). DebugCaps(), SliceCyclesLeft() and ResetSlice() are also called, while no
+        emulator thread exists, by the thread that holds the debugger's lifetime lock (ResetSlice: a reset
+        from the host UI). The defaults are those of a backend that implements none of it.
 
         The slice counter is the number of cycles left until the next UpdateSystem(). A backend with
         SH4DBG_NATIVE keeps it when Loop() returns and continues from it when Loop() or Step() is entered again.
@@ -474,7 +475,8 @@ struct SuperH4Backend {
     // through the same decoder, code generator and cost function as Loop(); charges it to the slice counter
     // as a block of that one instruction and, if the slice ran out, does the end-of-slice work Loop() does
     // (UpdateSystem, interrupt acceptance). A debugger check on the instruction is still made. Nothing it
-    // compiles enters the block cache, and blocks already cached stay.
+    // compiles enters the block cache; blocks already cached stay, except where Loop() itself would clear
+    // the cache at this pc (the boot addresses, a code cache that is nearly full).
     // The caller has verified that pc is even and that the instruction, and the slot of a delayed branch,
     // can be read and executed; CpuRunning is set for the duration.
     // Returns false, having done nothing, when the backend cannot step.
