@@ -40,6 +40,7 @@ struct SoundCPU : MMIODevice {
 	//                         core keeps apart
 	//   RN_SPSR               SPSR of the active mode
 	//   R13_IRQ .. SPSR_FIQ   the banked registers; for the bank of the active mode the live values
+	//   21..25                R8..R12 of the modes other than FIQ (the live values unless the core is in FIQ mode)
 	// No side effects. Returns false for any other index and while the value cannot be given.
 	virtual bool DebugGetReg(u32 reg, u32* value) { return false; }
 
