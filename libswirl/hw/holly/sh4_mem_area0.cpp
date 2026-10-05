@@ -147,6 +147,16 @@ bool area0_DebugNvmem(const u8** data, u32* size)
 	return true;
 }
 
+bool area0_DebugNvmemByte(u32 offset, u8* value)
+{
+	if (sys_nvmem.data == nullptr)
+		return false;
+
+	//the read of the chip itself, which is where the settings are substituted
+	*value = sys_nvmem.Read8(offset & sys_nvmem.mask);
+	return true;
+}
+
 u32 ReadFlash(u32 addr,u32 sz) { return sys_nvmem.Read(addr,sz); }
 void WriteFlash(u32 addr,u32 data,u32 sz) { sys_nvmem.Write(addr,data,sz); }
 

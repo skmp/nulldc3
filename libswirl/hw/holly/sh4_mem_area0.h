@@ -23,3 +23,8 @@ void map_area0(SuperH4* sh4, u32 base);
 // thread exists; the pointer is not kept beyond that.
 bool area0_DebugRom(const u8** data, u32* size);
 bool area0_DebugNvmem(const u8** data, u32* size);
+
+// The byte a guest read of the flash memory delivers at offset, which is taken modulo the size of the store:
+// the stored byte, with the settings substituted at those six offsets. No side effects. Returns false when
+// the store does not exist. Same threads.
+bool area0_DebugNvmemByte(u32 offset, u8* value);
