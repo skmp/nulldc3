@@ -486,8 +486,9 @@ struct SuperH4Backend {
     // Returns false, having done nothing, when the backend cannot step.
     virtual bool Step()                                   { return false; }
 
-    // The slice counter of the loop that runs the guest on this backend: SH4 time is
-    // sh4_sched_now64() + SH4_TIMESLICE - SliceCyclesLeft(). 0 when the backend does not expose it.
+    // The slice counter that the guest code executed last on this backend was charged to: Loop()'s, or the
+    // interpreter fallback's from sh4_fallback_loop() / sh4_fallback_step() until Loop() runs again. SH4 time
+    // is sh4_sched_now64() + SH4_TIMESLICE - SliceCyclesLeft(). 0 when the backend does not expose it.
     virtual int  SliceCyclesLeft()                        { return 0; }
 
     // Sets the slice counter(s) of this backend to SH4_TIMESLICE; a JIT also the one of the interpreter
