@@ -49,6 +49,23 @@ thread asks for, the rewrite of a memory access inside a block that runs outside
 on the emulator's host mapping of guest memory), the instruction counts of B11, and the 2ndmix workload.
 `libswirl/debugger/dbg_selftest_sh4bp.cpp` has those, for `devcast -config Debugger:SelfTest=sh4bp`.
 
+## The selftest of the emulator
+
+`libswirl/debugger/dbg_selftest_sh4bp.cpp` is the same mechanism on the real park loop and the real machine:
+the tests `sh4bp.b1` to `sh4bp.b14` of `devcast -config Debugger:SelfTest=sh4bp , Debugger:StartPaused=yes <elf>`.
+They write the guest programs of this directory into main memory and drive them through `dbg::emu`, and add
+what only the emulator has: the boot of the guest through reios, a reset while stopped, an address armed by a
+call from another thread while the guest runs, the write protection of the host mapping. A session tests the
+backend that is configured.
+
+```
+tests/debugger/sh4bp/selftest.sh <devcast> <elf> [work dir]
+```
+
+runs three sessions (JIT, interpreter, JIT with `Debugger:ForceFallback=yes`) and compares what they have to
+agree on: registers and step traces of the JIT and of the fallback with the interpreter's, time and the state
+of the integer workload of the fallback with the JIT's.
+
 ## The guest
 
 `guest.s` holds the guest programs; `guest.inc` is that file assembled (the image as bytes, the addresses of
