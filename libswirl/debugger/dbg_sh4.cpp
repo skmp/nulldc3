@@ -7,8 +7,6 @@
 
 #include "dbg_sh4.h"
 
-#include "hw/sh4/sh4_dbg.h"
-
 #include <cstdio>
 #include <cstdlib>
 
@@ -30,12 +28,6 @@ extern "C" u32 DYNACALL dbg_sh4_CheckFlow(u32) { StubReached("dbg_sh4_CheckFlow"
 void dbg_sh4_OnException() { }
 bool dbg_sh4_StopPending() { return false; }
 bool dbg_sh4_TakeRemainder(u32, u32*, u32*) { return false; }
-
-#if FEAT_SHREC != DYNAREC_NONE
-// Their place is hw/sh4/dyna/driver.cpp.
-void sh4_fallback_loop() { StubReached("sh4_fallback_loop"); }
-void sh4_fallback_step() { StubReached("sh4_fallback_step"); }
-#endif
 
 namespace dbg { namespace sh4 {
 

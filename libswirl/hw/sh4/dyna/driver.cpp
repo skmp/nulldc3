@@ -25,6 +25,7 @@
 #include "decoder.h"
 
 #include "debugger/debugger.h"
+#include "hw/sh4/sh4_dbg.h"
 
 #define bm_printf(...)
 
@@ -511,6 +512,141 @@ void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc)
 	bm_printf("rdv_LinkBlock() end\n");
 	return (void*)rv;
 }
+#if defined(NULLDC_DEBUGGER)
+
+/*
+	The interpreter fallback (hw/sh4/sh4_dbg.h): the guest runs through the interpreter's handlers and is charged
+	by the decoder's blocks. At each block start the block at pc is decoded, without compiling it, for its end,
+	its cost and the refunds of its debugger checks; the cost goes off the slice counter, and instructions are
+	interpreted up to the end of the block before the counter is tested.
+*/
+
+// Cycles left in the slice of the fallback loop. Kept when the loop is left and entered again.
+static int fallback_slice = SH4_TIMESLICE;
+
+// The guest last ran on the fallback loop: its counter is the one that tells the time
+static bool fallback_ran;
+
+// The decoded block, reused from block to block
+static RuntimeBlockInfo* fallback_blk;
+
+// Decodes the block at next_pc, charges it and interprets it to its end.
+// false: a debugger check or a flow report stopped inside; the refund is back on the counter
+static bool fallback_RunBlock(u32 max_opcodes, u32 end_pc, s32 cycles)
+{
+	const DecodeLimits limits = { max_opcodes, end_pc, cycles, true };
+
+	if (!fallback_blk)
+		fallback_blk = rdv_ngen->AllocateBlock();
+
+	RuntimeBlockInfo* rbi = fallback_blk;
+
+	rbi->Setup(next_pc,fpscr,&limits);
+
+	const u32 block_end = rbi->addr + rbi->sh4_code_size;
+
+	fallback_slice -= rbi->guest_cycles;
+
+	// the checks are in the order of their instructions
+	size_t check = 0;
+
+	for (;;)
+	{
+		u32 addr = next_pc;
+
+		while (check < rbi->oplist.size() && rbi->oplist[check].op != shop_dbg_check)
+			check++;
+
+		// The decoder makes no check for a delay slot: the slot of a delayed branch that is not taken runs
+		// here as an instruction of its own, without one
+		if (check < rbi->oplist.size() && rbi->oplist[check].rs1._imm == addr)
+		{
+			u32 refund = rbi->oplist[check].rs2._imm;
+			check++;
+
+			if (dbg_sh4_Check(addr, refund, block_end))
+			{
+				fallback_slice += refund;
+				return false;
+			}
+		}
+
+		u32 op = IReadMem16(addr);
+
+		next_pc = addr + 2;
+
+		ExecuteOpcode(op);
+
+		if (unlikely(dbg_sh4_stepout != 0))
+		{
+			// calls and returns report when they have run. RTE does it itself, in front of its interrupt check
+			if ((op & 0xF000) == 0xB000 || (op & 0xF0FF) == 0x0003 || (op & 0xF0FF) == 0x400B)
+				dbg_sh4_CheckFlow(DBG_SH4_FLOW_CALL);
+			else if (op == 0x000B)
+				dbg_sh4_CheckFlow(DBG_SH4_FLOW_RTS);
+
+			if (dbg_sh4_StopPending())
+				return false;
+		}
+
+		// the block ends with a control transfer, or behind its last instruction
+		if (next_pc != addr + 2 || next_pc == block_end)
+			return true;
+	}
+}
+
+// The end-of-slice work, when the slice ran out. false: the loop ends
+static bool fallback_SliceEnd()
+{
+	if (fallback_slice > 0)
+		return true;
+
+	fallback_slice += SH4_TIMESLICE;
+
+	// as the main loop of a jit: the cpu state is only looked at behind UpdateSystem
+	UpdateSystem_INTC();
+
+	return sh4_int_bCpuRun;
+}
+
+void sh4_fallback_loop()
+{
+	u32 end_pc, cycles;
+
+	fallback_ran = true;
+
+	if (dbg_sh4_TakeRemainder(next_pc, &end_pc, &cycles))
+	{
+		// the rest of the block that a check interrupted, for the cycles that were given back
+		if (!fallback_RunBlock(0, end_pc, (s32)cycles))
+			return;
+	}
+
+	// Left behind the block that used the slice up (a flow report stopped there), or entered with the cpu
+	// stopped: the end-of-slice work comes first
+	if (!fallback_SliceEnd() || !sh4_int_bCpuRun)
+		return;
+
+	for (;;)
+	{
+		if (!fallback_RunBlock(0, 0, -1))
+			return;
+
+		if (!fallback_SliceEnd())
+			return;
+	}
+}
+
+void sh4_fallback_step()
+{
+	fallback_ran = true;
+
+	if (fallback_RunBlock(1, 0, -1))
+		fallback_SliceEnd();
+}
+
+#endif
+
 struct recSH4 : SuperH4Backend {
 	~recSH4() { Term(); }
 
@@ -530,6 +666,10 @@ struct recSH4 : SuperH4Backend {
         sh4_dyna_rcb = (u8*)& Sh4cntx + sizeof(Sh4cntx);
 
         verify(rcb_noffs(&next_pc) == -184);
+
+#if defined(NULLDC_DEBUGGER)
+        fallback_ran = false;
+#endif
 
         // Resuming in the block that a debugger check interrupted: its rest runs first, as one block that ends
         // where the interrupted block ends and costs the cycles that were given back. A backend that cannot run
@@ -561,6 +701,10 @@ struct recSH4 : SuperH4Backend {
 
         sh4_dyna_rcb = (u8*)& Sh4cntx + sizeof(Sh4cntx);
 
+#if defined(NULLDC_DEBUGGER)
+        fallback_ran = false;
+#endif
+
         DecodeLimits one = { 1, 0, -1, false };
         rdv_RunTempBlock(&one);
 
@@ -569,12 +713,19 @@ struct recSH4 : SuperH4Backend {
 
     int SliceCyclesLeft()
     {
+#if defined(NULLDC_DEBUGGER)
+        if (fallback_ran)
+            return fallback_slice;
+#endif
         return rdv_ngen->SliceCyclesLeft();
     }
 
     void ResetSlice()
     {
         rdv_ngen->ResetSlice();
+#if defined(NULLDC_DEBUGGER)
+        fallback_slice = SH4_TIMESLICE;
+#endif
     }
 
     void DebugDiscardPage(u32 addr)
