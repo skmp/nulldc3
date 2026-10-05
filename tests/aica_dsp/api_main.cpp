@@ -9,6 +9,8 @@
 	              and both go on to the same state. Blobs that are not a state are refused
 	  instances   two cores with different programs, step by step in turns, end where each ends alone
 	  registers   what the CPU can write and read back of every register the DSP has, and that it has no others
+	  fields      a state with bits in its fields that their registers do not have: the CPU's reads, the sends, the
+	              steps and RunSample do what they do on the state with every field cut to its bits
 	  mixs        the sends of a sweep, the two banks, the late sends, the CPU's bank
 	  rules       the read latch, the IWT distances and the channel's slot on programs small enough to say by hand
 	              what they leave
@@ -556,6 +558,114 @@ static void test_registers()
 		"an offset inside a slot is the slot's register: a write to 0x3001 writes COEF0, a read of 0x3003 reads it");
 }
 
+//Every field of the state with bits that its register does not have: any bits, all of them, or the largest and
+//the smallest number of the field's type
+static void beyond_the_bits(AicaDsp& dsp, DspRandom& rnd, int kind)
+{
+	auto bits = [&](int width)
+	{
+		const uint32_t all = 0xFFFFFFFFu >> (32 - width);
+
+		return kind == 0 ? rnd.Bits(width) : kind == 1 ? all : rnd.Chance(2) ? all >> 1 : (all >> 1) + 1;
+	};
+
+	for (int32_t& v : dsp.TEMP) v = (int32_t)bits(32);
+	for (int32_t& v : dsp.MEMS) v = (int32_t)bits(32);
+	for (auto& bank : dsp.MIXS) for (int32_t& v : bank) v = (int32_t)bits(32);
+	for (uint16_t& v : dsp.COEF) v = (uint16_t)bits(16);
+
+	dsp.ACC = (int32_t)bits(32);
+	dsp.Y_REG = (int32_t)bits(32);
+	dsp.FRC_REG = (uint16_t)bits(16);
+	dsp.ADRS_REG = (uint16_t)bits(16);
+	dsp.nofl_pipe = (uint8_t)bits(8);
+	dsp.step = (uint8_t)bits(8);
+	dsp.slot_taken = (uint8_t)bits(8);
+	dsp.mixs_dsp = (uint8_t)bits(8);
+	dsp.mixs_fill = (uint8_t)bits(8);
+	dsp.mixs_swept = (uint8_t)bits(8);
+}
+
+//The machine with every field cut to the bits its register has: what LoadState makes of the state
+static Machine cut_of(const Machine& m)
+{
+	Machine cut = m;
+	std::vector<uint8_t> blob = blob_of(m.dsp);
+
+	cut.dsp.LoadState(blob.data(), (uint32_t)blob.size());
+
+	return cut;
+}
+
+static void test_fields()
+{
+	DspRandom rnd(0xF1E1D5ull);
+
+	group("fields");
+
+	uint64_t beyond = 0;
+
+	for (int index = 0; index < 96; index++)
+	{
+		Machine any;
+		AicaDspSampleInputs in;
+
+		random_machine(any, rnd, index % 4 == 3 ? 60 : 128, index & 1);
+		random_inputs(in, rnd, index % 3);
+		beyond_the_bits(any.dsp, rnd, index % 3);
+
+		//a sample in two gets no inputs: the sweep is then the state's to begin, and the slot of the first step
+		//the state's to give away
+		const AicaDspSampleInputs* given = index & 2 ? &in : nullptr;
+
+		Machine cut = cut_of(any);
+
+		beyond += blob_of(cut.dsp) != blob_of(any.dsp);
+
+		bool reads = true;
+
+		for (uint32_t off = 0; off < 0x8000; off += 4)
+			reads &= any.dsp.RegRead(off) == cut.dsp.RegRead(off);
+
+		char what[128];
+
+		snprintf(what, sizeof(what), "state %d: the CPU reads what it reads of the state cut to its bits", index);
+		check(reads, what);
+
+		//a send to each bank
+		for (Machine* m : { &any, &cut })
+		{
+			m->dsp.MixsSend((uint32_t)index & 15, in.mixs[0]);
+			m->dsp.MixsSendLate((uint32_t)(index >> 2) & 15, in.mixs[1]);
+		}
+
+		//to the end of the running sample and through the next one: step by step with the views, and in one go
+		Machine in_one_go = any;
+		const int left = 128 - cut.dsp.step;
+		bool views = true;
+
+		for (int s = 0; s < left + 128; s++)
+		{
+			AicaDspStepView of_any, of_cut;
+
+			any.dsp.StepOne(given, &of_any);
+			cut.dsp.StepOne(given, &of_cut);
+			views &= memcmp(&of_any, &of_cut, sizeof(of_any)) == 0;
+		}
+
+		in_one_go.dsp.RunSample(given);
+		in_one_go.dsp.RunSample(given);
+
+		snprintf(what, sizeof(what), "state %d: %d steps compute what they compute on the state cut to its bits", index, left + 128);
+		check(views && same(cut_of(any), cut), what);
+
+		snprintf(what, sizeof(what), "state %d: RunSample leaves what it leaves on the state cut to its bits", index);
+		check(same(cut_of(in_one_go), cut), what);
+	}
+
+	check(beyond == 96, "every one of the states has bits that its registers do not have");
+}
+
 static void test_mixs()
 {
 	group("mixs");
@@ -1069,6 +1179,7 @@ int main(int argc, char** argv)
 	test_state();
 	test_instances();
 	test_registers();
+	test_fields();
 	test_mixs();
 	test_rules();
 	test_helpers();

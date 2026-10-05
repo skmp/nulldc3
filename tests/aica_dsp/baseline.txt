@@ -8,6 +8,7 @@ aica.dsp.api                 split                               39015        39
 aica.dsp.api                 state                                1549         1549
 aica.dsp.api                 instances                              16           16
 aica.dsp.api                 registers                              54           54
+aica.dsp.api                 fields                                289          289
 aica.dsp.api                 mixs                                   19           19
 aica.dsp.api                 rules                                  18           18
 aica.dsp.api                 helpers                                67           67
