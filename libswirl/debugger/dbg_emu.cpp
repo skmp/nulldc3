@@ -1,4 +1,5 @@
 // Stub: dbg::emu, implemented by package E4a.
+// No selftest session starts with this stub: selftest::AtStart() is called by the real Park().
 /*
 	This file is part of libswirl
 */

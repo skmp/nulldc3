@@ -1,4 +1,5 @@
 // Stub: dbg::mem, implemented by package E3.
+// dbg::sh4::StepCheck and the resume exemption read opcodes through here: SH4 steps work only with the real module.
 /*
 	This file is part of libswirl
 */
