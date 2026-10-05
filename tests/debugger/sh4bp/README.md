@@ -42,6 +42,7 @@ context and a hash of RAM.
 | `b12` | Integer workload: the state of the fallback loop, with continue-only checks and with stops, is the jit's baseline, in fast timing and with `idleskip` off. The loop is selected only while a breakpoint is active. With FPU code time and pc are the jit's; the comparison of the context is printed |
 | `switch` | The forced fallback is selected and dropped while the guest runs the integer workload with its interrupts: once and in turns at slice ends, in a stop inside a block of the fallback, and at more than 1000 points of a run that a random sequence picks (slice ends both ways, and inside a block from the fallback to the jit's loop). The state at a later slice end is that of a run on the jit's loop alone and of a run on the fallback alone, and the first stop of a fallback that was just selected shows the time that the jit's own check shows there. In fast timing and with `idleskip` off |
 | `ownslot` | A delayed branch whose target is its own slot, for `bra`, `bsr`, `bt/s`, `bf/s`, `braf`, `bsrf`, `jmp`, `jsr` and `rts`: the slot runs as the slot and then as the instruction the branch arrived at, which starts a block and has its own check. With breakpoints on the branch, on the slot, behind it and on all three, the stops of the jit and of the fallback are the interpreter's, with their registers: a breakpoint on the slot stops the pair at its branch and the arrival at the slot's address. A step on the branch ends on the slot's address with the slot run once. The state of the fallback loop behind 200 slices with interrupts is the jit's, in fast timing and with `idleskip` off. `bt/s` and `bf/s` that are not taken, for the difference |
+| `dense` | Every instruction of a straight line armed, an integer line and a floating point line, in one page and across two: 1024 addresses, the most a session lists. With every arrival stopping, the stops of the jit and of the fallback are the interpreter's, with their registers. No cached block has more checks than the recompiler compiles into one ([below](#checks-in-compiled-code)). With every check answering continue the state behind 45 slices with interrupts is that of the run with nothing armed, in fast timing and with `idleskip` off; so it is with a stop and a resume at every arrival in a block of 150 armed instructions, on the jit and on the fallback, and with a step-out pending. A step-out asked for in the rest of a block that ends with a call is not ended by the callee's return. A block whose code is larger than what is left of the code cache has the cache emptied for it; in a code cache of 2600 bytes the lines run in smaller blocks and their stops are the interpreter's |
 | `b13` | Interpreter: 6000 steps through the workload with interrupts, and a run to the same instruction: identical context, memory and scheduler time |
 | `b14` | Jit: 3000 steps through FPU code, the workload and integer code, and runs to the same instructions: identical registers, the FPU registers bit for bit. No cost function of the tree is a sum over instructions, so the times are printed. The fallback's steps cost what the jit's cost |
 | `slot` | The interpreter runs the slot of a `bt/s` or `bf/s` that is not taken as an instruction of its own, so a slice can end, and an interrupt be accepted, between the two; a block of the recompiler holds both. A step on the handler's `rte` ends at the slot, which has not run, and the next step runs the slot alone. 30000 steps with interrupts: pc, integer registers and time behind every step are those of the interpreter's plain loop cut into units by a loop of the test's own, and the state behind the steps is that of a run to the same slice end. A slot armed while the loop is left between its branch and it: the slot runs, the next pair stops at its branch, with nothing armed before and with the checking loop already running. The address of a slot that a jump arrives at stops as itself. A breakpoint on a slot stops the handler's return to it, at the slot. An event breakpoint that fires in a slice that ends between the two ends a run there, and a step too, in the same state. Stop + resume at every arrival, and pauses at every slice end, leave the state of a run |
@@ -136,6 +137,33 @@ lose or add moves the next wait. With one rule of the mechanism broken in a scra
 stopped block not run; the refund of a stop not given back; the slice counter of the recompiler's loop, or
 of the interpreter's, started anew at every entry) the tests `debugger.sh4bp.boot.*` of the engines that the
 rule belongs to fail.
+
+## Checks in compiled code
+
+What a check costs the x64 backend in host code, and why no set of armed addresses can make a block too large
+for it. `debugger.sh4bp.dense` measures and tests all of it.
+
+- **A check** is 15 bytes in its block: two arguments (the address of the instruction, the cycles a stop gives
+  back) and a call. The call goes to a tail of 10 bytes that the block has once for all its checks, which adds
+  the third argument (the block end) and jumps to a stub that every block shares. The stub calls
+  `dbg_sh4_Check` and returns into the block, or adds the refund to the slice counter and leaves the block
+  and the main loop. The register allocator flushes for a check, so nothing is saved around the call; the
+  flush itself is at most 276 bytes (each of the 6 general and 4 xmm host registers written to the context
+  and loaded again). Measured: one check adds 25 bytes to a block; 56 checks on consecutive instructions add
+  50 bytes each in an integer line and 42 in a floating point line, the flushes included.
+- **A block holds at most 56 checks** (`ngen_features::DebugCheckBudget`: 16 KiB over the 291 bytes a check
+  can take). The decoder decodes a block to its end whatever is armed: its boundaries and its cost are those
+  of the block without a check. When the block has more checks than that, the backend compiles the
+  instructions in front of the check that is one too many, and the code ends by handing the rest of the block
+  over: it gives the cycles of the rest back to the slice counter and leaves the main loop, and the rest runs
+  as a block outside the block cache that ends where the block ends and costs those cycles (the way the rest
+  of a block runs behind a stop). The block is charged once and the slice counter is tested behind its last
+  instruction only, so the split is not visible to the guest. The rest is compiled each time it runs: a
+  block with more than 56 armed instructions is slow, not different.
+- **Code that does not fit** into what is left of the code cache is given up by the backend, which writes with
+  the free space as its bound. The cache is emptied and the block compiled again; code that an empty cache
+  has no room for is made of fewer instructions, down to one. That last step moves a block end, and time
+  with it: no block of a guest comes near it in a cache of 10 MiB.
 
 ## The cost when nothing is armed
 

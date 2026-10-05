@@ -235,7 +235,11 @@ static bool rdv_IsSoftResetPc(u32 pc)
 	return pc==0x8c0000e0 || pc==0xac010000 || pc==0xac008300;
 }
 
-DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
+//Compiles the block at next_pc into the block cache. 0: the code cache has to be emptied first. That is so at the
+//addresses of a soft reset and when little of the cache is left (soft_resets: the caller has not emptied it
+//yet), and whenever the backend finds no room for the code of the block.
+//max_opcodes: not 0, the block ends behind that many instructions at the latest
+DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets, u32 max_opcodes=0)
 {
 	u32 pc=next_pc;
 
@@ -249,13 +253,15 @@ DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
 			bm_printf("rdv_CompilePC: failed (soft jit reset) %08X\n", next_pc);	 	
 			return nullptr;
 		}
+
+		if (emit_FreeSpace()<16*1024)
+		{
+			bm_printf("rdv_CompilePC: failed out of mem %08X\n", next_pc);
+			return nullptr;
+		}
 	}
 
-	if (emit_FreeSpace()<16*1024)
-	{
-		bm_printf("rdv_CompilePC: failed out of mem %08X\n", next_pc);
-		return nullptr;
-	}
+	const DecodeLimits limits = { max_opcodes, 0, -1, false };
 
 	RuntimeBlockInfo* rv=0;
 	do
@@ -263,7 +269,7 @@ DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
 		RuntimeBlockInfo* rbi = rdv_ngen->AllocateBlock();
 		if (rv==0) rv=rbi;
 
-		rbi->Setup(pc,fpscr);
+		rbi->Setup(pc,fpscr,max_opcodes ? &limits : 0);
 
 		
 		bool do_opts=((rbi->addr&0x3FFFFFFF)>0x0C010100);
@@ -271,7 +277,12 @@ DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
 
 		rdv_ngen->Compile(rbi,DoCheck(rbi->addr, rbi->sh4_code_size),(pc&0xFFFFFF)==0x08300 || (pc&0xFFFFFF)==0x10000,false,do_opts);
 
-		verify(rbi->code!=0);
+		if (rbi->code==0)
+		{
+			bm_printf("rdv_CompilePC: failed, no room for the code %08X\n", next_pc);
+			delete rbi;
+			return nullptr;
+		}
 
 		bool doLock = !bm_RamPageHasData(rbi->addr, rbi->sh4_code_size); // && maybe some setting?
 
@@ -313,20 +324,42 @@ void rdv_RunTempBlock(const DecodeLimits* limits)
 	if ((rdv_IsSoftResetPc(pc) && bm_GetCode(pc)==rdv_ngen->FailedToFindBlock) || emit_FreeSpace()<16*1024)
 		sh4_cpu->ResetCache();
 
-	u32 cc_start=LastAddr;
+	DecodeLimits fewer=*limits;
+	RuntimeBlockInfo* rbi;
+	u32 cc_start;
 
-	RuntimeBlockInfo* rbi = rdv_ngen->AllocateBlock();
+	for (;;)
+	{
+		cc_start=LastAddr;
 
-	rbi->Setup(pc,fpscr,limits);
+		rbi = rdv_ngen->AllocateBlock();
 
-	bool do_opts=((rbi->addr&0x3FFFFFFF)>0x0C010100);
-	rbi->staging_runs=do_opts?100:-100;
+		rbi->Setup(pc,fpscr,&fewer);
 
-	//The code was decoded this instant and runs right away: there is nothing to check at its entry, and the
-	//failure path of that check would look the block up in the cache
-	rdv_ngen->Compile(rbi,NoCheck,false,false,do_opts);
+		bool do_opts=((rbi->addr&0x3FFFFFFF)>0x0C010100);
+		rbi->staging_runs=do_opts?100:-100;
 
-	verify(rbi->code!=0);
+		//The code was decoded this instant and runs right away: there is nothing to check at its entry, and the
+		//failure path of that check would look the block up in the cache
+		rdv_ngen->Compile(rbi,NoCheck,false,false,do_opts);
+
+		if (rbi->code!=0)
+			break;
+
+		//No room for the code in what is left of the cache: the cache is emptied, and code that the empty
+		//cache has no room for is made of fewer instructions, down to one
+		delete rbi;
+
+		if (LastAddr!=LastAddr_min)
+		{
+			sh4_cpu->ResetCache();
+		}
+		else
+		{
+			fewer.max_opcodes=fewer.max_opcodes ? fewer.max_opcodes/2 : 256;
+			verify(fewer.max_opcodes!=0);
+		}
+	}
 
 	u32 cc_end=LastAddr;
 
@@ -339,6 +372,37 @@ void rdv_RunTempBlock(const DecodeLimits* limits)
 		LastAddr=cc_start;
 
 	delete rbi;
+}
+
+//The rest of a block whose code ended in front of its last instruction: where the block ends, and the cycles of
+//the rest
+static bool rest_pending;
+static u32 rest_end;
+static u32 rest_cycles;
+
+void DYNACALL rdv_BlockRest(u32 pc, u32 cycles, u32 end_pc)
+{
+	next_pc=pc;
+
+	rest_pending=true;
+	rest_end=end_pc;
+	rest_cycles=cycles;
+}
+
+//Takes it, as the limits of the block that runs it. false: none is owed
+static bool rdv_TakeBlockRest(DecodeLimits* limits)
+{
+	if (!rest_pending)
+		return false;
+
+	rest_pending=false;
+
+	limits->max_opcodes=0;
+	limits->end_pc=rest_end;
+	limits->cycles=(s32)rest_cycles;
+	limits->no_compile=false;
+
+	return true;
 }
 
 DynarecCodeEntryPtr rdv_FindOrCompile_OrFail()
@@ -366,6 +430,10 @@ DynarecCodeEntryPtr rdv_CompilePC_OrClearCache()
         sh4_cpu->ResetCache();
 
 		rv = rdv_CompilePC_OrFail(false);
+
+		//code that the empty cache has no room for: a block of fewer instructions, down to one
+		for (u32 max_opcodes = 256; !rv && max_opcodes != 0; max_opcodes /= 2)
+			rv = rdv_CompilePC_OrFail(false, max_opcodes);
 
 		verify(rv != nullptr);
 	}
@@ -710,18 +778,38 @@ struct recSH4 : SuperH4Backend {
         // where the interrupted block ends and costs the cycles that were given back. A backend that cannot run
         // a block outside the block cache lets the rest go.
         DecodeLimits rest = { 0, 0, -1, false };
-        u32 rest_cycles;
+        u32 owed_cycles;
+        bool have_rest = false;
 
-        if (dbg_sh4_TakeRemainder(next_pc, &rest.end_pc, &rest_cycles) && features.DebugChecks)
+        if (dbg_sh4_TakeRemainder(next_pc, &rest.end_pc, &owed_cycles) && features.DebugChecks)
         {
-            rest.cycles = (s32)rest_cycles;
-            rdv_RunTempBlock(&rest);
-
-            if (dbg_sh4_StopPending())
-                return;
+            rest.cycles = (s32)owed_cycles;
+            have_rest = true;
         }
 
-        rdv_ngen->Mainloop(sh4_dyna_rcb);
+        for (;;)
+        {
+            if (have_rest)
+            {
+                rdv_RunTempBlock(&rest);
+
+                if (dbg_sh4_StopPending())
+                    return;
+
+                // the code of that block can end in front of its last instruction as well
+                have_rest = rdv_TakeBlockRest(&rest);
+                continue;
+            }
+
+            rdv_ngen->Mainloop(sh4_dyna_rcb);
+
+            // The main loop returns when the cpu was stopped, and when the code of a block handed the rest of
+            // the block over (rdv_BlockRest): that runs, and the loop is entered again
+            have_rest = rdv_TakeBlockRest(&rest);
+
+            if (!have_rest)
+                return;
+        }
     }
 
     u32 DebugCaps()

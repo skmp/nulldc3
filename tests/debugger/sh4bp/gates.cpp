@@ -12,6 +12,7 @@
 #include "hw/sh4/dyna/blockmanager.h"
 #include "hw/sh4/dyna/ngen.h"
 
+#include <algorithm>
 #include <cstring>
 #include <set>
 #include <vector>
@@ -20,6 +21,13 @@ using dbg::StopCause;
 
 //hw/sh4/dyna/blockmanager.cpp: every cached block
 extern std::set<RuntimeBlockInfo*> all_blocks;
+
+//hw/sh4/dyna/driver.cpp: where the next block is compiled to in the code cache, and where the cache begins
+extern u32 LastAddr;
+extern u32 LastAddr_min;
+
+//hw/sh4/sh4_core.h, whose names for the registers are not wanted here: applies a written FPSCR
+void UpdateFPSCR();
 
 static const Engine all_engines[] = { ENGINE_JIT, ENGINE_INTERP, ENGINE_FALLBACK };
 
@@ -1732,6 +1740,534 @@ static void gate_ownslot()
 
 
 /*
+	Dense arming: every instruction of long straight lines armed, up to the 1024 addresses a session can list. The
+	recompiler holds a bounded number of checks per compiled block (ngen_features::DebugCheckBudget): of a block
+	with more it compiles the instructions in front of the check that is one too many, and the rest of the block
+	runs behind them outside the block cache. Nothing of that is visible to the guest: the block is charged once
+	and the slice counter tested behind its last instruction, as without a check.
+
+	The program, written into RAM by the test:
+
+	   top:   n instructions of a line, integer or floating point
+	          jsr @r12 ; nop          the leaf of the image
+	          mov #3, r1
+	   poll:  mov.l @r13, r2          a loop block of the decoder's idle class
+	          dt r1
+	          bf poll
+	          dt r8
+	          bt end
+	          jmp @r14 ; nop          r14 = top
+	   end:   bra end ; nop
+*/
+struct Dense
+{
+	u32 top;
+	u32 n;
+	u32 call;		//the jsr behind the line
+	u32 end;
+};
+
+static Dense dense_write(u32 top, u32 n, bool fp)
+{
+	static const u16 int_ops[] = {
+		0x7101,		//add #1, r1
+		0x221A,		//xor r1, r2
+		0x4204,		//rotl r2
+		0x332C,		//add r2, r3
+		0x3318,		//sub r1, r3
+		0x643B,		//neg r3, r4
+		0x6549,		//swap.w r4, r5
+		0x365E,		//addc r5, r6
+		0x1D12,		//mov.l r1, @(8, r13)
+		0x676C,		//extu.b r6, r7
+		0x52D2,		//mov.l @(8, r13), r2
+		0x6077,		//not r7, r0
+	};
+	static const u16 fp_ops[] = {
+		0xF09D,		//fldi1 fr0
+		0xF100,		//fadd fr0, fr1
+		0xF21C,		//fmov fr1, fr2
+		0xF202,		//fmul fr0, fr2
+		0xF301,		//fsub fr0, fr3
+		0xF44D,		//fneg fr4
+		0xF55D,		//fabs fr5
+		0xF61C,		//fmov fr1, fr6
+		0xF760,		//fadd fr6, fr7
+		0xF13D,		//ftrc fr1, fpul
+		0xF82D,		//float fpul, fr8
+		0xF214,		//fcmp/eq fr1, fr2
+	};
+	static const u16 tail[] = {
+		0x4C0B,		//jsr @r12
+		0x0009,
+		0xE103,		//mov #3, r1
+		0x62D2,		//mov.l @r13, r2
+		0x4110,		//dt r1
+		0x8BFC,		//bf poll
+		0x4810,		//dt r8
+		0x8901,		//bt end
+		0x4E2B,		//jmp @r14
+		0x0009,
+		0xAFFE,		//end: bra end
+		0x0009,
+	};
+
+	for (u32 i = 0; i < n; i++)
+		machine_write16(top + i * 2, fp ? fp_ops[i % 12] : int_ops[i % 12]);
+
+	for (u32 i = 0; i < 12; i++)
+		machine_write16(top + n * 2 + i * 2, tail[i]);
+
+	Dense d = { top, n, top + n * 2, top + n * 2 + 20 };
+
+	return d;
+}
+
+static Dense dense_start(Engine e, u32 top, u32 n, bool fp, u32 passes)
+{
+	machine_reset(e);
+
+	Dense d = dense_write(top, n, fp);
+
+	R(8) = passes;
+	R(12) = G_leaf;
+	R(13) = G_data;
+	R(14) = d.top;
+
+	machine_set_pc(d.top);
+
+	return d;
+}
+
+//The first armed instructions of the line, and the end
+static void dense_arm(const Dense& d, u32 armed)
+{
+	std::vector<u32> ids, at;
+
+	for (u32 i = 0; i < armed; i++)
+		at.push_back(d.top + i * 2);
+	at.push_back(d.end);
+
+	for (u32 i = 0; i < at.size(); i++)
+		ids.push_back(i + 1);
+
+	machine_breakpoints(ids.data(), at.data(), (u32)at.size());
+}
+
+struct DenseBlocks
+{
+	u32 blocks;
+	u32 most_checks;	//in one block
+	u32 with_rest;		//blocks whose code hands a rest over
+	u32 most_bytes;		//host code of one block
+};
+
+static DenseBlocks dense_blocks()
+{
+	DenseBlocks b = { 0, 0, 0, 0 };
+
+	for (RuntimeBlockInfo* blk : all_blocks)
+	{
+		u32 checks = 0;
+
+		for (const shil_opcode& op : blk->oplist)
+			checks += op.op == shop_dbg_check;
+
+		b.blocks++;
+		b.most_checks = std::max(b.most_checks, checks);
+		b.with_rest += blk->dbg_rest_pc != 0;
+		b.most_bytes = std::max(b.most_bytes, blk->host_code_size);
+	}
+
+	return b;
+}
+
+//The time of a run with interrupts to a slice end, every debugger stop resumed.
+//cache_left: not 0, the run begins with that many bytes of the code cache free
+static MachineState dense_timed(Engine e, u32 top, u32 n, bool fp, u32 armed, bool muted, u64 slices, u64* stops, DenseBlocks* blocks = nullptr,
+	u32 cache_left = 0)
+{
+	Dense d = dense_start(e, top, n, fp, 0);		//2^32 passes
+
+	if (cache_left)
+		LastAddr = CODE_SIZE - cache_left;
+
+	machine_set_sr(SR_MD);
+	knobs.irq_period = 3;
+	knobs.host_stop_slice = slices;
+
+	if (armed)
+		dense_arm(d, armed);
+	if (muted)
+		dbg::sh4::SetActiveMask(0);
+
+	MachineState s = work_run(stops);
+
+	if (blocks)
+		*blocks = dense_blocks();
+
+	return s;
+}
+
+static void gate_dense()
+{
+	ngen_features features = { };
+	rdv_ngen->GetFeatures(&features);
+
+	check(features.DebugChecks && features.DebugCheckBudget != 0 && features.DebugCheckBudget < 224, "the recompiler compiles checks, %u of them into one block",
+		features.DebugCheckBudget);
+
+	//a backend without a bound is tested as one that has this one
+	const u32 budget = features.DebugCheckBudget ? features.DebugCheckBudget : 56;
+
+	//what a check adds to the host code of a block
+	{
+		u32 bytes[3];
+		const u32 armed[3] = { 0, 1, budget };
+
+		for (bool fp : { false, true })
+		{
+			for (u32 i = 0; i < 3; i++)
+			{
+				Dense d = dense_start(ENGINE_JIT, 0x8C020000, 200, fp, 1);
+
+				dense_arm(d, armed[i]);
+				dbg::sh4::SetActiveMask(0);
+				knobs.host_stop_slice = 3;
+				machine_resume();
+
+				RuntimeBlockInfo* blk = bm_GetBlock(d.top);
+
+				bytes[i] = blk ? blk->host_code_size : 0;
+
+				check(blk != nullptr && blk->dbg_rest_pc == 0 && block_checks(d.top) == (int)armed[i], "%s line: the block with %u armed instructions is whole and has %u checks",
+					fp ? "fp" : "integer", armed[i], armed[i]);
+			}
+
+			note("%s line, host code of a block of 200 instructions: %u bytes; with one check %u more; with %u checks on its first instructions %u more, %u a check",
+				fp ? "fp" : "integer", bytes[0], bytes[1] - bytes[0], budget, bytes[2] - bytes[0], (bytes[2] - bytes[0]) / budget);
+
+			check(bytes[2] > bytes[0] && (bytes[2] - bytes[0]) <= 16 * 1024, "%s line: %u checks add %u bytes of host code to their block, within the 16 KiB that the backend states",
+				fp ? "fp" : "integer", budget, bytes[2] - bytes[0]);
+		}
+	}
+
+	struct Layout { const char* what; u32 top; bool fp; };
+	const Layout layouts[] = {
+		{ "integer line in one page", 0x8C020000, false },
+		{ "integer line across pages", 0x8C020C00, false },
+		{ "fp line in one page", 0x8C020000, true },
+		{ "fp line across pages", 0x8C020C00, true },
+	};
+
+	const u32 n = dbg::kMaxBreakpoints - 1;		//with the end: every address a session can list
+
+	for (const Layout& l : layouts)
+	{
+		//every arrival stops: the stops are the interpreter's, with their registers
+		{
+			const u32 passes = 2;
+			std::vector<OwnHit> hits[ENGINE_COUNT];
+			DenseBlocks blocks = { 0, 0, 0, 0 };
+
+			for (Engine e : { ENGINE_INTERP, ENGINE_JIT, ENGINE_FALLBACK })
+			{
+				Dense d = dense_start(e, l.top, n, l.fp, passes);
+
+				dense_arm(d, n);
+				knobs.host_stop_slice = 100000;
+
+				for (u32 i = 0; i < passes * n + 8; i++)
+				{
+					MachineStop s = machine_resume();
+
+					if (!s.debugger || s.cause != StopCause::Breakpoint)
+						break;
+
+					hits[e].push_back({ s.pc, s.id, regs() });
+
+					if (s.pc == d.end)
+						break;
+				}
+
+				if (e == ENGINE_JIT)
+					blocks = dense_blocks();
+			}
+
+			const std::vector<OwnHit>& want = hits[ENGINE_INTERP];
+
+			check(want.size() == passes * n + 1 && want.back().id == n + 1, "%s, %u addresses armed: the interpreter stops at every instruction of the line in %u passes, and at the end (%zu stops)",
+				l.what, n + 1, passes, want.size());
+
+			for (Engine e : { ENGINE_JIT, ENGINE_FALLBACK })
+			{
+				size_t same = 0;
+
+				while (same < hits[e].size() && same < want.size() && hits[e][same].pc == want[same].pc && hits[e][same].id == want[same].id
+					&& hits[e][same].regs.same_all(want[same].regs))
+					same++;
+
+				check(hits[e].size() == want.size() && same == want.size(), "%s, %u addresses armed: the stops of the %s are the interpreter's, with their registers (%zu stops, %zu agree)",
+					l.what, n + 1, engine_name(e), hits[e].size(), same);
+			}
+
+			check(blocks.most_checks == budget && blocks.with_rest != 0, "%s: no cached block has more than %u checks (%u), and the code of %u blocks ends in front of their rest",
+				l.what, budget, blocks.most_checks, blocks.with_rest);
+		}
+
+		//every check answers continue: the time is that of the run with nothing armed
+		for (bool idleskip : { true, false })
+		{
+			settings.dynarec.idleskip = idleskip;
+
+			const char* timing = idleskip ? "fast" : "idleskip off";
+			const u64 slices = 45;
+			u64 stops;
+			DenseBlocks blocks;
+
+			MachineState base = dense_timed(ENGINE_JIT, l.top, n, l.fp, 0, false, slices, &stops);
+			u32 passes = 0 - R(8);
+
+			MachineState s = dense_timed(ENGINE_JIT, l.top, n, l.fp, n, true, slices, &stops, &blocks);
+
+			check(s == base && stops == 0 && blocks.with_rest != 0 && passes >= 8,
+				"%s, %s: %u addresses armed and muted, %u passes with interrupts: the state behind %llu slices is that of the run with nothing armed (%s)", l.what, timing,
+				n + 1, passes, (unsigned long long)slices, str(s));
+
+			if (idleskip)
+			{
+				base = dense_timed(ENGINE_INTERP, l.top, n, l.fp, 0, false, 400, &stops);
+				s = dense_timed(ENGINE_INTERP, l.top, n, l.fp, n, true, 400, &stops);
+
+				check(s == base && stops == 0, "%s: the same on the interpreter, behind 400 slices (%s)", l.what, str(s));
+			}
+		}
+
+		settings.dynarec.idleskip = true;
+	}
+
+	//A stop and a resume at every arrival, in a block with more armed instructions than its code has checks: the
+	//stops are in the code of the block and in every part of its rest
+	for (bool fp : { false, true })
+	{
+		const u32 top = 0x8C020000;
+		const u32 line = 3 * budget - 18;
+		const char* kind = fp ? "fp" : "integer";
+
+		for (bool idleskip : { true, false })
+		{
+			settings.dynarec.idleskip = idleskip;
+
+			//fp instructions cost nothing: with idleskip off a pass of the fp line is a few cycles
+			const u64 slices = fp && !idleskip ? 3 : 16;
+			const char* timing = idleskip ? "fast" : "idleskip off";
+			u64 stops;
+			DenseBlocks blocks;
+
+			MachineState base = dense_timed(ENGINE_JIT, top, line, fp, 0, false, slices, &stops);
+			u32 passes = 0 - R(8);
+
+			MachineState s = dense_timed(ENGINE_JIT, top, line, fp, line, false, slices, &stops, &blocks);
+
+			check(s == base && stops >= (u64)line * (passes - 1) && blocks.with_rest != 0 && blocks.most_checks == budget,
+				"%s line of %u armed instructions in one block, %s: %llu stops and resumes in %u passes with interrupts, the state behind %llu slices is that of the run with nothing armed (%s)",
+				kind, line, timing, (unsigned long long)stops, passes, (unsigned long long)slices, str(s));
+
+			s = dense_timed(ENGINE_FALLBACK, top, line, fp, line, false, slices, &stops);
+
+			check(s == base && machine_used_fallback() && stops >= (u64)line * (passes - 1), "%s line, %s: the same stops on the fallback loop, the jit's state (%s)", kind, timing, str(s));
+		}
+
+		settings.dynarec.idleskip = true;
+
+		//The block ends with a call. Its code does not hold the end: the rest reports the call to a step-out
+		//that is pending, and the leaf's return is then the return of something the level of the request
+		//called. A report that was lost would end the step-out behind the call
+		for (Engine e : all_engines)
+		{
+			Dense d = dense_start(e, top, line, fp, 3);
+
+			dense_arm(d, line);
+
+			MachineStop s;
+
+			for (u32 i = 0; i < line; i++)
+				s = machine_resume();
+
+			bool ok = is_bp(s, line, d.call - 2);
+
+			//asked for in front of the last instruction of the line, inside the rest of the block
+			s = machine_step_out();
+
+			check(ok && is_bp(s, 1, d.top) && R(8) == 2, "%s line, %s: a step-out asked for in the rest of the block that ends with a call is not ended by the callee's return (%s at %08X)",
+				kind, engine_name(e), s.debugger && s.cause == StopCause::Step ? "a step stop" : "a stop", s.pc);
+		}
+
+		//a step-out that stays pending, with every check answering continue
+		{
+			const u64 slices = 16;
+			u64 stops;
+
+			MachineState base = dense_timed(ENGINE_JIT, top, line, fp, 0, false, slices, &stops);
+
+			Dense d = dense_start(ENGINE_JIT, top, line, fp, 0);
+
+			machine_set_sr(SR_MD);
+			knobs.irq_period = 3;
+			knobs.host_stop_slice = slices;
+			dense_arm(d, line);
+			dbg::sh4::SetActiveMask(0);
+
+			MachineStop s = machine_step_out();
+			MachineState st = machine_state();
+
+			check(!s.debugger && st == base, "%s line: a step-out pending for the whole run, %u addresses armed and muted: the state of the run with nothing armed (%s)",
+				kind, line + 1, str(st));
+		}
+	}
+
+	//The code cache. A block is compiled when 16 KiB of the cache are free, and its code can be more than
+	//that: the backend gives it up, the cache is emptied and the block compiled again
+	{
+		//a line of double precision arithmetic: every instruction is a call
+		const u32 top = 0x8C020000;
+		const u32 n = 500;
+		const u64 slices = 12;
+
+		auto doubles = [&](u32 cache_left, u32 armed, u32* most_bytes)
+		{
+			machine_reset(ENGINE_JIT);
+
+			static const u16 ops[] = { 0xF200 /*fadd dr0, dr2*/, 0xF422 /*fmul dr2, dr4*/, 0xF601 /*fsub dr0, dr6*/, 0xF843 /*fdiv dr4, dr8*/ };
+
+			for (u32 i = 0; i < n; i++)
+				machine_write16(top + i * 2, ops[i % 4]);
+
+			Dense d = dense_write(top + n * 2, 8, false);
+
+			d.top = top;
+			d.n = n;
+
+			R(12) = G_leaf;
+			R(13) = G_data;
+			R(14) = top;
+
+			Sh4cntx.fpscr.full = 0x000C0001;
+			Sh4cntx.old_fpscr = Sh4cntx.fpscr;
+			UpdateFPSCR();
+
+			machine_set_pc(top);
+			machine_set_sr(SR_MD);
+			knobs.irq_period = 3;
+			knobs.host_stop_slice = slices;
+
+			if (armed)
+			{
+				dense_arm(d, armed);
+				dbg::sh4::SetActiveMask(0);
+			}
+
+			if (cache_left)
+				LastAddr = CODE_SIZE - cache_left;
+
+			MachineStop s = machine_resume();
+			MachineState st = machine_state();
+
+			*most_bytes = dense_blocks().most_bytes;
+
+			if (s.debugger)
+				st.pc = 0;
+
+			return st;
+		};
+
+		u32 bytes, bytes_left, bytes_armed;
+
+		MachineState base = doubles(0, 0, &bytes);
+
+		check(bytes > 16 * 1024 + 2048, "a block of %u double precision instructions has %u bytes of host code, more than the 16 KiB that a compile waits for", n, bytes);
+
+		//room for the compile to begin, not for the code
+		MachineState s = doubles(16 * 1024 + 2048, 0, &bytes_left);
+
+		check(s == base && bytes_left == bytes, "compiled with %u bytes of the code cache left: the cache is emptied for it, the state behind %llu slices is that of the run in an empty cache (%s)",
+			16 * 1024 + 2048, (unsigned long long)slices, str(s));
+
+		s = doubles(16 * 1024 + 2048, budget + 40, &bytes_armed);
+
+		check(s == base, "the same with %u of its instructions armed and muted (%s)", budget + 40, str(s));
+	}
+
+	//A code cache that has no room for the code of a block when it is empty: the block is made of fewer
+	//instructions. That moves block ends, and time with them; what the guest computes stays.
+	{
+		const u32 top = 0x8C020000;
+		const u32 line = 600;
+		const u32 passes = 2;
+		const u32 room = 2600;
+
+		for (bool fp : { false, true })
+		{
+			std::vector<OwnHit> hits[2];
+			u32 most_bytes = 0;
+
+			for (int i = 0; i < 2; i++)
+			{
+				Dense d = dense_start(i == 0 ? ENGINE_INTERP : ENGINE_JIT, top, line, fp, passes);
+
+				const u32 cache_begin = LastAddr_min;
+
+				if (i == 1)
+					LastAddr_min = LastAddr = CODE_SIZE - room;
+
+				//every eighth instruction of the line, and the end
+				std::vector<u32> ids, at;
+
+				for (u32 k = 0; k < line; k += 8)
+					at.push_back(d.top + k * 2);
+				at.push_back(d.end);
+
+				for (u32 k = 0; k < at.size(); k++)
+					ids.push_back(k + 1);
+
+				machine_breakpoints(ids.data(), at.data(), (u32)at.size());
+
+				knobs.host_stop_slice = 100000;
+
+				for (u32 k = 0; k < passes * line; k++)
+				{
+					MachineStop s = machine_resume();
+
+					if (!s.debugger || s.cause != StopCause::Breakpoint)
+						break;
+
+					hits[i].push_back({ s.pc, s.id, regs() });
+
+					if (i == 1)
+						most_bytes = std::max(most_bytes, dense_blocks().most_bytes);
+
+					if (s.pc == d.end)
+						break;
+				}
+
+				LastAddr_min = cache_begin;
+			}
+
+			size_t same = 0;
+
+			while (same < hits[0].size() && same < hits[1].size() && hits[1][same].pc == hits[0][same].pc && hits[1][same].id == hits[0][same].id
+				&& hits[1][same].regs.same_all(hits[0][same].regs))
+				same++;
+
+			check(hits[0].size() == passes * (line / 8) + 1 && hits[1].size() == hits[0].size() && same == hits[0].size() && most_bytes != 0 && most_bytes <= room,
+				"%s line of %u instructions in a code cache of %u bytes: the jit runs it in blocks of at most %u bytes of host code, its stops are the interpreter's with their registers (%zu stops, %zu agree)",
+				fp ? "fp" : "integer", line, room, most_bytes, hits[1].size(), same);
+		}
+	}
+}
+
+
+/*
 	B13 and B14: n instructions by stepping against the same n by running
 */
 
@@ -2737,6 +3273,7 @@ const Gate gates[] = {
 	{ "b12", "B12 the interpreter fallback charges by decoder blocks", gate_b12 },
 	{ "switch", "the forced fallback selected and dropped while the guest runs: no slice end moves", gate_switch },
 	{ "ownslot", "a delayed branch to its own slot: the arrival at the slot's address is a block start with its check", gate_ownslot },
+	{ "dense", "1024 addresses armed in straight lines: a bounded number of checks per compiled block, the stops and the time unchanged", gate_dense },
 	{ "b13", "B13 interpreter: n steps equal a run of n instructions", gate_b13 },
 	{ "b14", "B14 jit: n steps equal a run to the n-th instruction", gate_b14 },
 	{ "slot", "the interpreter between a conditional branch that is not taken and its slot: steps, arming, stops", gate_slot },

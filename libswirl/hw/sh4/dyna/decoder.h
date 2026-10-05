@@ -51,7 +51,11 @@ struct ngen_features
 	bool DebugChecks;         //if set the backend implements everything SH4DBG_NATIVE stands for (hw/sh4/sh4_if.h):
 	                          //only then do the blocks it compiles get debugger checks and flow reports (debugger/debugger.h)
 	bool CtxAtSlice;          //if set Sh4cntx is complete, pc included, whenever the generated code calls UpdateSystem (SH4DBG_CTX_AT_SLICE)
-	//A backend whose GetFeatures does not set the last two leaves them clear, because what it fills is the decoder's
+	u32  DebugCheckBudget;    //with DebugChecks: the most debugger checks that one compiled block holds, which bounds the host
+	                          //code they add to it. 0: no bound. Of a block with more the backend compiles the instructions in
+	                          //front of the check that is one too many, and the rest runs behind them outside the block cache
+	                          //(RuntimeBlockInfo::dbg_rest_pc)
+	//A backend whose GetFeatures does not set the last three leaves them clear, because what it fills is the decoder's
 	//state, which has static storage. An ngen_features of any other storage is zeroed in front of GetFeatures.
 };
 

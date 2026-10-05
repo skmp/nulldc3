@@ -57,6 +57,13 @@ struct RuntimeBlockInfo: RuntimeBlockInfo_Core
 	bool has_jcond;
 	u8 dbg_flow; //DbgSh4Flow: the block ends with a call or a return and its epilogue reports it to the debugger (step-out)
 
+	//A block with more debugger checks than its backend compiles into one (ngen_features::DebugCheckBudget): oplist
+	//ends in front of the instruction at dbg_rest_pc, and the compiled code hands the rest of the block over there,
+	//with dbg_rest_cycles of guest_cycles given back for it (rdv_BlockRest). addr, sh4_code_size, guest_opcodes and
+	//guest_cycles are those of the whole block; BlockType is BET_StaticJump to dbg_rest_pc. 0: the block is whole
+	u32 dbg_rest_pc;
+	u32 dbg_rest_cycles;
+
 	vector<shil_opcode> oplist;
 
 	bool contains_code(u8* ptr)

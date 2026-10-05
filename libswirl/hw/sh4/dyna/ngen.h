@@ -96,12 +96,18 @@ void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc);
 u32 DYNACALL rdv_DoInterrupts(void* block_cpde);
 u32 DYNACALL rdv_DoInterrupts_pc(u32 pc);
 
+//Called where the code of a block ends in front of its last instruction (RuntimeBlockInfo::dbg_rest_pc): the rest
+//of the block, from pc to end_pc, runs next, outside the block cache and for these cycles. The caller gives the
+//cycles back to the slice counter and leaves Mainloop or RunBlock at once, without the end-of-slice work
+void DYNACALL rdv_BlockRest(u32 pc, u32 cycles, u32 end_pc);
+
 #ifdef __cplusplus
 }
 #endif
 
 //Compiles a block at the pc that does not enter the block cache and runs it once, with the end-of-slice work
-//behind it if the slice ran out: a single step, or the rest of a block that a debugger check interrupted.
+//behind it if the slice ran out: a single step, the rest of a block that a debugger check interrupted, or the
+//rest of a block whose code ends in front of its last instruction (rdv_BlockRest).
 //Only with ngen_features::DebugChecks
 void rdv_RunTempBlock(const DecodeLimits* limits);
 
@@ -127,7 +133,8 @@ struct NGenBackend
 {
 	virtual bool Init() = 0;
 
-	//Called to compile a block
+	//Called to compile a block. A backend that finds the code cache too small for the code leaves block->code 0
+	//and the cache as it was: the caller empties the cache, or asks for a block of fewer instructions
 	virtual void Compile(RuntimeBlockInfo* block, SmcCheckEnum smc_checks, bool reset, bool staging, bool optimise) = 0;
 
 	//Called when blocks are reseted

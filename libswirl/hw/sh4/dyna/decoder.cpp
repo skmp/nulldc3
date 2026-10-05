@@ -1302,8 +1302,16 @@ _end:
 	if (limits && limits->cycles >= 0)
 		blk->guest_cycles = limits->cycles;
 
+	blk->dbg_rest_pc = 0;
+	blk->dbg_rest_cycles = 0;
+
 	if (state.dbg_checks)
 	{
+		// What a compiled block holds of them. The decode went on to the end of the block all the same: its
+		// boundaries and its cost are those of the block without a check.
+		const u32 budget = (limits && limits->no_compile) ? 0 : state.ngen.DebugCheckBudget;
+		u32 checks = 0;
+
 		// A check that stops gives back the part of the block cost that belongs to the instructions from its
 		// own on. The cost is spread over the instructions in proportion to what each of them added to it.
 		for (size_t i = 0; i < blk->oplist.size(); i++)
@@ -1314,6 +1322,23 @@ _end:
 			{
 				u32 charged = opcode_cycles ? (u32)((u64)blk->guest_cycles * sop.rs2._imm / opcode_cycles) : 0;
 				sop.rs2._imm = blk->guest_cycles - charged;
+
+				if (budget && checks++ == budget)
+				{
+					// One check too many. The code of the block ends in front of its instruction, where the
+					// rest of the block is handed over with the cycles this check would give back: the block
+					// is charged once, and the slice counter is tested behind its last instruction only.
+					blk->dbg_rest_pc = sop.rs1._imm;
+					blk->dbg_rest_cycles = sop.rs2._imm;
+					blk->oplist.resize(i);
+
+					blk->BlockType = BET_StaticJump;
+					blk->BranchBlock = blk->dbg_rest_pc;
+					blk->NextBlock = 0xFFFFFFFF;
+					blk->has_jcond = false;
+					blk->dbg_flow = DBG_SH4_FLOW_NONE;
+					break;
+				}
 			}
 		}
 	}

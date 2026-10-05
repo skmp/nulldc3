@@ -32,7 +32,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   include("${nulldc_tests_path}/common/libswirl.cmake")
 endif()
 
-set(sh4bp_gates b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b12 switch ownslot b13 b14 slot midpair arm event)
+set(sh4bp_gates b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b12 switch ownslot dense b13 b14 slot midpair arm event)
 
 # the configurations that the gates on the booted guest are made in: engine, and "off" for idleskip off
 set(sh4bp_boots jit interpreter fallback jit-idleskip-off fallback-idleskip-off)

@@ -49,6 +49,29 @@ extern "C" {
 // RunBlock. Jumped to with the stack as the main loop has it between two blocks.
 static const void* mainloop_exit;
 
+#if defined(NULLDC_DEBUGGER)
+// The debugger check of every block (build_check_stub): called from the block with the arguments of
+// dbg_sh4_Check. Returns into the block when the check answers "continue".
+static const void* check_stub;
+#endif
+
+/*
+	What debugger checks add to a block, at most.
+
+	A check is DBG_CHECK_CALL_BYTES in the block: two arguments and the call of the block's own tail, which adds
+	the third and goes on to check_stub. The register allocator flushes for it: every host register that holds a
+	guest register is written to the context in front of the check and loaded again behind it, 13 bytes each
+	way for one of the 6 general registers and 15 for one of the 4 xmm registers.
+
+	A block holds DBG_CHECK_BUDGET of them (ngen_features::DebugCheckBudget), which keeps their code within
+	DBG_CHECKS_BYTES_MAX whatever is armed.
+*/
+#define DBG_CHECK_CALL_BYTES   15
+#define DBG_CHECK_FLUSH_BYTES  (2 * (6 * 13 + 4 * 15))
+#define DBG_CHECK_TAIL_BYTES   10
+#define DBG_CHECKS_BYTES_MAX   (16 * 1024)
+#define DBG_CHECK_BUDGET       ((DBG_CHECKS_BYTES_MAX - DBG_CHECK_TAIL_BYTES) / (DBG_CHECK_CALL_BYTES + DBG_CHECK_FLUSH_BYTES))
+
 double host_cpu_time;
 u64 guest_cpu_cycles;
 
@@ -89,7 +112,8 @@ static void ngen_blockcheckfail2(u32 pc) {
 class BlockCompiler : public Xbyak::CodeGenerator
 {
 public:
-	BlockCompiler(void *buffer) : Xbyak::CodeGenerator(64 * 1024, buffer), regalloc(this)
+	// The code is written where it will run: max_size is what the place has room for
+	BlockCompiler(void *buffer, size_t max_size = 64 * 1024) : Xbyak::CodeGenerator(max_size, buffer), regalloc(this)
 	{
 		#if HOST_OS == OS_WINDOWS
 			call_regs.push_back(ecx);
@@ -242,9 +266,51 @@ public:
 		emit_Skip((u32)getSize());
 	}
 
+#if defined(NULLDC_DEBUGGER)
+	// The debugger check of a block, out of line and shared by every block: entered by a call from the block
+	// (through the block's tail) with the arguments of dbg_sh4_Check in place. No host register holds anything
+	// across it: the register allocator flushes for the check.
+	void build_check_stub() {
+		Xbyak::Label stop;
+
+		// the refund, across the call; the stack is aligned again with it
+		push(call_regs[1].cvt64());
+		call(CC_RX2RW(dbg_sh4_Check));
+		pop(call_regs[1].cvt64());
+
+		test(eax, eax);
+		jnz(stop);
+		ret();
+
+		// A stop in front of the instruction: the cycles of the instructions that did not run go back to the
+		// slice counter, and the block and the main loop are left without the end-of-slice work
+		L(stop);
+		#ifdef FEAT_NO_RWX_PAGES
+		mov(rax, (uintptr_t)&cycle_counter);
+		add(dword[rax], call_regs[1]);
+		#else
+		add(dword[rip + &cycle_counter], call_regs[1]);
+		#endif
+		add(rsp, 8 + STACK_ALIGN + 8);       // the return addresses into the block and into the main loop, and the frame of the block
+		jmp(mainloop_exit);
+
+		while (getSize() & 15)
+			nop();
+
+		ready();
+		emit_Skip((u32)getSize());
+	}
+#endif
+
 	void compile(RuntimeBlockInfo* block, SmcCheckEnum smc_checks, bool reset, bool staging, bool optimise)
 	{
 		//printf("X86_64 compiling %08x to %p\n", block->addr, emit_GetCCPtr());
+#if defined(NULLDC_DEBUGGER)
+		// the tail of the debugger checks of the block, and whether there is one
+		Xbyak::Label check_tail;
+		bool has_checks = false;
+#endif
+
 		CheckBlock(smc_checks, block);
 		
 		regalloc.DoAlloc(block);
@@ -288,31 +354,16 @@ public:
 			case shop_dbg_check:
 				{
 					// The register allocator flushes for this op: every register is in the context, and none is
-					// cached across the call. The pc is an argument, the debugger writes it when it stops.
+					// cached across the call. The pc is an argument, the debugger writes it when it stops; the
+					// tail of the block adds the block end.
+					const size_t at = getSize();
+
 					mov(call_regs[0], op.rs1._imm);
 					mov(call_regs[1], op.rs2._imm);
-					mov(call_regs[2], block->addr + block->sh4_code_size);
+					call(check_tail);
 
-					GenCall(dbg_sh4_Check);
-
-					Xbyak::Label no_stop;
-					test(eax, eax);
-					jz(no_stop);
-
-					// A stop in front of the instruction: the cycles of the instructions that did not run go back
-					// to the slice counter, and the main loop is left without its end-of-slice work
-					if (op.rs2._imm != 0)
-					{
-						#ifdef FEAT_NO_RWX_PAGES
-						mov(rax, (uintptr_t)&cycle_counter);
-						add(dword[rax], op.rs2._imm);
-						#else
-						add(dword[rip + &cycle_counter], op.rs2._imm);
-						#endif
-					}
-					GenLeaveMainloop();
-
-					L(no_stop);
+					verify(getSize() - at == DBG_CHECK_CALL_BYTES);
+					has_checks = true;
 				}
 				break;
 #endif
@@ -874,6 +925,58 @@ public:
 			regalloc.OpEnd(&op);
 		}
 
+		// what is behind the last instruction of every block
+		auto finish = [&]()
+		{
+#if defined(NULLDC_DEBUGGER)
+			if (has_checks)
+			{
+				// The tail of the checks: the third argument, the same for all of them
+				const size_t at = getSize();
+
+				L(check_tail);
+				mov(call_regs[2], block->addr + block->sh4_code_size);
+				jmp(check_stub, T_NEAR);
+
+				verify(getSize() - at == DBG_CHECK_TAIL_BYTES);
+			}
+#endif
+
+			ready();
+
+			block->code = (DynarecCodeEntryPtr)getCode();
+			block->host_code_size = (u32)getSize();
+
+			emit_Skip((u32)getSize());
+		};
+
+#if defined(NULLDC_DEBUGGER)
+		if (block->dbg_rest_pc)
+		{
+			// The code of the block ends here and its rest runs outside the block cache. Every register is in
+			// the context. The rest gets the cycles of its instructions back, and the main loop is left without
+			// its test of the slice counter: that comes behind the last instruction of the block.
+			mov(call_regs[0], block->dbg_rest_pc);
+			mov(call_regs[1], block->dbg_rest_cycles);
+			mov(call_regs[2], block->addr + block->sh4_code_size);
+			call(CC_RX2RW(rdv_BlockRest));
+
+			if (block->dbg_rest_cycles != 0)
+			{
+				#ifdef FEAT_NO_RWX_PAGES
+				mov(rax, (uintptr_t)&cycle_counter);
+				add(dword[rax], block->dbg_rest_cycles);
+				#else
+				add(dword[rip + &cycle_counter], block->dbg_rest_cycles);
+				#endif
+			}
+			GenLeaveMainloop();
+
+			finish();
+			return;
+		}
+#endif
+
 		mov(rax, (size_t)&next_pc);
 
 		switch (block->BlockType) {
@@ -963,12 +1066,7 @@ public:
 		add(rsp, STACK_ALIGN);
 		ret();
 
-		ready();
-
-		block->code = (DynarecCodeEntryPtr)getCode();
-		block->host_code_size = (u32)getSize();
-
-		emit_Skip((u32)getSize());
+		finish();
 	}
 
 	// Leaves the block and the main loop from inside a block: drops the frame of the block and the return
@@ -1527,13 +1625,30 @@ struct X64NGenBackend : NGenBackend
 {
 	BlockCompiler* compiler;
 
+	// The code goes to the end of the code cache, with what is left of the cache as its bound. Code that does
+	// not fit is given up: block->code stays 0 and the cache is as it was, for the caller to make room or to
+	// ask for less.
 	void Compile(RuntimeBlockInfo* block, SmcCheckEnum smc_checks, bool reset, bool staging, bool optimise)
 	{
-		verify(emit_FreeSpace() >= 16 * 1024);
+		block->code = 0;
+		block->host_code_size = 0;
 
-		compiler = new BlockCompiler(emit_GetCCPtr());
-		compiler->compile(block, smc_checks, reset, staging, optimise);
-		delete compiler;
+		BlockCompiler comp(emit_GetCCPtr(), emit_FreeSpace());
+
+		compiler = &comp;
+
+		try
+		{
+			comp.compile(block, smc_checks, reset, staging, optimise);
+		}
+		catch (const Xbyak::Error&)
+		{
+			block->code = 0;
+			block->host_code_size = 0;
+			block->memory_accesses.clear();
+		}
+
+		compiler = 0;
 	}
 
 	bool Rewrite(rei_host_context_t* ctx)
@@ -1606,6 +1721,14 @@ struct X64NGenBackend : NGenBackend
 			comp.build_runblock();
 		}
 
+#if defined(NULLDC_DEBUGGER)
+		{
+			check_stub = emit_GetCCPtr();
+			BlockCompiler comp(emit_GetCCPtr());
+			comp.build_check_stub();
+		}
+#endif
+
 		// To prevent code cache reset from wiping these out.
 		emit_SetBaseAddr();
 
@@ -1651,8 +1774,10 @@ struct X64NGenBackend : NGenBackend
 		// System V calling convention. Elsewhere the debugger uses the interpreter fallback (hw/sh4/sh4_dbg.h).
 #if defined(NULLDC_DEBUGGER) && !defined(_WIN32)
 		dst->DebugChecks = true;
+		dst->DebugCheckBudget = DBG_CHECK_BUDGET;
 #else
 		dst->DebugChecks = false;
+		dst->DebugCheckBudget = 0;
 #endif
 
 		// Between two blocks every register is in the context and the epilogue has written the pc. Inside a
