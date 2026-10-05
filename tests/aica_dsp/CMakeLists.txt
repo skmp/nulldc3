@@ -6,11 +6,13 @@
 #	aica_dsp_api          aica.dsp.api: what the calls of the core promise each other. No data needed
 #	aica_dsp_diff <set>   aica.dsp.diff.<set>: the core against the DSP of the caique sample model on generated
 #	                      programs, step for step
+#	aica_dsp_cases <case> aica.dsp.case.<case>: the DSP programs caique ran on a Dreamcast, on the model with the
+#	                      core in step and on the core alone, against the console's files
 #	aica_dsp_bench        samples a second, not a test
 #
-#	The model is caique-rtl's. Nothing of it is in this repository: aica_dsp_diff is compiled with its sources
-#	from the checkout (NULLDC_CAIQUE_DIR). Without a checkout its tests are skipped. All are gated on
-#	baseline.txt.
+#	The model, the programs and the console's files are caique-rtl's. Nothing of it is in this repository: the
+#	tests are compiled with its sources from the checkout (NULLDC_CAIQUE_DIR) and read its captures from there.
+#	Without a checkout they are skipped. All are gated on baseline.txt.
 #
 
 string(REPLACE "-fpermissive" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
@@ -33,6 +35,15 @@ add_library(nulldc_aica_dsp_test STATIC dsp_suite.cpp dsp_suite.h)
 target_include_directories(nulldc_aica_dsp_test PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(nulldc_aica_dsp_test PUBLIC nulldc_aica_dsp_core)
 
+# A test that finds its data missing when it runs says so and exits with this code. With --require-data it fails
+set(nulldc_dsp_skip_code 77)
+
+if(NULLDC_TESTS_REQUIRE_DATA)
+  set(nulldc_dsp_require_data --require-data)
+else()
+  set(nulldc_dsp_require_data "")
+endif()
+
 
 add_executable(aica_dsp_api api_main.cpp)
 target_link_libraries(aica_dsp_api PRIVATE nulldc_aica_dsp_test)
@@ -45,13 +56,22 @@ add_executable(aica_dsp_bench bench_main.cpp)
 target_link_libraries(aica_dsp_bench PRIVATE nulldc_aica_dsp_core)
 
 
-## Against the caique model ##
+## Against the caique model and its console captures ##
 
 set(nulldc_dsp_diff_sets random sparse directed)
+
+# The cases, and the ones that play a channel or are too long for the model: those run on one machine only
+set(nulldc_dsp_cases dsp_basic dsp_mem dsp_mem2 dsp_mem3 dsp_wslot dsp_unpack dsp_pack dsp_temp dsp_coll sh4_latch mdec_hold)
+set(nulldc_dsp_cases_model_only dsp_coll sh4_latch mdec_hold)
+set(nulldc_dsp_cases_core_only dsp_pack)
 
 if(NOT NULLDC_HAVE_CAIQUE)
   foreach(set ${nulldc_dsp_diff_sets})
     nulldc_add_missing_data_test(aica.dsp.diff.${set} "${NULLDC_CAIQUE_MISSING}")
+  endforeach()
+
+  foreach(case ${nulldc_dsp_cases})
+    nulldc_add_missing_data_test(aica.dsp.case.${case} "${NULLDC_CAIQUE_MISSING}")
   endforeach()
 else()
   # The model as it is in the checkout. Its warnings are its own
@@ -74,4 +94,50 @@ else()
     add_test(NAME aica.dsp.diff.${set} COMMAND aica_dsp_diff ${set} --strict)
     set_tests_properties(aica.dsp.diff.${set} PROPERTIES TIMEOUT 300)
   endforeach()
+
+  # Every case is a C program with a test_main and static data of its own: one object per machine it runs on, with
+  # its entry point under a name of its own
+  add_executable(aica_dsp_cases cases_main.cpp)
+  target_link_libraries(aica_dsp_cases PRIVATE nulldc_aica_dsp_caique)
+  target_compile_definitions(aica_dsp_cases PRIVATE
+    NULLDC_BASELINE="${nulldc_dsp_baseline}"
+    NULLDC_CAIQUE_DIR="${NULLDC_CAIQUE_DIR}"
+  )
+
+  foreach(case ${nulldc_dsp_cases})
+    set(machines model core)
+
+    if(case IN_LIST nulldc_dsp_cases_model_only)
+      set(machines model)
+    elseif(case IN_LIST nulldc_dsp_cases_core_only)
+      set(machines core)
+    endif()
+
+    foreach(machine ${machines})
+      add_library(nulldc_caique_case_${case}_${machine} OBJECT "${NULLDC_CAIQUE_DIR}/model/cases/${case}.c")
+      target_compile_definitions(nulldc_caique_case_${case}_${machine} PRIVATE
+        CASE="${case}" test_main=caique_case_${case}_${machine})
+      set_target_properties(nulldc_caique_case_${case}_${machine} PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+
+      if(NOT MSVC)
+        target_compile_options(nulldc_caique_case_${case}_${machine} PRIVATE -w)
+      endif()
+
+      target_sources(aica_dsp_cases PRIVATE $<TARGET_OBJECTS:nulldc_caique_case_${case}_${machine}>)
+    endforeach()
+
+    add_test(NAME aica.dsp.case.${case} COMMAND aica_dsp_cases ${case} --strict ${nulldc_dsp_require_data})
+    set_tests_properties(aica.dsp.case.${case} PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE ${nulldc_dsp_skip_code})
+  endforeach()
+
+  # mdec_hold ends with the measurement that caique's harness runs in front of every case
+  add_library(nulldc_caique_replay OBJECT "${NULLDC_CAIQUE_DIR}/model/cases/common/replay.c")
+  set_target_properties(nulldc_caique_replay PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+
+  if(NOT MSVC)
+    target_compile_options(nulldc_caique_replay PRIVATE -w)
+  endif()
+
+  target_sources(aica_dsp_cases PRIVATE $<TARGET_OBJECTS:nulldc_caique_replay>)
 endif()
+
