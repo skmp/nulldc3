@@ -66,6 +66,12 @@ typedef void (*MachineFn)();
 // Returns false to be called again at the next stop: the test armed an action (emu::Resume, emu::Step), or
 // waits for a stop that another thread causes. Returns true when the test is finished; it then has armed
 // nothing in this call, so that the next test begins parked on the same stop.
+// The driver starts no thread. A test that ends the emulator thread arranges the restart itself: a thread
+// it created waits for the lifetime Stopped (emu::GetRunState) and calls virtualDreamcast->Resume().
+// A test cannot arm a pause from a stop (emu::RequestPause does nothing while Parked): to stop a running
+// guest it sets an event breakpoint, or calls RequestPause() from a scheduler callback it registered or from
+// another thread. A service excursion while running is asked for by another thread through emu::Call; only
+// the test function itself, which runs on (E), must not call it.
 typedef bool (*GuestFn)(const emu::RunState& stop);
 
 // One registered test. Objects of it are defined by the two macros below, at namespace scope: the
