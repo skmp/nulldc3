@@ -32,22 +32,41 @@
 	pin on arm7
 */
 
+/*
+	The handshake, as on the console (wren7-rtl model/tests/hw/fiqdiag, model/NOTES.md "Interrupts"):
+	a request is latched with its level and pulls nFIQ, reading L releases nFIQ, writing bit 0 of M ends the
+	service and lets the next request in
+*/
 static void update_e68k(Arm7Context* ctx)
 {
-	if (!ctx->e68k_out && ctx->aica_interr)
+	if (!ctx->e68k_reg_M && ctx->aica_interr)
 	{
-		//Set the pending signal
-		//Is L register held here too ?
-		ctx->e68k_out = true;
 		ctx->e68k_reg_L = ctx->aica_reg_L;
 
+		//a request of level 0 does not interrupt, and L reads 0 behind it (console: fiqdiag d1.bin, d4.bin, d5.bin)
+		if (ctx->aica_reg_L != 0)
+		{
+			//Set the pending signal
+			ctx->e68k_reg_M = 1;
+			ctx->e68k_out = true;
+
+			ctx->backend->UpdateInterrupts();
+		}
+	}
+}
+
+static void e68k_AcknowledgeInterrupt(Arm7Context* ctx)
+{
+	if (ctx->e68k_out)
+	{
+		ctx->e68k_out = false;
 		ctx->backend->UpdateInterrupts();
 	}
 }
 
 static void e68k_AcceptInterrupt(Arm7Context* ctx)
 {
-	ctx->e68k_out = false;
+	ctx->e68k_reg_M = 0;
 	update_e68k(ctx);
 	
 }
@@ -58,9 +77,12 @@ static T arm_ReadReg(Arm7Context* ctx, u32 addr)
 {
 	addr &= 0x7FFF;
 	if (addr == REG_L)
+	{
+		e68k_AcknowledgeInterrupt(ctx);
 		return ctx->e68k_reg_L;
+	}
 	else if (addr == REG_M)
-		return ctx->e68k_reg_M;	//shouldn't really happen
+		return 0;	//shouldn't really happen
 	else
 		return ctx->aica->ReadReg(addr, sz);
 }
@@ -145,6 +167,9 @@ struct SoundCPU_impl : SoundCPU {
 		ctx.write32 = &scpu_WriteMemArm<4, u32>;
 
 		setBackend(ARM7BE_INTERPRETER);
+
+		//The reset of the AICA releases ARMRST before the first Reset() of this device: the reset state from the start
+		SoundCPU_impl::Reset(false);
 	}
 
 	//called when plugin is used by emu (you should do first time init here)
@@ -182,10 +207,40 @@ struct SoundCPU_impl : SoundCPU {
 		// disable FIQ
 		ctx.regs[16].I |= 0x40;
 
+		//The AICA's requests go with its registers: nothing is pending, pulls nFIQ or is in service, L is 0
+		ctx.aica_interr = false;
+		ctx.aica_reg_L = 0;
+		ctx.e68k_out = false;
+		ctx.e68k_reg_L = 0;
+		ctx.e68k_reg_M = 0;
+
 		ARM7Backend::CPUUpdateCPSR(&ctx);
 
 		ctx.regs[R15_ARM_NEXT].I = ctx.regs[15].I;
 		ctx.regs[15].I += 4;
+
+		arm->UpdateInterrupts();
+		arm->InvalidateJitCache();
+	}
+
+	//ARMRST is released: the reset of the ARM7DI (data sheet 3.5, console: wren7-rtl model/tests/hw/bringup).
+	//R14_svc and SPSR_svc take the PC and the CPSR, the CPSR gets SVC mode with I and F set and the PC is 0.
+	//Every other register keeps its value
+	void ResetException()
+	{
+		u32 pc = ctx.regs[R15_ARM_NEXT].I;
+
+		ARM7Backend::CPUSwitchMode(&ctx, 0x13, true);
+		ctx.regs[14].I = pc;
+
+		ctx.regs[RN_PSR_FLAGS].FLG.NZCV = ctx.regs[RN_SPSR].PSR.NZCV;
+		ctx.armIrqEnable = false;
+		ctx.armFiqEnable = false;
+		ARM7Backend::CPUUpdateCPSR(&ctx);
+
+		ctx.regs[R15_ARM_NEXT].I = 0;
+		ctx.regs[15].I = 4;
+		ctx.regs[CYCL_CNT].I = 0;
 
 		arm->UpdateInterrupts();
 		arm->InvalidateJitCache();
@@ -196,7 +251,15 @@ struct SoundCPU_impl : SoundCPU {
 		bool enabled = state == 0;
 
 		if (!ctx.enabled && enabled)
-			Reset(false);
+		{
+			ResetException();
+
+			//The reset ends a service in progress, as a write of bit 0 of M does: the program that is started gets its
+			//interrupts whatever the one before it was in the middle of. Not measured on a console (no job there
+			//finds a request in service); software depends on it, the ARM crt0 of KallistiOS writes M in its FIQ
+			//handler only. L and the registers of the AICA stay (console: fiqdiag d1.bin to d5.bin), and nFIQ does
+			e68k_AcceptInterrupt(&ctx);
+		}
 
 		ctx.enabled = enabled;
 	}

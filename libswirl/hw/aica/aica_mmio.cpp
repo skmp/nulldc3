@@ -317,6 +317,10 @@ struct AicaDevice final : AICA {
 			}
 		}
 
+		//SCILV0-2 are write only, they read as 0 (console: wren7-rtl model/tests/hw/fiqdiag)
+		if (addr >= SCILV0_addr && addr < SCILV2_addr + 4)
+			return 0;
+
 		ReadMemArrRet(aica_reg, addr, sz);
 	}
 	template<u32 sz>

@@ -1,8 +1,8 @@
 ## ARM7 tests ##
 #
-#	nulldc_arm7_interp    the ARM7 interpreter and SoundCPU of libswirl, without the recompiler (FEAT_AREC =
-#	                      DYNAREC_NONE). SoundCPU.cpp is compiled through arm7_machine.cpp, which wraps it into
-#	                      the machine the tests run their guests on
+#	nulldc_arm7_interp    the ARM7 interpreter, SoundCPU and the AICA's register block of libswirl, without the
+#	                      recompiler (FEAT_AREC = DYNAREC_NONE). SoundCPU.cpp is compiled through
+#	                      arm7_machine.cpp, which wraps it into the machine the tests run their guests on
 #	nulldc_arm7_test      what the tests share: options, report, checks and baseline (arm7_suite), the console
 #	                      jobs of wren7-rtl (wren7_job)
 #
@@ -18,7 +18,7 @@
 
 nulldc_add_libswirl_library(nulldc_arm7_interp
   AREC DYNAREC_NONE
-  SOURCES hw/arm7/arm7.cpp hw/arm7/arm7_interpreter.cpp
+  SOURCES hw/arm7/arm7.cpp hw/arm7/arm7_interpreter.cpp hw/aica/aica_mmio.cpp
 )
 target_sources(nulldc_arm7_interp PRIVATE arm7_machine.cpp arm7_machine.h)
 target_include_directories(nulldc_arm7_interp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

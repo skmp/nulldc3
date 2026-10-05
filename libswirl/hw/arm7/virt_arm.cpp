@@ -9,6 +9,8 @@
 
 #if HOST_CPU==CPU_X86 && FEAT_AREC != DYNAREC_NONE
 
+#include "arm7_mul.h"
+
 #define C_CORE
 
 namespace VARM
