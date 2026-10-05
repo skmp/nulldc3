@@ -32,6 +32,7 @@ set(nulldc_system_cases
   "fault.segv:SHIM"
   "fault.bus:SHIM"
   "fault.ill:SHIM"
+  "fault.on_request:SHIM"
   "fault.block:SHIM"
   "boot.2ndmix.jit:ELF"
   "boot.2ndmix.interp:ELF"

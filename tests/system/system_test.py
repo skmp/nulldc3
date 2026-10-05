@@ -173,6 +173,18 @@ class Harness:
         self.runs.append(run)
         return run
 
+    def wait_for_output(self, started, text):
+        """Waits until the output of a started run has text. False: the run ended, or used up its watchdog time,
+        without it."""
+        tag, args, process, log, directory, t0 = started
+        while True:
+            over = process.poll() is not None or time.time() - t0 >= self.options.watchdog
+            if text in self.read_log(directory):
+                return True
+            if over:
+                return False
+            time.sleep(0.02)
+
     @staticmethod
     def read_log(directory):
         with open(os.path.join(directory, 'log.txt'), 'rb') as f:
@@ -415,15 +427,30 @@ def case_frame_refsw2(h):
     check(none.fields['vram'] != run.fields['vram'], 'refsw2 left VRAM as the none renderer does', run)
 
 
-def fault_environment(h, kind):
+def start_fault(h, tag, kind, keys=(), env=None):
+    """Starts guest_spin with the fault shim and waits for the text of the guest: from there on the handlers are
+    installed, the config is loaded and the machine runs, however long the emulator took to get there. Returns
+    what finish() takes and the path of the file that makes the shim fault when it is created."""
     check(h.options.shim and os.path.isfile(h.options.shim), 'no fault shim (--shim)')
-    return {'LD_PRELOAD': h.options.shim, 'NULLDC_TEST_FAULT': kind}
+    request = os.path.join(h.work, tag, 'fault-now')
+    environment = {'LD_PRELOAD': h.options.shim, 'NULLDC_TEST_FAULT': kind, 'NULLDC_TEST_FAULT_WHEN': request}
+    environment.update(env or {})
+    started = h.start(tag, headless(*keys, engine='interp'), h.guest('guest_spin'), env=environment)
+    if not h.wait_for_output(started, 'guest: running'):
+        check(False, 'the text of the guest did not come, no fault was asked for', h.finish(started))
+    return started, request
+
+
+def ask_for_fault(request):
+    open(request, 'w').close()
 
 
 def case_fault(h, kind):
     """A fault that is not a guest memory fault ends the process: a diagnostic, and a status that is not 0."""
     name = {'segv': 'SIGSEGV', 'bus': 'SIGBUS', 'ill': 'SIGILL'}[kind]
-    run = h.run('fault', headless(engine='interp'), h.guest('guest_spin'), env=fault_environment(h, kind))
+    started, request = start_fault(h, 'fault', kind)
+    ask_for_fault(request)
+    run = h.finish(started)
     check(not run.hung, 'the process did not end after the fault: killed by the watchdog', run)
     check(run.returncode == -getattr(signal, name), 'exit code %s, expected the end by %s' % (run.returncode, name),
           run)
@@ -434,18 +461,34 @@ def case_fault(h, kind):
     check('guest: running' in run.log, 'the output in front of the fault is missing', run)
 
 
+def case_fault_on_request(h):
+    """The fault of the fault cases comes when the case asks for it, and not before: a case that asks once the
+    guest has printed its text always has that text in front of the fault."""
+    started, request = start_fault(h, 'fault_on_request', 'segv')
+    tag, args, process, log, directory, t0 = started
+    # long enough for a fault that does not wait for the request to come
+    time.sleep(1)
+    if process.poll() is not None or 'fault_handler' in h.read_log(directory):
+        check(False, 'the fault came before it was asked for', h.finish(started))
+    ask_for_fault(request)
+    run = h.finish(started)
+    check(not run.hung, 'the fault that was asked for did not come: killed by the watchdog', run)
+    check(run.returncode == -signal.SIGSEGV, 'exit code %s, expected the end by SIGSEGV' % run.returncode, run)
+    text, fault = run.log.find('guest: running'), run.log.find('fault_handler: unhandled SIGSEGV')
+    check(0 <= text < fault, 'the text of the guest is not in front of the fault', run)
+
+
 def case_fault_block(h):
     """NULLDC_FAULT_BLOCK=1: the process stays, for a debugger, and says so."""
-    env = fault_environment(h, 'segv')
-    env['NULLDC_FAULT_BLOCK'] = '1'
-    started = h.start('fault_block', headless(engine='interp'), h.guest('guest_spin'), env=env)
+    started, request = start_fault(h, 'fault_block', 'segv', env={'NULLDC_FAULT_BLOCK': '1'})
+    ask_for_fault(request)
     run = h.finish(started, kill_when=lambda log: log.count('fault_handler: Blocking') >= 2)
     check(run.killed_on_purpose, 'the process did not block after the fault', run)
     check('blocking for a debugger' in run.log, 'no diagnostic of the fault', run)
 
     # the config key does the same for a fault after the config is loaded
-    started = h.start('fault_block_key', headless('config:Debug.BlockOnFault=yes', engine='interp'),
-                      h.guest('guest_spin'), env=fault_environment(h, 'segv'))
+    started, request = start_fault(h, 'fault_block_key', 'segv', keys=['config:Debug.BlockOnFault=yes'])
+    ask_for_fault(request)
     run = h.finish(started, kill_when=lambda log: log.count('fault_handler: Blocking') >= 2)
     check(run.killed_on_purpose, 'the process did not block after the fault (config key)', run)
 
@@ -542,6 +585,7 @@ CASES = {
     'fault.segv': lambda h: case_fault(h, 'segv'),
     'fault.bus': lambda h: case_fault(h, 'bus'),
     'fault.ill': lambda h: case_fault(h, 'ill'),
+    'fault.on_request': case_fault_on_request,
     'fault.block': case_fault_block,
     'determinism': case_determinism,
     'perf.script': case_perf_script,

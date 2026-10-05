@@ -57,6 +57,7 @@ Every test is `system_test.py --case <case>` on one of the two emulators.
 | `headless.no_program` | headless with nothing to run: exit code 1 and `reason=error` | |
 | `headless.gl_renderer` | a renderer that needs GL (`refsw` in the default build, `gles` in the other) is refused: exit code 1 and `reason=error` | |
 | `fault.segv` `fault.bus` `fault.ill` | a fault that is not a guest memory fault ends the process by that signal, with the `fault_handler: unhandled ...` line, and what was printed before it is in the output | |
+| `fault.on_request` | the fault of these tests comes when the test asks for it and not before: a second after the text of the guest the process still runs and has printed no `fault_handler` line; asked for, the fault ends it, behind that text | |
 | `fault.block` | with `NULLDC_FAULT_BLOCK=1`, and with `config:Debug.BlockOnFault=yes`, the process stays and prints `fault_handler: Blocking` | |
 | `boot.2ndmix.jit` `boot.2ndmix.interp` | 2ndmix boots under reios with the `none` renderer and runs for 600 vblanks: exit code 0, `reason=vblanks vblanks=600`, the serial port shows the KallistiOS banner, `2ndMix/KallistiOS starting` and `Starting display` | `NULLDC_ELF_DIR` |
 | `boot.hello.jit` `boot.hello.interp` | the same for hello and 30 vblanks: the banner, `Hello world!`, `arch: exit return code 0` | `NULLDC_ELF_DIR` |
@@ -68,9 +69,11 @@ In every run that is expected to end by itself, the output must not have `Fatal 
 `fault_handler`.
 
 The fault tests make the emulator fault with a library the project builds, `fault_shim.so`, preloaded into the
-emulator: once the emulator has installed its handler for the signal, a thread of the library writes to a page
-nothing knows (SIGSEGV), to a mapping behind the end of its file (SIGBUS), or executes an undefined instruction
-(SIGILL).
+emulator: once the emulator has installed its handler for the signal and the test has created the file the library
+waits for, a thread of the library writes to a page nothing knows (SIGSEGV), to a mapping behind the end of its
+file (SIGBUS), or executes an undefined instruction (SIGILL). A test creates the file when the text of the guest
+is in the output of the run: the fault is then in a machine that runs, with its config loaded and that text in
+front of it, however long the emulator took to get there.
 
 hello returns from `main` into its own start-up code (KallistiOS returns to the PR it was started with, which it
 keeps on the stack it then uses) and stays there, at about a quarter of real time on the JIT; that is the program,
