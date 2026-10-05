@@ -9,6 +9,7 @@ aica.dsp.api                 state                                1549         1
 aica.dsp.api                 instances                              16           16
 aica.dsp.api                 registers                              54           54
 aica.dsp.api                 fields                                289          289
+aica.dsp.api                 ram-sizes                             966          966
 aica.dsp.api                 helpers                                68           68
 aica.dsp.api                 shifter                               326          326
 aica.dsp.api                 address                               456          456

@@ -11,6 +11,8 @@
 	  registers   what the CPU can write and read back of every register the DSP has, and that it has no others
 	  fields      a state with bits in its fields that their registers do not have: the CPU's reads, the sends, the
 	              steps and RunSample do what they do on the state with every field cut to its bits
+	  ram-sizes   a wave RAM of 4, 8 and 16 MB with the ring anywhere in it: every memory step has the byte that the
+	              address rule gives, and RunSample leaves what the steps leave
 	  helpers     decode and encode, the float format at its corners, the view of a step, a core without wave RAM
 	  shifter, address, ring, rules, mixs
 	              the known-answer programs (dsp_known.cpp)
@@ -103,14 +105,9 @@ static AicaDspInst nop()
 	return inst;
 }
 
-//A program of `steps` busy rows, the rest empty, and everything a program reads
-static void random_machine(Machine& m, DspRandom& rnd, int steps, bool sparse)
+//A program of `steps` busy rows, the rest empty, and everything a program reads but the wave RAM
+static void random_program(AicaDsp& dsp, DspRandom& rnd, int steps, bool sparse)
 {
-	AicaDsp& dsp = m.dsp;
-
-	for (uint32_t i = 0; i < RAM_SIZE; i++)
-		m.ram[i] = (uint8_t)rnd.Bits(8);
-
 	for (int i = 0; i < 128; i++)
 	{
 		dsp.RegWrite(0x3000 + 4 * i, rnd.Bits(16));
@@ -140,6 +137,14 @@ static void random_machine(Machine& m, DspRandom& rnd, int steps, bool sparse)
 
 	dsp.RegWrite(0x2804, rnd.Bits(15));
 	dsp.MDEC_CT = (uint16_t)rnd.Bits(16);
+}
+
+static void random_machine(Machine& m, DspRandom& rnd, int steps, bool sparse)
+{
+	for (uint32_t i = 0; i < RAM_SIZE; i++)
+		m.ram[i] = (uint8_t)rnd.Bits(8);
+
+	random_program(m.dsp, rnd, steps, sparse);
 }
 
 static void random_inputs(AicaDspSampleInputs& in, DspRandom& rnd, int fetches)
@@ -666,6 +671,152 @@ static void test_fields()
 	check(beyond == 96, "every one of the states has bits that its registers do not have");
 }
 
+//The byte of the wave RAM that a memory step of the row `i` has, by the rule of the header and from the state in
+//front of the step: MADRS, ADRS_REG as a signed 12 bit number and NXADR make a word, TABLE wraps it at 64K words,
+//without TABLE MDEC_CT is added and the ring wraps it, and the ring starts at byte RBP * 2048 of a wave RAM that
+//wraps at its size. beyond: the byte is behind the end of the wave RAM
+static uint32_t rule_address(const AicaDsp& dsp, const AicaDspInst& i, uint32_t ram_size, bool* beyond)
+{
+	uint32_t word = dsp.MADRS[i.MASA] + i.NXADR;
+
+	if (i.ADREB)
+		word += (dsp.ADRS_REG & 0x7FFu) - (dsp.ADRS_REG & 0x800u);
+
+	if (i.TABLE)
+		word &= 0xFFFF;
+	else
+		word = (word + dsp.MDEC_CT) & ((0x2000u << ((dsp.RBPL >> 13) & 3)) - 1);
+
+	const uint32_t byte = (dsp.RBPL & 0xFFFu) * 2048 + 2 * word;
+
+	*beyond = byte >= ram_size;
+
+	return byte % ram_size;
+}
+
+/*
+	Wave RAM above the 2 MB of the console. The caique model has 2 MB and no other size, so here the core has no
+	reference but itself and the address rule: random programs on 4, 8 and 16 MB, with the ring anywhere RBP
+	reaches, in the upper half of that, and where it ends behind the end of the wave RAM. Every memory step has to
+	be at the byte of the rule, and a sample in one go has to leave what its 128 steps leave, in the state and in
+	all of the wave RAM. dsp_known.cpp has the same sizes by known answers.
+*/
+static void test_ram_sizes()
+{
+	DspRandom rnd(0x8A4512Eull);
+
+	group("ram-sizes");
+
+	static const uint32_t megabytes[] = { 4, 8, 16 };
+
+	for (uint32_t mb : megabytes)
+	{
+		const uint32_t size = mb << 20;
+
+		//RBP is 12 bit: the ring starts in the first 8 MB of any wave RAM
+		const uint32_t reach = (size < (8u << 20) ? size : 8u << 20) / 2048;
+
+		std::vector<uint8_t> ram_steps(size), ram_run;
+
+		for (uint32_t i = 0; i < size; i += 8)
+		{
+			const uint64_t bytes = rnd.Next();
+
+			memcpy(&ram_steps[i], &bytes, 8);
+		}
+
+		ram_run = ram_steps;
+
+		uint64_t accesses = 0, upper = 0, above = 0, behind = 0;
+
+		for (int index = 0; index < 160; index++)
+		{
+			AicaDsp by_steps;
+
+			by_steps.Init(ram_steps.data(), size);
+			random_program(by_steps, rnd, 128, index & 1);
+
+			uint32_t rbp = rnd.Bits(12), rbl = rnd.Bits(2);
+
+			switch (index % 4)
+			{
+			case 1: rbp = reach / 2 + rnd.Below(reach / 2); break;				//in the upper half
+			case 2: rbp = reach - 1 - rnd.Below(8); rbl = 3; break;				//64K words that start below the end
+			case 3: rbp = 0xFFF - rnd.Below(4); break;							//as far up as RBP goes
+			default: break;
+			}
+
+			by_steps.RegWrite(0x2804, rbp | (rbl << 13));
+
+			AicaDsp in_one_go = by_steps;
+
+			in_one_go.ram = ram_run.data();
+
+			bool addresses = true, states = true;
+
+			for (int sample = 0; sample < 3; sample++)
+			{
+				AicaDspSampleInputs in;
+
+				random_inputs(in, rnd, (index + sample) % 3);
+
+				//the second core runs the sample in one go, from step 0 or behind some steps
+				const int split = sample == 0 ? 0 : (int)rnd.Below(128);
+
+				for (int s = 0; s < 128; s++)
+				{
+					AicaDspInst inst;
+					AicaDspStepView view;
+					bool beyond;
+
+					AicaDspDecode(by_steps.MPRO[s], &inst);
+
+					const uint32_t due = rule_address(by_steps, inst, size, &beyond);
+
+					by_steps.StepOne(&in, &view);
+
+					if (inst.MRD || inst.MWT)
+					{
+						addresses &= (uint32_t)view.mem_addr == due;
+						accesses++;
+						upper += due >= reach * 1024;
+						above += due >= (8u << 20);
+						behind += beyond;
+					}
+
+					if (s < split)
+						in_one_go.StepOne(&in);
+				}
+
+				in_one_go.RunSample(&in);
+				states &= blob_of(by_steps) == blob_of(in_one_go);
+			}
+
+			const bool rams = ram_steps == ram_run;
+
+			if (!rams)
+				ram_run = ram_steps;
+
+			char what[128];
+
+			snprintf(what, sizeof(what), "%u MB, program %d: every memory step is at the byte of the address rule", mb, index);
+			check(addresses, what);
+
+			snprintf(what, sizeof(what), "%u MB, program %d: RunSample leaves what the steps leave, in the state and in the wave RAM", mb, index);
+			check(states && rams, what);
+		}
+
+		if (dsp_suite_opt().verbose)
+			dsp_note("  ram-sizes: %u MB, %llu memory steps, %llu in the upper half of what RBP reaches, %llu above 8 MB, %llu behind the end of the wave RAM",
+				mb, (unsigned long long)accesses, (unsigned long long)upper, (unsigned long long)above, (unsigned long long)behind);
+
+		//a ring that starts as far up as RBP goes ends 126 KB above 8 MB: behind the end of 4 and 8 MB, inside 16 MB
+		check(accesses > 20000 && upper > accesses / 4, "the programs have their memory steps, and many of them in the upper half of what RBP reaches");
+		check(mb == 16 ? behind == 0 && above > accesses / 64 : behind > accesses / 64 && above == 0,
+			"and where the ring goes on behind the end of the wave RAM, or above 8 MB in the 16 MB that have room for it");
+	}
+}
+
 //The known-answer programs on the core called itself
 struct NativeMachine : KnownMachine
 {
@@ -922,6 +1073,7 @@ int main(int argc, char** argv)
 	test_instances();
 	test_registers();
 	test_fields();
+	test_ram_sizes();
 	test_helpers();
 	test_known();
 	group(0);

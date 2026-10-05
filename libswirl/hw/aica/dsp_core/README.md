@@ -82,7 +82,8 @@ on a console, `model/NOTES.md` there has the measurements and `model/tests/<case
 * What MDEC_CT is after power on. The core starts at 1, as the model does; a program cannot read it.
 * EXTS with a disc playing: what the CPU reads at 0x45C0 then, and the << 8.
 * Offsets 0x3300-0x33FF and 0x3C00-0x3FFF. The core has no registers there.
-* A wave RAM of 8 MB. The core takes any power of two, RBP is 12 bit and reaches 8 MB.
+* A wave RAM of 8 MB. The core takes any power of two, RBP is 12 bit and reaches 8 MB. The caique model has
+  2 MB: above that `tests/aica_dsp` holds the core against the address rule, on 4, 8 and 16 MB.
 * A bus read in a slot the DSP uses. The bus does not grant one; in the core the DSP's read comes last.
 
 ## What is not modelled
