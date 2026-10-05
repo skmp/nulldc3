@@ -12,7 +12,7 @@
 	table that gives each id its wire name.
 
 	An event is not a breakpoint address: the code breakpoints of a processor use the event names
-	dc.sh4.cpu.pc, dc.aica.arm7.pc and dc.aica.dsp.step, which are not in this table.
+	dc.sh4.cpu.pc, dc.aica.arm7.pc and dc.aica.dsp.step (dbg_emu.h), which are not in this table.
 
 	Rate classes
 	- EVR_LOW:  logged whenever a client is connected

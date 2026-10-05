@@ -39,6 +39,12 @@ inline const char* TargetName(Target t) {
 	return "";
 }
 
+// The "event" of a code breakpoint, one name per target. These names are not in the event table
+// (dbg_events.h): an event breakpoint cannot be set on them.
+const char* const kEventSh4Pc   = "dc.sh4.cpu.pc";
+const char* const kEventArm7Pc  = "dc.aica.arm7.pc";
+const char* const kEventDspStep = "dc.aica.dsp.step";
+
 // Breakpoint categories: the keys of "categories" in a tick. A breakpoint with kind "event" is in Events;
 // a code breakpoint is in the category of its target.
 enum class Category : u8 {
@@ -145,6 +151,17 @@ enum ErrorCode : int {
 	kErrNotWritable    = -32013,		// "not writable: <what>"
 	kErrCaptureTimeout = -32014,		// "capture timed out"
 };
+
+// A binary WebSocket frame starts with a header of kBinaryHeaderBytes: the magic "NDB3" (4E 44 42 33), then
+// kind, binaryId and payloadBytes, each a little-endian u32. The JSON result the frame belongs to carries the
+// same binaryId, and totalBytes equal to payloadBytes.
+enum BinaryKind : u32 {
+	kBinarySgc    = 1,		// SGC frames
+	kBinaryMemory = 2,		// memory
+	kBinaryCore   = 3,		// CORE capture
+	kBinaryTa     = 4,		// TA capture
+};
+const u32 kBinaryHeaderBytes = 16;
 
 // Bounds of request parameters; a request outside them is answered with kErrInvalidParams.
 const u32 kMaxMemorySliceBytes  = 65536;		// state.getMemorySlice.length, 1..
