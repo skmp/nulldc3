@@ -14,6 +14,83 @@
 _start:
 
 ! ---------------------------------------------------------------------------------------------------------
+! boot: the entry point of the image, what a machine that boots its guest starts. It goes the way of a guest
+! behind its entry point: it sets itself up with every interrupt masked, opens the interrupts and then works
+! without end. No input. Needs the interrupt source of the machine from g_boot_open on.
+!   g_boot_wait   the setup, a loop of two instructions that runs 0x3000 times
+!   g_boot_open   the ldc that opens the interrupts
+! Its main loop has a block of every kind, as the workload below has, and is busy: it waits for an interrupt in
+! one pass of 32 only, so that between two waits it works through several interrupts and what a pass costs
+! decides where the next wait begins.
+!   g_boot_pass   a call with its slot
+!   g_boot_poll   a loop block of three instructions that only reads: the decoder's idle class
+!   g_boot_long   250 instructions in a row: the recompiler ends the block behind 224 of them
+!   g_boot_sleep  the SLEEP of every 32nd pass
+	.align	2
+	.global	g_boot, g_boot_wait, g_boot_open, g_boot_pass, g_boot_poll, g_boot_long, g_boot_sleep
+g_boot:
+	mov.l	k_boot_count, r1
+g_boot_wait:
+	dt	r1
+	bf	g_boot_wait
+	mov.l	k_boot_sr, r0
+g_boot_open:
+	ldc	r0, sr
+	mov.l	k_boot_data, r8
+	mov	#0, r9
+	mov	#0, r13
+g_boot_pass:
+	mov	r9, r4
+	bsr	g_leaf
+	add	#3, r4
+	mov.l	r0, @r8
+	mov	#3, r1
+g_boot_poll:
+	mov.l	@r8, r2
+	dt	r1
+	bf	g_boot_poll
+g_boot_long:
+	.rept	125
+	add	#3, r3
+	rotl	r3
+	.endr
+	add	r3, r13
+	mov.l	r3, @(8, r8)
+	fldi1	fr0
+	lds	r9, fpul
+	float	fpul, fr1
+	fadd	fr0, fr1
+	fmul	fr1, fr1
+	ftrc	fr1, fpul
+	sts	fpul, r5
+	mov.l	r5, @(4, r8)
+	mov.l	k_boot_outer, r0
+	jsr	@r0
+	mov	r9, r4
+	add	r0, r13
+	mov	r9, r0
+	and	#31, r0
+	cmp/eq	#0, r0
+	bt/s	g_boot_sleep
+	add	#1, r9
+	bra	g_boot_pass
+	nop
+g_boot_sleep:
+	sleep
+	bra	g_boot_pass
+	nop
+
+	.align	2
+k_boot_count:
+	.long	0x3000
+k_boot_sr:
+	.long	0x40000000
+k_boot_data:
+	.long	g_data
+k_boot_outer:
+	.long	g_outer
+
+! ---------------------------------------------------------------------------------------------------------
 ! line: straight code, three blocks. No input.
 !   g_line           first instruction of a block
 !   g_line_mid       in the middle of that block

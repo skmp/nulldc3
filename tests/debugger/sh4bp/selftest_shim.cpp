@@ -1,5 +1,5 @@
 /*
-	sh4bp_selftest <jit|interpreter|fallback> [filter]: the selftest of the emulator
+	sh4bp_selftest <jit|interpreter|fallback> [filter] [idleskip=off]: the selftest of the emulator
 	(libswirl/debugger/dbg_selftest_sh4bp.cpp, with its driver dbg_selftest.cpp) on the machine of these tests.
 
 	The selftest drives the guest through dbg::emu. Here dbg::emu is this file: a park loop that hands every
@@ -7,8 +7,9 @@
 	machine.cpp. The emulator's own park loop takes this place when the selftest runs in the emulator; what
 	this run shows is that the tests themselves are right, on all three engines.
 
-	There is no reios: a guest that is resumed or stepped at the reset vector is "booted" by putting its pc on
-	the entry point of the image, which is what the boot trap leaves behind.
+	There is no reios: a guest that is resumed or stepped at the reset vector is "booted" by what the boot trap
+	leaves behind. The image is loaded again and the pc is put on its entry point, the boot program of guest.s,
+	and the devices of the machine start: the interrupt source, and the vblank event of the video timing.
 */
 #include "machine.h"
 #include "guest.inc"
@@ -19,8 +20,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 using namespace dbg;
+
+//the devices of a booted machine: an interrupt request at every 2nd slice end, a vblank at every 29th
+#define BOOT_IRQ_PERIOD    2
+#define BOOT_VBLANK_PERIOD 29
 
 static Engine engine;
 static const char* filter = "sh4bp";
@@ -28,7 +34,10 @@ static const char* filter = "sh4bp";
 enum Armed { ARMED_NONE, ARMED_RESUME, ARMED_STEP, ARMED_OVER, ARMED_OUT, ARMED_RESET };
 
 static Armed armed;
+
+//the state last published; other threads ask for it
 static emu::RunState state;
+static std::mutex state_mutex;
 
 //cfg/cfg.h: the driver reads its filter from the configuration
 string cfgLoadStr(const wchar* section, const wchar* key, const wchar* def)
@@ -84,13 +93,20 @@ void SetSh4Breakpoints(const u32* ids, const u32* addrs, u32 n)
 	sh4::SetBreakpoints(ids, addrs, n);
 }
 
+void SetEventBreakpoints(const u32* ids, const u8* events, u32 n)
+{
+	machine_event_breakpoints(ids, events, n);
+}
+
 void SetActiveMask(u32 categories)
 {
-	sh4::SetActiveMask(categories);
+	machine_active_mask(categories);
 }
 
 RunState GetRunState()
 {
+	std::lock_guard<std::mutex> lock(state_mutex);
+
 	return state;
 }
 
@@ -120,11 +136,23 @@ bool GetSh4Engine(Sh4EngineInfo* out)
 
 static void publish(StopCause cause, u32 id)
 {
+	std::lock_guard<std::mutex> lock(state_mutex);
+
 	state.lifetime = Lifetime::Parked;
 	state.stopId++;
 	state.cause = cause;
 	state.breakpointId = id;
 	state.notice = engine == ENGINE_FALLBACK && machine_used_fallback() ? (u32)NOTICE_SH4_FALLBACK : 0;
+}
+
+//a resume, and a step over or out that goes on as one
+static void publish_running()
+{
+	std::lock_guard<std::mutex> lock(state_mutex);
+
+	state.lifetime = Lifetime::Running;
+	state.cause = StopCause::NoCause;
+	state.breakpointId = 0;
 }
 
 static void publish(const MachineStop& stop)
@@ -138,7 +166,12 @@ static bool boot()
 	if (Sh4cntx.pc != 0xA0000000)
 		return false;
 
+	memcpy(machine_ram(G_BASE), guest_image, sizeof(guest_image));
 	machine_set_pc(G_BASE);
+
+	knobs.irq_period = BOOT_IRQ_PERIOD;
+	knobs.vblank_period = BOOT_VBLANK_PERIOD;
+
 	return true;
 }
 
@@ -154,7 +187,7 @@ int main(int argc, char** argv)
 		engine = ENGINE_FALLBACK;
 	else
 	{
-		printf("usage: sh4bp_selftest <jit|interpreter|fallback> [filter]\n");
+		printf("usage: sh4bp_selftest <jit|interpreter|fallback> [filter] [idleskip=off]\n");
 		return 2;
 	}
 
@@ -162,6 +195,10 @@ int main(int argc, char** argv)
 		filter = argv[2];
 
 	machine_init();
+
+	//config:Dynarec.idleskip=no of the emulator
+	if (argc > 3 && strcmp(argv[3], "idleskip=off") == 0)
+		settings.dynarec.idleskip = false;
 	machine_reset(engine);
 
 	selftest::AtStart();
@@ -186,6 +223,7 @@ int main(int argc, char** argv)
 		{
 		case ARMED_RESUME:
 			boot();
+			publish_running();
 			publish(machine_resume());
 			break;
 
@@ -197,10 +235,12 @@ int main(int argc, char** argv)
 			break;
 
 		case ARMED_OVER:
+			publish_running();
 			publish(machine_step_over());
 			break;
 
 		case ARMED_OUT:
+			publish_running();
 			publish(machine_step_out());
 			break;
 
