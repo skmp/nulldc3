@@ -38,12 +38,12 @@
 	X(EV_DMAC_START,          "dc.holly.dmac.transfer_start", "holly",    "info", EVR_HIGH, "dc.holly.dmac") /* ch2 and sort DMA handlers (E3) */ \
 	X(EV_DMAC_END,            "dc.holly.dmac.transfer_end",   "holly",    "info", EVR_HIGH, "dc.holly.dmac") /* ch2 and sort DMA handlers (E3) */ \
 	X(EV_TA_LIST_INIT,        "dc.holly.ta.list_init",        "ta",       "info", EVR_HIGH, "dc.holly.ta")   /* hw/pvr (E3) */ \
-	X(EV_TA_LIST_END,         "dc.holly.ta.list_end",         "ta",       "info", EVR_HIGH, "dc.holly.ta")   /* hw/pvr (E3) */ \
+	X(EV_TA_LIST_END,         "dc.holly.ta.list_end",         "ta",       "info", EVR_HIGH, "dc.holly.ta")   /* hw/pvr/ta.cpp (TA_HLE); hw/holly/holly_intc.cpp RaiseAsicNormal (TA_LLE, the default build) (E3) */ \
 	X(EV_CORE_RENDER_START,   "dc.holly.core.render_start",   "core",     "info", EVR_HIGH, "dc.holly.core") /* hw/pvr (E3) */ \
 	X(EV_CORE_RENDER_END,     "dc.holly.core.render_end",     "core",     "info", EVR_HIGH, "dc.holly.core") /* hw/pvr (E3) */ \
 	X(EV_CORE_VBLANK,         "dc.holly.core.vblank",         "core",     "info", EVR_HIGH, "dc.holly.core") /* hw/pvr/spg.cpp (E3) */ \
-	X(EV_AICA_INTERRUPT,      "dc.aica.interrupt",            "aica",     "info", EVR_HIGH, "dc.aica")       /* hw/aica/aica_mmio.cpp (E3) */ \
-	X(EV_AICA_TIMER,          "dc.aica.timer",                "aica",     "info", EVR_HIGH, "dc.aica")       /* hw/aica/aica_mmio.cpp (E3) */ \
+	X(EV_AICA_INTERRUPT,      "dc.aica.interrupt",            "aica",     "info", EVR_HIGH, "dc.aica")       /* hw/aica/aica_mmio.cpp UpdateSh4Ints (to the SH4), hw/arm7/SoundCPU.cpp update_e68k (to the ARM7) (E3) */ \
+	X(EV_AICA_TIMER,          "dc.aica.timer",                "aica",     "info", EVR_HIGH, "dc.aica")       /* hw/aica/aica.h AicaTimer::StepTimer (E3) */ \
 	X(EV_AICA_KEY_ON,         "dc.aica.channels.key_on",      "aica",     "info", EVR_LOW,  "dc.aica.sgc")   /* hw/aica/sgc_if.cpp (E3) */ \
 	X(EV_AICA_KEY_OFF,        "dc.aica.channels.key_off",     "aica",     "info", EVR_LOW,  "dc.aica.sgc")   /* hw/aica/sgc_if.cpp (E3) */ \
 	X(EV_AICA_LOOP,           "dc.aica.channels.loop",        "aica",     "info", EVR_HIGH, "dc.aica.sgc")   /* hw/aica/sgc_if.cpp (E3) */ \
