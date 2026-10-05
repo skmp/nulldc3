@@ -439,6 +439,7 @@ sh4op(i1111_nnn0_1111_1101)
 	int n=GetN(op) & 0xE;
 
 
+	// SH7091: FSCA does nothing with FPSCR.PR = 1 (console)
 	//cosine(x) = sine(pi/2 + x).
 	if (fpscr.PR==0)
 	{
@@ -458,22 +459,18 @@ sh4op(i1111_nnn0_1111_1101)
 	#endif
 
 	}
-	else
-		iNimp("FSCA : Double precision mode");
 }
 
 //FSRRA //1111_nnnn_0111_1101
 sh4op(i1111_nnnn_0111_1101)
 {
-	// What about double precision?
+	// SH7091: FSRRA does nothing with FPSCR.PR = 1 (console)
 	u32 n = GetN(op);
 	if (fpscr.PR==0)
 	{
 		fr[n] = (float)(1/sqrtf(fr[n]));
 		CHECK_FPU_32(fr[n]);
 	}
-	else
-		iNimp("FSRRA : Double precision mode");
 }
 
 //fcnvds <DR_N>,FPUL
@@ -516,13 +513,10 @@ sh4op(i1111_nnmm_1110_1101)
 {
 	int n=GetN(op)&0xC;
 	int m=(GetN(op)&0x3)<<2;
+	// SH7091: FIPR does nothing with FPSCR.PR = 1 (console)
 	if(fpscr.PR ==0)
 	{
 		fr[n+3]=sh4_fipr(&fr[n], &fr[m]);
-	}
-	else
-	{
-		die("FIPR Precision=1");
 	}
 }
 
@@ -681,13 +675,10 @@ sh4op(i1111_nn01_1111_1101)
 
 	u32 n=GetN(op)&0xC;
 
+	// SH7091: FTRV does nothing with FPSCR.PR = 1 (console)
 	if (fpscr.PR==0)
 	{
 		sh4_ftrv(&fr[n], &fr[n], xf);
-	}
-	else
-	{
-		iNimp("FTRV in dp mode");
 	}
 }
 

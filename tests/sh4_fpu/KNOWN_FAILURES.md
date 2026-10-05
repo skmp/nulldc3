@@ -14,12 +14,11 @@ A fix takes its entry out of this file and updates the baselines in the same com
 | | cases | traps | value-i | value-d | flags-i | flags-d | agree | native | crash |
 |---|---|---|---|---|---|---|---|---|---|
 | `sh4.fpu.scalar` | 225,036 | 19,633 | 200,662 | 200,662 | 109,153 | 109,153 | 225,036 | 113,946 | 0 |
-| `sh4.fpu.vector` | 1,371,226 | 1,617 | 677,220 | 677,220 | 13,254 | 13,254 | 1,371,226 | 1,370,977 | 150 |
+| `sh4.fpu.vector` | 1,371,226 | 1,617 | 677,320 | 677,320 | 13,404 | 13,404 | 1,371,226 | 1,370,977 | 0 |
 
 ## 1. There is no FPU exception
 
-**Groups:** every `.trap` group, `value` is 0 of the total in all of them. Scalar 19,633 records, vector 1,567 of
-the 1,617 trap records (the other 50 are in 7.).
+**Groups:** every `.trap` group, `value` is 0 of the total in all of them. Scalar 19,633 records, vector 1,617.
 
 On the hardware (console; manual 6.5) an instruction raises the FPU exception (EXPEVT 0x120) and leaves its
 destination as it is when
@@ -28,7 +27,9 @@ destination as it is when
   14,077 of the scalar trap records,
 * V or Z is raised and enabled,
 * an O, U or I enable is set and the instruction is one that can raise it, whatever the result is: every FADD
-  FSUB FMUL FDIV FMAC FCNVDS FSQRT FSRRA FSCA FIPR FTRV with EN.I set traps (FTRV also with EN.V).
+  FSUB FMUL FDIV FMAC FCNVDS FSQRT FSRRA FSCA FIPR FTRV with EN.I set traps (FTRV also with EN.V). That holds
+  for FIPR, FTRV, FSCA and FSRRA with PR = 1 as well, where they do nothing else, on the hardware and in both
+  engines (the 85 records of the `console.specials.pr1.trap` groups).
 
 devcast carries the instruction out and goes on: `sh4_ex_FPU` exists only in a commented-out enum
 (`hw/sh4/sh4_interrupts.h`), neither engine can raise it.
@@ -39,7 +40,7 @@ devcast carries the instruction out and goes on: `sh4_ex_FPU` exists only in a c
 ## 2. FPSCR's cause and flag fields are never written
 
 **Groups:** the `flags` columns of nearly every group. Scalar: 115,883 records are not the hardware's FPSCR,
-vector: 1,357,822 cases (and 150 of 7.).
+vector: 1,357,822 cases.
 
 On the hardware (console; manual 6.5) every instruction that computes rewrites the cause field (an exact
 result clears it) and ORs what it raises into the flag field, also when it traps. devcast writes neither in
@@ -156,19 +157,7 @@ product round to zero is much worse than round to nearest: the hardware cuts onc
     FIPR.dn1.rn.zero     zero #23: every product is -0: FR11 is 80000000, hardware 00000000
     FIPR.dn1.rz.overflow overflow #0: FR7 is 7F38FF70, hardware 7F7FFFFF
 
-## 7. FIPR with PR = 1 ends the emulator
-
-**Groups:** `FIPR.console.specials.pr1` (100) and `FIPR.console.specials.pr1.trap` (50): `crash` 150, `value` and
-`flags` 0, in both engines (with PR = 1 the dynarec calls the interpreter's handler).
-
-On the hardware (console) FIPR, FTRV, FSCA and FSRRA with PR = 1 do nothing: no register is written, FPSCR is
-not touched, there is no illegal instruction exception, and the FPU exception is raised if EN.I is set (for
-FTRV: EN.V, EN.O, EN.U or EN.I). devcast's FIPR handler calls `die("FIPR Precision=1")`. The handlers of FTRV,
-FSCA and FSRRA print a line and do nothing, which is what the hardware does: `FTRV.console.specials.pr1`,
-`FSCA.console.specials.pr1` and `FSRRA.console.specials.pr1` pass value and flags (their `.trap` groups fail
-by 1.).
-
-## 8. FSRRA is 1 / sqrtf(x)
+## 7. FSRRA is 1 / sqrtf(x)
 
 **Groups:** `FSRRA.dn1.*.normal`, `.one-to-four`, `.simple`, `FSRRA.console.*` and the scalar `FSRRA.*.normal`:
 159,900 vector cases and 10 scalar records.
@@ -190,7 +179,7 @@ roundings: `1 / sqrtf(x)` in the interpreter, `sqrtss` and `divss` in the x64 ba
 The zeros pass (`FSRRA.dn1.*.zero`: an infinity of the zero's sign), as do +inf and what gives a NaN: a negative
 number, -inf and a NaN. A denormal is 3.
 
-## 9. FSCA is a table of the round to nearest results
+## 8. FSCA is a table of the round to nearest results
 
 **Groups:** `FSCA.dn1.rz.angle` 33,084 of 65,536, `FSCA.dn1.rz.upper` 4,110 of 8,192, `FSCA.console.values.rz` 446
 of 1,024, 28 of `FSCA.console.specials.dn1`; and `FSCA.dn1.rn.angle` 2 of 65,536, `FSCA.console.values.rn` 3, 8
@@ -210,7 +199,7 @@ FPUL[31:16] is ignored by both (`FSCA.dn1.rn.upper` passes).
 
 ## Where the engines differ from each other
 
-Nowhere: `agree` is the total in every group of both tests. In the 150 cases of 7. they end in the same `die()`.
+Nowhere: `agree` is the total in every group of both tests.
 
 ## What the records do not show
 
