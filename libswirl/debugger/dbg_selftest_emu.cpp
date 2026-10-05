@@ -388,6 +388,15 @@ void OtherJoin()
 	}
 }
 
+// A short wait that keeps the processor: for two threads that have to meet
+void Spin(u32 n)
+{
+	static std::atomic<u32> spun;
+
+	for (u32 i = 0; i < n * 64; i++)
+		spun.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool WaitLifetime(Lifetime want, int timeout_ms = 20000)
 {
 	Clock::time_point t0 = Clock::now();
@@ -2392,6 +2401,180 @@ DBG_SELFTEST_GUEST(emu_step, "emu.step")
 
 	sp.phase = 0;
 	return true;
+}
+
+/*
+	emu.term: the machine is taken apart under its emulator thread, whatever that thread is doing, and made
+	again. The thread is ended and waited for first: until it is gone it finds its machine, also through the
+	global that holds it, and the fault handler of a recompiler finds it too.
+*/
+namespace {
+
+enum TermCase {
+	TC_RUNNING,			// the guest runs: the boot, then the loop
+	TC_PAUSE_PENDING,	// a pause is asked for and the machine goes in the same moment
+	TC_EXCURSION,		// a call runs in the park context of the running thread
+	TC_CALL_RESET,		// a reset that a call asked the running machine for is on its way
+	TC_GUEST_RESET,		// the guest wrote the reset register
+	TC_RESUME,			// the thread is parked, and a call resumes it in the same moment
+	TC_END
+};
+
+const char* const kTermName[TC_END] = {
+	"while the guest runs", "with a pause asked for", "during a service excursion", "with a reset by a call on its way",
+	"with a reset by the guest on its way", "while a call resumes the parked thread",
+};
+
+const u32 kTermRounds = 8;
+
+struct {
+	int phase;
+	u32 n;
+	string image;
+	std::atomic<u32> done[TC_END], notGone { 0 }, notMade { 0 }, hung { 0 };
+	std::atomic<bool> inCall { false };
+	u32 strays;
+} tx;
+
+// The other thread: what the host does when its user interface ends, or its menu says Exit, with the emulator
+// thread still there, and a start of the program behind it
+void TermRound(TermCase which, u32 round)
+{
+	std::thread aux;
+	std::chrono::microseconds jitter((round * 7919) % 2000);
+
+	if (which != TC_RESUME && !WaitLifetime(Lifetime::Running))
+		tx.hung++;
+
+	switch (which)
+	{
+	case TC_RUNNING:
+	case TC_GUEST_RESET:
+		std::this_thread::sleep_for(jitter);
+		break;
+
+	case TC_PAUSE_PENDING:
+		std::this_thread::sleep_for(jitter / 8);
+		emu::RequestPause();
+		break;
+
+	case TC_EXCURSION:
+	{
+		tx.inCall = false;
+		aux = std::thread([] {
+			emu::Call(emu::CC_TABLE, [] {
+				tx.inCall = true;
+				Nap(10);
+			});
+		});
+
+		Clock::time_point t0 = Clock::now();
+
+		while (!tx.inCall && MsSince(t0) < 5000)
+			std::this_thread::yield();
+
+		if (!tx.inCall)
+			tx.hung++;
+		break;
+	}
+
+	case TC_CALL_RESET:
+		aux = std::thread([] { emu::Call(emu::CC_WRITE, [] { emu::Reset(); }); });
+		std::this_thread::sleep_for(jitter);
+		break;
+
+	case TC_RESUME:
+		aux = std::thread([round] {
+			Spin((round * 13) % 60);
+			emu::Call(emu::CC_EXEC, [] { emu::Resume(); });
+		});
+		Spin((round * 29) % 60);
+		break;
+
+	default:
+		break;
+	}
+
+	virtualDreamcast.reset();
+
+	if (emu::GetRunState().lifetime != Lifetime::NoMachine)
+		tx.notGone++;
+
+	if (aux.joinable())
+		aux.join();
+
+	machine_gen++;
+	virtualDreamcast.reset(VirtualDreamcast::Create());
+
+	if (!virtualDreamcast->Init() || virtualDreamcast->StartGame(tx.image) != 0)
+	{
+		tx.notMade++;
+		return;
+	}
+
+	tx.done[which]++;
+}
+
+}
+
+DBG_SELFTEST_GUEST(emu_term, "emu.term")
+{
+	if (tx.phase == 0)
+	{
+		if (!Ready(stop))
+			return false;
+
+		tx.image = cfgLoadStr("config", "image", "");
+		tx.n = 0;
+		tx.strays = 0;
+		tx.notGone = 0;
+		tx.notMade = 0;
+		tx.hung = 0;
+		for (auto& d : tx.done)
+			d = 0;
+
+		tx.phase = 1;
+	}
+	else
+	{
+		// a stop of the thread that is about to go (the pause got there first): nothing is armed for it
+		if (stop.cause != StopCause::Start)
+		{
+			tx.strays++;
+			return false;
+		}
+
+		// the first thread of the machine that the round before made
+		OtherJoin();
+	}
+
+	if (tx.n == TC_END * kTermRounds || tx.notMade != 0)
+	{
+		for (u32 i = 0; i < TC_END; i++)
+			Check(tx.done[i] == kTermRounds, "%u times the machine was taken apart %s, and made again", tx.done[i].load(), kTermName[i]);
+
+		Check(tx.notGone == 0 && tx.notMade == 0 && tx.hung == 0, "every time the state was NoMachine behind it, and the next machine started (%u, %u, %u)", tx.notGone.load(), tx.notMade.load(), tx.hung.load());
+		Check(stop.cause == StopCause::Start && stop.lifetime == Lifetime::Parked && AtResetVector(), "the first thread of the last machine is parked at its start");
+		Note("%u stops of threads that were about to go", tx.strays);
+
+		TakeSeen();
+		tx.phase = 0;
+		return true;
+	}
+
+	TermCase which = (TermCase)(tx.n % TC_END);
+	u32 round = tx.n / TC_END;
+
+	tx.n++;
+
+	if (which == TC_GUEST_RESET)
+		Goto(EMU_G_softreset);
+
+	if (which != TC_RESUME)
+		Resume();
+
+	OtherStart([which, round] { TermRound(which, round); });
+	return false;
 }
 
 /*

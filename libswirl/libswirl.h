@@ -34,6 +34,14 @@ struct VirtualDreamcast {
     virtual void Term() = 0;
     virtual int StartGame(const string& path) = 0;
 
+    // The thread of the user interface. Stops the machine as Stop() does, with no callback of its own, and
+    // returns when the emulator thread has ended; at once when there is none. The emulator thread uses the
+    // machine, the global that holds it and the renderer of the user interface until it has ended: whoever
+    // takes one of these away calls this first. The caller draws nothing while it waits, so the thread ends
+    // without waiting for the frames it queued to be drawn.
+    // The body here is that of a machine without an emulator thread
+    virtual void StopAndWait() { }
+
     // Emulator thread: the guest asked for a reset of the machine
     virtual void RequestReset() = 0;
 
@@ -54,7 +62,38 @@ struct VirtualDreamcast {
     static VirtualDreamcast* Create();
 };
 
-extern unique_ptr<VirtualDreamcast> virtualDreamcast;
+// Holds the machine that exists, as a unique_ptr does, but for the order in which a machine goes: its
+// emulator thread is ended and waited for first (StopAndWait), and only then does the holder let go of the
+// machine and destroy it. The emulator thread, and the fault handler that serves it, find their machine here
+// for as long as that thread exists. reset() is for the thread of the user interface.
+class MachinePtr {
+    VirtualDreamcast* machine = nullptr;
+
+public:
+    MachinePtr() { }
+    ~MachinePtr() { reset(); }
+    MachinePtr(const MachinePtr&) = delete;
+    MachinePtr& operator=(const MachinePtr&) = delete;
+
+    void reset(VirtualDreamcast* next = nullptr)
+    {
+        if (machine)
+            machine->StopAndWait();
+
+        VirtualDreamcast* old = machine;
+        machine = next;
+        delete old;
+    }
+
+    VirtualDreamcast* get() const { return machine; }
+    VirtualDreamcast* operator->() const { return machine; }
+    VirtualDreamcast& operator*() const { return *machine; }
+    explicit operator bool() const { return machine != nullptr; }
+    bool operator==(std::nullptr_t) const { return machine == nullptr; }
+    bool operator!=(std::nullptr_t) const { return machine != nullptr; }
+};
+
+extern MachinePtr virtualDreamcast;
 extern unique_ptr<GDRomDisc> g_GDRDisc;
 
 

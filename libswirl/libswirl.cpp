@@ -50,7 +50,7 @@
 #include "scripting/lua_bindings.h"
 #endif
 
-unique_ptr<VirtualDreamcast> virtualDreamcast;
+MachinePtr virtualDreamcast;
 unique_ptr<GDRomDisc> g_GDRDisc;
 
 
@@ -667,6 +667,11 @@ void reicast_term() {
     // before the GUI, and with it the machine, goes away
     dbg::Term();
 
+    // An emulator thread that is still there goes through the renderer of the user interface on its way out:
+    // it has ended before the renderer goes
+    if (virtualDreamcast)
+        virtualDreamcast->StopAndWait();
+
     g_GUIRenderer.reset();
 
     g_GUI.reset();
@@ -695,6 +700,8 @@ struct Dreamcast_impl : VirtualDreamcast {
         HOST_STOP   = 1,    // Stop(): the host UI, the end of an automated run. The thread runs callback and ends
         GUEST_RESET = 2,    // RequestReset(): the thread resets the machine and runs on
         GUEST_EXIT  = 4,    // RequestExit(): the thread ends
+        HOST_WAITS  = 8,    // StopAndWait(), with HOST_STOP: the thread that draws the frames waits for this
+                            // one to end, so the thread ends without waiting for its frames to be drawn
     };
 
     cMutex callback_lock;
@@ -782,7 +789,7 @@ struct Dreamcast_impl : VirtualDreamcast {
             {
                 SaveRomFiles(get_writable_data_path(DATA_PATH));
 
-                virtualDreamcast->Reset();
+                Reset();
 
                 // FPSCR is the reset's now, on this thread
                 sh4_host_fp_resync();
@@ -804,7 +811,14 @@ struct Dreamcast_impl : VirtualDreamcast {
         luabindings_onstop();
 #endif
 
-        g_GUIRenderer->WaitQueueEmpty();
+        // The frames this thread queued are drawn before the stop callback runs, unless the thread that
+        // draws them is waiting for this one
+        callback_lock.Lock();
+        bool host_waits = (stop_reasons & HOST_WAITS) != 0;
+        callback_lock.Unlock();
+
+        if (!host_waits)
+            g_GUIRenderer->WaitQueueEmpty();
 
         // From here on a stop request finds no thread to take it
         callback_lock.Lock();
@@ -1042,21 +1056,25 @@ struct Dreamcast_impl : VirtualDreamcast {
     }
 
 
-    void Term()
+    // The wait is made without the lifetime lock, which the emulator thread takes on its way out
+    void StopAndWait()
     {
-        // The machine is never taken apart under its emulator thread: a thread that exists is stopped, with no
-        // callback, and waited for. The wait is made without the lifetime lock, which that thread takes on
-        // its way out
         callback_lock.Lock();
         bool live = thread_live;
         if (live)
-            stop_reasons |= HOST_STOP;
+            stop_reasons |= HOST_STOP | HOST_WAITS;
         callback_lock.Unlock();
 
         if (live)
             sh4_cpu->Stop();
 
         emu_thread.WaitToEnd();
+    }
+
+    void Term()
+    {
+        // The machine is never taken apart under its emulator thread
+        StopAndWait();
 
         dbg::emu::LifetimeLock lifetime;
 
