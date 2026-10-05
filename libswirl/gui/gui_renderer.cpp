@@ -92,6 +92,9 @@ static void findGLVersion()
 
     auto renderer = (const char*)glGetString(GL_RENDERER);
 
+    // which device draws: a speed that was measured on a software rasteriser has to say so
+    printf("OpenGL renderer: %s\n", renderer ? renderer : "unknown");
+
     if (renderer && strstr(renderer, "V3D 4.2"))
     {
         printf("glesrend: Enabling rpi4_workaround\n");
