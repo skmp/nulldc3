@@ -27,6 +27,8 @@ void runctl_vblank();
 bool runctl_guest_exit();
 
 // A frame on its way to the screen: width x height pixels, 4 bytes each, B G R A in memory.
+// Called on the thread that presents: the thread of the user interface with a window, the emulator thread
+// headless. The frame is kept for the exit line, which the emulator thread reads only after WaitQueueEmpty().
 // True: there is no GL context, and the caller is done with the frame
 bool runctl_present(const u32* pixels, int width, int height);
 

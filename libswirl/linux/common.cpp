@@ -143,6 +143,10 @@ naked void re_raise_fault()
 // Blocking here instead, so that a native debugger can be attached and set break_segfault, is opt-in:
 // NULLDC_FAULT_BLOCK=1 in the environment, or config:Debug.BlockOnFault=yes once the config is loaded.
 bool break_segfault = false;
+
+// Written by the thread of main only, while the emulator starts: from the environment before it has created a
+// thread, from the config key before the emulator thread exists. Read by the signal handlers, on whichever
+// thread faults.
 static bool fault_blocks = false;
 
 void common_linux_fault_block(bool block)

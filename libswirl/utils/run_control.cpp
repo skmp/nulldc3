@@ -30,7 +30,8 @@ typedef std::chrono::steady_clock wall_clock;
 
 struct RunControl
 {
-	// the keys
+	// the keys. Written once by runctl_configure, while the emulator starts and before the emulator thread
+	// exists; only read from then on, by any thread
 	bool headless = false;
 	u32 exit_vblanks = 0;		// 0: no limit
 	u64 exit_cycles = 0;		// 0: no limit
@@ -39,7 +40,8 @@ struct RunControl
 	bool frame_hash = false;
 	string frame_png;
 
-	// the run. Emulator thread, but for exit_code
+	// the run. Emulator thread, but for exit_code: the emulator thread and the thread of the user interface set
+	// it, main returns it
 	u32 vblanks = 0;
 	bool exiting = false;
 	const char* exit_reason = "";
@@ -47,7 +49,9 @@ struct RunControl
 	wall_clock::time_point first_vblank_wall;
 	std::atomic<int> exit_code { 0 };
 
-	// the last frame a renderer presented
+	// the last frame a renderer presented. Written by runctl_present on the thread that presents: the thread of
+	// the user interface with a window, the emulator thread headless. Read by finish() on the emulator thread,
+	// which runs after WaitQueueEmpty(): no present is queued or running by then
 	std::vector<u32> frame;
 	int frame_width = 0;
 	int frame_height = 0;
