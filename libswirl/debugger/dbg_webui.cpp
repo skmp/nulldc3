@@ -63,9 +63,9 @@ const std::string& BuiltinPage() {
 	static const std::string page =
 		"<!doctype html>\n"
 		"<html lang=\"en\">\n"
-		"<head><meta charset=\"utf-8\"><title>nullDC debugger</title></head>\n"
+		"<head><meta charset=\"utf-8\"><title>nullDC 3.0.0 debugger</title></head>\n"
 		"<body>\n"
-		"<h1>nullDC debugger</h1>\n"
+		"<h1>nullDC 3.0.0 debugger</h1>\n"
 		"<p>The debugger server is running, but this build of the emulator has no devtools UI embedded.</p>\n"
 		"<p>To get the UI, build it in the dreamcast-devtools repository with\n"
 		"<code>npm ci &amp;&amp; npm run build:native</code>, which writes <code>dist-native/</code>. Then either</p>\n"

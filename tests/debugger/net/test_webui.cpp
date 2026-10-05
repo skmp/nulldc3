@@ -27,6 +27,19 @@ static std::string ReadAll(const std::filesystem::path& path) {
 	return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
 }
 
+// The text of the built-in page is the same in every build, with a bundle embedded or not: it names the
+// product and says where a UI comes from.
+static void TestBuiltinPage() {
+	const std::string& page = webui::BuiltinPage();
+	CHECK(page.find("<title>nullDC 3.0.0 debugger</title>") != std::string::npos);
+	CHECK(page.find("<h1>nullDC 3.0.0 debugger</h1>") != std::string::npos);
+	CHECK(page.find("no devtools UI embedded") != std::string::npos);
+	CHECK(page.find("NULLDC_DEVTOOLS_DIST") != std::string::npos);
+	CHECK(page.find("Debugger:WebRoot") != std::string::npos);
+	CHECK(page.find("npm run build:native") != std::string::npos);
+	CHECK(page.find("protocol 3") != std::string::npos);
+}
+
 static void TestBuiltin(int port) {
 	CHECK(!webui::Embedded());
 	CHECK_EQ(std::string(webui::Version()), std::string("none"));
@@ -35,12 +48,6 @@ static void TestBuiltin(int port) {
 	CHECK(webui::Find("index.html") == nullptr);
 
 	const std::string& page = webui::BuiltinPage();
-	CHECK(page.find("no devtools UI embedded") != std::string::npos);
-	CHECK(page.find("NULLDC_DEVTOOLS_DIST") != std::string::npos);
-	CHECK(page.find("Debugger:WebRoot") != std::string::npos);
-	CHECK(page.find("npm run build:native") != std::string::npos);
-	CHECK(page.find("protocol 3") != std::string::npos);
-
 	for (const char* target : { "/", "/index.html" }) {
 		for (const char* headers : { "", "Accept-Encoding: gzip\r\n" }) {
 			HttpResult r = TestClient::Get(port, target, headers);
@@ -150,6 +157,7 @@ static void TestBundle(int port, const std::string& dir) {
 int main(int argc, char** argv) {
 	std::string dir = argc > 1 ? argv[1] : "";
 	CHECK_EQ(kProtocolVersion, 3);
+	TestBuiltinPage();
 
 	Quiet handler;
 	net::Server server;
