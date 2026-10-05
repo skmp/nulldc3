@@ -664,23 +664,27 @@ static void TestWakeUps() {
 	uint32_t id = Open(ws, rec, server.Port());
 
 	// The short sleeps let the network thread get back to its wait, so nearly every send is a wake-up of
-	// its own and many of them arrive while the thread handles the one before.
-	const int kThreads = 8, kMessages = 3000;
+	// its own and many of them arrive while the thread handles the one before. The run is also bounded by
+	// time: how long such a sleep really takes differs by an order of magnitude between systems.
+	const int kThreads = 8, kSends = 24000;
+	std::atomic<int> sent{0};
+	auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 	std::vector<std::thread> threads;
 	for (int t = 0; t < kThreads; t++) {
-		threads.emplace_back([&server, id, t] {
+		threads.emplace_back([&server, &sent, id, t, until] {
 			uint32_t seed = (uint32_t)t * 7919u + 99;
-			for (int i = 0; i < kMessages; i++) {
+			while (sent < kSends && std::chrono::steady_clock::now() < until) {
 				server.SendText(id, "x");
+				sent++;
 				seed = seed * 1664525u + 1013904223u;
 				std::this_thread::sleep_for(std::chrono::microseconds(1 + (seed >> 16) % 400));
 			}
 		});
 	}
-	for (int i = 0; i < kThreads * kMessages; i++)
-		REQUIRE(Text(ws) == "x");
 	for (auto& thread : threads)
 		thread.join();
+	for (int i = 0; i < sent; i++)
+		REQUIRE(Text(ws) == "x");
 
 	// A wake-up that got lost shows as a delivery at the thread's next periodic look (250 ms) instead.
 	std::vector<long long> delays;
@@ -692,7 +696,7 @@ static void TestWakeUps() {
 		delays.push_back(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count());
 	}
 	std::sort(delays.begin(), delays.end());
-	printf("send to delivery after %d racing sends: median %lld us, slowest %lld us\n", kThreads * kMessages, delays[delays.size() / 2], delays.back());
+	printf("send to delivery after %d racing sends: median %lld us, slowest %lld us\n", sent.load(), delays[delays.size() / 2], delays.back());
 	CHECK(delays[delays.size() / 2] < 100000);
 
 	// Stop while the thread waits, most of a period before its next periodic look: only the wake-up ends
