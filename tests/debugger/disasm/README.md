@@ -107,7 +107,8 @@ all 16 msr field masks, edge displacements, pc-relative forms, return idioms), 6
 swap space and the PSR-transfer space, 4000 in the undefined space, and 200,000 uniformly random words.
 
 Compared per encoding: valid / invalid, text, the info flags (derived from the rewritten objdump text by the rules
-of `dbg_disasm.h`), `b` / `bl` targets, pc-relative addresses, and the `= value` of pc-relative loads against the image.
+of `dbg_disasm.h`; all clear on a `.word`), `b` / `bl` targets, pc-relative addresses, and the `= value` of
+pc-relative loads against the image.
 
 Whether a pc-relative address is due is decided by the encoding, never by what `dbg_disasm` reports:
 `ldr` / `str` with pc as base and a pre-indexed immediate offset, with or without write-back (size 1 or 4), and
@@ -140,7 +141,8 @@ Result (GNU objdump 2.43):
 |---|---|---|---|---|
 | 249364 | 58562 | 169178 | 21624 | 0 |
 
-Checked: 199595 flag sets, 28042 branch targets, 1299 pc-relative addresses, 500 literal values.
+Checked: 227740 flag sets (every encoding counted as identical or normalised-equal), 28042 branch targets,
+1299 pc-relative addresses, 500 literal values.
 
 Per class (decode of the ARM7DI data sheet):
 

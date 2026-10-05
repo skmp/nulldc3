@@ -24,6 +24,9 @@ COND = ['eq', 'ne', 'cs', 'cc', 'mi', 'pl', 'vs', 'vc', 'hi', 'ls', 'ge', 'lt', 
 DP = ['and', 'eor', 'sub', 'rsb', 'add', 'adc', 'sbc', 'rsc', 'tst', 'teq', 'cmp', 'cmn', 'orr', 'mov', 'bic', 'mvn']
 SHIFT_ALIAS = ('lsl', 'lsr', 'asr', 'ror')
 
+# Flag letters of the info signature: valid, branch, delayed, call, return, conditional, trap
+SIGNATURE = 'vbdcr?t'
+
 
 def classify(op):
     """Instruction class of an encoding on the ARM7DI, from the ARM7DI data sheet's decode."""
@@ -420,10 +423,11 @@ def explained(op, cls, obj_raw, our_text, our_valid):
 def expected(op, obj_raw):
     """
     What objdump's line for an encoding stands for in dbg_disasm's terms: (valid, text, rules, flags). rules names
-    the rewrites that changed something, flags is the info signature that follows from the text.
+    the rewrites that changed something, flags is the info signature that follows from the text: every flag is
+    clear on an encoding that is not an instruction.
     """
     if '<UNDEFINED>' in obj_raw:
-        return False, '.word 0x%08x' % op, {'<UNDEFINED> -> .word'}, None
+        return False, '.word 0x%08x' % op, {'<UNDEFINED> -> .word'}, '-' * len(SIGNATURE)
     want, rules = rewrite(op, obj_raw)
     rules |= twin(op)[1]
     if op >> 28 == 15:
@@ -459,7 +463,7 @@ def compare(ops, obj, expect, ours):
 
         same_text = obj_valid == our_valid and want == our_text
         ok = same_text
-        if ok and our_valid:
+        if ok:
             ok = info['flags'] == want_flags
             checked['flag sets'] += 1
         if ok:
