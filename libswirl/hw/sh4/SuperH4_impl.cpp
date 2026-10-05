@@ -135,9 +135,9 @@ void SuperH4_impl::Run() {
         sh4_backend->Loop();
 }
 
-// Any thread. A stop request also ends a debugger stop: a parked machine counts as running (IsRunning), and
-// the park loop is woken so that the emulator thread takes the request. A machine that is being reset counts
-// as running no longer either
+// Any thread. A stop request also ends a debugger stop and a reset as reasons for the machine to count as
+// running (IsRunning): from here on it does so by the request alone, which the machine has recorded
+// (stopping). The park loop is woken so that the emulator thread takes the request
 void SuperH4_impl::Stop()
 {
     resetting = false;
@@ -220,16 +220,16 @@ void SuperH4_impl::Reset(bool Manual)
     }
 }
 
-// A machine that the debugger has stopped (latched, parked, in a step) counts as running, and so does one
-// that is being reset: its emulator thread exists and has not been asked to stop, and the host UI stops it
-// like a running one
+// A machine counts as running for as long as its emulator thread has not taken its stop callback: also one
+// that the debugger has stopped (latched, parked, in a step), one that is being reset, and one that has been
+// asked to stop and is on its way there. The host UI stops each of them like a running one
 //
-// The three hand over to one another on the emulator thread, the next one set before the one before it is
-// cleared. Read in this order, the cpu's a second time at the end, no hand-over is read as a machine that
-// does not run
+// The first three hand over to one another on the emulator thread, the next one set before the one before it
+// is cleared. Read in this order, the cpu's a second time behind them, no hand-over is read as a machine that
+// does not run. A stop request sets stopping before it clears the others, on any thread: it is read last
 bool SuperH4_impl::IsRunning()
 {
-    return sh4_int_bCpuRun || dbg::g_parked || resetting || sh4_int_bCpuRun;
+    return sh4_int_bCpuRun || dbg::g_parked || resetting || sh4_int_bCpuRun || stopping;
 }
 
 SuperH4_impl::SuperH4_impl() {

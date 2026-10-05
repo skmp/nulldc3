@@ -25,8 +25,12 @@ struct VirtualDreamcast {
     virtual void SaveState() = 0;
 
     // Any thread. Stops the machine: the emulator thread leaves the CPU at the end of its time slice (at once
-    // when a debugger has it parked), runs callback and ends. A second call before the thread has ended adds
-    // its callback behind the first. Without an emulator thread the callback runs at once, on the caller.
+    // when a debugger has it parked), has the user interface draw the frames it queued, runs callback and
+    // ends. A second call before the thread has taken its callbacks adds its callback behind the first.
+    // Without an emulator thread, or with one that has taken them, the callback runs at once, on the caller.
+    // The machine counts as running (SuperH4::IsRunning) until the thread takes its callbacks: what ends the
+    // user interface is a callback of Stop for as long as it does, never a call made beside a stop that is
+    // on its way.
     virtual void Stop(function<void()> callback) = 0;
     virtual void Reset() = 0;
     virtual void Resume() = 0;
@@ -46,8 +50,10 @@ struct VirtualDreamcast {
     virtual void RequestReset() = 0;
 
     // Emulator thread: the guest program ended. The emulator thread ends as for Stop, with no callback.
+    // Returns whether this call is the one that ends it: false when the thread has been asked to stop or to
+    // exit before, and the guest only executes on to the end of its time slice.
     // The body here is that of a machine without an emulator thread
-    virtual void RequestExit() { }
+    virtual bool RequestExit() { return false; }
 
     // Emulator thread, the CPU is stopped: sets it running, at the start of the thread and from then on
     // again, unless a stop, a reset or an exit has been requested since; then the CPU is left stopped. The

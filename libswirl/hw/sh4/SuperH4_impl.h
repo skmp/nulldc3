@@ -30,6 +30,13 @@ struct SuperH4_impl final : SuperH4 {
     // while it has not been asked to stop; Stop() clears it, and the emulator thread when the reset is done
     std::atomic<bool> resetting { false };
 
+    // The machine has been asked to stop, or its guest has ended, and the emulator thread has not taken its
+    // stop callback yet: on its way there it waits for the user interface to draw the frames it queued. The
+    // machine counts as running all through (IsRunning), so that a host that acts a second time stops it as it
+    // stops a running one, behind the stop that is on its way, and does not end its user interface under the
+    // thread. The machine sets it before it stops the cpu, and clears it where the thread takes the callback
+    std::atomic<bool> stopping { false };
+
     void SetA0Handler(Area0Hanlders slot, MMIODevice* dev);
     MMIODevice* GetA0Handler(Area0Hanlders slot);
 

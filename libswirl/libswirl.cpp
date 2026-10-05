@@ -817,7 +817,8 @@ struct Dreamcast_impl : VirtualDreamcast {
 #endif
 
         // The frames this thread queued are drawn before the stop callback runs, unless the thread that
-        // draws them is waiting for this one
+        // draws them is waiting for this one. It draws until then: the machine counts as running up to the
+        // callback below, so a host ends its user interface by a callback of Stop(), which runs behind this wait
         callback_lock.Lock();
         bool host_waits = (stop_reasons & HOST_WAITS) != 0;
         callback_lock.Unlock();
@@ -834,6 +835,7 @@ struct Dreamcast_impl : VirtualDreamcast {
         thread_live = false;
         p_sh4rcb->cntx.CpuRunning = false;
         dbg::g_parked = false;
+        static_cast<SuperH4_impl*>(sh4_cpu)->stopping = false;
         callback_lock.Unlock();
 
         if (stopped)
@@ -1064,13 +1066,22 @@ struct Dreamcast_impl : VirtualDreamcast {
     }
 
 
+    // callback_lock held, an emulator thread is live: records why it ends. From here until that thread takes
+    // its stop callback the machine counts as running by this request (SuperH4_impl::stopping), whatever the
+    // cpu and a debugger stop say: the caller stops the cpu next
+    void Stopping(u32 reasons)
+    {
+        stop_reasons |= reasons;
+        static_cast<SuperH4_impl*>(sh4_cpu)->stopping = true;
+    }
+
     // The wait is made without the lifetime lock, which the emulator thread takes on its way out
     void StopAndWait()
     {
         callback_lock.Lock();
         bool live = thread_live;
         if (live)
-            stop_reasons |= HOST_STOP | HOST_WAITS;
+            Stopping(HOST_STOP | HOST_WAITS);
         callback_lock.Unlock();
 
         if (live)
@@ -1124,7 +1135,7 @@ struct Dreamcast_impl : VirtualDreamcast {
             return;
         }
 
-        stop_reasons |= HOST_STOP;
+        Stopping(HOST_STOP);
 
         if (this->callback)
         {
@@ -1166,13 +1177,22 @@ struct Dreamcast_impl : VirtualDreamcast {
     }
 
     // Called on the emulator thread when the guest program has ended
-    void RequestExit()
+    bool RequestExit()
     {
         callback_lock.Lock();
-        stop_reasons |= GUEST_EXIT;
+
+        // one exit per thread, and none behind a stop: the guest goes on executing to the end of its slice
+        bool first = thread_live && !(stop_reasons & (HOST_STOP | GUEST_EXIT));
+
+        if (first)
+            Stopping(GUEST_EXIT);
+
         callback_lock.Unlock();
 
-        sh4_cpu->Stop();
+        if (first)
+            sh4_cpu->Stop();
+
+        return first;
     }
 
     bool StartCpu(bool leavePark)

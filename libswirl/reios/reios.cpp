@@ -384,14 +384,15 @@ void reios_sys_misc() {
 }
 
 void reios_exit() {
-	if (sh4_cpu->IsRunning()) {
+	// The emulator thread ends for a guest exit, and has to know that this is why its cpu stopped. Once: the
+	// pc stays on this hook, which the guest calls again until its time slice ends, and a machine that has
+	// been asked to stop counts as running until its thread has stopped
+	if (virtualDreamcast->RequestExit()) {
 		printf("-----------------\n");
 		printf("REIOS: Exit\n");
 		printf("-----------------\n");
 
-		// The emulator thread ends for a guest exit, and has to know that this is why its cpu stopped. An
-		// automated run ends with it
-		virtualDreamcast->RequestExit();
+		// an automated run ends with it
 		runctl_guest_exit();
 	}
 

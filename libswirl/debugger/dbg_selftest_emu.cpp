@@ -2766,6 +2766,270 @@ DBG_SELFTEST_GUEST(emu_stopevent, "emu.stopevent")
 }
 
 /*
+	emu.stopruns: a machine that has been asked to stop counts as running until its emulator thread has taken
+	its stop callback. A host that acts twice in a row (the close button of the window clicked twice, the escape
+	key and then the close button) looks at IsRunning() for its second action. Where it finds the machine
+	stopped it ends its user interface on the spot; an emulator thread that is still on its way out waits for
+	that user interface to draw the frames it queued, and never ends.
+*/
+namespace {
+
+// The host stops the machine and acts again at once: what it found, and what the callbacks found
+struct Twice {
+	std::atomic<bool> runningBehind { false };		// IsRunning() behind the first stop
+	std::atomic<int> direct { 0 };					// the second action found the machine stopped
+	std::atomic<int> order { 0 }, firstAt { 0 }, secondAt { 0 };
+	std::atomic<bool> runningInCallback { true };
+};
+
+struct {
+	int phase;
+	std::atomic<bool> otherFailed { false };
+	std::atomic<bool> runningStopped { true };
+	std::atomic<int> rvCall { 99 };
+	emu::RunState stopped;
+
+	Twice parked, running;
+
+	// the exit of the guest, and the close button behind it
+	bool exitFirst, exitAgain, exitRunning;
+	int exitDirect;
+	std::atomic<int> exitCloses { 0 };
+
+	// the rounds of the other thread
+	std::atomic<u32> rounds { 0 }, firsts { 0 }, chained { 0 }, seconds { 0 }, direct { 0 }, bypassed { 0 }, stoppedRunning { 0 }, hung { 0 };
+	std::atomic<bool> roundsDone { false };
+	u32 parkedFirst, starts;
+} sr;
+
+const u32 kStopRunsRounds = 240;
+
+// On the emulator thread, which is here and so has not taken a stop callback: the host stops the machine and
+// then does what the window does for its close button (linux-dist/x11.cpp), with a count where the window ends
+// its user interface
+void TwiceHere(Twice* t)
+{
+	virtualDreamcast->Stop([t] {
+		t->firstAt = ++t->order;
+		t->runningInCallback = sh4_cpu->IsRunning();
+	});
+
+	t->runningBehind = sh4_cpu->IsRunning();
+
+	if (virtualDreamcast && sh4_cpu->IsRunning())
+		virtualDreamcast->Stop([t] { t->secondAt = ++t->order; });
+	else
+		t->direct++;
+}
+
+void TwiceCheck(const Twice& t, const char* when)
+{
+	Check(t.runningBehind, "%s: asked to stop, the machine counts as running while its thread has not taken the stop callback", when);
+	Check(t.direct == 0 && t.firstAt == 1 && t.secondAt == 2,
+		"%s: a second action of the host stops the machine as well, and its callback runs behind the first (%d, %d; found stopped %d times)",
+		when, t.firstAt.load(), t.secondAt.load(), t.direct.load());
+	Check(!t.runningInCallback && !sr.runningStopped && !sr.otherFailed, "%s: the machine does not count as running when the stop callback looks, nor once it is stopped", when);
+}
+
+// The other thread waits for the emulator thread to be gone, and starts the next
+void StopRunsNext()
+{
+	if (!WaitLifetime(Lifetime::Stopped))
+	{
+		sr.otherFailed = true;
+		return;
+	}
+
+	sr.stopped = emu::GetRunState();
+	sr.runningStopped = sh4_cpu->IsRunning();
+
+	virtualDreamcast->Resume();
+}
+
+// The other thread is the host: a stop, and a second action with nothing in between, at any moment of a
+// running guest, with a pause asked for and with the thread parked
+void StopRunsRounds()
+{
+	for (u32 i = 0; i < kStopRunsRounds; i++)
+	{
+		if (!WaitLifetime(Lifetime::Running))
+		{
+			sr.hung++;
+			break;
+		}
+
+		// somewhere in the guest
+		std::this_thread::sleep_for(std::chrono::microseconds(100 + (i * 53) % 900));
+
+		if (i % 3 != 0)
+			emu::RequestPause();
+
+		// every third time the pause gets the time to park first
+		if (i % 3 == 2)
+			Nap(2);
+
+		virtualDreamcast->Stop([] { sr.firsts++; });
+
+		if (virtualDreamcast && sh4_cpu->IsRunning())
+		{
+			sr.chained++;
+			virtualDreamcast->Stop([] { sr.seconds++; });
+		}
+		else
+		{
+			// The window ends its user interface here. It may when the emulator thread has taken its stop
+			// callback: a stop then finds no thread and runs its callback at once, on this thread. A callback
+			// that the emulator thread runs was taken by a thread that was still on its way out
+			sr.direct++;
+
+			virtualDreamcast->Stop([] {
+				if (emu::OnEmuThread())
+					sr.bypassed++;
+			});
+		}
+
+		if (!WaitLifetime(Lifetime::Stopped))
+		{
+			sr.hung++;
+			break;
+		}
+
+		if (sh4_cpu->IsRunning())
+			sr.stoppedRunning++;
+
+		sr.rounds++;
+
+		if (i + 1 == kStopRunsRounds)
+			sr.roundsDone = true;
+
+		virtualDreamcast->Resume();
+	}
+}
+
+}
+
+DBG_SELFTEST_GUEST(emu_stopruns, "emu.stopruns")
+{
+	switch (sr.phase)
+	{
+	case 0:
+		if (!Ready(stop))
+			return false;
+
+		Goto(EMU_G_busy_tmu);
+		TakeSeen();
+
+		sr.otherFailed = false;
+		sr.runningStopped = true;
+		sr.phase = 1;
+
+		// parked
+		OtherStart(StopRunsNext);
+		TwiceHere(&sr.parked);
+		return false;
+
+	case 1:
+		OtherJoin();
+
+		TwiceCheck(sr.parked, "parked");
+		Check(sr.stopped.cause == StopCause::HostStopped && stop.cause == StopCause::Start, "parked: the thread ended for the host stop, and the host started the next");
+
+		sr.runningStopped = true;
+		sr.phase = 2;
+
+		// running: the host acts from a call that the slice hook runs
+		Resume();
+
+		OtherStart([] {
+			if (!WaitLifetime(Lifetime::Running))
+			{
+				sr.otherFailed = true;
+				return;
+			}
+
+			Nap(2);
+
+			sr.rvCall = emu::Call(emu::CC_READ, [] { TwiceHere(&sr.running); });
+
+			StopRunsNext();
+		});
+		return false;
+
+	case 2:
+		OtherJoin();
+
+		TwiceCheck(sr.running, "running");
+		Check(sr.rvCall == 0 && sr.stopped.cause == StopCause::HostStopped && stop.cause == StopCause::Start, "running: the call returned 0 (%d), the thread ended for the host stop", sr.rvCall.load());
+
+		sr.runningStopped = true;
+		sr.exitCloses = 0;
+		sr.exitDirect = 0;
+		sr.phase = 3;
+
+		// The guest has ended, which ends the thread as a stop does, and the close button comes behind it
+		OtherStart(StopRunsNext);
+
+		sr.exitFirst = virtualDreamcast->RequestExit();
+		sr.exitRunning = sh4_cpu->IsRunning();
+		sr.exitAgain = virtualDreamcast->RequestExit();
+
+		if (virtualDreamcast && sh4_cpu->IsRunning())
+			virtualDreamcast->Stop([] { sr.exitCloses++; });
+		else
+			sr.exitDirect++;
+
+		return false;
+
+	case 3:
+		OtherJoin();
+
+		Check(sr.exitFirst && !sr.exitAgain, "an exit of the guest is asked for once: the second request says that it changed nothing");
+		Check(sr.exitRunning && sr.exitDirect == 0 && sr.exitCloses == 1, "a machine whose guest has ended counts as running until its thread has stopped: the close button behind the exit goes through the machine (callback ran %d times)", sr.exitCloses.load());
+		Check(!sr.otherFailed && !sr.runningStopped && sr.stopped.cause == StopCause::GuestExit && stop.cause == StopCause::Start, "the thread ended for the guest exit; stopped, the machine does not count as running");
+
+		sr.rounds = sr.firsts = sr.chained = sr.seconds = sr.direct = sr.bypassed = sr.stoppedRunning = sr.hung = 0;
+		sr.roundsDone = false;
+		sr.parkedFirst = sr.starts = 0;
+		sr.phase = 4;
+
+		Resume();
+
+		OtherStart(StopRunsRounds);
+		return false;
+
+	case 4:
+		// the pause got there first: the thread is parked, and the stop that follows ends it
+		if (stop.cause == StopCause::Pause)
+		{
+			sr.parkedFirst++;
+			return false;
+		}
+
+		sr.starts++;
+
+		if (!sr.roundsDone && sr.hung == 0)
+		{
+			Resume();
+			return false;
+		}
+
+		OtherJoin();
+
+		Check(sr.hung == 0 && sr.rounds == kStopRunsRounds && sr.starts == kStopRunsRounds, "%u times the host stopped the machine and acted again at once: the thread ended every time", sr.rounds.load());
+		Check(sr.bypassed == 0, "the host never found a machine stopped whose thread had its stop callback still to take (it did %u times of %u)", sr.bypassed.load(), kStopRunsRounds);
+		Check(sr.firsts == kStopRunsRounds && sr.seconds == sr.chained && sr.chained + sr.direct == kStopRunsRounds && sr.stoppedRunning == 0,
+			"every callback ran once (%u, and %u of the %u second actions that went through the machine); stopped, the machine never counted as running (%u)",
+			sr.firsts.load(), sr.seconds.load(), sr.chained.load(), sr.stoppedRunning.load());
+		Note("the second action found the thread gone %u times of %u; the thread was parked for a pause when the stop came in %u times", sr.direct.load(), kStopRunsRounds, sr.parkedFirst);
+		break;
+	}
+
+	TakeSeen();
+	sr.phase = 0;
+	return true;
+}
+
+/*
 	emu.term: the machine is taken apart under its emulator thread, whatever that thread is doing, and made
 	again. The thread is ended and waited for first: until it is gone it finds its machine, also through the
 	global that holds it, and the fault handler of a recompiler finds it too.
