@@ -11,12 +11,16 @@
 	op2 + NOT(Rn) + C for RSC, C the carry out of that sum and V its signed overflow. Nothing of it comes from an
 	emulator. The forms without S leave the flags alone.
 
-	Checks: adc, sbc, rsc. The test needs no data.
+	trap: SWI and the undefined instruction trap, with what R14 holds in the trap's mode and where "movs pc, lr" in
+	the vector goes on (the tables below have the source).
+
+	Checks: adc, sbc, rsc, trap. The test needs no data.
 */
 #include "arm7_machine.h"
 #include "arm7_suite.h"
 
 #include <cstring>
+#include <string>
 
 #define FN 8
 #define FZ 4
@@ -154,6 +158,115 @@ static void step(void*)
 	arm7m_step();
 }
 
+/*
+	The traps. SWI and the undefined instruction trap put the address of the instruction behind them into R14 of
+	the mode they enter, SVC and UND, and go on at 0x08 and 0x04 (ARM7DI data sheet 3.4, 4.10). "movs pc, lr" in the
+	vector comes back to the instruction behind the trap.
+
+	The console has it in the timing kernels swi and und of wren7-rtl (model/tests/hw/timing/src/swi.s, und.s):
+	"movs pc, lr" in the vector and 8 traps in a row per iteration. An iteration takes 415.99 and 451.04 clocks
+	(model/tests/hw/timing/SUMMARY.txt), the time of 8 traps and 8 returns; a trap that came back one instruction
+	further would run 4 of them. The cases are that program: one trap, and 8 in a row.
+*/
+#define MOVS_PC_LR 0xE1B0F00E
+#define MODE_SVC 0x13
+#define MODE_UND 0x1B
+
+#define TRAP_ADDR 0x40
+
+struct Trap
+{
+	const char* name;
+	u32 opcode;
+	u32 vector;
+	u32 mode;
+	u32 count;			//traps in a row
+};
+
+static const Trap traps[] =
+{
+	{ "swi 0", 0xEF000000, 0x08, MODE_SVC, 1 },
+	{ "swi 0", 0xEF000000, 0x08, MODE_SVC, 8 },
+	{ "undefined", 0xE7F000F0, 0x04, MODE_UND, 1 },
+	{ "undefined", 0xE7F000F0, 0x04, MODE_UND, 8 },
+};
+
+static void run_traps()
+{
+	for (size_t i = 0; i < sizeof(traps) / sizeof(traps[0]); i++)
+	{
+		const Trap& t = traps[i];
+		Arm7Context* ctx = arm7m_context();
+		u32 handler = MOVS_PC_LR;
+
+		arm7m_power_on();
+		arm7m_clear();
+		memcpy(arm7m_ram() + t.vector, &handler, 4);
+
+		for (u32 n = 0; n < t.count; n++)
+			memcpy(arm7m_ram() + TRAP_ADDR + 4 * n, &t.opcode, 4);
+
+		arm7m_release_reset();
+		ctx->regs[R15_ARM_NEXT].I = TRAP_ADDR;
+
+		char what[64];
+
+		snprintf(what, sizeof(what), "trap case %u (%s x %u)", (u32)i, t.name, t.count);
+
+		bool pass = true;
+		std::string wrong;
+
+		for (u32 n = 0; pass && n < t.count; n++)
+		{
+			u32 behind = TRAP_ADDR + 4 * n + 4;
+			char text[128];
+
+			//the trap
+			if (arm7_guarded(what, &step, 0) != TGR_OK)
+			{
+				pass = false;
+				break;
+			}
+
+			u32 next = ctx->regs[R15_ARM_NEXT].I;
+			u32 mode = arm7m_cpsr() & 0x1F;
+			u32 r14 = ctx->regs[14].I;
+
+			if (next != t.vector || mode != t.mode || r14 != behind)
+			{
+				snprintf(text, sizeof(text), " trap %u at %08X: next instruction at %08X, mode %02X, R14 %08X, has to be %08X, %02X, %08X;",
+					n, behind - 4, next, mode, r14, t.vector, t.mode, behind);
+				wrong = text;
+				pass = false;
+				break;
+			}
+
+			//movs pc, lr
+			if (arm7_guarded(what, &step, 0) != TGR_OK)
+			{
+				pass = false;
+				break;
+			}
+
+			next = ctx->regs[R15_ARM_NEXT].I;
+			mode = arm7m_cpsr() & 0x1F;
+
+			if (next != behind || mode != MODE_SVC)
+			{
+				snprintf(text, sizeof(text), " return of trap %u: next instruction at %08X, mode %02X, has to be %08X, %02X;",
+					n, next, mode, behind, MODE_SVC);
+				wrong = text;
+				pass = false;
+			}
+		}
+
+		arm7_count("trap", pass);
+
+		if (!wrong.empty())
+			fprintf(arm7_report, "trap case %u: %s x %u:%s\n", (u32)i, t.name, t.count, wrong.c_str());
+	}
+}
+
 int main(int argc, char** argv)
 {
 	static const char test[] = "arm7.directed";
@@ -225,6 +338,9 @@ int main(int argc, char** argv)
 			fprintf(arm7_report, "\n");
 		}
 	}
+
+	if (arm7_selected("trap"))
+		run_traps();
 
 	return arm7_suite_end();
 }

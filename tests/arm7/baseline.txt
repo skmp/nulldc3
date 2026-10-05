@@ -42,6 +42,7 @@ arm7.wren7.bringup       reset-state              4     2
 arm7.directed            adc                     24    24
 arm7.directed            sbc                     23    23
 arm7.directed            rsc                     16    16
+arm7.directed            trap                     4     0
 #
 # Pinned: what a test has to find again, word for word. arm7.vendor: r0-r14 and CPSR at the end marker of
 # every program.

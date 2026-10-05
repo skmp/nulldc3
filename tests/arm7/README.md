@@ -9,7 +9,7 @@ register window is a plain register file that only knows the bit a guest raises 
 | test | what it runs | data |
 |---|---|---|
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast, from reset to their end marker: no error bit in r1 (`r1 & 0x3FFFFFFF == 0`) and the pinned r0-r14 and CPSR at the end | `tests/vendor/arm7di-tests-dreamcast` (submodule) |
-| `arm7.directed` | ADC, SBC and RSC on operands at the edges with the carry clear and set, 63 single instructions with hand-written results | none |
+| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), and SWI and the undefined instruction trap with their return | none |
 | `arm7.wren7.vendor` | the same programs as console jobs: r1 and CPSR against the console's | wren7-rtl |
 | `arm7.wren7.qemu_diff` | 4 x 1000 random instructions (data processing, MUL/MLA, LDR/STR, LDM/STM, SWP): registers, flags and memory of every case against the console's | wren7-rtl |
 | `arm7.wren7.mulsem` | 1024 multiplier inputs: MUL(S)/MLA(S) results and flags, and the Rd == Rm forms, against the console's | wren7-rtl |
@@ -37,6 +37,12 @@ without the carry in passes all of them. `directed_main.cpp` has tables of singl
 immediate operand, with and without S) with the operands, the flags going in and what Rd and N, Z, C, V have
 to be afterwards, written down from the definition of the instruction and not taken from an emulator. A new
 case is a row in a table and `arm7_directed --update-baseline`.
+
+None of the 55 console jobs that run here returns from an exception. The check `trap` has SWI and the
+undefined instruction trap with `movs pc, lr` in their vector, one trap and 8 in a row: R14 of the mode the
+trap enters is the address of the instruction behind it, and the return goes on there. That is the program
+of wren7-rtl's timing kernels `swi` and `und`, whose time on the console is that of 8 traps and 8 returns per
+iteration (`model/tests/hw/timing/SUMMARY.txt`).
 
 ## The wren7 console suites
 

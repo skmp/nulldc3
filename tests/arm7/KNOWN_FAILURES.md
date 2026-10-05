@@ -10,10 +10,24 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
+| D1 | `arm7.directed` `trap` | 4 | 0 | 4 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 2 | 2 |
 
-Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 63/63, the r1 and the CPSR of the 45 vendor jobs,
-the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
+Everything else passes: `arm7.vendor` 45/45, the 63 ADC, SBC and RSC cases of `arm7.directed`, the r1 and the
+CPSR of the 45 vendor jobs, the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55
+jobs end.
+
+### D1: SWI and the undefined instruction trap return one instruction too far
+
+A SWI and the undefined instruction trap leave the address of the instruction behind them in R14 of the mode
+they enter. `CPUSoftwareInterrupt` and `CPUUndefinedException` (`hw/arm7/arm7.cpp`) add 4 to a PC that is
+already past the instruction, so R14 is 4 too high and `movs pc, lr` skips an instruction. `CPUFiq` uses the
+same expression in front of the fetch, where it is right.
+
+* Console: wren7's timing kernels `swi` and `und` have `movs pc, lr` in the vector and 8 traps in a row per
+  iteration, and an iteration takes the time of 8 traps and 8 returns (415.99 and 451.04 clocks in
+  `wren7-rtl/model/tests/hw/timing/SUMMARY.txt`). With R14 4 too high every other trap is skipped.
+* `trap`: one trap and 8 in a row, for both. R14 is 0x48 behind a trap at 0x40.
 
 ### D7: where a reset finds the ARM
 
@@ -31,12 +45,11 @@ interpreter executes whole instructions and has one value, the address of the in
 
 ## Known, and not shown by these tests
 
-Known from the code and from what wren7-rtl measured or models. The 55 jobs do not get there: none returns
-from an exception or gets an interrupt, and all 4000 random instructions pass.
+Known from the code and from what wren7-rtl measured or models. The 55 jobs do not get there: none gets an
+interrupt, and all 4000 random instructions pass.
 
 | | what | console / data sheet | here |
 |---|---|---|---|
-| D1 | return address of SWI and of the undefined instruction trap | R14 = address of the instruction + 4 (console: wren7's `swi` and `und` timing kernels take the time of a trap that returns to the next instruction) | + 8: `CPUSoftwareInterrupt` and `CPUUndefinedException` in `hw/arm7/arm7.cpp` add 4 to a PC that is already past the instruction, so `movs pc, lr` skips one instruction. `CPUFiq` is right |
 | D5 | interrupt controller | a request with level 0 (SCILV0-2) does not reach FIQ; reading L (0x2D00) releases nFIQ; writing M (0x2D04) bit 0 lets the next request in (console) | any enabled pending bit raises FIQ (`update_arm_interrupts` in `hw/aica/aica_mmio.cpp`); reading L does nothing, only the M write releases (`hw/arm7/SoundCPU.cpp`) |
 | D6 | SCILV0-2 | read back as 0 (console) | the stored value |
 | D7 | registers when the machine is switched on | not known: a console job starts with what the programs before it left | cleared, with VisualBoyAdvance's GBA stack pointers (R13 = 0x03007F00, R13_irq = 0x03007FA0, R13_svc = 0x03007FE0) and CPSR = 0x53 (`SoundCPU_impl::Reset` in `hw/arm7/SoundCPU.cpp`); the first reset puts that CPSR into SPSR_svc |
