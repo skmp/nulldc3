@@ -25,6 +25,7 @@
 #include "pvr_yuv.h"
 
 #include "hw/sh4/sh4_mmio.h"
+#include "debugger/debugger.h"
 
 bool pal_needs_update = true;
 bool fog_needs_update = true;
@@ -56,6 +57,8 @@ struct PVRDevice : MMIODevice {
         }
 
         //	printf(">>\tDMAC: Ch2 DMA SRC=%X DST=%X LEN=%X\n", src, dst, len );
+
+        DBG_EVENT(dbg::EV_DMAC_START, "ch2 DMA: %X bytes from %08X to %08X", len, src, dst);
 
             // Direct DList DMA (Ch2)
 
@@ -150,6 +153,8 @@ struct PVRDevice : MMIODevice {
         SB_C2DST = 0x00000000;
         SB_C2DLEN = 0x00000000;
 
+        DBG_EVENT(dbg::EV_DMAC_END, "ch2 DMA");
+
         // The DMA end interrupt flag (SB_ISTNRM - bit 19: DTDE2INT) is set to "1."
         //-> fixed , holly_PVR_DMA is for different use now (fixed the interrupts enum too)
         asic->RaiseInterrupt(holly_CH2_DMA);
@@ -234,6 +239,7 @@ struct PVRDevice : MMIODevice {
     }
     void pvr_do_sort_dma()
     {
+        DBG_EVENT(dbg::EV_DMAC_START, "sort DMA: link table at %08X, link base %08X", SB_SDSTAW, SB_SDBAAW);
 
         SB_SDDIV = 0;//index is 0 now :)
         u32 link_addr = calculate_start_link_addr();
@@ -259,6 +265,8 @@ struct PVRDevice : MMIODevice {
                 link_addr = calculate_start_link_addr();
             }
         }
+
+        DBG_EVENT(dbg::EV_DMAC_END, "sort DMA: %u start links", SB_SDDIV);
 
         // End of DMA :)
         SB_SDST = 0;
@@ -308,6 +316,8 @@ struct PVRDevice : MMIODevice {
 
         if (addr == STARTRENDER_addr)
         {
+            DBG_EVENT(dbg::EV_CORE_RENDER_START, "STARTRENDER: PARAM_BASE %06X, REGION_BASE %06X", PARAM_BASE, REGION_BASE);
+
             //start render
             rend_start_render(vram);
             return;
@@ -320,6 +330,8 @@ struct PVRDevice : MMIODevice {
             TA_ISP_CURRENT = TA_ISP_BASE;
             if (data >> 31)
             {
+                DBG_EVENT(dbg::EV_TA_LIST_INIT, "TA_LIST_INIT: TA_OL_BASE %06X, TA_ISP_BASE %06X", TA_OL_BASE, TA_ISP_BASE);
+
                 #if FEAT_TA == TA_HLE
                 ta_vtx_ListInit();
                 #else

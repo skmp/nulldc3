@@ -10,11 +10,17 @@
 #include "hw/sh4/sh4_interrupts.h"
 #include "hw/holly/sb.h"
 #include "hw/maple/maple_if.h"
+#include "debugger/debugger.h"
 
 /*
 	ASIC Interrupt controller
 	part of the holly block on dc
 */
+
+#if FEAT_TA == TA_LLE
+//by list type
+static const char* const ta_list_names[5] = { "opaque", "opaque modifier volume", "translucent", "translucent modifier volume", "punch-through" };
+#endif
 
 struct ASICDevice_impl final : ASIC {
 	SystemBus* sb;
@@ -69,6 +75,15 @@ struct ASICDevice_impl final : ASIC {
 
 		u32 Interrupt = 1 << (u8)inter;
 		SB_ISTNRM |= Interrupt;
+
+#if FEAT_TA == TA_LLE
+		//The low-level TA core raises the interrupt of a list that ended by itself: this is where its lists end.
+		//The other core reports the end where it finds it (hw/pvr/ta.cpp)
+		const u32 list_ends = (1 << (u8)holly_OPAQUE) | (1 << (u8)holly_OPAQUEMOD) | (1 << (u8)holly_TRANS) | (1 << (u8)holly_TRANSMOD) | (1 << (u8)holly_PUNCHTHRU);
+
+		if (unlikely(Interrupt & list_ends))
+			DBG_EVENT(dbg::EV_TA_LIST_END, "%s list", ta_list_names[inter == holly_PUNCHTHRU ? 4 : (u8)inter - (u8)holly_OPAQUE]);
+#endif
 
 		asic_RL2Pending();
 		asic_RL4Pending();
