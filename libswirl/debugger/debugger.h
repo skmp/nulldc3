@@ -253,8 +253,9 @@ enum : u32 {
 // - Runs the queued calls of every class, one at a time. With no debugger stop in force this is a service
 //   excursion: no stop is published.
 // - Parks while a debugger stop is in force: the stop that was latched before Run() returned; a guest
-//   reset made while a debugger stop was in force or a pause was wanted (reason reset); at the first Park()
-//   after OnMachineCreated(), Debugger:StartPaused or an active selftest session (reason start).
+//   reset made while a debugger stop was in force or a pause was wanted (reason reset); a start park (reason
+//   start): at the first Park() after OnMachineCreated() when Debugger:StartPaused is set, and at the first
+//   Park() of every emulator thread while a selftest session is active (dbg::selftest::Active()).
 //   Entering a stop: g_parked is set, CpuRunning cleared, the SH4 breakpoint state drops its temporary
 //   breakpoints and a pending step-out, the listener is invoked, the window title becomes
 //   "nullDC 3.0.0 [paused by debugger]". The park loop then waits, without limit, for a call, for a

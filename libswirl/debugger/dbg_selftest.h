@@ -45,8 +45,9 @@
 	Tests are on (E): they never call dbg::emu::Call, and Check / Note are called from inside a test only.
 
 	What the emulator thread does for a session (dbg_emu.cpp):
-	  - the first Park() of a thread calls AtStart() before it decides whether to park;
-	  - that Park() makes the start park when Debugger:StartPaused is set or Active() is true;
+	  - the first Park() of every emulator thread calls AtStart() before it decides whether to park;
+	  - that Park() makes the start park (reason start) when Active() is true, which is at every thread start
+	    during a session, or when it is the first Park() after OnMachineCreated() and Debugger:StartPaused is set;
 	  - the park loop calls OnStop() for every stop it publishes, after the listener, while Active() is true,
 	    and then executes the action the test armed, or waits as it does for a client.
 */
@@ -56,7 +57,8 @@ namespace dbg { namespace selftest {
 typedef void (*MachineFn)();
 
 // stop: the state the park loop just published; the lifetime is Parked. The first call of a test gets the
-// stop that is current when the test begins.
+// stop that is current when the test begins. A test that ends the emulator thread (host stop, guest exit) is
+// called again with the start stop of the next thread.
 // Returns false to be called again at the next stop: the test armed an action (emu::Resume, emu::Step), or
 // waits for a stop that another thread causes. Returns true when the test is finished; it then has armed
 // nothing in this call, so that the next test begins parked on the same stop.
@@ -101,8 +103,8 @@ bool Requested();
 
 // (E). Starts the session if one is requested and none was started in this process; otherwise it does
 // nothing. Runs every selected machine test. When no guest test is selected the session ends here: the
-// last line is printed and the process ends, AtStart() does not return. Called by the first Park() of an
-// emulator thread, with emu_started set and no lock held.
+// last line is printed and the process ends, AtStart() does not return. Called by the first Park() of every
+// emulator thread, before that Park() decides whether to park, with emu_started set and no lock held.
 void AtStart();
 
 // (E). True from AtStart() on while guest tests remain.
