@@ -40,6 +40,8 @@
 	                 SetEventBreakpoints, SetActiveMask, Resume, Step, Reset, ...) to arm what happens next.
 	                 No client is connected, so a test that sets an event breakpoint also opens the gate of
 	                 its event, and closes it again (g_event_on, debugger.h).
+	                 No client is connected, so the test also sets the active mask (emu::SetActiveMask); it
+	                 starts as 0.
 
 	The machine tests run first, then the guest tests one after the other, each kind in the order of the
 	names. A test starts with the machine as the test before it left it.

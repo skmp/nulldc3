@@ -322,6 +322,7 @@ void SetEventBreakpoints(const u32* ids, const u8* events, u32 n);
 // or no category soloed, and a client connected or within kClientGraceMs of the last one. Read at every
 // arrival at a breakpoint; never causes code-cache work. Forwarded to dbg::sh4::SetActiveMask; it can make
 // UseFallbackLoop() change as SetSh4Breakpoints can.
+// Before the first call the mask is 0: no listed breakpoint and no event breakpoint stops.
 void SetActiveMask(u32 categories);
 
 // Any thread, never blocks. The state last published, as one consistent copy. notice is current even when

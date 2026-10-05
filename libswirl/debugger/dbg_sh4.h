@@ -73,6 +73,7 @@ void SetBreakpoints(const u32* ids, const u32* addrs, u32 n);
 
 // The active mask (emu::SetActiveMask); only CategoryBit(Category::Sh4) matters here. Read by the check;
 // never changes the armed set and never discards. Also callable under L while no emulator thread exists.
+// Before the first call the mask is 0: no listed breakpoint and no event breakpoint stops.
 void SetActiveMask(u32 categories);
 
 // Park loop, inside a CC_EXEC call (emu::Step calls it for every kind of SH4 step). The preconditions of
