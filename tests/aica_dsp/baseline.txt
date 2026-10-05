@@ -5,7 +5,7 @@
 #
 # test                       check                               total         pass
 aica.dsp.api                 split                               39015        39015
-aica.dsp.api                 state                                1545         1545
+aica.dsp.api                 state                                1549         1549
 aica.dsp.api                 instances                              16           16
 aica.dsp.api                 registers                              51           51
 aica.dsp.api                 mixs                                   16           16

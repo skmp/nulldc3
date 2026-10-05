@@ -4,8 +4,9 @@
 	  split       a sample run with RunSample from every step, behind that many StepOne, is the sample run with 128
 	              StepOne: every register, the wave RAM. On random programs, on programs that end early at every
 	              length, with sends, channel fetches and a pending ChannelFetch
-	  state       SaveState in front of every step, LoadState into another core that held something else: the blob
-	              is the same again, and both go on to the same state. Blobs that are not a state are refused
+	  state       SaveState in front of every step, with a channel in the slot, a sweep begun and sends made by
+	              calls, LoadState into a core of all zeros and into one of all ones: the blob is the same again,
+	              and both go on to the same state. Blobs that are not a state are refused
 	  instances   two cores with different programs, step by step in turns, end where each ends alone
 	  registers   what the CPU can write and read back of every register the DSP has, and that it has no others
 	  mixs        the sends of a sweep, the two banks, the late sends, the CPU's bank
@@ -248,11 +249,60 @@ static void test_split()
 	}
 }
 
+//What a sound generator does in front of step s, call by call and where the hardware has it: the sweep begins 16
+//steps before step 0 and its sends go on into the next sample, the last sends of the sweep before land behind
+//its start, and a channel that fetches takes the slot of its step
+static void events_by_call(AicaDsp& dsp, const AicaDspSampleInputs& in, int s)
+{
+	if (s == 112)
+		dsp.SweepBegin();
+
+	const uint32_t bus = (uint32_t)s & 15;
+
+	if ((in.mixs_sent >> bus) & 1)
+	{
+		if (s >= 120)
+			dsp.MixsSendLate(bus, in.mixs[bus]);
+		else if (s >= 112 || s < 64)
+			dsp.MixsSend(bus, in.mixs[bus]);
+	}
+
+	const uint32_t channel = (((uint32_t)s + 14) >> 1) & 63;
+
+	if (!(s & 1) && ((in.fetch >> channel) & 1))
+		dsp.ChannelFetch(in.fetch_word[channel]);
+}
+
+//A core with the same byte in all of its state: every field in front of the wave RAM pointer
+static void fill_state(AicaDsp& dsp, int byte)
+{
+	memset(&dsp, byte, offsetof(AicaDsp, ram));
+}
+
 static void test_state()
 {
 	DspRandom rnd(0x57A7E00ull);
 
 	group("state");
+
+	//The blob is those fields, all of their bits and nothing else: a core of all ones saves all ones
+	{
+		Machine ones;
+
+		fill_state(ones.dsp, 0xFF);
+
+		std::vector<uint8_t> blob = blob_of(ones.dsp);
+		size_t set = 0;
+
+		for (size_t i = 8; i < blob.size(); i++)
+			set += blob[i] == 0xFF;
+
+		check(blob.size() > 8 && set == blob.size() - 8, "the blob is the state in front of the wave RAM pointer, bit for bit");
+	}
+
+	//what the saved states had: a channel in the slot of their step, a sweep that has begun, sends to both MIXS
+	//banks, EXTS, samples behind them
+	uint64_t states = 0, taken = 0, swept = 0, sent = 0, used = 0;
 
 	for (int index = 0; index < 6; index++)
 	{
@@ -264,42 +314,77 @@ static void test_state()
 
 		random_inputs(in, rnd, 1);
 
+		//Three programs get the events of a sample with the sample, three call by call: only a call leaves a channel
+		//in the slot of the next step, or a sweep that has begun, in the state
+		const bool calls = index >= 3;
+		const AicaDspSampleInputs* given = calls ? nullptr : &in;
+
+		a.dsp.EXTS[0] = (int16_t)(rnd.Bits(16) | 1);
+		a.dsp.EXTS[1] = (int16_t)(rnd.Bits(16) | 1);
+
+		//two samples first: each MIXS bank has had its sweep
+		for (int s = 0; s < 2 * 128; s++)
+		{
+			if (calls)
+				events_by_call(a.dsp, in, s & 127);
+
+			a.dsp.StepOne(given);
+		}
+
 		for (int s = 0; s < 128; s++)
 		{
-			//the core the state goes into had another program and other registers
-			Machine b;
-
-			random_machine(b, rnd, 128, false);
-
-			for (int k = 0; k < 37; k++)
-				b.dsp.StepOne();
+			if (calls)
+				events_by_call(a.dsp, in, s);
 
 			std::vector<uint8_t> blob = blob_of(a.dsp);
-			bool loaded = b.dsp.LoadState(blob.data(), (uint32_t)blob.size());
+
+			states++;
+			taken += a.dsp.slot_taken;
+			swept += a.dsp.mixs_swept;
+			sent += a.dsp.mixs_sent[0] && a.dsp.mixs_sent[1];
+			used += a.dsp.samples && a.dsp.EXTS[0] && a.dsp.EXTS[1];
+
+			//The state goes into a core that holds 0 in every field, and into one that holds all ones: whatever a
+			//field of the state is, one of the two had something else in it
+			Machine b, c;
+
+			fill_state(b.dsp, 0x00);
+			fill_state(c.dsp, 0xFF);
+
+			bool loaded = b.dsp.LoadState(blob.data(), (uint32_t)blob.size()) && c.dsp.LoadState(blob.data(), (uint32_t)blob.size());
 
 			b.ram = a.ram;
 
 			char what[96];
 
 			snprintf(what, sizeof(what), "program %d: state in front of step %d", index, s);
-			check(loaded && blob_of(b.dsp) == blob, what);
+			check(loaded && blob_of(b.dsp) == blob && blob_of(c.dsp) == blob, what);
 
 			//both to the end of this sample and through the next: one by steps, one in one go
 			Machine a2 = a;
 
 			for (int k = s; k < 128; k++)
-				a2.dsp.StepOne(&in);
+				a2.dsp.StepOne(given);
 
-			a2.dsp.RunSample(&in);
-			b.dsp.RunSample(&in);
-			b.dsp.RunSample(&in);
+			a2.dsp.RunSample(given);
+			b.dsp.RunSample(given);
+			b.dsp.RunSample(given);
 
 			snprintf(what, sizeof(what), "program %d: going on from the state in front of step %d", index, s);
 			check(same(a2, b), what);
 
-			a.dsp.StepOne(&in);
+			a.dsp.StepOne(given);
 		}
 	}
+
+	if (dsp_suite_opt().verbose)
+		dsp_note("  state: %llu states, %llu with a channel in the slot, %llu behind SweepBegin, %llu with sends in both banks, %llu in use",
+			(unsigned long long)states, (unsigned long long)taken, (unsigned long long)swept, (unsigned long long)sent,
+			(unsigned long long)used);
+
+	check(taken > 0 && taken < states, "some of the states have a channel in the slot of their step");
+	check(swept > 0 && swept < states, "some of the states are behind a SweepBegin that step 0 has not taken yet");
+	check(sent > states / 2 && used == states, "the states have sends in both MIXS banks, EXTS and samples behind them");
 
 	//what is not a state
 	Machine m;
