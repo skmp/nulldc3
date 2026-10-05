@@ -66,6 +66,10 @@ static u32 latch_id;
 
 static bool used_fallback;
 
+//the slice counter of machine_reference_step(), and whether it is the one that tells the time
+static s32 ref_slice;
+static bool ref_used;
+
 const char* engine_name(Engine e)
 {
 	switch (e)
@@ -550,6 +554,55 @@ static MachineStop single_step()
 	return park_enter(true);
 }
 
+//One instruction of the reference loop and, when it used the slice up, the end of the slice.
+//true: an interrupt was accepted there
+static bool reference_instruction()
+{
+	u32 addr = next_pc;
+
+	next_pc += 2;
+	ExecuteOpcode(IReadMem16(addr));
+
+	//an instruction of the interpreter costs 8 cycles
+	ref_slice -= 8;
+
+	if (ref_slice > 0)
+		return false;
+
+	ref_slice += SH4_TIMESLICE;
+
+	return UpdateSystem() && UpdateINTC();
+}
+
+MachineStop machine_reference_step()
+{
+	if (engine != ENGINE_INTERP)
+		fatal("the reference step is the interpreter's");
+
+	ref_used = true;
+
+	bool accepted = park_leave();
+
+	sh4_int_bCpuRun = true;
+
+	if (!accepted)
+	{
+		in_step = true;
+
+		u16 op = IReadMem16(next_pc);
+
+		//the handlers of bt/s and bf/s leave the slot to the loop when they do not branch
+		bool slot_follows = ((op & 0xFF00) == 0x8D00 && sr.T == 0) || ((op & 0xFF00) == 0x8F00 && sr.T != 0);
+
+		if (!reference_instruction() && slot_follows)
+			reference_instruction();
+
+		in_step = false;
+	}
+
+	return park_enter(true);
+}
+
 static bool step_refused(int* error, const char** why)
 {
 	const char* reason = nullptr;
@@ -784,6 +837,8 @@ void machine_reset(Engine e)
 	pause_wanted = excursion_wanted = in_step = false;
 	latch_has_cause = false;
 	used_fallback = false;
+	ref_slice = SH4_TIMESLICE;
+	ref_used = false;
 
 	dbg::g_stop_latched = true;
 	dbg::g_intc_deferred = false;
@@ -821,12 +876,17 @@ static u64 fnv(u64 h, const void* data, size_t bytes)
 	return h;
 }
 
+u64 machine_time()
+{
+	return sched_now + SH4_TIMESLICE - (ref_used ? ref_slice : backend->SliceCyclesLeft());
+}
+
 MachineState machine_state()
 {
 	MachineState s;
 
 	s.sched = sched_now;
-	s.counter = backend->SliceCyclesLeft();
+	s.counter = ref_used ? ref_slice : backend->SliceCyclesLeft();
 	s.pc = next_pc;
 
 	u64 h = 0xCBF29CE484222325ull;

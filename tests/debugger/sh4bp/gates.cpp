@@ -1409,6 +1409,291 @@ static void gate_b14()
 
 
 /*
+	The slot of a delayed conditional branch that is not taken. The interpreter runs it as an instruction of its
+	own, so its loop can be left, and an interrupt accepted, between the two. A block of the recompiler holds
+	both.
+*/
+static void pair_start(Engine e, u32 irq_period)
+{
+	machine_reset(e);
+	machine_set_sr(SR_MD);
+	machine_set_pc(G_pair);
+
+	R(4) = 0x7FFFFFFF;
+
+	knobs.irq_period = irq_period;
+}
+
+//Resumes every debugger stop up to the host stop. at_slot: the stops that were at the address of a slot
+static MachineState pair_run(u64* stops, u64* at_slot)
+{
+	*at_slot = 0;
+
+	for (;;)
+	{
+		MachineStop s = machine_resume();
+
+		if (!s.debugger)
+			break;
+
+		*at_slot += s.pc == G_pair_bt_slot || s.pc == G_pair_bf_slot;
+	}
+
+	*stops = counters.stops;
+
+	return machine_state();
+}
+
+static void gate_slot()
+{
+	MachineStop s;
+
+	//An interrupt that is accepted between a branch and its slot returns to the slot. The step on the handler's
+	//rte ends there: the slot is the instruction of the step behind it
+	for (Engine e : all_engines)
+	{
+		const char* en = engine_name(e);
+
+		for (u32 slot : { (u32)G_pair_bt_slot, (u32)G_pair_bf_slot })
+		{
+			const char* what = slot == G_pair_bt_slot ? "bt/s" : "bf/s";
+			const u32 reg = slot == G_pair_bt_slot ? 1 : 2;
+
+			pair_start(e, 3);
+
+			bool found = false;
+
+			for (u32 i = 0; i < 20000 && !found; i++)
+			{
+				s = machine_step();
+				found = s.pc == G_irq && Sh4cntx.spc == slot;
+			}
+
+			if (e != ENGINE_INTERP)
+			{
+				check(!found && counters.irqs != 0, "%s: no interrupt comes between a %s that is not taken and its slot in 20000 steps (%llu interrupts)",
+					en, what, (unsigned long long)counters.irqs);
+				continue;
+			}
+
+			if (!check(found, "%s: a step on a %s that is not taken ends at the handler of an interrupt, the slot still to run", en, what))
+				continue;
+
+			//the handler works on the other register bank
+			const u32 ran = Sh4cntx.r_bank[reg];
+
+			for (u32 i = 0; i < 20 && Sh4cntx.pc != G_irq_rte; i++)
+				machine_step();
+
+			s = machine_step();
+			check(is_step(s, slot) && R(reg) == ran, "%s: the step on the handler's rte ends at the slot of the %s, and the slot has not run (pc %08X, slot runs %u, %u before)",
+				en, what, s.pc, R(reg), ran);
+
+			s = machine_step();
+			check(is_step(s, slot + 2) && R(reg) == ran + 1, "%s: the next step runs the slot of the %s and nothing else (pc %08X)", en, what, s.pc);
+		}
+	}
+
+	//Steps against the plain loop of the interpreter cut into units, with interrupts
+	{
+		struct Unit
+		{
+			u32 pc;
+			u64 ints;
+			u64 time;
+
+			bool operator==(const Unit& o) const { return pc == o.pc && ints == o.ints && time == o.time; }
+		};
+
+		const u32 steps = 30000;
+		std::vector<Unit> by_step, by_loop;
+		u32 between = 0;
+
+		pair_start(ENGINE_INTERP, 3);
+		for (u32 i = 0; i < steps; i++)
+		{
+			s = machine_step();
+			by_step.push_back({ s.pc, int_hash(regs()), machine_time() });
+			between += s.pc == G_irq && (Sh4cntx.spc == G_pair_bt_slot || Sh4cntx.spc == G_pair_bf_slot);
+		}
+		MachineState a = machine_state();
+
+		pair_start(ENGINE_INTERP, 3);
+		for (u32 i = 0; i < steps; i++)
+		{
+			s = machine_reference_step();
+			by_loop.push_back({ s.pc, int_hash(regs()), machine_time() });
+		}
+		MachineState b = machine_state();
+
+		u32 same = 0;
+
+		while (same < steps && by_step[same] == by_loop[same])
+			same++;
+
+		check(same == steps && a == b && between != 0,
+			"interpreter: %u steps with interrupts: pc, integer registers and time behind every step are those of the plain loop cut into units (%u agree; %u interrupts between a branch and its slot)",
+			steps, same, between);
+
+		if (same < steps)
+			note("step %u: the step ends at %08X, time %llu; the plain loop at %08X, time %llu", same + 1, by_step[same].pc,
+				(unsigned long long)by_step[same].time, by_loop[same].pc, (unsigned long long)by_loop[same].time);
+
+		//and the plain loop itself, at a slice end that the steps reach with nothing run behind it
+		pair_start(ENGINE_INTERP, 3);
+		for (u32 i = 0; i < steps || machine_state().counter != SH4_TIMESLICE; i++)
+			machine_step();
+		a = machine_state();
+
+		const u64 slices = counters.slices;
+
+		pair_start(ENGINE_INTERP, 3);
+		knobs.host_stop_slice = slices;
+		s = machine_resume();
+		b = machine_state();
+
+		check(!s.debugger && a == b, "interpreter: the state behind the steps that end with slice %llu is the state of a run to the end of that slice (%s)",
+			(unsigned long long)slices, str(a));
+	}
+
+	//The loop is left at a slice end between a branch and its slot, and the slot is armed in that visit of the
+	//park context. The pair that is under way has had its check: the slot runs, and the next pair stops, in front
+	//of its branch. With nothing armed before, and with the loop that checks already running
+	for (Engine e : all_engines)
+	{
+		for (bool checking : { false, true })
+		{
+			const char* en = engine_name(e);
+			const char* loop = checking ? "an address armed before" : "nothing armed before";
+			bool armed = false;
+			u32 ran = 0;
+
+			pair_start(e, 0);
+			if (checking)
+				bps({ G_line });
+
+			knobs.host_stop_slice = 200;
+			knobs.excursion_every = 1;
+			knobs.excursion = [&]()
+			{
+				if (armed || Sh4cntx.pc != G_pair_bt_slot)
+					return;
+
+				armed = true;
+				ran = R(1);
+
+				if (checking)
+					bps({ G_line, G_pair_bt_slot });
+				else
+					bps({ G_pair_bt_slot });
+			};
+
+			s = machine_resume();
+
+			if (e == ENGINE_INTERP)
+				check(armed && is_bp(s, checking ? 2 : 1, G_pair_bt) && R(1) == ran + 1,
+					"%s, %s: a slot armed while the loop is left between its branch and it: the slot runs, the next pair stops at its branch (pc %08X, slot runs %u, %u before)",
+					en, loop, s.pc, R(1), ran);
+			else
+				check(!armed && !s.debugger, "%s, %s: no slice ends between a branch and its slot", en, loop);
+		}
+	}
+
+	//The address of a slot that a jump arrives at is an instruction like any other: armed in the visit of the park
+	//context that follows the jump, it stops at once, as itself
+	for (Engine e : all_engines)
+	{
+		const char* en = engine_name(e);
+		bool armed = false;
+		u32 ran = 0;
+
+		pair_start(e, 0);
+
+		knobs.host_stop_slice = 200;
+		knobs.excursion_every = 1;
+		knobs.excursion = [&]()
+		{
+			if (armed || Sh4cntx.pc != G_pair_in)
+				return;
+
+			armed = true;
+			ran = R(3);
+			bps({ G_pair_in });
+		};
+
+		s = machine_resume();
+
+		if (armed)
+			check(is_bp(s, 1, G_pair_in) && R(3) == ran && Sh4cntx.sr.T == 1,
+				"%s: armed while the loop is left behind a jump to an address that follows a bf/s in memory: stops there, nothing of it run (pc %08X)", en, s.pc);
+		else
+			check(e != ENGINE_INTERP && !s.debugger, "%s: no slice ends behind the jump", en);
+	}
+
+	//In a run the same holds: the rte of a handler that came between a branch and its slot arrives at the slot as
+	//at any instruction, and a breakpoint on it stops there
+	{
+		pair_start(ENGINE_INTERP, 3);
+		bps({ G_irq });
+
+		bool found = false;
+
+		for (u32 i = 0; i < 200 && !found; i++)
+		{
+			s = machine_resume();
+			found = is_bp(s, 1, G_irq) && Sh4cntx.spc == G_pair_bt_slot;
+		}
+
+		const u32 ran = Sh4cntx.r_bank[1];
+
+		bps({ G_irq, G_pair_bt_slot });
+		s = machine_resume();
+
+		bool at_slot = found && is_bp(s, 2, G_pair_bt_slot) && R(1) == ran;
+
+		s = machine_resume();
+
+		check(at_slot && is_bp(s, 2, G_pair_bt) && R(1) == ran + 1,
+			"interpreter: a breakpoint on a slot stops the handler's return to it at the slot, nothing of it run; the next pair stops at its branch");
+	}
+
+	//Stops and pauses between a branch and its slot leave no trace
+	for (Engine e : all_engines)
+	{
+		const char* en = engine_name(e);
+		const bool fb = e == ENGINE_FALLBACK;
+		const u64 slices = e == ENGINE_INTERP ? 400 : 40;
+		u64 stops, at_slot;
+
+		//the fallback loop runs while a breakpoint is active: its baseline has one that is never reached
+		pair_start(e, 3);
+		if (fb)
+			bps({ G_line });
+		knobs.host_stop_slice = slices;
+		MachineState base = pair_run(&stops, &at_slot);
+
+		pair_start(e, 3);
+		bps({ G_pair_bt_slot, G_pair_bf_slot, G_line });
+		knobs.host_stop_slice = slices;
+		MachineState st = pair_run(&stops, &at_slot);
+
+		check(st == base && stops != 0 && (at_slot != 0) == (e == ENGINE_INTERP),
+			"%s: stop + resume at every arrival at two slots, with interrupts: %llu stops, %llu of them at a slot that a handler returned to, state = baseline (%s)",
+			en, (unsigned long long)stops, (unsigned long long)at_slot, str(st));
+
+		pair_start(e, 3);
+		bps({ G_pair_bt_slot, G_pair_bf_slot, G_line });
+		knobs.host_stop_slice = slices;
+		knobs.pause_every = 1;
+		st = pair_run(&stops, &at_slot);
+
+		check(st == base && counters.pauses != 0, "%s: the same with a pause at every slice end: %llu stops, %llu pauses, state = baseline", en,
+			(unsigned long long)stops, (unsigned long long)counters.pauses);
+	}
+}
+
+
+/*
 	Arming: what is discarded, and what is not
 */
 static void gate_arm()
@@ -1626,6 +1911,7 @@ const Gate gates[] = {
 	{ "b12", "B12 the interpreter fallback charges by decoder blocks", gate_b12 },
 	{ "b13", "B13 interpreter: n steps equal a run of n instructions", gate_b13 },
 	{ "b14", "B14 jit: n steps equal a run to the n-th instruction", gate_b14 },
+	{ "slot", "the interpreter between a conditional branch that is not taken and its slot: steps, arming, stops", gate_slot },
 	{ "arm", "page discards on arming, blocks over two pages, category mask, breakpoints added in a stop", gate_arm },
 };
 

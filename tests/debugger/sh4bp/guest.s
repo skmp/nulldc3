@@ -474,5 +474,43 @@ g_fstep_end:
 	bra	g_fstep_end
 	nop
 
+! ---------------------------------------------------------------------------------------------------------
+! pair: delayed conditional branches that are not taken. r4 = passes. Takes interrupts when SR lets it.
+! The interpreter runs a slot behind a branch that was not taken as an instruction of its own: a pass is nine
+! of its instructions, a slice is 56, so the ends of the slices walk through every place of the loop, the
+! ones between a branch and its slot included.
+!   g_pair_bt, g_pair_bt_slot   a bt/s that is not taken until the last pass. r1 counts the runs of its slot
+!   g_pair_bf, g_pair_bf_slot   a bf/s that is never taken. r2 counts the runs of its slot
+!   g_pair_in                   an instruction that is only reached by a jump, behind a bf/s that never runs:
+!                               the address of a slot, the instruction of no pair. r3 counts its runs
+	.align	2
+	.global	g_pair, g_pair_top, g_pair_bt, g_pair_bt_slot, g_pair_bf, g_pair_bf_slot, g_pair_jump, g_pair_in, g_pair_end
+g_pair:
+	mov	#0, r1
+	mov	#0, r2
+	mov	#0, r3
+g_pair_top:
+	dt	r4
+g_pair_bt:
+	bt/s	g_pair_end
+g_pair_bt_slot:
+	add	#1, r1
+	cmp/eq	r0, r0
+g_pair_bf:
+	bf/s	g_pair_end
+g_pair_bf_slot:
+	add	#1, r2
+g_pair_jump:
+	bra	g_pair_in
+	nop
+	bf/s	g_pair_end
+g_pair_in:
+	add	#1, r3
+	bra	g_pair_top
+	nop
+g_pair_end:
+	bra	g_pair_end
+	nop
+
 	.global	g_image_end
 g_image_end:

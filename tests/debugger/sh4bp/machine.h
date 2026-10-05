@@ -103,6 +103,9 @@ void machine_set_sr(u32 sr);
 
 MachineState machine_state();
 
+//SH4 time: the scheduler's, and what the running slice has used
+u64 machine_time();
+
 //The enabled listed SHcode breakpoints: ids[i] at addrs[i]. In the park context
 void machine_breakpoints(const u32* ids, const u32* addrs, u32 n);
 
@@ -113,6 +116,13 @@ MachineStop machine_resume();
 MachineStop machine_step(int* error = nullptr, const char** why = nullptr);
 MachineStop machine_step_over(int* error = nullptr, const char** why = nullptr);
 MachineStop machine_step_out(int* error = nullptr, const char** why = nullptr);
+
+//The reference for a step of the interpreter: the interpreter's plain loop, made by a loop of the machine's own
+//over the opcode handlers, for one unit. A unit is an instruction; a conditional branch with a delay slot that is
+//not taken goes on into its slot, unless the slice ended between the two and an interrupt was accepted there.
+//The slice counter of this loop is its own: from the first call until the next machine_reset() it is the one
+//that machine_state() and machine_time() tell. Interpreter engine only
+MachineStop machine_reference_step();
 
 //Did the last machine_resume() or step use the interpreter fallback?
 bool machine_used_fallback();
