@@ -4,7 +4,8 @@
 #	here as the emulator's compilers have to take it, without the permissive mode of the emulator build, and with
 #	no conversion that narrows or changes a sign left to the compiler.
 #
-#	aica_dsp_api          aica.dsp.api: what the calls of the core promise each other. No data needed
+#	aica_dsp_api          aica.dsp.api: what the calls of the core promise each other, and the known-answer
+#	                      programs (dsp_known.cpp). No data needed
 #	aica_dsp_diff <set>   aica.dsp.diff.<set>: the core against the DSP of the caique sample model on generated
 #	                      programs, step for step
 #	aica_dsp_cases <case> aica.dsp.case.<case>: the DSP programs caique ran on a Dreamcast, on the model with the
@@ -36,7 +37,7 @@ if(NOT MSVC)
   target_compile_options(nulldc_aica_dsp_core PRIVATE -Wall -Wextra -Wconversion -Wsign-conversion -Werror)
 endif()
 
-add_library(nulldc_aica_dsp_test STATIC dsp_suite.cpp dsp_suite.h)
+add_library(nulldc_aica_dsp_test STATIC dsp_suite.cpp dsp_suite.h dsp_known.cpp dsp_known.h)
 target_include_directories(nulldc_aica_dsp_test PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(nulldc_aica_dsp_test PUBLIC nulldc_aica_dsp_core)
 
