@@ -242,3 +242,23 @@ A second way to run the SH4 vectors only has to fill an `SsSuite` (`common/ss_su
 of a loaded vector are executed, whether instruction fetches are part of the expected bus order, and what that
 way of executing is known to fail, and to notify of, on top of the policy table. It gets its own baseline file.
 `sh4_singlestep/main.cpp` is the whole interpreter suite.
+
+## The FPU against the hardware
+
+`sh4_fpu` has two more tests. They need a shrike4-rtl checkout, whose headers they are compiled with and whose
+console records they read: `-DNULLDC_SHRIKE4_DIR=<path to shrike4-rtl>`, default `../shrike4-rtl` next to the
+repository if it is there. Without it they are skipped, or fail with `-DNULLDC_TESTS_REQUIRE_DATA=ON`.
+
+| test | what it runs | data |
+|---|---|---|
+| `sh4.fpu.scalar` | FADD FSUB FMUL FDIV FMAC FSQRT FTRC FCMP FABS FNEG FSRRA FCNVDS FCNVSD, single and double precision, through the SH4 interpreter and through the dynarec, against the 225,036 records a Dreamcast answered | a shrike4-rtl checkout |
+| `sh4.fpu.vector` | FIPR FTRV FSCA FSRRA through both, against shrike4-rtl's bit-exact model on 1,355,584 generated cases and against 15,642 console records, which the model has to answer as the console did | a shrike4-rtl checkout |
+
+Both count, per group of instruction, FPSCR setting and kind of operand, the cases in which each engine leaves
+the hardware's values (bit for bit), the hardware's FPSCR, and in which the two engines agree, and are gated
+on `sh4_fpu/baseline_scalar.txt` and `sh4_fpu/baseline_vector.txt` like the other tests (`--strict` in ctest,
+`sh4_fpu scalar --update-baseline` and `sh4_fpu vector --update-baseline` after a fix). They run on x86-64
+hosts only.
+
+* `sh4_fpu/README.md`: the data, how a case is run, the groups and columns, the baselines, looking at a failure,
+* `sh4_fpu/KNOWN_FAILURES.md`: why the counts are below their totals, cause by cause.

@@ -1,0 +1,112 @@
+# sh4.fpu.vector baseline: what devcast's SH4 interpreter and dynarec leave of the hardware's results, per group.
+#   total     cases, of which
+#   trap      the hardware raises the FPU exception and writes no result
+#   value-i   the interpreter leaves the hardware's FR, XF, FPUL and T        value-d   the dynarec does
+#   flags-i   the interpreter leaves the hardware's FPSCR                     flags-d   the dynarec does
+#   agree     interpreter and dynarec leave the same
+#   native    the dynarec compiled the instruction to native code
+#   crash     an engine ends in die(), verify() or a signal
+# The test fails when a group has fewer cases than listed here in value, flags, agree or native, or more in
+# crash. KNOWN_FAILURES.md has the reason for every count that is below its total.
+# Written by the test's --update-baseline, see README.md.
+#
+# group                                total   trap value-i value-d flags-i flags-d   agree  native crash
+FIPR.dn1.rn.normal                     64000      0   39523   40365       0       0   49226   64000     0
+FIPR.dn1.rn.vec3                       24000      0   15919   15919       0       0   24000   24000     0
+FIPR.dn1.rn.single                     24000      0   23069   23069       0       0   24000   24000     0
+FIPR.dn1.rn.self                       16000      0   10851   11148       0       0   13399   16000     0
+FIPR.dn1.rn.exact                      16000      0   15997   15996       0       0   15997   16000     0
+FIPR.dn1.rn.cancel                     16000      0    1522    1530       0       0   15709   16000     0
+FIPR.dn1.rn.wide                       16000      0   13597   13605       0       0   15752   16000     0
+FIPR.dn1.rn.overflow                    8000      0    3300    3288       0       0    7898    8000     0
+FIPR.dn1.rn.underflow                   8000      0    3810    3811       0       0    7986    8000     0
+FIPR.dn1.rn.zero                        4000      0    3538    3535       0       0    3967    4000     0
+FIPR.dn1.rn.denormal                    4000      0    3373    3368       0       0    3986    4000     0
+FIPR.dn1.rn.inf                         4000      0    1906    1906    2044    2044    4000    4000     0
+FIPR.dn1.rn.nan                         4000      0       0       0    1419    1419    2637    4000     0
+FIPR.dn1.rz.normal                     64000      0   13651   13929       0       0   37985   64000     0
+FIPR.dn1.rz.vec3                       24000      0    7404    7404       0       0   24000   24000     0
+FIPR.dn1.rz.single                     24000      0   23296   23296       0       0   24000   24000     0
+FIPR.dn1.rz.self                       16000      0    5191    5416       0       0   11909   16000     0
+FIPR.dn1.rz.exact                      16000      0   15997   15996       0       0   15997   16000     0
+FIPR.dn1.rz.cancel                     16000      0    1338    1328       0       0   15516   16000     0
+FIPR.dn1.rz.wide                       16000      0    3923    3869       0       0    9853   16000     0
+FIPR.dn1.rz.overflow                    8000      0    3297    3454       0       0    4650    8000     0
+FIPR.dn1.rz.underflow                   8000      0    3762    3766       0       0    7988    8000     0
+FIPR.dn1.rz.zero                        4000      0    3332    3331       0       0    3957    4000     0
+FIPR.dn1.rz.denormal                    4000      0    1247    1264       0       0    3065    4000     0
+FIPR.dn1.rz.inf                         4000      0    1906    1906    2044    2044    4000    4000     0
+FIPR.dn1.rz.nan                         4000      0       0       0    1419    1419    2637    4000     0
+FIPR.console.values.rn                  5000      0    3944    3933       0       0    4762    5000     0
+FIPR.console.values.rz                  5000      0    2566    2564       0       0    4583    5000     0
+FIPR.console.specials.dn1                378      0     248     248      70      70     366     378     0
+FIPR.console.specials.dn1.trap           472    472       0       0      90      90     450     472     0
+FIPR.console.specials.dn0                280      0     204     204      66      66     272     280     0
+FIPR.console.specials.dn0.trap           420    420       0       0      88      88     400     420     0
+FIPR.console.specials.pr1                100      0       0       0       0       0     100       0   100
+FIPR.console.specials.pr1.trap            50     50       0       0       0       0      50       0    50
+FTRV.dn1.rn.normal                     64000      0    9202    9850       0       0   22761   64000     0
+FTRV.dn1.rn.affine                     48000      0   24148   15580       0       0   19939   48000     0
+FTRV.dn1.rn.diagonal                   16000      0   13432   13432       0       0   16000   16000     0
+FTRV.dn1.rn.exact                      16000      0   15992   15989       0       0   15987   16000     0
+FTRV.dn1.rn.cancel                     16000      0      21      22       0       0   14952   16000     0
+FTRV.dn1.rn.wide                       16000      0    8419    8424       0       0   15058   16000     0
+FTRV.dn1.rn.overflow                    8000      0     242     234       0       0    7554    8000     0
+FTRV.dn1.rn.underflow                   8000      0     365     365       0       0    7966    8000     0
+FTRV.dn1.rn.zero                        4000      0    2556    2561       0       0    3897    4000     0
+FTRV.dn1.rn.denormal                    4000      0    2089    2084       0       0    3731    4000     0
+FTRV.dn1.rn.inf                         4000      0    1123    1124     418     418    3195    4000     0
+FTRV.dn1.rn.nan                         4000      0       0       0     410     410    3480    4000     0
+FTRV.dn1.rz.normal                     64000      0     340     171       0       0    9421   64000     0
+FTRV.dn1.rz.affine                     48000      0   15844    3546       0       0    7006   48000     0
+FTRV.dn1.rz.diagonal                   16000      0   14248   14248       0       0   16000   16000     0
+FTRV.dn1.rz.exact                      16000      0   15990   15986       0       0   15986   16000     0
+FTRV.dn1.rz.cancel                     16000      0      14      13       0       0   14266   16000     0
+FTRV.dn1.rz.wide                       16000      0      94      75       0       0    2825   16000     0
+FTRV.dn1.rz.overflow                    8000      0     243     289       0       0     893    8000     0
+FTRV.dn1.rz.underflow                   8000      0     349     347       0       0    7958    8000     0
+FTRV.dn1.rz.zero                        4000      0    2090    2085       0       0    3850    4000     0
+FTRV.dn1.rz.denormal                    4000      0      24      18       0       0     870    4000     0
+FTRV.dn1.rz.inf                         4000      0     569     556     418     418    2748    4000     0
+FTRV.dn1.rz.nan                         4000      0       0       0     410     410    3299    4000     0
+FTRV.console.specials.dn1                 51      0      27      27       2       2      51      51     0
+FTRV.console.specials.dn1.trap           136    136       0       0       8       8     136     136     0
+FTRV.console.specials.dn0                 34      0      18      18       2       2      34      34     0
+FTRV.console.specials.dn0.trap           136    136       0       0       8       8     136     136     0
+FTRV.console.specials.pr1                 17      0      17      17      17      17      17       0     0
+FTRV.console.specials.pr1.trap            17     17       0       0      17      17      17       0     0
+FSCA.dn1.rn.angle                      65536      0   65534   65534       0       0   65536   65536     0
+FSCA.dn1.rn.upper                       8192      0    8192    8192       0       0    8192    8192     0
+FSCA.dn1.rz.angle                      65536      0   32452   32452       0       0   65536   65536     0
+FSCA.dn1.rz.upper                       8192      0    4082    4082       0       0    8192    8192     0
+FSCA.console.values.rn                  1032      0    1029    1029       0       0    1032    1032     0
+FSCA.console.values.rz                  1024      0     578     578       0       0    1024    1024     0
+FSCA.console.specials.dn1                 57      0      21      21       0       0      57      57     0
+FSCA.console.specials.dn1.trap            29     29       0       0       0       0      29      29     0
+FSCA.console.specials.dn0                  1      0       1       1       0       0       1       1     0
+FSCA.console.specials.pr1                  8      0       8       8       8       8       8       0     0
+FSCA.console.specials.pr1.trap             2      2       0       0       2       2       2       0     0
+FSRRA.dn1.rn.normal                   128000      0   76498   76498       0       0  128000  128000     0
+FSRRA.dn1.rn.one-to-four               32000      0   19050   19050       0       0   32000   32000     0
+FSRRA.dn1.rn.simple                    16000      0   10931   10931       0       0   16000   16000     0
+FSRRA.dn1.rn.zero                         32      0      32      32       0       0      32      32     0
+FSRRA.dn1.rn.denormal                   4000      0       0       0       0       0    4000    4000     0
+FSRRA.dn1.rn.negative                   4000      0       0       0       0       0    4000    4000     0
+FSRRA.dn1.rn.inf                          32      0      16      16      16      16      32      32     0
+FSRRA.dn1.rn.nan                        4000      0       0       0    2029    2029    4000    4000     0
+FSRRA.dn1.rz.normal                   128000      0   62917   62917       0       0  128000  128000     0
+FSRRA.dn1.rz.one-to-four               32000      0   15784   15784       0       0   32000   32000     0
+FSRRA.dn1.rz.simple                    16000      0    7248    7248       0       0   16000   16000     0
+FSRRA.dn1.rz.zero                         32      0      32      32       0       0      32      32     0
+FSRRA.dn1.rz.denormal                   4000      0       0       0       0       0    4000    4000     0
+FSRRA.dn1.rz.negative                   4000      0       0       0       0       0    4000    4000     0
+FSRRA.dn1.rz.inf                          32      0      16      16      16      16      32      32     0
+FSRRA.dn1.rz.nan                        4000      0       0       0    2029    2029    4000    4000     0
+FSRRA.console.values.rn                  272      0     233     233       0       0     272     272     0
+FSRRA.console.values.rz                  272      0       9       9       0       0     272     272     0
+FSRRA.console.specials.dn1               255      0      94      94      50      50     255     255     0
+FSRRA.console.specials.dn1.trap          164    164       0       0      26      26     164     164     0
+FSRRA.console.specials.dn0               205      0      84      84      48      48     205     205     0
+FSRRA.console.specials.dn0.trap          175    175       0       0      25      25     175     175     0
+FSRRA.console.specials.pr1                39      0      39      39      39      39      39       0     0
+FSRRA.console.specials.pr1.trap           16     16       0       0      16      16      16       0     0
