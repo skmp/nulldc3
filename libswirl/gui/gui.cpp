@@ -1092,7 +1092,9 @@ int msgboxf(const wchar* text, unsigned int type, ...) {
     printf("%s\n", temp);
     fflush(stdout);
 
-    g_GUI->DisplayNotification(temp, 2000);
+    // die() and verify() end up here, also before there is a GUI
+    if (g_GUI)
+        g_GUI->DisplayNotification(temp, 2000);
 
     return 1;
 }

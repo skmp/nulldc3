@@ -500,7 +500,10 @@ int main(int argc, wchar* argv[])
 
 	settings.profile.run_counts=0;
 
-	if (reicast_init(argc, argv))
+	int init_rv = reicast_init(argc, argv);
+	if (init_rv == rv_cli_finish)
+		return 0;	// -help: the usage text is all that was asked for
+	if (init_rv)
 		die("Reicast initialization failed\n");
     
     #if FEAT_HAS_SERIAL_TTY

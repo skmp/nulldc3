@@ -502,7 +502,10 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 	{
 		CoInitialize(nullptr);
 
-		if (reicast_init(argc, argv) != 0)
+		int init_rv = reicast_init(argc, argv);
+		if (init_rv == rv_cli_finish)
+			return 0;	// -help: the usage text is all that was asked for
+		if (init_rv != 0)
 			die("Reicast initialization failed");
 
 		#ifdef _WIN64
