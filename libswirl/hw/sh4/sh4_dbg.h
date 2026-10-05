@@ -52,6 +52,10 @@ void sh4_fallback_loop();
 // From the park loop, in place of SuperH4Backend::Step(): executes the instruction at pc (a delayed branch
 // together with its slot), charged as a block of that one instruction, with the end-of-slice work if the
 // slice ran out. The caller has checked the step preconditions and set CpuRunning for its duration.
+// Like Step(), it does not apply the loop's rule for a counter that is not positive: entered with one it
+// executes its instruction first and does the end-of-slice work behind it. After a flow report that stopped
+// behind the block that used the slice up, that is one instruction ahead of an undebugged run (a documented
+// skew of a debugger stop).
 void sh4_fallback_step();
 
 #else

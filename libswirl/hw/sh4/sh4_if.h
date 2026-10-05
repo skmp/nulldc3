@@ -466,6 +466,10 @@ struct SuperH4Backend {
         A Loop() entered with a counter that is not positive and no remainder to run (dbg_sh4_TakeRemainder,
         debugger/debugger.h: a flow report stopped behind the block that used the slice up) does the
         end-of-slice work before its first block. After a remainder it tests the counter as after any block.
+        Step() does not apply this rule: entered with a counter that is not positive it executes its
+        instruction first and does the end-of-slice work behind it. After a flow report that stopped behind
+        the block that used the slice up, that is one instruction ahead of an undebugged run (a documented
+        skew of a debugger stop).
     */
 
     // SH4DBG_* bits. Constant for the life of the backend.
