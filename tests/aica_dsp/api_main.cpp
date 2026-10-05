@@ -533,6 +533,27 @@ static void test_registers()
 		dsp.RegWrite(0x45C8, p);
 		check(dsp.RegRead(0x3300) == 0 && dsp.RegRead(0x3C00) == 0 && dsp.RegRead(0x45C8) == 0, "offsets between the register files are nothing of the DSP's");
 	}
+
+	//A slot is one register of 16 bit or fewer, whichever of its four bytes the offset names: nothing of a write
+	//is kept above the register's bits, and there is no byte of a slot to write alone
+	dsp.RegWrite(0x3000, 0x12345678);
+	dsp.RegWrite(0x3200, 0x12345678);
+	dsp.RegWrite(0x3400, 0x12345678);
+	dsp.RegWrite(0x4004, 0x12345678);
+	check(dsp.RegRead(0x3000) == 0x5678 && dsp.RegRead(0x3200) == 0x5678 && dsp.RegRead(0x3400) == 0x5678 && dsp.RegRead(0x4004) == 0x5678,
+		"0x12345678 written to COEF, MADRS, MPRO and the upper part of TEMP reads back 5678");
+
+	dsp.RegWrite(0x4000, 0x1FF);
+	dsp.RegWrite(0x4500, 0x1F);
+	check(dsp.RegRead(0x4000) == 0xFF && dsp.TEMP[0] == 0x5678FF && dsp.RegRead(0x4500) == 0xF && dsp.RegRead(0x4504) == 0xAAAA,
+		"the low part of TEMP is 8 bit and that of MIXS 4 bit: a bit above them is not stored, and is not in the value the DSP has");
+
+	dsp.RegWrite(0x3001, 0xAB);
+	dsp.RegWrite(0x3406, 0x1234);
+	dsp.RegWrite(0x4007, 0x4321);
+	check(dsp.RegRead(0x3000) == 0xA8 && dsp.RegRead(0x3003) == 0xA8 && dsp.MPRO[0][0] == 0x5678 && dsp.MPRO[0][1] == 0x1234
+		&& dsp.RegRead(0x3405) == 0x1234 && dsp.TEMP[0] == 0x4321FF,
+		"an offset inside a slot is the slot's register: a write to 0x3001 writes COEF0, a read of 0x3003 reads it");
 }
 
 static void test_mixs()
