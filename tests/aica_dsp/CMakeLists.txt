@@ -15,8 +15,8 @@
 #	The model, the programs and the console's files are caique-rtl's and stay there: the tests are compiled with
 #	its sources from the checkout (NULLDC_CAIQUE_DIR) and read its captures from there. What this directory has
 #	of caique is the harness around them: cases_main.cpp and dsp_lockstep.cpp name the caique files they follow,
-#	with the licence. Without a checkout the tests are skipped. All but aica.dsp.capi and aica.dsp.wasm are gated
-#	on baseline.txt, see README.md.
+#	with the licence. Without a checkout the tests are skipped. All but aica.dsp.capi and the aica.dsp.wasm tests
+#	are gated on baseline.txt, see README.md.
 #
 
 string(REPLACE "-fpermissive" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
@@ -152,6 +152,7 @@ endif()
 #	the two: aica.dsp.capi, which needs nothing. The trace it writes has the answers of the core's own calls, for
 #	aica.dsp.wasm.
 #	aica.dsp.wasm needs emcc and node. emcc: on the PATH, or the emsdk in the environment's EMSDK or in ~/emsdk.
+#	aica.dsp.wasm.emsdk and aica.dsp.wasm.noemcc are build.sh finding its emcc, and need the emcc to be an emsdk's.
 #
 
 add_executable(aica_dsp_wasm_trace
@@ -169,9 +170,13 @@ find_program(NULLDC_NODE node)
 find_program(NULLDC_EMCC emcc HINTS "$ENV{EMSDK}/upstream/emscripten" "$ENV{HOME}/emsdk/upstream/emscripten")
 
 if(NOT NULLDC_EMCC)
-  nulldc_add_skipped_test(aica.dsp.wasm "no emcc: not on the PATH, and no emsdk in EMSDK or ~/emsdk")
+  foreach(test aica.dsp.wasm aica.dsp.wasm.emsdk aica.dsp.wasm.noemcc)
+    nulldc_add_skipped_test(${test} "no emcc: not on the PATH, and no emsdk in EMSDK or ~/emsdk")
+  endforeach()
 elseif(NOT NULLDC_NODE)
-  nulldc_add_skipped_test(aica.dsp.wasm "no node on the PATH")
+  foreach(test aica.dsp.wasm aica.dsp.wasm.emsdk aica.dsp.wasm.noemcc)
+    nulldc_add_skipped_test(${test} "no node on the PATH")
+  endforeach()
 else()
   get_filename_component(nulldc_emcc_dir "${NULLDC_EMCC}" DIRECTORY)
   get_filename_component(nulldc_emsdk_dir "${nulldc_emcc_dir}/../.." ABSOLUTE)
@@ -206,4 +211,40 @@ else()
     COMMAND "${NULLDC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/wasm_test.mjs"
             "${nulldc_dsp_wasm_dir}/aica_dsp_core.mjs" "${nulldc_dsp_wasm_dir}/aica_dsp_core.wasm" "${nulldc_dsp_wasm_trace}")
   set_tests_properties(aica.dsp.wasm PROPERTIES TIMEOUT 120)
+
+  # build.sh finds emcc by itself: on the PATH, or in the emsdk of EMSDK. The command above hands it the emcc on
+  # the PATH. These two run it by sh on the PATH without the directories that have an emcc: with the emsdk in
+  # EMSDK it has to build the module, and with no emsdk there it has to say that it has no emcc
+  string(REPLACE ":" ";" nulldc_path_dirs "$ENV{PATH}")
+  set(nulldc_path_no_emcc "")
+  set(nulldc_sh_no_emcc "")
+
+  foreach(dir ${nulldc_path_dirs})
+    if(NOT EXISTS "${dir}/emcc")
+      list(APPEND nulldc_path_no_emcc "${dir}")
+
+      if(NOT nulldc_sh_no_emcc AND EXISTS "${dir}/sh")
+        set(nulldc_sh_no_emcc "${dir}/sh")
+      endif()
+    endif()
+  endforeach()
+
+  list(JOIN nulldc_path_no_emcc ":" nulldc_path_no_emcc)
+
+  if(nulldc_sh_no_emcc AND EXISTS "${nulldc_emsdk_dir}/upstream/emscripten/emcc")
+    add_test(NAME aica.dsp.wasm.emsdk
+      COMMAND ${CMAKE_COMMAND} -E env "PATH=${nulldc_path_no_emcc}" "EMSDK=${nulldc_emsdk_dir}"
+              "${nulldc_sh_no_emcc}" "${nulldc_dsp_core_path}/wasm/build.sh" "${CMAKE_CURRENT_BINARY_DIR}/wasm_emsdk")
+    set_tests_properties(aica.dsp.wasm.emsdk PROPERTIES TIMEOUT 300)
+
+    add_test(NAME aica.dsp.wasm.noemcc
+      COMMAND ${CMAKE_COMMAND} -E env "PATH=${nulldc_path_no_emcc}" "EMSDK=${CMAKE_CURRENT_BINARY_DIR}/no_emsdk"
+              "${nulldc_sh_no_emcc}" "${nulldc_dsp_core_path}/wasm/build.sh" "${CMAKE_CURRENT_BINARY_DIR}/wasm_noemcc")
+    set_tests_properties(aica.dsp.wasm.noemcc PROPERTIES
+      TIMEOUT 300 PASS_REGULAR_EXPRESSION "no emcc on the PATH and no emsdk in")
+  else()
+    foreach(test aica.dsp.wasm.emsdk aica.dsp.wasm.noemcc)
+      nulldc_add_skipped_test(${test} "the emcc is not in an emsdk, or the PATH has no sh outside the directories with an emcc")
+    endforeach()
+  endif()
 endif()

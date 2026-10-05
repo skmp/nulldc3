@@ -15,12 +15,14 @@ Without it the tests that need it are skipped, or fail with `-DNULLDC_TESTS_REQU
 | `aica.dsp.case.<case>` | a DSP program caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
 | `aica.dsp.capi` | the C interface of the core (`wasm/aica_dsp_capi.h`), compiled for the host, against the core called itself, call for call | none |
 | `aica.dsp.wasm` | `aica_dsp_core.wasm` and its loader in node against the core compiled for the host and called itself, call for call | emcc (on the PATH, or an emsdk in `EMSDK` or `~/emsdk`) and node; skipped without them |
+| `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | `wasm/build.sh` finding its emcc, run by sh on a PATH that has none: with the emsdk in `EMSDK` it builds the module, with no emsdk there it says that it has no emcc | an emcc that is in an emsdk, and node; skipped otherwise |
 
-All but `aica.dsp.capi` and `aica.dsp.wasm` count their cases into checks and are gated on `baseline.txt`: a check
-that passes fewer cases than its baseline, or has another number of cases, fails, and ctest runs the tests with
-`--strict`, where more passes than the baseline fail as well until the baseline is updated
-(`<executable> ... --update-baseline`) and committed. `KNOWN_FAILURES.md` has the reason for every check that is
-below its total. `aica.dsp.capi` and `aica.dsp.wasm` are lists of answers that all have to be the same.
+All but `aica.dsp.capi` and the `aica.dsp.wasm` tests count their cases into checks and are gated on
+`baseline.txt`: a check that passes fewer cases than its baseline, or has another number of cases, fails, and
+ctest runs the tests with `--strict`, where more passes than the baseline fail as well until the baseline is
+updated (`<executable> ... --update-baseline`) and committed. `KNOWN_FAILURES.md` has the reason for every check
+that is below its total. `aica.dsp.capi` and `aica.dsp.wasm` are lists of answers that all have to be the same,
+the two tests of `build.sh` are what the script returns and prints.
 
 ## Step for step: `dsp_lockstep`
 

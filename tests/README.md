@@ -43,6 +43,7 @@ way.
 | `aica.dsp.case.dsp_basic` `.dsp_mem` `.dsp_mem2` `.dsp_mem3` `.dsp_wslot` `.dsp_unpack` `.dsp_pack` `.dsp_temp` `.dsp_coll` `.sh4_latch` `.mdec_hold` | the DSP programs caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
 | `aica.dsp.capi` | the C interface of the AICA DSP core, compiled for the host, against the core called itself | none |
 | `aica.dsp.wasm` | the WebAssembly build of the AICA DSP core in node, through its loader and its C interface, against the core compiled for the host | emcc and node, skipped without them |
+| `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | the script that builds it, run by sh on a PATH without emcc: it builds with the emsdk in `EMSDK`, and says that it has no emcc when there is no emsdk | an emcc that is in an emsdk, and node; skipped otherwise |
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it.
@@ -50,10 +51,11 @@ The `aica.dsp.diff.*` and `aica.dsp.case.*` tests need `-DNULLDC_CAIQUE_DIR=<pat
 sits next to the repository; they compile its sample model and its DSP programs (C) from there and read its console
 captures.
 
-Every test but `common.selftest`, `sh4.core`, `aica.dsp.capi` and `aica.dsp.wasm` is gated on a baseline file, and
-ctest runs them with `--strict`: a count that is worse than its baseline fails, and so does one that is better,
-until the baseline is updated and committed. `common.selftest`, `sh4.core`, `aica.dsp.capi` and `aica.dsp.wasm` are
-lists of checks that all have to hold.
+Every test but `common.selftest`, `sh4.core`, `aica.dsp.capi` and the `aica.dsp.wasm` tests is gated on a baseline
+file, and ctest runs them with `--strict`: a count that is worse than its baseline fails, and so does one that is
+better, until the baseline is updated and committed. `common.selftest`, `sh4.core`, `aica.dsp.capi` and
+`aica.dsp.wasm` are lists of checks that all have to hold, `aica.dsp.wasm.emsdk` and `aica.dsp.wasm.noemcc` are
+what the build script returns and prints.
 
 More about the suites:
 
