@@ -12,7 +12,7 @@
 	  fields      a state with bits in its fields that their registers do not have: the CPU's reads, the sends, the
 	              steps and RunSample do what they do on the state with every field cut to its bits
 	  helpers     decode and encode, the float format at its corners, the view of a step, a core without wave RAM
-	  shifter, rules, mixs
+	  shifter, address, ring, rules, mixs
 	              the known-answer programs (dsp_known.cpp)
 */
 #include "dsp_known.h"

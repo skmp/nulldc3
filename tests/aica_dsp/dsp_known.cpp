@@ -7,6 +7,8 @@
 	                       and its B is TEMP. The CPU writes TEMP
 	  ACC - TEMP           a row with BSEL and YSEL 1 on a COEF of -4096: X * Y / 4096 is -TEMP exactly
 	  ACC out              the row behind it shifts it: TWT puts SHIFTED into TEMP, which the CPU reads
+	  a word to the RAM    MWT with NOFL writes SHIFTED[23:8]
+	  a word from the RAM  MRD with NOFL in an odd step, IWT two steps on: MEMS has the word << 8, the CPU reads it
 */
 #include "dsp_known.h"
 #include "hw/aica/dsp_core/wasm/aica_dsp_capi.h"
@@ -260,6 +262,235 @@ static void known_shifter()
 	}
 
 	check(m->Get(AICA_DSP_REG_MDEC_CT) == 0xFFFF, "MDEC_CT counts down through 0");
+}
+
+
+/*
+	The byte of the wave RAM that a memory step has. In words:
+
+	  TABLE 1   (MADRS + ADRS_REG + NXADR) mod 64K, MDEC_CT and RBL do not count
+	  TABLE 0   (MADRS + ADRS_REG + NXADR + MDEC_CT) mod the ring's 8K << RBL
+
+	ADRS_REG is a signed 12 bit number. The byte is RBP * 2048 + 2 * the word, in the wave RAM as large as it is:
+	RBP is 12 bit and reaches 8 MB, a ring near the top goes on behind it. `at` is that byte in a wave RAM of 2, 4, 8
+	and 16 MB.
+*/
+enum
+{
+	ADRS_NONE = 0,		//the row has no ADREB
+	ADRS_SHIFTED = 1,	//ADRL with SHIFT 3: ADRS_REG = SHIFTED[23:12]
+	ADRS_INPUTS = 2,	//ADRL: ADRS_REG = INPUTS[23:16], 8 bit sign extended
+};
+
+static const struct Address
+{
+	const char* what;
+	uint32_t rbp, rbl, table, madrs;
+	int how, adrs;
+	uint32_t nxadr, ct;
+	uint32_t at[4];
+}
+addresses[] =
+{
+	//TABLE, with the ring at 0x020000 and 8K words long
+	{ "TABLE: word 0", 0x040, 0, 1, 0x0000, ADRS_NONE, 0, 0, 0x1234, { 0x020000, 0x020000, 0x020000, 0x020000 } },
+	{ "TABLE: word 0xFFFF", 0x040, 0, 1, 0xFFFF, ADRS_NONE, 0, 0, 0x1234, { 0x03FFFE, 0x03FFFE, 0x03FFFE, 0x03FFFE } },
+	{ "TABLE: 0xFFFF + NXADR is word 0", 0x040, 0, 1, 0xFFFF, ADRS_NONE, 0, 1, 0x1234, { 0x020000, 0x020000, 0x020000, 0x020000 } },
+	{ "TABLE: 0xFFC0 + ADRS_REG 0x7F is word 0x003F", 0x040, 0, 1, 0xFFC0, ADRS_INPUTS, 0x7F, 0, 0x1234, { 0x02007E, 0x02007E, 0x02007E, 0x02007E } },
+	{ "TABLE: 0xF801 + ADRS_REG 0x7FF is word 0", 0x040, 0, 1, 0xF801, ADRS_SHIFTED, 0x7FF, 0, 0x1234, { 0x020000, 0x020000, 0x020000, 0x020000 } },
+	{ "TABLE: 1 + ADRS_REG -2 is word 0xFFFF", 0x040, 0, 1, 0x0001, ADRS_INPUTS, -2, 0, 0x1234, { 0x03FFFE, 0x03FFFE, 0x03FFFE, 0x03FFFE } },
+	{ "TABLE: 0x07FF + ADRS_REG -0x800 is word 0xFFFF", 0x040, 0, 1, 0x07FF, ADRS_SHIFTED, -0x800, 0, 0x1234, { 0x03FFFE, 0x03FFFE, 0x03FFFE, 0x03FFFE } },
+	{ "TABLE: 0x10 + ADRS_REG -2 + NXADR is word 0x000F", 0x040, 0, 1, 0x0010, ADRS_INPUTS, -2, 1, 0x1234, { 0x02001E, 0x02001E, 0x02001E, 0x02001E } },
+	{ "TABLE: word 0x8000 with a ring of 8K", 0x000, 0, 1, 0x8000, ADRS_NONE, 0, 0, 0x1234, { 0x010000, 0x010000, 0x010000, 0x010000 } },
+
+	//the ring, at 0x000800
+	{ "ring of 8K: its last word", 0x001, 0, 0, 0x1FFF, ADRS_NONE, 0, 0, 0x0000, { 0x0047FE, 0x0047FE, 0x0047FE, 0x0047FE } },
+	{ "ring of 8K: behind its last word is word 0", 0x001, 0, 0, 0x1FFF, ADRS_NONE, 0, 1, 0x0000, { 0x000800, 0x000800, 0x000800, 0x000800 } },
+	{ "ring of 8K: MDEC_CT 0xFFFF is its last word", 0x001, 0, 0, 0x0000, ADRS_NONE, 0, 0, 0xFFFF, { 0x0047FE, 0x0047FE, 0x0047FE, 0x0047FE } },
+	{ "ring of 16K: MDEC_CT 0xFFFF is its last word", 0x001, 1, 0, 0x0000, ADRS_NONE, 0, 0, 0xFFFF, { 0x0087FE, 0x0087FE, 0x0087FE, 0x0087FE } },
+	{ "ring of 32K: MDEC_CT 0xFFFF is its last word", 0x001, 2, 0, 0x0000, ADRS_NONE, 0, 0, 0xFFFF, { 0x0107FE, 0x0107FE, 0x0107FE, 0x0107FE } },
+	{ "ring of 64K: MDEC_CT 0xFFFF is its last word", 0x001, 3, 0, 0x0000, ADRS_NONE, 0, 0, 0xFFFF, { 0x0207FE, 0x0207FE, 0x0207FE, 0x0207FE } },
+	{ "ring of 64K: 0x9000 + MDEC_CT 0x9000 is word 0x2000", 0x001, 3, 0, 0x9000, ADRS_NONE, 0, 0, 0x9000, { 0x004800, 0x004800, 0x004800, 0x004800 } },
+	{ "ring of 16K: 0x4005 + ADRS_REG -2 + MDEC_CT 3 is word 6", 0x001, 1, 0, 0x4005, ADRS_INPUTS, -2, 0, 0x0003, { 0x00080C, 0x00080C, 0x00080C, 0x00080C } },
+
+	//RBP, and the end of the wave RAM
+	{ "RBP 0x3FF: the last word of 2 MB", 0x3FF, 0, 0, 0x03FF, ADRS_NONE, 0, 0, 0x0000, { 0x1FFFFE, 0x1FFFFE, 0x1FFFFE, 0x1FFFFE } },
+	{ "RBP 0x3FF: the ring goes on behind 2 MB", 0x3FF, 0, 0, 0x03FF, ADRS_NONE, 0, 1, 0x0000, { 0x000000, 0x200000, 0x200000, 0x200000 } },
+	{ "RBP 0x7FF: the ring goes on behind 4 MB", 0x7FF, 2, 0, 0x7FFF, ADRS_NONE, 0, 1, 0x0400, { 0x000000, 0x000000, 0x400000, 0x400000 } },
+	{ "RBP 0x800: the ring at 4 MB", 0x800, 3, 0, 0x8000, ADRS_NONE, 0, 0, 0x8001, { 0x000002, 0x000002, 0x400002, 0x400002 } },
+	{ "RBP 0xBFF: a ring of 16K at 0x5FF800", 0xBFF, 1, 0, 0x0000, ADRS_NONE, 0, 0, 0xFFFF, { 0x0077FE, 0x2077FE, 0x6077FE, 0x6077FE } },
+	{ "RBP 0xC80: TABLE at 0x640000", 0xC80, 0, 1, 0x0123, ADRS_NONE, 0, 0, 0x4321, { 0x040246, 0x240246, 0x640246, 0x640246 } },
+	{ "RBP 0xFFF: the last word of 8 MB", 0xFFF, 3, 0, 0x03FF, ADRS_NONE, 0, 0, 0x0000, { 0x1FFFFE, 0x3FFFFE, 0x7FFFFE, 0x7FFFFE } },
+	{ "RBP 0xFFF: TABLE 0x400 + ADRS_REG -1, the same word", 0xFFF, 0, 1, 0x0400, ADRS_INPUTS, -1, 0, 0x0000, { 0x1FFFFE, 0x3FFFFE, 0x7FFFFE, 0x7FFFFE } },
+	{ "RBP 0xFFF: the ring goes on behind 8 MB", 0xFFF, 3, 0, 0x03FF, ADRS_NONE, 0, 1, 0x0000, { 0x000000, 0x000000, 0x000000, 0x800000 } },
+	{ "RBP 0xFFF: the last word of a ring of 64K", 0xFFF, 3, 0, 0xFFFE, ADRS_NONE, 0, 0, 0x0001, { 0x01F7FE, 0x01F7FE, 0x01F7FE, 0x81F7FE } },
+	{ "RBP 0xFFF: the last word of TABLE", 0xFFF, 0, 1, 0xFFFF, ADRS_NONE, 0, 0, 0x0000, { 0x01F7FE, 0x01F7FE, 0x01F7FE, 0x81F7FE } },
+};
+
+#define KNOWN_WRITTEN 0xA5C3u		//the word the MWT writes
+#define KNOWN_PLANTED 0x5A17u		//the word that is where the MRD has to read
+
+static void known_address(int size_index)
+{
+	const uint32_t ram_size = (2u << 20) << size_index;
+	const uint32_t megabytes = ram_size >> 20;
+
+	create(ram_size);
+
+	//rows 1 to 3 load ADRS_REG and leave the word to write in ACC, row 4 writes, row 5 reads, row 7 stores what was
+	//read in MEMS[2]. TEMP[10] is what ADRS_REG is shifted out of, TEMP[11] the word to write, MEMS[1] the input
+	//with ADRS_REG in bits 23:16
+	temp_write(11, (int32_t)(KNOWN_WRITTEN << 8));
+
+	for (const Address& a : addresses)
+	{
+		const uint32_t at = a.at[size_index];
+		const uint8_t to_adrs = (uint8_t)((10 - a.ct) & 127), to_word = (uint8_t)((11 - a.ct) & 127);
+		AicaDspInst inst;
+
+		m->RegWrite(0x2804, a.rbp | (a.rbl << 13));
+		m->RegWrite(0x3200 + 4 * 3, a.madrs);
+		temp_write(10, a.how == ADRS_SHIFTED ? a.adrs * 4096 : 0);
+		m->RegWrite(0x4404 + 8 * 1, a.how == ADRS_INPUTS ? ((uint32_t)a.adrs & 0xFF) << 8 : 0);
+
+		inst = nop();
+		inst.TRA = to_adrs;
+		put(1, inst);
+
+		inst = nop();
+		inst.TRA = to_word;
+		inst.IRA = 1;
+		inst.ADRL = a.how != ADRS_NONE;
+		inst.SHIFT = a.how == ADRS_SHIFTED ? 3 : 0;
+		put(2, inst);
+
+		inst.ADRL = 0;
+		inst.SHIFT = 0;
+		put(3, inst);
+
+		AicaDspInst access = nop();
+
+		access.TRA = to_word;
+		access.NOFL = 1;
+		access.TABLE = (uint8_t)a.table;
+		access.MASA = 3;
+		access.ADREB = a.how != ADRS_NONE;
+		access.NXADR = (uint8_t)a.nxadr;
+
+		inst = access;
+		inst.MWT = 1;
+		put(4, inst);
+		put(5, nop());
+		put(7, nop());
+
+		m->Set(AICA_DSP_REG_MDEC_CT, a.ct);
+		sample();
+
+		check(m->RamRead(at) == KNOWN_WRITTEN && m->RamUsed() == 2, "%u MB, %s: MWT writes byte %06x, and no other", megabytes, a.what, at);
+		m->RamWrite(at, 0);
+
+		//the word to read, and other words where an address that is cut short, or not cut, would read
+		const uint32_t others[5] = { at ^ 0x200000, at ^ 0x400000, at ^ 0x800000, (at + 0x20000) & (ram_size - 1), (at - 0x20000) & (ram_size - 1) };
+
+		for (uint32_t other : others)
+		{
+			if (other < ram_size)
+				m->RamWrite(other, 0xD0C0);
+		}
+
+		m->RamWrite(at, KNOWN_PLANTED);
+
+		put(4, nop());
+		inst = access;
+		inst.MRD = 1;
+		put(5, inst);
+
+		inst = nop();
+		inst.IWT = 1;
+		inst.IWA = 2;
+		put(7, inst);
+
+		m->Set(AICA_DSP_REG_MDEC_CT, a.ct);
+		sample();
+
+		check(mems_read(2) == KNOWN_PLANTED << 8, "%u MB, %s: MRD reads byte %06x", megabytes, a.what, at);
+
+		for (uint32_t other : others)
+		{
+			if (other < ram_size)
+				m->RamWrite(other, 0);
+		}
+
+		m->RamWrite(at, 0);
+	}
+
+	check(m->RamUsed() == 0, "%u MB: no step has written anything else", megabytes);
+}
+
+
+/*
+	The ring as what it is for, a delay. The program writes a word at MADRS[0] and reads at MADRS[1] = MADRS[0] + 1 and
+	at MADRS[2] = MADRS[0] + 2. MDEC_CT counts down once a sample, so the word a sample writes is the one the next
+	sample reads at MADRS[1] and the one after that at MADRS[2].
+*/
+static void known_ring()
+{
+	m->Group("ring");
+	create(2u << 20);
+
+	//a ring of 8K words at byte 0x8000
+	m->RegWrite(0x2804, 0x010);
+	m->RegWrite(0x3200 + 4 * 0, 0x0100);
+	m->RegWrite(0x3200 + 4 * 1, 0x0101);
+	m->RegWrite(0x3200 + 4 * 2, 0x0102);
+
+	//the row in front of the write leaves TEMP[MDEC_CT] in ACC: the four samples write these, with MDEC_CT 2, 1, 0
+	//and 0xFFFF
+	static const uint32_t words[4] = { 0x1110, 0x2220, 0x3330, 0x4440 };
+
+	temp_write(2, (int32_t)(words[0] << 8));
+	temp_write(1, (int32_t)(words[1] << 8));
+	temp_write(0, (int32_t)(words[2] << 8));
+	temp_write(127, (int32_t)(words[3] << 8));
+
+	AicaDspInst inst = nop();
+
+	inst.MWT = 1;
+	inst.NOFL = 1;
+	inst.MASA = 0;
+	put(4, inst);
+
+	inst = nop();
+	inst.MRD = 1;
+	inst.NOFL = 1;
+	inst.MASA = 1;
+	put(5, inst);
+	inst.MASA = 2;
+	put(9, inst);
+
+	inst = nop();
+	inst.IWT = 1;
+	inst.IWA = 2;
+	put(7, inst);
+	inst.IWA = 3;
+	put(11, inst);
+
+	m->Set(AICA_DSP_REG_MDEC_CT, 2);
+
+	//what the two reads of each sample return: the words of the sample before and of the one before that
+	static const uint32_t one_back[4] = { 0, 0x1110, 0x2220, 0x3330 }, two_back[4] = { 0, 0, 0x1110, 0x2220 };
+
+	for (int n = 0; n < 4; n++)
+	{
+		sample();
+		check(mems_read(2) == one_back[n] << 8, "sample %d reads at MADRS + 1 what the sample before wrote at MADRS", n);
+		check(mems_read(3) == two_back[n] << 8, "sample %d reads at MADRS + 2 what the sample two before wrote", n);
+	}
+
+	//with MDEC_CT 2, 1, 0 and 0xFFFF the writes went to words 0x102, 0x101, 0x100 and 0x0FF of the ring
+	check(m->RamRead(0x8204) == 0x1110 && m->RamRead(0x8202) == 0x2220 && m->RamRead(0x8200) == 0x3330 && m->RamRead(0x81FE) == 0x4440
+		&& m->RamUsed() == 8, "the four words are one word apart, downwards, and nothing else is written");
+	check(m->Get(AICA_DSP_REG_MDEC_CT) == 0xFFFE, "MDEC_CT is 16 bit and goes on below 0");
 }
 
 
@@ -614,6 +845,12 @@ void dsp_known_answers(KnownMachine& machine)
 
 		known_shifter();
 
+		m->Group("address");
+
+		for (int size_index = 0; size_index < 4; size_index++)
+			known_address(size_index);
+
+		known_ring();
 		known_rules();
 		known_mixs();
 	}

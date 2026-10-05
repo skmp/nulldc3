@@ -7,6 +7,10 @@
 
 	  shifter   the four shifter modes on ACC inside 24 bit, at the ends of 24 bit, beyond them and at the ends
 	            of 26 bit: what is twice the value, what saturates and at which number, what is cut
+	  address   the byte of the wave RAM that an MWT writes and an MRD reads: TABLE and its wrap at 64K words,
+	            every ring size, MDEC_CT, ADRS_REG, NXADR, RBP, on a wave RAM of 2, 4, 8 and 16 MB, up to the
+	            last word of each and with the ring across its end
+	  ring      a word written to the ring comes back one MADRS further in the next sample
 	  rules     the read latch, the distances from MRD to IWT, a channel in the slot, NOFL of IWT, EFREG, MDEC_CT
 	  mixs      the sends of a sweep, the two banks, the late sends, the CPU's bank
 
