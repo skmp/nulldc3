@@ -266,6 +266,8 @@ enum Area0Hanlders {
 	A0H_MAX
 };
 
+struct SuperH4Backend;
+
 struct SuperH4 {
 	VLockedMemory mram;
 	VLockedMemory vram;
@@ -281,6 +283,16 @@ struct SuperH4 {
 	}
 
     virtual bool setBackend(SuperH4Backends backend) = 0;
+
+    // The backend object Run() drives: the one the last setBackend() installed. Init() installs the interpreter
+    // and every emulator thread start installs the configured one, so the pointer is never kept across a thread
+    // start. Null before Init() and after Term(), and from a SuperH4 that does not give its backend out (the
+    // default): a caller takes null as a backend without capabilities.
+    // For the debugger (run control: DebugCaps, Step, SliceCyclesLeft; the SH4 breakpoint state:
+    // DebugDiscardPage, DebugDiscardFlow) and for the sound regression harness (DebugCaps); it is there in builds
+    // without the debugger as well. Emulator thread, or the thread that holds the debugger's lifetime lock while
+    // no emulator thread exists.
+    virtual SuperH4Backend* DebugBackend() { return nullptr; }
 
     virtual bool Init() = 0;
     virtual void Reset(bool Manual) = 0;

@@ -312,8 +312,8 @@ void OnElfLoaded(const void* image, size_t size);
 	decoder asks dbg_sh4_WantsCheck for every instruction it decodes that is not a delay slot and emits a
 	check where it says so; an interpreter-type loop asks in front of every instruction it executes.
 	The armed set changes only in the park context, or under L while no emulator thread exists: never while a
-	block is decoded or executing. Each change discards the compiled blocks of the address's page through
-	SuperH4Backend::DebugDiscardPage (hw/sh4/sh4_if.h).
+	block is decoded or executing. Each change made on (E) discards the compiled blocks of the address's page
+	through SuperH4Backend::DebugDiscardPage of the active backend, sh4_cpu->DebugBackend() (hw/sh4/sh4_if.h).
 */
 
 // Number of armed addresses. Zero keeps the query to one load and a branch.

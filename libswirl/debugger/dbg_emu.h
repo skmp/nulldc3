@@ -325,7 +325,8 @@ void LatchStop(StopCause cause, u32 breakpointId);
 void OnEvent(EventId id);
 
 /*
-	The SH4 engine, for dc.timing, describe.capabilities and the notices.
+	The SH4 engine, for dc.timing, describe.capabilities and the notices. The active backend is
+	sh4_cpu->DebugBackend() (hw/sh4/sh4_if.h).
 */
 struct Sh4EngineInfo {
 	const char* backend;	// "interpreter", "x64", "arm64", "arm32", "x86", "cpp": constant string

@@ -28,9 +28,9 @@
 
 	Unless a function says otherwise it is called on (E) in the park context only (park loop or service
 	excursion: no block is executing, none is on the host stack), never blocks, and never from the slice hook.
-	Changes of the armed set made on (E) discard compiled blocks through the active backend
-	(SuperH4Backend::DebugDiscardPage / DebugDiscardFlow); under L without an emulator thread only the set
-	changes, because every thread start builds a fresh code cache.
+	Changes of the armed set made on (E) discard compiled blocks through sh4_cpu->DebugBackend()
+	(SuperH4Backend::DebugDiscardPage / DebugDiscardFlow, hw/sh4/sh4_if.h); under L without an emulator thread
+	only the set changes, because every thread start builds a fresh code cache.
 */
 
 namespace dbg { namespace sh4 {
