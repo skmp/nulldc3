@@ -160,15 +160,13 @@ its delay slot passes all of them as well. The same file has BT/S and BF/S, take
 taken, with `clrt` or `sett` in the delay slot (12 vectors).
 
 `add r1,r1` leaves PR as it is as well, and moves a jump through a register only when that register is r1. A
-delayed jump or call takes where it goes, and a call writes PR, in front of its delay slot. The file has (9
+delayed jump or call takes where it goes, and a call writes PR, in front of its delay slot. The file has (12
 vectors)
 
 * RTS with `lds r4,pr` in the delay slot: it returns to the PR it is entered with,
 * JMP @r3, BRAF r3 and BSRF r3 with `mov r4,r3` in the delay slot: they go by the r3 they are entered with,
-* JSR @r3, BSR and BSRF r3 with `sts pr,r5` in the delay slot: r5 gets the return address of the call.
-
-The interpreter does not pass the last three: it writes PR behind the delay slot. The dynarec passes them, and
-the differential has the difference; `sh4_dynarec/KNOWN_DIFFERENCES.md` has more on it.
+* JSR @r3, BSR and BSRF r3 with `sts pr,r5` in the delay slot: r5 gets the return address of the call,
+* JSR @r3, BSR and BSRF r3 with `lds r4,pr` in the delay slot: PR is left with what the delay slot loads.
 
 All but one of the single-step vectors of LDS Rm,FPSCR and LDS.L @Rm+,FPSCR that can be run load a value with
 bits that FPSCR does not have, and expect them stored (`fpscr-bits`). The file has the loads instead (13 vectors):

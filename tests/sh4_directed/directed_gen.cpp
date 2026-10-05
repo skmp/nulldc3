@@ -424,7 +424,8 @@ static const Branch branches[] =
 
 //// Delayed jumps and calls: where it goes is taken, and PR is written, in front of the delay slot (PR = PC + 4,
 //// PC = ... and then Delay_Slot() in the manual's descriptions). A delay slot that loads the register the
-//// jump goes through, or PR, does not move it, and one that stores PR behind a call stores the return address.
+//// jump goes through, or PR, does not move it, one that stores PR behind a call stores the return address, and
+//// one that loads PR behind a call leaves what it loads.
 //// The instruction is at PC_BASE + 2 and goes through r3, the delay slot loads from r4 or stores to r5
 
 struct Jump
@@ -463,6 +464,11 @@ static const Jump jumps[] =
 	{ "0100mmmm00001011_sz0_pr0", 0x430B, OP_STS_PR_R5, JUMP_R3,     JUMP_R3,                   JUMP_R3,     JUMP_RETURN, JUMP_RETURN },
 	{ "1011dddddddddddd_sz0_pr0", 0xB010, OP_STS_PR_R5, JUMP_R3,     JUMP_RETURN + 0x10 * 2,    JUMP_R3,     JUMP_RETURN, JUMP_RETURN },
 	{ "0000mmmm00000011_sz0_pr0", 0x0303, OP_STS_PR_R5, JUMP_OFFSET, JUMP_RETURN + JUMP_OFFSET, JUMP_OFFSET, JUMP_RETURN, JUMP_RETURN },
+
+	//and a delay slot that loads PR is the later write of the two
+	{ "0100mmmm00001011_sz0_pr0", 0x430B, OP_LDS_R4_PR, JUMP_R3,     JUMP_R3,                   JUMP_R3,     JUMP_R5,     JUMP_R4 },
+	{ "1011dddddddddddd_sz0_pr0", 0xB010, OP_LDS_R4_PR, JUMP_R3,     JUMP_RETURN + 0x10 * 2,    JUMP_R3,     JUMP_R5,     JUMP_R4 },
+	{ "0000mmmm00000011_sz0_pr0", 0x0303, OP_LDS_R4_PR, JUMP_OFFSET, JUMP_RETURN + JUMP_OFFSET, JUMP_OFFSET, JUMP_R5,     JUMP_R4 },
 };
 
 //// LDS Rm,FPSCR and LDS.L @Rm+,FPSCR: FPSCR has 22 bits (FR SZ PR DN, cause, enable, flag, RM), the 10 above them

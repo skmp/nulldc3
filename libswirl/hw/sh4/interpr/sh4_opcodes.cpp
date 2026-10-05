@@ -889,14 +889,14 @@ sh4op(i0000_nnnn_0010_0011)
 //bsrf <REG_N>
 sh4op(i0000_nnnn_0000_0011)
 {
-	//TODO: Check pr setting vs real h/w
 	u32 n = GetN(op);
 	u32 newpc = r[n] + next_pc +2;
-	u32 newpr = next_pc + 2;
-	
+
+	//SH7091: PR is written before the delay slot
+	pr = next_pc + 2;
+
 	ExecuteDelayslot(); //WARN : pr and r[n] can change here
-	
-	pr = newpr;
+
 	next_pc = newpc;
 }
 
@@ -996,12 +996,13 @@ sh4op(i1010_iiii_iiii_iiii)
 // bsr <bdisp12>
 sh4op(i1011_iiii_iiii_iiii)
 {
-	//TODO: check pr vs real h/w
-	u32 newpr = next_pc + 2; //return after delayslot
 	u32 newpc = branch_target_s12(op);
-	ExecuteDelayslot();
 
-	pr = newpr;
+	//SH7091: PR is written before the delay slot
+	pr = next_pc + 2; //return after delayslot
+
+	ExecuteDelayslot(); //WARN : pr can change here
+
 	next_pc=newpc;
 }
 
@@ -1030,12 +1031,13 @@ sh4op(i0100_nnnn_0000_1011)
 {
 	u32 n = GetN(op);
 
-	//TODO: check pr vs real h/w
-	u32 newpr = next_pc + 2;   //return after delayslot
 	u32 newpc= r[n];
+
+	//SH7091: PR is written before the delay slot
+	pr = next_pc + 2;   //return after delayslot
+
 	ExecuteDelayslot(); //r[n]/pr can change here
 
-	pr = newpr;
 	next_pc=newpc;
 }
 

@@ -106,30 +106,13 @@ else the dynarec does not pass, the interpreter does not pass either (`tests/com
 
 ## sh4.directed.*
 
-The hand-written vectors of `tests/sh4_directed` (210 in 28 files). What they expect is the SH-4 software manual's
-description of the instruction. The dynarec passes all of them, the interpreter all but three, and those three are
-what `sh4.directed.differential` finds:
+The hand-written vectors of `tests/sh4_directed` (213 in 28 files). What they expect is the SH-4 software manual's
+description of the instruction. Both engines pass all of them, and `sh4.directed.differential` finds no difference.
 
-| file | instruction | delay slot | kind | vectors | cause |
-|---|---|---|---|---|---|
-| `0100mmmm00001011` | JSR @R3 | STS PR,R5 | state | 1 | PR is written behind the delay slot |
-| `1011dddddddddddd` | BSR disp | STS PR,R5 | state | 1 | PR is written behind the delay slot |
-| `0000mmmm00000011` | BSRF R3 | STS PR,R5 | state | 1 | PR is written behind the delay slot |
-
-**BSR, BSRF and JSR, PR and the delay slot.** The manual's descriptions of the three write PR and then run the delay
-slot (`PR = PC + 4; PC = ...; Delay_Slot(temp + 2);`), so an instruction in the delay slot that reads PR reads the
-return address of the call. The interpreter's handlers (`hw/sh4/interpr/sh4_opcodes.cpp`, each with a TODO to check
-PR against real hardware) compute the return address, call `ExecuteDelayslot()` and write PR after it: `sts pr,r5`
-in the delay slot leaves the PR of before the call in R5 (8C0F6000 in the vectors, the return address is 8C010006).
-The dynarec's decoder emits the write of PR in front of the delay slot (`dec_set_pr`, `hw/sh4/dyna/decoder.cpp`)
-and passes the three vectors. Nothing else differs in them: the target of the call and the PR that is left are
-right in both. The 500 single-step vectors of each of the three files do not see it, their delay slot is
-`add r1,r1`. By the same code a delay slot that loads PR (`lds`, `lds.l`) loses what it loads in the interpreter;
-no vector has such a delay slot.
-
-The other directed delay slots pass in both engines: RTS returns to the PR it is entered with (`lds r4,pr` in the
-delay slot), JMP, BRAF and BSRF go by the register they are entered with (`mov r4,r3` in the delay slot of a jump
-through R3), BT/S and BF/S test the T they are entered with.
+The delay slots: BSR, BSRF and JSR write PR in front of the delay slot (`sts pr,r5` in it reads the return address
+of the call, `lds r4,pr` in it is the later write and stays), RTS returns to the PR it is entered with (`lds r4,pr`
+in the delay slot), JMP, BRAF and BSRF go by the register they are entered with (`mov r4,r3` in the delay slot of a
+jump through R3), BT/S and BF/S test the T they are entered with.
 
 ## Not measured on a console
 

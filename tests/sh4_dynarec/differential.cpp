@@ -93,18 +93,10 @@ static const char known_ftrc_nan[] =
 	"FTRC of a NaN with the sign bit clear: 7FFFFFFF in the interpreter (it corrects the host's 80000000 by the sign bit "
 	"of the operand), 80000000 in the x64 backend (cvttss2si as it is)";
 
-static const char known_pr_behind_slot[] =
-	"BSR, BSRF and JSR with a delay slot that reads PR (sts pr,r5 in the directed vectors): the interpreter writes PR "
-	"behind the delay slot, which reads the PR of before the call. The dynarec writes it in front of the delay slot, as "
-	"an SH4 does";
-
 static const DiffKnown known[] =
 {
 	{ 0, SSP_FPU, DK_NOTIFY, known_fd },
 	{ "0000000000101011_sz0_pr0", 0, DK_STATE, known_rte },
-	{ "0000mmmm00000011_sz0_pr0", 0, DK_STATE, known_pr_behind_slot },
-	{ "0100mmmm00001011_sz0_pr0", 0, DK_STATE, known_pr_behind_slot },
-	{ "1011dddddddddddd_sz0_pr0", 0, DK_STATE, known_pr_behind_slot },
 	{ "1111nn0111111101_sz0_pr0", 0, DK_STATE, known_sum_order },
 	{ "1111nnmm11101101_sz0_pr0", 0, DK_STATE, known_sum_order },
 	{ "1111mmmm00111101_sz0_pr0", 0, DK_STATE, known_ftrc_nan },
