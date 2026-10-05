@@ -161,7 +161,14 @@ namespace
 
 		// the oscillator of the channel that plays, after every tick
 		std::vector<u8> phases;
+
+		// what the debugger shows of every channel at the end, shown_fields of each
+		std::vector<u32> shown;
 	};
+
+	const char* const shown_fields[] = { "enabled", "looped", "aegState", "fegState", "aegLevel", "fegValue", "ca", "caFraction", "step",
+		"sampleCurrent", "samplePrevious", "lfoState", "alfo", "plfo" };
+	const size_t shown_field_count = sizeof(shown_fields) / sizeof(shown_fields[0]);
 
 	// Creates a generator in memory filled with one byte, on a machine that is empty otherwise, starts one
 	// channel and plays
@@ -220,6 +227,18 @@ namespace
 		played.regs.insert(played.regs.end(), aica_reg, aica_reg + sizeof(aica_reg));
 		played.samples = sink.samples;
 
+		for (u32 channel = 0; channel < 64; channel++)
+		{
+			AicaChannelDebug shown = {};
+			sgc->DebugGetChannel(channel, &shown);
+
+			const u32 fields[] = { shown.enabled, shown.looped, shown.aegState, shown.fegState, shown.aegLevel, shown.fegValue, shown.ca, shown.caFraction,
+				shown.step, (u32)shown.sampleCurrent, (u32)shown.samplePrevious, shown.lfoState, shown.alfo, shown.plfo };
+			static_assert(sizeof(fields) / sizeof(fields[0]) == shown_field_count, "one name for every field");
+
+			played.shown.insert(played.shown.end(), fields, fields + shown_field_count);
+		}
+
 		delete sgc;
 		return played;
 	}
@@ -263,6 +282,11 @@ namespace
 			at = FirstDifference(played.phases, reference.phases);
 			Check(played.phases == reference.phases, "%s: the oscillator of a generator created in memory of %02X runs as that of one created in memory of 00: after tick %zu it is at %02X, not %02X",
 				name, fill, at, at < played.phases.size() ? played.phases[at] : 0, at < reference.phases.size() ? reference.phases[at] : 0);
+
+			at = FirstDifference(played.shown, reference.shown);
+			Check(played.shown == reference.shown, "%s: the debugger is shown the same channels of a generator created in memory of %02X: %s of channel %zu is %08X, not %08X",
+				name, fill, shown_fields[at % shown_field_count], at / shown_field_count,
+				at < played.shown.size() ? played.shown[at] : 0, at < reference.shown.size() ? reference.shown[at] : 0);
 		}
 	}
 
@@ -295,9 +319,9 @@ namespace
 		allocated = alloc_bytes - allocated;
 		Check(allocated >= 64 * 64, "the generator and its 64 channels come from the operator new that fills: %zu bytes", allocated);
 
-		// no channel was keyed on: none has passed a loop end, none has a play position, and the oscillator
-		// and the filter envelope of each stand at 0. The debugger's reads come first, a guest read clears
-		// the loop flag
+		// no channel was keyed on: none has passed a loop end, none has a play position or a sample, and the
+		// oscillator and the filter envelope of each stand at 0. The debugger's reads come first, a guest read
+		// clears the loop flag
 		for (u32 channel = 0; channel < 64; channel++)
 		{
 			AicaChannelDebug shown = {};
@@ -308,6 +332,9 @@ namespace
 			shown.lfoState = 0xFF;
 			shown.fegValue = 0xFFFFFFFF;
 			shown.ca = 0xFFFFFFFF;
+			shown.caFraction = 0xFFFFFFFF;
+			shown.sampleCurrent = -1;
+			shown.samplePrevious = -1;
 			SelectChannel(channel);
 
 			bool ok = sgc->DebugGetChannel(channel, &shown) && sgc->DebugReadCommonReg(0x2810, &status) && sgc->DebugReadCommonReg(0x2814, &position);
@@ -322,6 +349,9 @@ namespace
 			Check(ok && shown.ca == 0 && position == 0 && GuestReadsPlayPosition(sgc) == 0,
 				"channel %u was never keyed on: the debugger shows the play position %08X and CA %04X, the guest reads CA %04X",
 				channel, shown.ca, position, GuestReadsPlayPosition(sgc));
+			Check(ok && shown.caFraction == 0 && shown.sampleCurrent == 0 && shown.samplePrevious == 0,
+				"channel %u was never keyed on: the debugger shows the fraction %X of its play position and the samples %d and %d",
+				channel, shown.caFraction, shown.samplePrevious, shown.sampleCurrent);
 		}
 
 		// The flag is a byte of the save state and one bit to the guest. The byte stands behind the loop

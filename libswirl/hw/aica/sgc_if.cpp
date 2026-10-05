@@ -392,6 +392,12 @@ struct ChannelEx
 		CA=0;
 		FEG.value=0;
 
+		//written at key on and read by the channel after it. Until then the debugger shows them: the fraction of
+		//the play position and the two decoded samples
+		step.full=0;
+		s0=0;
+		s1=0;
+
 		for (u32 i=0;i<0x80;i++)
 			RegWrite(i);
 		disable();
