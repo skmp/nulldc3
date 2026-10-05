@@ -32,7 +32,7 @@ way.
 | `sh4.singlestep.interp` | every single-step vector through the SH4 interpreter, gated on `sh4_singlestep/baseline.txt` | `vendor/sh4-tests` |
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
-| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges) | none |
+| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes T) | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | ADC, SBC and RSC at the edges with the carry clear and set, hand-written results | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
@@ -137,8 +137,14 @@ The single-step vectors are random. None of the 500 ADDC vectors has a sum of 0x
 that loses the carry of adding T passes all of them. `sh4_directed/directed_gen.cpp` has hand-written vectors for
 the instructions that take or leave a carry, a borrow or an overflow in T and for the compares: ADDC, SUBC, NEGC,
 ADDV, SUBV, ROTCL, ROTCR, DT, DIV1 and the CMP instructions, on 0, 0xFFFFFFFF, 0x7FFFFFFF and 0x80000000 with T
-clear and set (176 vectors). What an instruction leaves is written down from its definition in the SH-4 software
-manual, nothing of it comes from an emulator.
+clear and set (176 vectors).
+
+Every delay slot of the single-step vectors is `add r1,r1`, which leaves T as it is, so a BT/S that tests T behind
+its delay slot passes all of them as well. The same file has BT/S and BF/S, taken (forwards and backwards) and not
+taken, with `clrt` or `sett` in the delay slot (12 vectors).
+
+What an instruction leaves is written down from its definition in the SH-4 software manual, nothing of it comes
+from an emulator.
 
 The build writes them into `<build dir>/sh4_directed/vectors` in the format and under the file names of the
 single-step vectors, and `sh4.directed.interp`, `sh4.directed.dynarec` and `sh4.directed.differential` are the

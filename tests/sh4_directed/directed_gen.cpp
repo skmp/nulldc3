@@ -1,12 +1,13 @@
 /*
 	Directed SH4 vectors: the carry, borrow, overflow and compare instructions on operands at the edges (0,
-	0xFFFFFFFF, 0x7FFFFFFF, 0x80000000) with T clear and set. The single-step vectors are random and have none of
-	these: no ADDC whose sum is 0xFFFFFFFF with T set, for one.
+	0xFFFFFFFF, 0x7FFFFFFF, 0x80000000) with T clear and set, and the delayed conditional branches with a delay
+	slot that changes T. The single-step vectors are random and have none of these: no ADDC whose sum is
+	0xFFFFFFFF with T set, for one, and add r1,r1 in every delay slot, which leaves T as it is.
 
 	sh4_directed_gen <dir> writes vector files in the format of the single-step vectors and under their file
 	names (ss_format.h), so the suites run them as they run those and the policy table applies as it is. A vector
-	is nop / the instruction / nop / nop on a state that has a value of its own in every register. Nothing but
-	Rn, T, Q and PC may change.
+	is nop / the instruction / nop / nop on a state that has a value of its own in every register, and nop /
+	the branch / clrt or sett / nop for a branch. Nothing but Rn, T, Q and PC may change.
 
 	What an instruction leaves is written down by hand in the tables, from its definition in the SH-4 software
 	manual. Nothing of it comes from an emulator.
@@ -28,6 +29,8 @@
 #define PC_BASE 0x8C010000
 
 #define OP_NOP 0x0009
+#define OP_CLRT 0x0008
+#define OP_SETT 0x0018
 
 struct Case
 {
@@ -374,6 +377,43 @@ static const Group groups[] =
 	GROUP("0011nnnnmmmm0100_sz0_pr0", 0x3344, FORM_RM_RN, div1),		//div1 r4,r3
 };
 
+//// Delayed conditional branches: T is tested in front of the delay slot, what the delay slot leaves in T
+//// does not decide. The branch is the second instruction, at PC_BASE + 2
+
+struct Branch
+{
+	const char* file;
+	u16 opcode;			//with the displacement
+	u16 slot;			//the delay slot: OP_CLRT or OP_SETT
+	u32 flags;			//FT going in
+	u32 next;			//where the instruction behind the delay slot is run from
+	u32 flags_after;
+};
+
+#define BRANCH_TARGET (PC_BASE + 2 + 4 + 0x10 * 2)		//displacement 0x10: taken
+#define BRANCH_BACK (PC_BASE + 2 + 4 - 0x10 * 2)		//displacement 0xF0: taken, backwards
+#define BRANCH_NONE (PC_BASE + 6)						//not taken
+
+static const Branch branches[] =
+{
+	//bt/s: taken with T set
+	//file                        opcode  slot     in  next           after
+	{ "10001101dddddddd_sz0_pr0", 0x8D10, OP_CLRT, FT, BRANCH_TARGET, 0 },
+	{ "10001101dddddddd_sz0_pr0", 0x8D10, OP_SETT, 0,  BRANCH_NONE,   FT },
+	{ "10001101dddddddd_sz0_pr0", 0x8D10, OP_SETT, FT, BRANCH_TARGET, FT },
+	{ "10001101dddddddd_sz0_pr0", 0x8D10, OP_CLRT, 0,  BRANCH_NONE,   0 },
+	{ "10001101dddddddd_sz0_pr0", 0x8DF0, OP_CLRT, FT, BRANCH_BACK,   0 },
+	{ "10001101dddddddd_sz0_pr0", 0x8DF0, OP_SETT, 0,  BRANCH_NONE,   FT },
+
+	//bf/s: taken with T clear
+	{ "10001111dddddddd_sz0_pr0", 0x8F10, OP_SETT, 0,  BRANCH_TARGET, FT },
+	{ "10001111dddddddd_sz0_pr0", 0x8F10, OP_CLRT, FT, BRANCH_NONE,   0 },
+	{ "10001111dddddddd_sz0_pr0", 0x8F10, OP_CLRT, 0,  BRANCH_TARGET, 0 },
+	{ "10001111dddddddd_sz0_pr0", 0x8F10, OP_SETT, FT, BRANCH_NONE,   FT },
+	{ "10001111dddddddd_sz0_pr0", 0x8FF0, OP_SETT, 0,  BRANCH_BACK,   FT },
+	{ "10001111dddddddd_sz0_pr0", 0x8FF0, OP_CLRT, FT, BRANCH_NONE,   0 },
+};
+
 //Every register has a value that no other one has, so an instruction that touches the wrong one shows
 static void base_state(SsState& s)
 {
@@ -402,7 +442,8 @@ static void base_state(SsState& s)
 	s.FPUL = 0x55556666;
 }
 
-static void make_vector(const Group& g, const Case& c, SsTest& t)
+//The framing, the state going in and nops
+static void begin_vector(SsTest& t)
 {
 	memset(&t, 0, sizeof(t));
 
@@ -417,10 +458,34 @@ static void make_vector(const Group& g, const Case& c, SsTest& t)
 	t.opcodes.size = sizeof(SsOpcodesBlock);
 	t.opcodes.tag = 4;
 
+	base_state(t.initial.s);
+
+	for (u32 i = 0; i < 5; i++)
+		t.opcodes.op[i] = OP_NOP;
+}
+
+//The fetches: three instructions in a row and the 4th from last, PC ends behind that one
+static void end_vector(SsTest& t, u32 last)
+{
+	t.final_.s.PC = last + 2;
+
+	for (u32 i = 0; i < 4; i++)
+	{
+		u32 addr = i < 3 ? PC_BASE + i * 2 : last;
+		u32 offset = addr - PC_BASE;
+
+		t.cycles.c[i].actions = SS_ACTION_FETCH;
+		t.cycles.c[i].fetch_addr = addr;
+		t.cycles.c[i].fetch_val = t.opcodes.op[(offset & 1) == 0 && offset < 8 ? offset / 2 : 4];
+	}
+}
+
+static void make_vector(const Group& g, const Case& c, SsTest& t)
+{
+	begin_vector(t);
+
 	u32 n = g.form == FORM_IMM_R0 ? 0 : 3;
 	u32 opcode = g.opcode;
-
-	base_state(t.initial.s);
 
 	t.initial.s.R[n] = c.rn;
 	t.initial.s.SR = SR_BASE | c.flags;
@@ -434,19 +499,26 @@ static void make_vector(const Group& g, const Case& c, SsTest& t)
 
 	t.final_.s.R[n] = c.rn_after;
 	t.final_.s.SR = SR_BASE | c.flags_after;
-	t.final_.s.PC = PC_BASE + 8;
-
-	for (u32 i = 0; i < 5; i++)
-		t.opcodes.op[i] = OP_NOP;
 
 	t.opcodes.op[SS_TEST_INSTRUCTION] = opcode;
 
-	for (u32 i = 0; i < 4; i++)
-	{
-		t.cycles.c[i].actions = SS_ACTION_FETCH;
-		t.cycles.c[i].fetch_addr = PC_BASE + i * 2;
-		t.cycles.c[i].fetch_val = t.opcodes.op[i];
-	}
+	end_vector(t, PC_BASE + 6);
+}
+
+static void make_branch_vector(const Branch& b, SsTest& t)
+{
+	begin_vector(t);
+
+	t.initial.s.SR = SR_BASE | b.flags;
+
+	t.final_.s = t.initial.s;
+
+	t.final_.s.SR = SR_BASE | b.flags_after;
+
+	t.opcodes.op[SS_TEST_INSTRUCTION] = b.opcode;
+	t.opcodes.op[SS_TEST_INSTRUCTION + 1] = b.slot;
+
+	end_vector(t, b.next);
 }
 
 int main(int argc, char** argv)
@@ -471,6 +543,15 @@ int main(int argc, char** argv)
 			files[groups[g].file].push_back(t);
 			vectors++;
 		}
+	}
+
+	for (size_t b = 0; b < sizeof(branches) / sizeof(branches[0]); b++)
+	{
+		SsTest t;
+
+		make_branch_vector(branches[b], t);
+		files[branches[b].file].push_back(t);
+		vectors++;
 	}
 
 	//what an earlier table left behind

@@ -21,3 +21,5 @@
 0100nnnn00100101_sz0_pr0      10    10    10      10
 0110nnnnmmmm1010_sz0_pr0      10    10    10      10
 10001000iiiiiiii_sz0_pr0       7     7     7       7
+10001101dddddddd_sz0_pr0       6     6     6       6
+10001111dddddddd_sz0_pr0       6     6     6       6
