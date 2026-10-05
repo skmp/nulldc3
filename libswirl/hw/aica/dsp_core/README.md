@@ -203,7 +203,8 @@ What the user of the playground sees change with the swap:
 | ADRS_REG | added unsigned | added as a signed 12 bit number: a negative modulation goes down |
 | MDEC_CT | counts from the ring length down to 1 and reloads | 16 bit, free running; the same addresses in the ring and in TEMP, another number in the register view |
 | Bit 15 of 0x2804 | stored | a test mode: MDEC_CT is XORed with 0x8080 every sample while it is set |
-| COEF | 16 bit stored | bits 2:0 read 0 |
+| Register slots | every slot is 32 bit of storage, and an offset is a byte's: 0x12345678 written to COEF, MADRS, MPRO or the upper part of TEMP reads back whole; the low parts keep the bits above their own (TEMP low 0x1FF reads 1FF and is 0x1FF to the DSP, MIXS low 0x1F reads 1F); a write to 0x3001 changes the second byte of COEF0 | a slot is one 16 bit register, the low parts of TEMP / MEMS / MIXS 8 / 8 / 4 bit: the upper half of a slot reads 0, a bit a register does not have is not stored, and bits 1:0 of an offset are ignored, so a write to 0x3001 writes COEF0. This does not show for what the panel and the assembler write; it does for a register file that is loaded and for a value typed in above 16 bit |
+| COEF | 32 bit stored | 16 bit, and bits 2:0 read 0 |
 | MEMS low byte, EXTS, 0x2804 | read and written by `writeReg` / `readReg` | not the CPU's to write (MEMS low byte, EXTS) or to read (0x2804, EXTS): `pokeReg` / `peekReg` |
 | Other register offsets | 0x8000 bytes of storage | none: they read 0 |
 | Internal registers | MEMVAL[0..3] | the latch, its copy and what IWT stores (`REG.LATCH`, `REG.LATCH_COPY`, `REG.MEMVAL`) |
