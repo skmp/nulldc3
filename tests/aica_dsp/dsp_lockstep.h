@@ -7,6 +7,11 @@
 	steps, and the wave RAM the step can have written. The core has its own wave RAM, so a write that only one of
 	the two makes shows.
 
+	The view the core gives of a step (AicaDspStepView) is compared too, all of its words. What a step computes
+	and no register keeps, INPUTS, SHIFTED, X, Y, B and what it did to the wave RAM, where and with which word,
+	is worked out from the model's state in front of the step; the rest of the view is the model's state behind
+	it.
+
 	Two ways to run a sample:
 	  StepChip   the whole model: its sound generator makes the sends and the channel fetches, the core gets them
 	             as the model has them when its DSP starts
@@ -116,7 +121,10 @@ private:
 
 	bool sample_wrote;				//a step of the running sample wrote wave RAM
 
+	AicaDspStepView due;			//what the view of the next step has to say, as far as the model has it in front of the step
+
 	void BeginSample();
+	void ViewDue(int step);
 	void FastSample();
 	void CoreStep(int step);
 	void Compare(int step, const AicaDspStepView& view);

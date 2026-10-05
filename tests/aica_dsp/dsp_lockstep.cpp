@@ -495,6 +495,148 @@ void DspLockstep::Compare(int step, const AicaDspStepView& view)
 			return;
 		}
 	}
+
+	//The view: what the model had in front of the step, and of what the step leaves, the model's state behind it
+	static const char* const words[AICA_DSP_STEP_VIEW_WORDS] =
+	{
+		"step", "MDEC_CT", "INPUTS", "SHIFTED", "X", "Y", "B", "ACC", "FRC_REG", "Y_REG", "ADRS_REG", "memval",
+		"memval_nofl", "latch", "latch_copy", "mem_op", "mem_addr", "mem_data", "slot_taken", "mixs_bank",
+	};
+
+	AicaDspStepView expected = due;
+
+	expected.ACC = *m.ACC;
+	expected.FRC_REG = *m.FRC_REG;
+	expected.Y_REG = *m.Y_REG;
+	expected.ADRS_REG = (int32_t)*m.ADRS_REG;
+	expected.memval = *m.memval;
+	expected.latch = *m.latch;
+	expected.latch_copy = *m.cp;
+
+	int32_t want[AICA_DSP_STEP_VIEW_WORDS], have[AICA_DSP_STEP_VIEW_WORDS];
+
+	memcpy(want, &expected, sizeof(want));
+	memcpy(have, &view, sizeof(have));
+
+	for (int k = 0; k < AICA_DSP_STEP_VIEW_WORDS; k++)
+	{
+		if (want[k] != have[k])
+		{
+			char what[32];
+
+			snprintf(what, sizeof(what), "the view's %s", words[k]);
+			Differs(step, what, want[k], have[k]);
+			return;
+		}
+	}
+}
+
+static int32_t sign_extend(int64_t value, int bits)
+{
+	const int64_t top = (int64_t)1 << (bits - 1);
+
+	return (int32_t)(((value & (2 * top - 1)) ^ top) - top);
+}
+
+static int32_t saturate24(int64_t value)
+{
+	return (int32_t)(value < -0x800000 ? -0x800000 : value > 0x7FFFFF ? 0x7FFFFF : value);
+}
+
+/*
+	What the step the model is about to execute computes, from the model's state in front of it: the part of the
+	view that no register has behind the step. By the rules of the core's header, on the model's registers.
+*/
+void DspLockstep::ViewDue(int step)
+{
+	const uint32_t w0 = m.reg[(0x3400 + 16 * step) >> 2], w1 = m.reg[(0x3404 + 16 * step) >> 2];
+	const uint32_t w2 = m.reg[(0x3408 + 16 * step) >> 2], w3 = m.reg[(0x340C + 16 * step) >> 2];
+	const uint32_t rbpl = m.reg[0x2804 >> 2];
+	const uint32_t ct = *m.MDEC_CT;
+	const int64_t acc = *m.ACC;
+
+	memset(&due, 0, sizeof(due));
+
+	due.step = step;
+	due.MDEC_CT = (int32_t)ct;
+	due.memval_nofl = m.nofl_pipe[1];
+	due.mixs_bank = (int32_t)((*m.samples - 1) & 1);
+
+	const uint32_t ira = (w1 >> 7) & 0x3F;
+	int64_t inputs = 0;
+
+	if (ira <= 0x1F)
+		inputs = m.MEMS[ira];
+	else if (ira <= 0x2F)
+		inputs = (int64_t)m.MIXS_bank[due.mixs_bank][ira - 0x20] * 16;
+	else if (ira <= 0x31)
+		inputs = (int64_t)m.EXTS[ira - 0x30] * 256;
+
+	due.INPUTS = sign_extend(inputs, 24);
+
+	switch ((w2 >> 4) & 3)
+	{
+	case 0: due.SHIFTED = saturate24(acc); break;
+	case 1: due.SHIFTED = saturate24(acc * 2); break;
+	case 2: due.SHIFTED = sign_extend(acc * 2, 24); break;
+	default: due.SHIFTED = sign_extend(acc, 24); break;
+	}
+
+	const int32_t temp = m.TEMP[((w0 >> 9) + ct) & 0x7F];
+
+	due.X = (w1 & 0x8000) ? due.INPUTS : temp;
+
+	switch ((w1 >> 13) & 3)
+	{
+	case 0: due.Y = sign_extend(*m.FRC_REG, 13); break;
+	case 1: due.Y = sign_extend(m.reg[(0x3000 + 4 * step) >> 2] >> 3, 13); break;
+	case 2: due.Y = sign_extend(*m.Y_REG >> 11, 13); break;
+	default: due.Y = (*m.Y_REG >> 4) & 0xFFF; break;
+	}
+
+	//ZERO, BSEL, NEGB
+	due.B = (w2 & 2) ? 0 : (w2 & 1) ? (int32_t)acc : temp;
+
+	if (w2 & 4)
+		due.B = -due.B;
+
+	const bool mwt = (w2 & 0x4000) != 0, mrd = (w2 & 0x2000) != 0;
+
+	due.slot_taken = !(step & 1) && m.coll_claim[((step + 14) >> 1) & 63];
+
+	if (mwt || mrd)
+	{
+		//MASA, ADREB, NXADR, TABLE; RBL and RBP
+		uint32_t addr = m.reg[(0x3200 + 4 * ((w3 >> 9) & 0x3F)) >> 2];
+
+		if (w3 & 0x100)
+			addr += (uint32_t)sign_extend(*m.ADRS_REG, 12);
+
+		if (w3 & 0x80)
+			addr++;
+
+		if (w2 & 0x8000)
+			addr &= 0xFFFF;
+		else
+			addr = (addr + ct) & ((8192u << ((rbpl >> 13) & 3)) - 1);
+
+		const uint32_t at = (2 * addr + (rbpl & 0xFFF) * 2048u) & (CAIQUE_RAM_SIZE - 1);
+
+		due.mem_addr = (int32_t)at;
+
+		if (due.slot_taken)
+			due.mem_op = AICA_DSP_MEM_LOST;
+		else if (mwt)
+		{
+			due.mem_op = mrd ? AICA_DSP_MEM_WRITE_NO_READ : AICA_DSP_MEM_WRITE;
+			due.mem_data = (w3 & 0x8000) ? (due.SHIFTED >> 8) & 0xFFFF : caique_pack(due.SHIFTED);
+		}
+		else
+		{
+			due.mem_op = AICA_DSP_MEM_READ;
+			due.mem_data = m.ram[at] | (m.ram[at + 1] << 8);
+		}
+	}
 }
 
 void DspLockstep::OnStep(int step)
@@ -507,6 +649,8 @@ void DspLockstep::OnStep(int step)
 	//a bus read in the slot of this step: in the model's latch before the step runs
 	if (events && events->bus_read[step])
 		*m.latch = events->bus_word[step];
+
+	ViewDue(step);
 }
 
 void DspLockstep::StepChip()

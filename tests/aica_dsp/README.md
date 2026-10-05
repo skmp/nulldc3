@@ -28,9 +28,11 @@ the checkout, with a hook in front of the one place where its DSP starts a step 
 a test gets control between any two steps. `DspLockstep` runs the core next to the model: both get the same CPU
 accesses and events, and behind every step everything the DSP has is compared: TEMP, MEMS, both MIXS banks,
 EFREG, MDEC_CT, ACC, FRC_REG, Y_REG, ADRS_REG, the read latch, its copy, what IWT stores, the NOFL of the last two
-steps, and the wave RAM a write can reach (each has its own wave RAM). The test fails as a problem, whatever the
-counts, when the model does not announce 128 steps for a sample: the checkout's model is then not the one the hook
-was written for.
+steps, and the wave RAM a write can reach (each has its own wave RAM). The view the core gives of the step
+(`AicaDspStepView`, what the debugger and the playground show) is compared in all of its words: INPUTS, SHIFTED,
+X, Y, B and the wave RAM access with its address and word are worked out from the model's state in front of the
+step, the rest is the model's state behind it. The test fails as a problem, whatever the counts, when the model
+does not announce 128 steps for a sample: the checkout's model is then not the one the hook was written for.
 
 A second core runs every sample with `RunSample`, from step 0 or from a step in the middle, and has to be where
 the first core is behind every sample. That is the check named `run-samples`.
