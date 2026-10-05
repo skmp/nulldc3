@@ -656,8 +656,8 @@ static const u8 cpuBitsSet[256] = { 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3,
           C_OUT = (value & 0x80000000 ? true : false);\
         }\
       } else {\
+        /* ARM7DI 4.4.2: a register amount of 0 leaves the operand and C as they are */\
         value = reg[opcode & 0x0F].I;\
-        C_OUT = (value & 0x80000000 ? true : false);\
       }\
       if(dest == 15) {\
         OPCODE2\
@@ -975,8 +975,8 @@ static const u8 cpuBitsSet[256] = { 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3,
           C_OUT = (value & 0x80000000 ? true : false);\
         }\
       } else {\
+        /* ARM7DI 4.4.2: a register amount of 0 leaves the operand and C as they are */\
         value = reg[opcode & 0x0F].I;\
-        C_OUT = (value & 0x80000000 ? true : false);\
       }\
       if(dest == 15) {\
         OPCODE2\

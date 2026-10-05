@@ -10,8 +10,6 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
-| D2 | `arm7.wren7.qemu_diff` `s2:data-proc` | 509 | 507 | 2 |
-| D2 | `arm7.wren7.qemu_diff` `s3:data-proc` | 573 | 572 | 1 |
 | D3 | `arm7.wren7.mulsem` `muls-flags` | 1024 | 522 | 502 |
 | D3 | `arm7.wren7.mulsem` `mlas-flags` | 1024 | 522 | 502 |
 | D4 | `arm7.wren7.mulsem` `muls-rd-rm` | 1024 | 69 | 955 |
@@ -19,20 +17,8 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 | D7 | `arm7.wren7.vendor` `cpsr` | 45 | 4 | 41 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 0 | 4 |
 
-Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 63/63, the r1 of the 45 vendor jobs, the other 3997
-of the 4000 qemu_diff cases, the MULS and MLAS results, and how all 55 jobs end.
-
-### D2: ROR by a register whose low byte is 0 changes C
-
-A shift by a register amount of 0 leaves the operand and the carry alone, for every shift type. The interpreter
-does so for LSL, LSR and ASR; for ROR it sets C to bit 31 of Rm.
-
-* Code: the `OP Rd,Rb,Rm ROR Rs` cases of `LOGICAL_DATA_OPCODE` and `LOGICAL_DATA_OPCODE_WITHOUT_base`
-  (`arm-new.h:642`, `:962`). The `else` of the outer `if(shift)` does what only "ROR by a multiple of 32" should.
-* Cases: `s2` 133 (`E13A0B77`, TEQ r10, r7, ROR r11), `s2` 820 (`E11A0576`, TST r10, r6, ROR r5), `s3` 389
-  (`E13B0876`, TEQ r11, r6, ROR r8). In all three the low byte of the amount register is 0, C is set going
-  in and bit 31 of Rm is clear: the console keeps C, the interpreter clears it.
-* Only the instructions that take C from the shifter show it (AND, EOR, TST, TEQ, ORR, MOV, BIC, MVN with S).
+Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 63/63, the r1 of the 45 vendor jobs, the 4000
+qemu_diff cases, the MULS and MLAS results, and how all 55 jobs end.
 
 ### D3: MULS and MLAS leave C alone
 
@@ -72,7 +58,7 @@ stack pointers and leaves IRQs enabled: CPSR = 0x53.
 ## Known, and not shown by these tests
 
 Known from the code and from what wren7-rtl measured or models. The 55 jobs do not get there: none returns
-from an exception or gets an interrupt, and all 4000 random instructions pass apart from D2.
+from an exception or gets an interrupt, and all 4000 random instructions pass.
 
 | | what | console / data sheet | here |
 |---|---|---|---|

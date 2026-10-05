@@ -15,12 +15,12 @@ arm7.wren7.qemu_diff     s1:ldm/stm             104   104
 arm7.wren7.qemu_diff     s1:ldr/str             155   155
 arm7.wren7.qemu_diff     s1:mul/mla             114   114
 arm7.wren7.qemu_diff     s1:swp                  68    68
-arm7.wren7.qemu_diff     s2:data-proc           509   507
+arm7.wren7.qemu_diff     s2:data-proc           509   509
 arm7.wren7.qemu_diff     s2:ldm/stm             131   131
 arm7.wren7.qemu_diff     s2:ldr/str             151   151
 arm7.wren7.qemu_diff     s2:mul/mla             152   152
 arm7.wren7.qemu_diff     s2:swp                  57    57
-arm7.wren7.qemu_diff     s3:data-proc           573   572
+arm7.wren7.qemu_diff     s3:data-proc           573   573
 arm7.wren7.qemu_diff     s3:ldm/stm             109   109
 arm7.wren7.qemu_diff     s3:ldr/str             138   138
 arm7.wren7.qemu_diff     s3:mul/mla             117   117
