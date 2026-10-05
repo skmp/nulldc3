@@ -66,6 +66,9 @@ namespace dbg { namespace emu { namespace test {
 // dbg_emu.cpp: invoked behind the listener with every state that is published
 extern void (*observer)(const RunState& state);
 
+// dbg_emu.cpp: the threads of the session start without a start park
+extern bool plainStart;
+
 } } }
 
 // reios/reios.cpp: the hook a guest program returns to
@@ -2212,6 +2215,105 @@ DBG_SELFTEST_GUEST(emu_fp, "emu.fp")
 	return true;
 }
 #endif
+
+/*
+	emu.startstop: the host stops the machine while its emulator thread starts, from another thread than the one
+	that starts it. The threads of this test start as they do without a session: the start park of a session
+	would stop the cpu itself.
+*/
+namespace {
+
+struct {
+	int phase;
+	std::atomic<u32> cycles { 0 }, callbacks { 0 }, hung { 0 }, running { 0 }, early { 0 };
+} st;
+
+const u32 kStartStops = 40;
+
+}
+
+DBG_SELFTEST_GUEST(emu_startstop, "emu.startstop")
+{
+	if (st.phase == 0)
+	{
+		if (!Ready(stop))
+			return false;
+
+		Goto(EMU_G_spin);
+		TakeSeen();
+
+		st.cycles = 0;
+		st.callbacks = 0;
+		st.hung = 0;
+		st.running = 0;
+		st.early = 0;
+		st.phase = 1;
+
+		OtherStart([] {
+			HostStop first;
+
+			if (!StopMachine(&first))
+			{
+				st.hung++;
+				return;
+			}
+
+			emu::test::plainStart = true;
+
+			for (u32 i = 0; i < kStartStops; i++)
+			{
+				std::thread starter([] { virtualDreamcast->Resume(); });
+
+				// Running is published before the thread exists
+				while (emu::GetRunState().lifetime == Lifetime::Stopped)
+				{
+				}
+
+				Spin((i * 37) % 300);
+
+				// the stop found the starter still waiting for its thread
+				if (!sh4_cpu->IsRunning())
+					st.early++;
+
+				virtualDreamcast->Stop([] { st.callbacks++; });
+
+				starter.join();
+
+				if (!WaitLifetime(Lifetime::Stopped))
+				{
+					st.hung++;
+					break;
+				}
+
+				if (sh4_cpu->IsRunning())
+				{
+					st.running++;
+
+					// put right, for the next thread to start
+					sh4_cpu->Stop();
+				}
+
+				st.cycles++;
+			}
+
+			emu::test::plainStart = false;
+
+			virtualDreamcast->Resume();
+		});
+		return false;
+	}
+
+	OtherJoin();
+
+	Check(st.hung == 0 && st.cycles == kStartStops && stop.cause == StopCause::Start, "%u times a host stop while the thread started: the thread ended every time", st.cycles.load());
+	Check(st.callbacks == kStartStops, "every stop ran its callback, once (%u)", st.callbacks.load());
+	Check(st.running == 0, "the stopped machine never counted as running (it did %u times of %u)", st.running.load(), kStartStops);
+	Note("the stop came in before the cpu of the new thread was started in %u of %u", st.early.load(), kStartStops);
+
+	TakeSeen();
+	st.phase = 0;
+	return true;
+}
 
 /*
 	emu.step: steps, as far as run control goes: the stop of a step, and a reset of the guest, a host stop, a

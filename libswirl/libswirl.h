@@ -49,10 +49,11 @@ struct VirtualDreamcast {
     // The body here is that of a machine without an emulator thread
     virtual void RequestExit() { }
 
-    // Emulator thread, the CPU is stopped: sets it running again unless a stop, a reset or an exit has been
-    // requested since. The test and the start are one step against Stop() on another thread: a request is
-    // either seen here or stops the CPU afterwards. leavePark also ends the debugger stop the thread is in
-    // (dbg::g_parked); a debugger's single step keeps it. Returns whether the CPU runs.
+    // Emulator thread, the CPU is stopped: sets it running, at the start of the thread and from then on
+    // again, unless a stop, a reset or an exit has been requested since; then the CPU is left stopped. The
+    // test and the start are one step against Stop() on another thread: a request is either seen here or
+    // stops the CPU afterwards. leavePark also ends the debugger stop the thread is in (dbg::g_parked); a
+    // debugger's single step keeps it. Returns whether the CPU runs.
     // The body here is that of a machine without an emulator thread
     virtual bool StartCpu(bool leavePark) { return false; }
 

@@ -768,7 +768,8 @@ struct Dreamcast_impl : VirtualDreamcast {
             printf("Using DSP Interpreter\n");
         }
 
-        sh4_cpu->Start();
+        // not when the machine was asked to stop while this thread started
+        StartCpu(false);
 
         emu_started.Set();
 
@@ -1182,6 +1183,11 @@ struct Dreamcast_impl : VirtualDreamcast {
 
             if (leavePark)
                 dbg::g_parked = false;
+        }
+        else
+        {
+            // stopped it stays, also where the request came in between the start of the thread and here
+            p_sh4rcb->cntx.CpuRunning = false;
         }
 
         callback_lock.Unlock();

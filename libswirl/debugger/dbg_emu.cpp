@@ -57,6 +57,10 @@ namespace test {
 // under L while no emulator thread exists.
 void (*observer)(const RunState& state);
 
+// For the selftest: while it is set a thread of a session starts as a thread without a session does, with no
+// start park. Set and cleared while no emulator thread exists
+bool plainStart;
+
 }
 
 namespace {
@@ -1191,7 +1195,7 @@ u32 Park()
 		// ends the process when the session has no guest test
 		selftest::AtStart();
 
-		bool start = selftest::Active();
+		bool start = selftest::Active() && !test::plainStart;
 
 		if (machineFirstPark)
 		{
