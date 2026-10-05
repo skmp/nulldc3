@@ -39,6 +39,10 @@
 #include <mutex>
 #include <thread>
 
+// hw/pvr/spg.cpp: when the running machine last wrote its frame rate into the title of the window. Written on
+// the emulator thread
+extern float last_fps;
+
 namespace dbg {
 
 std::atomic<u32> g_attn(0);
@@ -57,8 +61,8 @@ namespace test {
 // under L while no emulator thread exists.
 void (*observer)(const RunState& state);
 
-// For the selftest, which has no window to look at: how often the park loop has put its title on the window.
-// The emulator thread's own
+// For the selftest, which has no window to look at: how often dbg::emu has called the window, which it does
+// for nothing but the title of the park loop. The emulator thread's own
 u32 pausedTitles;
 
 // For the selftest: while it is set a thread of a session starts as a thread without a session does, with no
@@ -76,7 +80,6 @@ typedef std::chrono::steady_clock Clock;
 const u32 kAttnLatched = 4;
 
 const char* const kPausedTitle = "nullDC 3.0.0 [paused by debugger]";
-const char* const kTitle = "nullDC 3.0.0";
 
 /*
 	A call. The caller and the queue share it; everything but fn is guarded by Q. fn is run, and destroyed, by
@@ -132,7 +135,8 @@ struct {
 	bool inStep;				// the park loop is executing a step
 	bool stopInForce;			// a debugger stop is published and in force
 	bool stepFallback;			// the stop that is decided ends a step the interpreter fallback made
-	bool titled;				// the park loop of this thread has set the window title
+	bool titled;				// the park loop of this thread has put its title on the window
+	float titledAt;				// last_fps when it last did
 
 	// A stop that is decided and not published yet: the record of LatchStop(), a start park, a pause request
 	StopCause want;
@@ -452,11 +456,17 @@ void EnterStop()
 
 	RunState state = Publish(Lifetime::Parked, cause, id, notice, true);
 
-	// At every stop: the machine that ran since the last one, be it for a step, may have written its frame
-	// rate into the title
-	e.titled = true;
-	os_SetWindowText(kPausedTitle);
-	test::pausedTitles++;
+	// The title says that the debugger paused, at every stop. It is put where it is not on the window already:
+	// at the first stop of a thread, and when the running machine has taken the title back with its frame
+	// rate since. A title call waits for the thread of the user interface on some hosts
+	if (!e.titled || e.titledAt != last_fps)
+	{
+		e.titled = true;
+		e.titledAt = last_fps;
+
+		os_SetWindowText(kPausedTitle);
+		test::pausedTitles++;
+	}
 
 	// A guest test stands where a call stands: it reads and writes directly and arms what happens next
 	if (selftest::Active())
@@ -1146,9 +1156,9 @@ void OnThreadExiting(bool guestExit)
 
 	Announce(stopped);
 
-	if (e.titled)
-		os_SetWindowText(kTitle);
-
+	// No call of the window from here: this is behind the stop callback, and the thread of the user interface
+	// may have ended its loop in it and be waiting for this thread. The title of the park loop stays until a
+	// running machine writes its frame rate
 	e = { };
 	t_is_emu = false;
 }

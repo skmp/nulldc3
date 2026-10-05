@@ -67,7 +67,7 @@ namespace dbg { namespace emu { namespace test {
 // dbg_emu.cpp: invoked behind the listener with every state that is published
 extern void (*observer)(const RunState& state);
 
-// dbg_emu.cpp: how often the park loop has put its title on the window
+// dbg_emu.cpp: how often dbg::emu has called the window, which it does to put the title of the park loop there
 extern u32 pausedTitles;
 
 // dbg_emu.cpp: the threads of the session start without a start park
@@ -77,6 +77,9 @@ extern bool plainStart;
 
 // reios/reios.cpp: the hook a guest program returns to
 void reios_exit();
+
+// hw/pvr/spg.cpp: when the running machine last wrote its frame rate into the title of the window
+extern float last_fps;
 
 namespace {
 
@@ -3219,25 +3222,43 @@ DBG_SELFTEST_GUEST(emu_term, "emu.term")
 }
 
 /*
-	emu.title: the window says that the debugger paused, at every stop
+	emu.title: the window says that the debugger paused, at every stop. The park loop puts its title there when
+	it is not on the window already, and the emulator thread calls the window for nothing else: not on its way
+	out, behind the stop callback, where the thread of the user interface may be waiting for it.
 */
 namespace {
 
 struct {
 	int phase;
-	u32 stop0, titles;
+	u32 stop0, titles, n;
+	float fps;
+	u32 bad, puts, taken;
+	std::atomic<u32> inCallback { 0 };
 	std::atomic<bool> otherFailed { false };
 } ti;
 
-void TitleRound(const emu::RunState& stop)
+const u32 kTitleStops = 30;
+const int kTitleRunMs = 3000;		// the running machine writes its frame rate every 2 s
+
+// The guest runs for run_ms and is paused again
+void TitleRound(const emu::RunState& stop, int run_ms)
 {
 	ti.stop0 = stop.stopId;
 	ti.titles = emu::test::pausedTitles;
+	ti.fps = last_fps;
 
 	Resume();
 
-	OtherStart([] {
-		if (!WaitLifetime(Lifetime::Running) || !PauseAndWait(ti.stop0))
+	OtherStart([run_ms] {
+		if (!WaitLifetime(Lifetime::Running))
+		{
+			ti.otherFailed = true;
+			return;
+		}
+
+		Nap(run_ms);
+
+		if (!PauseAndWait(ti.stop0))
 			ti.otherFailed = true;
 	});
 }
@@ -3253,25 +3274,73 @@ DBG_SELFTEST_GUEST(emu_title, "emu.title")
 			return false;
 
 		Goto(EMU_G_spin);
+		ti.n = ti.bad = ti.puts = ti.taken = 0;
+		ti.otherFailed = false;
 		ti.phase = 1;
 
-		// this thread has stopped before: the stop it is parked on
-		TitleRound(stop);
+		// this thread has stopped before, and its title is on the window
+		TitleRound(stop, 0);
 		return false;
 
 	case 1:
+	{
+		OtherJoin();
+
+		// the title is put exactly where the running machine has taken it back since the last stop
+		bool taken = last_fps != ti.fps;
+		u32 put = emu::test::pausedTitles - ti.titles;
+
+		if (stop.cause != StopCause::Pause || put != (taken ? 1u : 0u))
+			ti.bad++;
+
+		ti.puts += put;
+		ti.taken += taken;
+
+		if (++ti.n < kTitleStops && !ti.otherFailed)
+		{
+			TitleRound(stop, 0);
+			return false;
+		}
+
+		Check(!ti.otherFailed && ti.bad == 0 && ti.puts < kTitleStops,
+			"%u stops of one thread, one behind the other: the park loop put its title on the window where the running machine had taken it back, %u times, and nowhere else (%u times; %u stops were not as they have to be)",
+			ti.n, ti.taken, ti.puts, ti.bad);
+
+		ti.phase = 2;
+		TitleRound(stop, kTitleRunMs);
+		return false;
+	}
+
 	case 2:
 		OtherJoin();
 
-		Check(!ti.otherFailed && stop.cause == StopCause::Pause && emu::test::pausedTitles == ti.titles + 1,
-			"stop %d of a thread that had stopped before: the park loop put its title on the window (%u times)", ti.phase + 1, emu::test::pausedTitles - ti.titles);
+		Check(!ti.otherFailed && stop.cause == StopCause::Pause && last_fps != ti.fps && emu::test::pausedTitles == ti.titles + 1,
+			"a stop behind %d ms of a running guest, which wrote its frame rate into the title: the park loop put its title there again, once (%u times)",
+			kTitleRunMs, emu::test::pausedTitles - ti.titles);
 
-		if (ti.phase == 1)
-		{
-			ti.phase = 2;
-			TitleRound(stop);
-			return false;
-		}
+		ti.phase = 3;
+
+		// The host stops the parked machine. The thread that leaves has its title on the window
+		OtherStart([] {
+			virtualDreamcast->Stop([] { ti.inCallback = emu::test::pausedTitles; });
+
+			if (!WaitLifetime(Lifetime::Stopped))
+			{
+				ti.otherFailed = true;
+				return;
+			}
+
+			// waits for the thread that leaves to be gone
+			virtualDreamcast->Resume();
+		});
+		return false;
+
+	case 3:
+		OtherJoin();
+
+		Check(!ti.otherFailed && stop.cause == StopCause::Start && emu::test::pausedTitles == ti.inCallback + 1,
+			"a thread that the host stops does not call the window behind its stop callback; the next thread puts the title at its first stop (%u calls since the callback)",
+			emu::test::pausedTitles - ti.inCallback.load());
 		break;
 	}
 
