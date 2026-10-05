@@ -23,7 +23,7 @@ endif()
 # The state of a channel that no register write sets: the same in a generator created in memory that held
 # anything, for the guest, for the debugger and in the samples. The loop flag is one bit for the guest and for
 # the debugger
-add_test(NAME aica.channels COMMAND aica_test channels)
+add_test(NAME ${NULLDC_TEST_PREFIX}aica.channels COMMAND aica_test channels)
 
 # The real-time clock is pinned by config:Debug.FixedRtc and by config:Dreamcast.RTC
-add_test(NAME aica.rtc COMMAND aica_test rtc)
+add_test(NAME ${NULLDC_TEST_PREFIX}aica.rtc COMMAND aica_test rtc)

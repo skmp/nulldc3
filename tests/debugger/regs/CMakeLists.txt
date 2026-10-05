@@ -9,6 +9,11 @@ project(dbg_regs_tests CXX)
 #
 # The panel id test compares with the devtools UI and is reported as skipped without it:
 #   -DDEVTOOLS_DIR=<dreamcast-devtools checkout>
+#
+# The tests project (tests/CMakeLists.txt) adds this directory as well. What it sets is all optional here:
+#   NULLDC_TEST_PREFIX          put in front of every test name (debugger.regs.)
+#   NULLDC_DEVTOOLS_DIR         the dreamcast-devtools checkout, in place of DEVTOOLS_DIR
+#   NULLDC_TESTS_REQUIRE_DATA   the panel id test fails without the devtools UI instead of being skipped
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -40,22 +45,32 @@ endif()
 enable_testing()
 
 # The tables by themselves: structure, names, widths, keys, events, panels, the paths clients rely on
-add_test(NAME tables COMMAND regs_test tables)
+add_test(NAME ${NULLDC_TEST_PREFIX}tables COMMAND regs_test tables)
 
 # The tables against the definitions they were written from: the NAME_addr lines of the on-chip modules and
 # of the system bus
-add_test(NAME sources COMMAND regs_test sources "${LIBSWIRL_DIR}")
+add_test(NAME ${NULLDC_TEST_PREFIX}sources COMMAND regs_test sources "${LIBSWIRL_DIR}")
 
 # The panel ids against the list of the devtools UI
-set(DEVTOOLS_DIR "${DEVCAST_DIR}/../dreamcast-devtools" CACHE PATH "dreamcast-devtools checkout (panel id list)")
-set(DEVTOOLS_SCHEMA "${DEVTOOLS_DIR}/src/lib/debuggerSchema.ts")
-
-if(EXISTS "${DEVTOOLS_SCHEMA}")
-  add_test(NAME panels COMMAND regs_test panels "${DEVTOOLS_SCHEMA}")
+if(DEFINED NULLDC_DEVTOOLS_DIR)
+  set(devtools_option NULLDC_DEVTOOLS_DIR)
 else()
-  add_test(NAME panels COMMAND ${CMAKE_COMMAND} -E echo
-    "SKIP: no ${DEVTOOLS_SCHEMA}; set -DDEVTOOLS_DIR=<dreamcast-devtools checkout>")
+  set(DEVTOOLS_DIR "${DEVCAST_DIR}/../dreamcast-devtools" CACHE PATH "dreamcast-devtools checkout (panel id list)")
+  set(devtools_option DEVTOOLS_DIR)
 endif()
-set_tests_properties(panels PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP: ")
+set(DEVTOOLS_SCHEMA "${${devtools_option}}/src/lib/debuggerSchema.ts")
+
+# A skipped test prints "SKIP: <reason>". With NULLDC_TESTS_REQUIRE_DATA that is a failed test.
+if(EXISTS "${DEVTOOLS_SCHEMA}")
+  add_test(NAME ${NULLDC_TEST_PREFIX}panels COMMAND regs_test panels "${DEVTOOLS_SCHEMA}")
+else()
+  add_test(NAME ${NULLDC_TEST_PREFIX}panels COMMAND ${CMAKE_COMMAND} -E echo
+    "SKIP: no ${DEVTOOLS_SCHEMA}; set -D${devtools_option}=<dreamcast-devtools checkout>")
+endif()
+if(NULLDC_TESTS_REQUIRE_DATA)
+  set_tests_properties(${NULLDC_TEST_PREFIX}panels PROPERTIES FAIL_REGULAR_EXPRESSION "SKIP: ")
+else()
+  set_tests_properties(${NULLDC_TEST_PREFIX}panels PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP: ")
+endif()
 
 add_subdirectory(aica)

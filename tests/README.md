@@ -114,7 +114,8 @@ More about the suites:
     vendor/            the submodules
     files/             fixtures
     debugger/          the debugger's modules that link without the emulator, one CMake project per directory:
-                       net/ (transport, embedded UI), disasm/ (disassemblers, README.md)
+                       net/ (transport, embedded UI), disasm/ (disassemblers, README.md), regs/ (device tree
+                       tables, and device state that has a test without the machine, README.md)
 
 ## The single-step vectors
 
@@ -339,7 +340,9 @@ CMake project per directory. Each builds alone, with its own options (the head o
 and this project adds them all, so that one `ctest` runs everything. They are not compiled with the emulator's
 flags: the debugger's sources have to build as standard C++20, without `-fpermissive`, and with warnings on. That
 is why `tests/CMakeLists.txt` adds them in front of `common/libswirl.cmake`, and why they come first in the
-output of `ctest`. Here their tests are named `debugger.<suite>.<name>`; alone, `<name>`.
+output of `ctest`. Here their tests are named `debugger.<suite>.<name>`; alone, `<name>`. One directory of them,
+`debugger/regs/aica`, compiles two translation units of the emulator and takes its definitions and flags, for
+itself only.
 
 | test | what it runs | needs |
 |---|---|---|
@@ -354,6 +357,9 @@ output of `ctest`. Here their tests are named `debugger.<suite>.<name>`; alone, 
 | `debugger.disasm.sh4_opcode_table` | every SH-4 opcode against `hw/sh4/sh4_opcode_list.cpp` | python3 |
 | `debugger.disasm.arm7_objdump` `debugger.disasm.arm7_objdump_selftest` | 249,364 ARM encodings against GNU objdump, and that comparison on dumps with a changed field | python3, an ARM objdump |
 | `debugger.disasm.dsp_playground` | 100,193 DSP steps against the disassembler and assembler of the devtools playground | a dreamcast-devtools checkout with `node_modules` |
+| `debugger.regs.tables` `debugger.regs.sources` | `dbg_regs_tables.cpp`, the device tree behind `debugger.describe`: the tables by themselves, and their on-chip and system bus rows against `hw/sh4/sh4_mmr.h` and `hw/holly/sb_regs.h` | nothing |
+| `debugger.regs.panels` | the panel ids of the tables against the list of the devtools UI | a dreamcast-devtools checkout |
+| `debugger.regs.aica.channels` `debugger.regs.aica.rtc` | the sound generator (`hw/aica/sgc_if.cpp`) and the settings of the sound regression harness (`hw/aica/aica_hash.cpp`), compiled as the emulator compiles them: the state of a channel that no register write sets, for the guest, for the debugger and in the samples; the two keys that pin the real-time clock | nothing |
 
 What the tests of the last column look for, and the option that says where it is:
 
@@ -371,6 +377,8 @@ without its data.
 
 * `debugger/disasm/README.md`: what is compared with objdump, the opcode table and the playground, and every
   difference that is accepted,
+* `debugger/regs/README.md`: what the table tests check, and the tests of `regs/aica`, the one directory of these
+  suites that takes the emulator's definitions and flags (`reicast/cmake/config.cmake`, for itself only),
 * the head of `debugger/net/CMakeLists.txt`: the sanitizer builds and the bundle of the net suite.
 
 A new suite is a directory `tests/debugger/<suite>` with a `CMakeLists.txt` that starts with its own

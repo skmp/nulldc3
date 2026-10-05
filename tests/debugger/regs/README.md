@@ -24,6 +24,11 @@ little that the two units reference from the rest of the emulator.
 | `aica.channels` | The state of a channel that no register write sets. A sound generator is created in memory that was filled with ones: no channel has its loop flag set, neither for a guest read of the channel status (`LP`, bit 15 of `0x2810`) nor for the debugger (`DebugGetChannel`, `DebugReadCommonReg`), and every channel has its play position (`CA`, `0x2814`) with its fraction, its two decoded samples, its low-frequency oscillator and its filter envelope at 0. Generators created in memory filled with different bytes play the same samples, show the guest the same registers and the debugger the same 64 channels: with a loop, with a loop under the amplitude modulation of an oscillator the guest never reset, and with the noise generator. The loop flag is one byte of the save state; whatever that byte holds, the guest and the debugger see its bit 0, the debugger's reads leave it and the guest's read clears it. |
 | `aica.rtc` | The keys that pin the real-time clock: `config:Debug.FixedRtc`, and `config:Dreamcast.RTC` when the first is missing or 0. Neither key, or the keys in another section, leave the clock to the host. |
 
+The tests project (`tests/CMakeLists.txt`, `tests/README.md`) adds this directory as well. There the tests are
+named `debugger.regs.<name>`, the dreamcast-devtools checkout is given with `-DNULLDC_DEVTOOLS_DIR=`, and
+`-DNULLDC_TESTS_REQUIRE_DATA=ON` makes `panels` fail without it instead of being skipped; that option works here
+too.
+
 What needs the machine is not here but in the emulator's selftest (`libswirl/debugger/dbg_selftest_regs.cpp`,
 `devcast -config Debugger:SelfTest=regs <program>`): that every row is a register the emulator has, that every value
 reads without a side effect and equals what the guest would read, and the memory map of `dbg_mem.h`.
