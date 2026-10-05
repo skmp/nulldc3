@@ -84,6 +84,9 @@ void SetActiveMask(u32 categories);
 //   "undefined opcode"          the opcode at pc is not an instruction the interpreter table executes
 //   "illegal slot instruction"  pc holds a delayed branch whose slot word cannot be read, is undefined or
 //                               is an instruction that writes pc
+// In builds with MMU the word is read without address translation (dbg::mem): for a pc outside P1 / P2 the
+// preconditions, and the has_slot test of PrepareResume() / PrepareStep(), look at the physical address
+// pc & 0x1FFFFFFF. Steps and slot breakpoints in translated code are not supported.
 int StepCheck(const char** why);
 
 // Park loop, when the park context is left for a resume, after the deferred interrupt acceptance and
