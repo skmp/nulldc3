@@ -1,8 +1,11 @@
 #!/bin/bash
-# Makes guest.inc from guest.s: the image as bytes and the addresses of its g_* labels.
-# Needs an sh-elf binutils (KallistiOS: /opt/toolchains/dc/sh-elf/bin); the tests build without it, from guest.inc.
+# Makes libswirl/debugger/dbg_selftest_sh4bp_guest.inc from guest.s: the image as bytes and the addresses of its
+# g_* labels. The file stands next to the selftest of the emulator, which includes it as these tests do.
+# Needs an sh-elf binutils (KallistiOS: /opt/toolchains/dc/sh-elf/bin); the emulator and the tests build without
+# it, from the file.
 set -e
 cd "$(dirname "$0")"
+OUT=../../../libswirl/debugger/dbg_selftest_sh4bp_guest.inc
 BIN=${SH_ELF_BIN:-/opt/toolchains/dc/sh-elf/bin}
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
@@ -12,7 +15,8 @@ trap 'rm -rf "$T"' EXIT
 "$BIN/sh-elf-objcopy" -O binary -j .text "$T/guest.elf" "$T/guest.bin"
 
 {
-	echo "// Made by gen.sh from guest.s. Not edited by hand."
+	echo "// The guest programs of the sh4bp selftest and of the tests in tests/debugger/sh4bp, assembled."
+	echo "// Made by tests/debugger/sh4bp/gen.sh from guest.s. Not edited by hand."
 	echo
 	echo "#define G_BASE 0x8C010000"
 	"$BIN/sh-elf-nm" "$T/guest.elf" | awk '$3 ~ /^g_/ { printf "#define G_%s 0x%s\n", substr($3, 3), toupper($1) }' | sort
@@ -20,6 +24,6 @@ trap 'rm -rf "$T"' EXIT
 	echo "static const unsigned char guest_image[] = {"
 	od -An -v -tx1 -w16 "$T/guest.bin" | sed -e 's/^ */\t/' -e 's/\([0-9a-f][0-9a-f]\)/0x\1,/g'
 	echo "};"
-} > guest.inc
+} > "$OUT"
 
-echo "guest.inc: $(stat -c %s "$T/guest.bin") bytes of image, $(grep -c '^#define G_' guest.inc) names"
+echo "$OUT: $(stat -c %s "$T/guest.bin") bytes of image, $(grep -c '^#define G_' "$OUT") names"

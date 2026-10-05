@@ -1,4 +1,5 @@
-// Made by gen.sh from guest.s. Not edited by hand.
+// The guest programs of the sh4bp selftest and of the tests in tests/debugger/sh4bp, assembled.
+// Made by tests/debugger/sh4bp/gen.sh from guest.s. Not edited by hand.
 
 #define G_BASE 0x8C010000
 #define G_boot 0x8C010000

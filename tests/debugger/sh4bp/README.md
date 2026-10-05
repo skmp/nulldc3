@@ -215,9 +215,11 @@ What the numbers are made of:
 
 ## The guest
 
-`guest.s` holds the guest programs; `guest.inc` is that file assembled (the image as bytes, the addresses of
-the `g_*` labels) and is what the tests build from. `gen.sh` makes it and needs an sh-elf binutils; the build
-does not. The image starts with its boot program: what the selftest gets when it boots the guest.
+`guest.s` holds the guest programs; `libswirl/debugger/dbg_selftest_sh4bp_guest.inc` is that file assembled
+(the image as bytes, the addresses of the `g_*` labels). It stands next to the selftest of the emulator, which
+includes it as the tests here do: the emulator's sources include nothing from `tests/`. `gen.sh` makes it and
+needs an sh-elf binutils; the builds do not. The image starts with its boot program: what the selftest gets
+when it boots the guest.
 
 ## The call sites of run control
 

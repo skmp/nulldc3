@@ -1,8 +1,8 @@
 ! Guest programs of the sh4bp gates. SH4, little endian, linked at 0x8C010000.
 !
-! guest.inc holds this file assembled, as the bytes of the image and the addresses of the g_* labels; gen.sh
-! makes it. The tests load the image into the RAM of their machine, point the pc at a program and say in
-! registers what it is to do.
+! libswirl/debugger/dbg_selftest_sh4bp_guest.inc holds this file assembled, as the bytes of the image and the
+! addresses of the g_* labels; gen.sh makes it. The tests load the image into the RAM of their machine, point
+! the pc at a program and say in registers what it is to do.
 !
 ! The machine around it (machine.h): RAM at 0x0C000000 with its mirrors, and one device
 !   0xA0600000  write: acknowledges the interrupt request (IRL9, taken at vbr + 0x600)

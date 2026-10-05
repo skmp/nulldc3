@@ -12,7 +12,7 @@
 	and the devices of the machine start: the interrupt source, and the vblank event of the video timing.
 */
 #include "machine.h"
-#include "guest.inc"
+#include "debugger/dbg_selftest_sh4bp_guest.inc"
 
 #include "debugger/dbg_selftest.h"
 #include "hw/sh4/sh4_sched.h"

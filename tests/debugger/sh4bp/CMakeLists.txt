@@ -230,7 +230,7 @@ add_executable(sh4bp_test
   gates.cpp
   machine.cpp   machine.h
   stubs.cpp
-  guest.inc
+  "${nulldc_core_path}/debugger/dbg_selftest_sh4bp_guest.inc"
 )
 target_link_libraries(sh4bp_test PRIVATE nulldc_sh4bp)
 
@@ -292,10 +292,10 @@ nulldc_add_libswirl_library(nulldc_sh4bp_off
     deps/crypto/sha1.cpp
 )
 
-add_executable(sh4bp_cost_on cost.cpp stubs.cpp guest.inc)
+add_executable(sh4bp_cost_on cost.cpp stubs.cpp "${nulldc_core_path}/debugger/dbg_selftest_sh4bp_guest.inc")
 target_link_libraries(sh4bp_cost_on PRIVATE nulldc_sh4bp)
 
-add_executable(sh4bp_cost_off cost.cpp stubs.cpp guest.inc)
+add_executable(sh4bp_cost_off cost.cpp stubs.cpp "${nulldc_core_path}/debugger/dbg_selftest_sh4bp_guest.inc")
 target_link_libraries(sh4bp_cost_off PRIVATE nulldc_sh4bp_off)
 
 add_test(NAME debugger.sh4bp.b11

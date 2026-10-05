@@ -1,5 +1,5 @@
 #include "machine.h"
-#include "guest.inc"
+#include "debugger/dbg_selftest_sh4bp_guest.inc"
 
 #include "hw/sh4/sh4_core.h"
 #include "hw/sh4/sh4_dbg.h"

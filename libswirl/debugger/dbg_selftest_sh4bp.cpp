@@ -44,7 +44,7 @@
 #include "hw/sh4/dyna/blockmanager.h"
 #endif
 
-#include "../../tests/debugger/sh4bp/guest.inc"
+#include "dbg_selftest_sh4bp_guest.inc"
 
 #include <atomic>
 #include <cstdio>
