@@ -387,6 +387,11 @@ bool dbg_sh4_AnyArmed(u32 pc, u32 bytes);
 // to its slice counter and leaves its loop at once: no further guest instruction, no UpdateSystem().
 extern "C" u32 DYNACALL dbg_sh4_Check(u32 pc, u32 refund, u32 block_end);
 
+// From an interpreter-type loop, when it executes the slot of a delayed conditional branch that was not taken:
+// the instruction runs without a check, because the check of the pair was made in front of its branch. Ends
+// the resume exemption, which otherwise waits for the next check call. No other effect; does not stop.
+void dbg_sh4_SlotRuns();
+
 // Non-zero while a step-out is pending. The decoder of a JIT with ngen_features::DebugChecks then marks the
 // blocks that end with a call or a return and their epilogue reports to dbg_sh4_CheckFlow; an
 // interpreter-type loop, sh4_fallback_loop() included, reports after each call and RTS it executed, and its
@@ -498,6 +503,7 @@ static inline bool dbg_sh4_IsArmed(u32) { return false; }
 static inline bool dbg_sh4_WantsCheck(u32, bool) { return false; }
 static inline bool dbg_sh4_AnyArmed(u32, u32) { return false; }
 static inline u32 DYNACALL dbg_sh4_Check(u32, u32, u32) { return 0; }
+static inline void dbg_sh4_SlotRuns() { }
 static inline u32 DYNACALL dbg_sh4_CheckFlow(u32) { return 0; }
 static inline void dbg_sh4_OnException() { }
 static inline bool dbg_sh4_StopPending() { return false; }

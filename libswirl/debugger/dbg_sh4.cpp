@@ -26,6 +26,7 @@ u32 dbg_sh4_stepout;
 bool dbg_sh4_IsArmed(u32) { return false; }
 bool dbg_sh4_AnyArmed(u32, u32) { return false; }
 extern "C" u32 DYNACALL dbg_sh4_Check(u32, u32, u32) { StubReached("dbg_sh4_Check"); }
+void dbg_sh4_SlotRuns() { }
 extern "C" u32 DYNACALL dbg_sh4_CheckFlow(u32) { StubReached("dbg_sh4_CheckFlow"); }
 void dbg_sh4_OnException() { }
 bool dbg_sh4_StopPending() { return false; }
