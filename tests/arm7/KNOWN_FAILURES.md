@@ -10,24 +10,10 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
-| D1 | `arm7.directed` `trap` | 4 | 0 | 4 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 2 | 2 |
 
-Everything else passes: `arm7.vendor` 45/45, the 63 ADC, SBC and RSC cases of `arm7.directed`, the r1 and the
-CPSR of the 45 vendor jobs, the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55
-jobs end.
-
-### D1: SWI and the undefined instruction trap return one instruction too far
-
-A SWI and the undefined instruction trap leave the address of the instruction behind them in R14 of the mode
-they enter. `CPUSoftwareInterrupt` and `CPUUndefinedException` (`hw/arm7/arm7.cpp`) add 4 to a PC that is
-already past the instruction, so R14 is 4 too high and `movs pc, lr` skips an instruction. `CPUFiq` uses the
-same expression in front of the fetch, where it is right.
-
-* Console: wren7's timing kernels `swi` and `und` have `movs pc, lr` in the vector and 8 traps in a row per
-  iteration, and an iteration takes the time of 8 traps and 8 returns (415.99 and 451.04 clocks in
-  `wren7-rtl/model/tests/hw/timing/SUMMARY.txt`). With R14 4 too high every other trap is skipped.
-* `trap`: one trap and 8 in a row, for both. R14 is 0x48 behind a trap at 0x40.
+Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 67/67, the r1 and the CPSR of the 45 vendor jobs,
+the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
 
 ### D7: where a reset finds the ARM
 
@@ -56,7 +42,7 @@ interrupt, and all 4000 random instructions pass.
 | D8 | `STR` of R15 | the instruction's address + 12 (data sheet; console for STM) | + 8 in every word STR handler of `arm-new.h`; STM stores + 12 |
 | D9 | `STR Rd, [Rn, #x]!` with Rd == Rn | stores the old base (data sheet) | stores the new one: the pre-indexed handlers write the base back before the store (`arm-new.h`, `CASE_16(0x520)` and the like) |
 | D10 | TSTP, TEQP, CMPP, CMNP (Rd = R15 with S) | SPSR to CPSR, the PC is not written (data sheet) | take the Rd = R15 path and reload the PC, which skips an instruction |
-| D11 | undefined instruction | a trap like any other | a trap (with D1) that also prints `arm7: CPUUndefinedException(). SOMETHING WENT WRONG` every time |
+| D11 | undefined instruction | a trap like any other | a trap that also prints `arm7: CPUUndefinedException(). SOMETHING WENT WRONG` every time |
 | D12 | recompiler: LDM / STM of one register with P = 0 and W = 0 | the base stays | rewritten as a post-indexed LDR / STR, which writes the base back (`hw/arm7/arm7_jit_virt.cpp`). The recompiler is not built on x86-64 and no test runs it |
 
 D8 to D10 rest on the data sheet and on wren7's model, there is no console capture for them.

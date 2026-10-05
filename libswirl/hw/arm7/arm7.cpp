@@ -224,7 +224,8 @@ void DYNACALL ARM7Backend::CPUUpdateCPSR(Arm7Context* ctx)
 
 static void CPUSoftwareInterrupt(Arm7Context* ctx, int comment)
 {
-	u32 PC = reg[R15_ARM_NEXT].I + 4;
+	//ARM7DI 3.4: R14_svc is the address of the instruction behind the SWI, which the PC is past already
+	u32 PC = reg[R15_ARM_NEXT].I;
 	//bool savedArmState = armState;
 	ARM7Backend::CPUSwitchMode(ctx, 0x13, true);
 	reg[14].I = PC;
@@ -238,7 +239,8 @@ static void CPUSoftwareInterrupt(Arm7Context* ctx, int comment)
 static void CPUUndefinedException(Arm7Context* ctx)
 {
 	printf("arm7: CPUUndefinedException(). SOMETHING WENT WRONG\n");
-	u32 PC = reg[R15_ARM_NEXT].I + 4;
+	//ARM7DI 3.4: R14_und is the address of the instruction behind the undefined one
+	u32 PC = reg[R15_ARM_NEXT].I;
 	ARM7Backend::CPUSwitchMode(ctx, 0x1b, true);
 	reg[14].I = PC;
 	//	reg[15].I = 0x04;
