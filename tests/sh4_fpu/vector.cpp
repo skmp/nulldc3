@@ -149,23 +149,14 @@ static const char* why_value(const FpuCase& c, const FpuRegs& left, u32 engine)
 		return 0;
 	}
 
-	if (hardware == QNAN && is_nan(is))
-		return "NaN result: the host's bit pattern, the hardware's is always 7FBFFFFF";
-
 	if (c.before.fpscr & FPU_FPSCR_DN)
 	{
 		//what the engine makes of the operands when the denormals among them are zeros
 		FpuCase flushed = c;
 		FpuRegs again;
 
-		if (flush_denormals(flushed.before) && fpu_try(flushed, engine, again))
-		{
-			if (again.fr[w] == hardware)
-				return "DN = 1: a denormal operand is not taken as the zero of its sign";
-
-			if (hardware == QNAN && is_nan(again.fr[w]))
-				return "DN = 1: a denormal operand is not taken as the zero of its sign (the NaN it then makes has the host's bit pattern too)";
-		}
+		if (flush_denormals(flushed.before) && fpu_try(flushed, engine, again) && again.fr[w] == hardware)
+			return "DN = 1: a denormal operand is not taken as the zero of its sign";
 	}
 
 	if (insn == VI_FSRRA)

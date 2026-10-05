@@ -129,25 +129,35 @@ static INLINE void RaiseFPUDisableException()
 #endif
 }
 
-// The SH4 sets the signaling bit to 0 for qNaN (unlike all recent CPUs). Some games relies on this.
+// SH7091: every NaN result is 0x7FBFFFFF, in double precision 0x7FF7FFFF FFFFFFFF (programming manual 6.2.2)
+#define SH4_QNAN32 0x7FBFFFFF
+#define SH4_QNAN64 0x7FF7FFFFFFFFFFFFull
+
 static INLINE f32 fixNaN(f32 f)
 {
-//	u32& hex = *(u32 *)&f;
-//	// no fast-math
-//	if (f != f)
-//		hex = 0x7fbfffff;
-//	// fast-math
-//	if ((hex & 0x7fffffff) > 0x7f800000)
-//		hex = 0x7fbfffff;
+	u32 hex;
+	memcpy(&hex, &f, sizeof(hex));
+
+	if ((hex & 0x7FFFFFFF) > 0x7F800000)
+	{
+		hex = SH4_QNAN32;
+		memcpy(&f, &hex, sizeof(f));
+	}
+
 	return f;
 }
 
 static INLINE f64 fixNaN64(f64 f)
 {
-	// no fast-math
-//	return f == f ? f : 0x7ff7ffffffffffffll;
-	// fast-math
-//	return (*(u64 *)&f & 0x7fffffffffffffffll) <= 0x7f80000000000000ll ? f : 0x7ff7ffffffffffffll;
+	u64 hex;
+	memcpy(&hex, &f, sizeof(hex));
+
+	if ((hex & 0x7FFFFFFFFFFFFFFFull) > 0x7FF0000000000000ull)
+	{
+		hex = SH4_QNAN64;
+		memcpy(&f, &hex, sizeof(f));
+	}
+
 	return f;
 }
 

@@ -124,10 +124,6 @@ static void label_case(const void* arg, const FpuCase& c, char* text, size_t siz
 
 //// why a value is not the hardware's (--why)
 
-#define QNAN_SINGLE     0x7FBFFFFF	//what an SH4 makes when it makes a NaN
-#define QNAN_HIGH       0x7FF7FFFF
-#define QNAN_LOW        0xFFFFFFFF
-
 //Where an instruction leaves its result
 enum
 {
@@ -176,31 +172,6 @@ static bool same_result(u32 result, const FpuRegs& a, const FpuRegs& b)
 	case RESULT_DR0:  return a.fr[0] == b.fr[0] && a.fr[1] == b.fr[1];
 	case RESULT_FPUL: return a.fpul == b.fpul;
 	default:          return a.t == b.t;
-	}
-}
-
-//The result is a floating point number, and a NaN
-static bool nan_result(int op, u32 result, const FpuRegs& r)
-{
-	switch (result)
-	{
-	case RESULT_FR0:  return class_single(r.fr[0]) == CLASS_NAN;
-	case RESULT_FR2:  return class_single(r.fr[2]) == CLASS_NAN;
-	case RESULT_DR0:  return class_double(r.fr[0], r.fr[1]) == CLASS_NAN;
-	case RESULT_FPUL: return op == P_FCNVDS && class_single(r.fpul) == CLASS_NAN;
-	default:          return false;
-	}
-}
-
-//The NaN is the one an SH4 makes
-static bool sh4_nan_result(u32 result, const FpuRegs& r)
-{
-	switch (result)
-	{
-	case RESULT_FR0:  return r.fr[0] == QNAN_SINGLE;
-	case RESULT_FR2:  return r.fr[2] == QNAN_SINGLE;
-	case RESULT_DR0:  return r.fr[0] == QNAN_HIGH && r.fr[1] == QNAN_LOW;
-	default:          return r.fpul == QNAN_SINGLE;
 	}
 }
 
@@ -291,23 +262,14 @@ static const char* why_value(const FpuCase& c, const FpuRegs& left, u32 engine)
 	if (op == P_FTRC_S || op == P_FTRC_D)
 		return 0;
 
-	if (!same_result(result, left, hardware) && nan_result(op, result, left) && sh4_nan_result(result, hardware))
-		return "NaN result: the host's bit pattern, the hardware's is always 7FBFFFFF / 7FF7FFFF FFFFFFFF";
-
 	if (dn)
 	{
 		//what the engine makes of the operands when the denormals among them are zeros
 		FpuCase flushed = c;
 		FpuRegs again;
 
-		if (flush_denormals(kind, flushed.before) && fpu_try(flushed, engine, again))
-		{
-			if (same_result(result, again, hardware))
-				return "DN = 1: a denormal operand is not taken as the zero of its sign";
-
-			if (nan_result(op, result, again) && sh4_nan_result(result, hardware))
-				return "DN = 1: a denormal operand is not taken as the zero of its sign (the NaN it then makes has the host's bit pattern too)";
-		}
+		if (flush_denormals(kind, flushed.before) && fpu_try(flushed, engine, again) && same_result(result, again, hardware))
+			return "DN = 1: a denormal operand is not taken as the zero of its sign";
 
 		if (smallest_normal_and_zero(result, hardware, left))
 			return "DN = 1: a result below the smallest normal number that rounds up to it is that number on the hardware, the host flushes it to zero";

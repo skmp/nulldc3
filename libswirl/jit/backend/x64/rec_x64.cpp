@@ -591,6 +591,7 @@ public:
 
 			case shop_fsqrt:
 				sqrtss(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs1));
+				GenFixNaN(regalloc.MapXRegister(op.rd));
 				break;
 
 			case shop_fmac:
@@ -604,6 +605,7 @@ public:
 					mulss(xmm0, regalloc.MapXRegister(op.rs3));
 					addss(regalloc.MapXRegister(op.rd), xmm0);
 				}
+				GenFixNaN(regalloc.MapXRegister(op.rd));
 				break;
 
 			case shop_fsrra:
@@ -612,6 +614,7 @@ public:
 				mov(eax, 0x3f800000);	// 1.0
 				movd(regalloc.MapXRegister(op.rd), eax);
 				divss(regalloc.MapXRegister(op.rd), xmm0);
+				GenFixNaN(regalloc.MapXRegister(op.rd));
 				break;
 
 			case shop_fsetgt:
@@ -666,6 +669,7 @@ public:
 						shufps(xmm1, xmm1,1);
 						addss(rd, xmm1);
 					}
+					GenFixNaN(rd);
 				}
 				break;
 
@@ -707,6 +711,25 @@ public:
 					addps(xmm0, xmm1);	 //sum it all up
 					addps(xmm2, xmm3);
 					addps(xmm0, xmm2);
+
+					// SH7091: a NaN result is 0x7FBFFFFF, in each of the four
+					{
+						Xbyak::Label no_nan;
+
+						movaps(xmm1, xmm0);
+						cmpunordps(xmm1, xmm0);		//xmm1=mask of the NaNs
+						movmskps(eax, xmm1);
+						test(eax, eax);
+						jz(no_nan);
+						mov(eax, SH4_QNAN32);
+						movd(xmm2, eax);
+						shufps(xmm2, xmm2, 0);
+						andps(xmm2, xmm1);
+						andnps(xmm1, xmm0);
+						orps(xmm1, xmm2);
+						movaps(xmm0, xmm1);
+						L(no_nan);
+					}
 
 					mov(rax, (uintptr_t)op.rd.reg_ptr());
 					movaps(xword[rax], xmm0);
@@ -1249,6 +1272,19 @@ private:
 		if (regalloc.mapf(op.rd) != regalloc.mapf(op.rs1))
 			movss(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs1));
 		(this->*natop)(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs2));
+		GenFixNaN(regalloc.MapXRegister(op.rd));
+	}
+
+	// SH7091: a NaN result is 0x7FBFFFFF (programming manual 6.2.2). Uses eax
+	void GenFixNaN(const Xbyak::Xmm& reg)
+	{
+		Xbyak::Label not_nan;
+
+		ucomiss(reg, reg);
+		jnp(not_nan);
+		mov(eax, SH4_QNAN32);
+		movd(reg, eax);
+		L(not_nan);
 	}
 
 	template<class Ret, class... Params>

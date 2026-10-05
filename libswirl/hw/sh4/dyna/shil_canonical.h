@@ -148,10 +148,11 @@ shil_compile \
 #define BIN_OP_I4(tp,z,rt,pt) BIN_OP_I_BASE( return ((tp)(pt)r1) z ((tp)(pt)r2); ,u32,rt)
 
 #define BIN_OP_F(z) BIN_OP_I_BASE( return fixNaN(r1 z r2); ,f32,f32)
-#define BIN_OP_FU(z) BIN_OP_I_BASE( return fixNaN(r1 z r2); ,f32,u32)
+#define BIN_OP_FU(z) BIN_OP_I_BASE( return r1 z r2; ,f32,u32)
 
 #define UN_OP_I(z) UN_OP_I_BASE( return z (r1); ,u32)
 #define UN_OP_F(z) UN_OP_I_BASE( return z (r1); ,f32)
+#define UN_OP_FN(z) UN_OP_I_BASE( return fixNaN(z (r1)); ,f32)
 
 #define shil_recimp() \
 shil_compile( \
@@ -171,6 +172,7 @@ shil_compile( \
 
 #define UN_OP_I(z)
 #define UN_OP_F(z)
+#define UN_OP_FN(z)
 #define shil_recimp()
 #endif
 
@@ -838,7 +840,7 @@ shil_opc_end()
 
 //shop_fsqrt
 shil_opc(fsqrt)
-UN_OP_F(sqrtf)
+UN_OP_FN(sqrtf)
 shil_opc_end()
 
 
@@ -932,7 +934,7 @@ shil_opc_end()
 
 //shop_fsrra
 shil_opc(fsrra)
-UN_OP_F(1/sqrtf)
+UN_OP_FN(1/sqrtf)
 shil_opc_end()
 
 
@@ -1032,5 +1034,6 @@ SHIL_END
 
 #undef UN_OP_I
 #undef UN_OP_F
+#undef UN_OP_FN
 #undef BIN_OP_FU
 #undef shil_recimp

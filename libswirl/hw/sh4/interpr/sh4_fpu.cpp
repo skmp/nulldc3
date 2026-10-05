@@ -79,7 +79,7 @@ INLINE void Denorm32(float &value)
 
 
 #define CHECK_FPU_32(v) v = fixNaN(v)
-#define CHECK_FPU_64(v)
+#define CHECK_FPU_64(v) v = fixNaN64(v)
 
 
 //fadd <FREG_M>,<FREG_N>
@@ -123,6 +123,7 @@ sh4op(i1111_nnnn_mmmm_0001)
 		double drn=GetDR(n), drm=GetDR(m);
 		drn-=drm;
 		//dr[n] -= dr[m];
+		CHECK_FPU_64(drn);
 		SetDR(n,drn);
 	}
 }
@@ -144,6 +145,7 @@ sh4op(i1111_nnnn_mmmm_0010)
 		double drn=GetDR(n), drm=GetDR(m);
 		drn*=drm;
 		//dr[n] *= dr[m];
+		CHECK_FPU_64(drn);
 		SetDR(n,drn);
 	}
 }
@@ -166,6 +168,7 @@ sh4op(i1111_nnnn_mmmm_0011)
 
 		double drn=GetDR(n), drm=GetDR(m);
 		drn/=drm;
+		CHECK_FPU_64(drn);
 		SetDR(n,drn);
 	}
 }
@@ -482,6 +485,7 @@ sh4op(i1111_nnnn_1011_1101)
 		u32 n = (op >> 9) & 0x07;
 		u32*p=&fpul;
 		*((float*)p) = (float)GetDR(n);
+		CHECK_FPU_32(*((float*)p));
 	}
 	else
 	{
@@ -497,7 +501,9 @@ sh4op(i1111_nnnn_1010_1101)
 	{
 		u32 n = (op >> 9) & 0x07;
 		u32* p = &fpul;
-		SetDR(n,(double)*((float*)p));
+		f64 d = (double)*((float*)p);
+		CHECK_FPU_64(d);
+		SetDR(n,d);
 	}
 	else
 	{
@@ -623,7 +629,9 @@ sh4op(i1111_nnnn_0110_1101)
 		//Operation _can_ be done on sh4
 		u32 n = GetN(op)>>1;
 
-		SetDR(n,sqrt(GetDR(n)));
+		f64 d = sqrt(GetDR(n));
+		CHECK_FPU_64(d);
+		SetDR(n,d);
 	}
 }
 
