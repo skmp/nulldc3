@@ -825,10 +825,17 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 			problems++;
 	}
 
-	if (!gated)
-		fprintf(report, "\nnot compared with the baseline\n");
+	//Only a run that was compared with the baseline passes
+	const char* verdict = "PASS";
 
-	fprintf(report, "\n%s: %s\n", opt.name.c_str(), problems ? "FAIL" : "PASS");
+	if (problems)
+		verdict = "FAIL";
+	else if (opt.update_baseline)
+		verdict = "not gated (the baseline was written)";
+	else if (!gated)
+		verdict = "not gated (not compared with the baseline)";
+
+	fprintf(report, "\n%s: %s\n", opt.name.c_str(), verdict);
 	fflush(report);
 
 	return problems ? 1 : 0;

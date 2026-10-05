@@ -29,7 +29,8 @@
 	writes the counts into the file.
 
 	--file, --vector, --verbose and --unfilter are for looking at single files and vectors, the option list is
-	in the usage text.
+	in the usage text. A run that is not compared with the baseline (--vector, --unfilter, --update-baseline)
+	does not end in PASS: it fails on what fails whatever the baseline says, and is "not gated" otherwise.
 */
 #pragma once
 #include "ss_format.h"

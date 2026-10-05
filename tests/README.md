@@ -139,6 +139,10 @@ counts as well and needs the same.
 `--verbose` prints, for every vector that is not an exact pass or that raises a notification nobody announces,
 the opcodes, the expected and the actual bus activity and the registers before, expected and actual.
 
+A run with `--vector`, `--unfilter` or `--update-baseline` is not compared with the baseline and does not end in
+`PASS`. It ends in `<name>: not gated (...)` with exit code 0, or in `FAIL` when it has what fails whatever the
+baseline says: a hang, a crash or a notification nobody announces, the vector of `--vector` not passing.
+
 ## The directed vectors
 
 The single-step vectors are random. None of the 500 ADDC vectors has a sum of 0xFFFFFFFF with T set, so an ADDC

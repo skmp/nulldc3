@@ -86,4 +86,5 @@ and fails with `--strict`, as ctest runs it.
     sh4_differential --unfilter all                     # run the unaligned and odd-pc vectors as well
     sh4_differential --update-baseline                  # after a fix, commit the file with it
 
-`sh4_singlestep_dynarec` has the options of `sh4_singlestep_interp`.
+`sh4_singlestep_dynarec` has the options of `sh4_singlestep_interp`. As there, a run with `--vector`, `--unfilter`
+or `--update-baseline` is not compared with the baseline and ends in `not gated (...)`, not in `PASS`.

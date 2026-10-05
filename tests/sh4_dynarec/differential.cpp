@@ -34,6 +34,9 @@
 	it fails the run as well: a baseline that is behind lets a regression back to its counts pass.
 	--update-baseline writes the counts into the file. KNOWN_DIFFERENCES.md has what is behind the differences
 	of the baseline.
+
+	A run that is not compared with the baseline (--vector, --unfilter, --update-baseline) does not end in
+	PASS: it fails on what fails whatever the baseline says, and is "not gated" otherwise.
 */
 #include "ss_format.h"
 #include "ss_policy.h"
@@ -908,10 +911,17 @@ int main(int argc, char** argv)
 			problems++;
 	}
 
-	if (!gated)
-		fprintf(report, "\nnot compared with the baseline\n");
+	//Only a run that was compared with the baseline passes
+	const char* verdict = "PASS";
 
-	fprintf(report, "\n%s: %s\n", opt.name.c_str(), problems ? "FAIL" : "PASS");
+	if (problems)
+		verdict = "FAIL";
+	else if (opt.update_baseline)
+		verdict = "not gated (the baseline was written)";
+	else if (!gated)
+		verdict = "not gated (not compared with the baseline)";
+
+	fprintf(report, "\n%s: %s\n", opt.name.c_str(), verdict);
 	fflush(report);
 
 	return problems ? 1 : 0;
