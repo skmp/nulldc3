@@ -10,7 +10,7 @@ what is written to them, and a sample passes only when a test says so (`arm7_mac
 | test | what it runs | data |
 |---|---|---|
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast, from reset to their end marker: no error bit in r1 (`r1 & 0x3FFFFFFF == 0`) and the pinned r0-r14 and CPSR at the end | `tests/vendor/arm7di-tests-dreamcast` (submodule) |
-| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), and SWI and the undefined instruction trap with their return | none |
+| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA and what SCILV0-2 read back | none |
 | `arm7.wren7.vendor` | the same programs as console jobs: r1 and CPSR against the console's | wren7-rtl |
 | `arm7.wren7.qemu_diff` | 4 x 1000 random instructions (data processing, MUL/MLA, LDR/STR, LDM/STM, SWP): registers, flags and memory of every case against the console's | wren7-rtl |
 | `arm7.wren7.mulsem` | 1024 multiplier inputs: MUL(S)/MLA(S) results and flags, and the Rd == Rm forms, against the console's | wren7-rtl |
@@ -44,6 +44,13 @@ undefined instruction trap with `movs pc, lr` in their vector, one trap and 8 in
 trap enters is the address of the instruction behind it, and the return goes on there. That is the program
 of wren7-rtl's timing kernels `swi` and `und`, whose time on the console is that of 8 traps and 8 returns per
 iteration (`model/tests/hw/timing/SUMMARY.txt`).
+
+None gets an interrupt either. The checks `fiq` and `scilv` drive the interrupt controller in front of nFIQ
+through the registers a guest has for it, with the one sample interval as the request: a request of level 0
+does not interrupt, level 1 and 7 do and L reads the level; reading L releases nFIQ and nothing else does;
+writing bit 0 of M lets the next request in and nothing else does; SCILV0-2 read back as 0. What has to happen
+is what a Dreamcast did in wren7-rtl's `fiqdiag` jobs (`model/tests/hw/fiqdiag/hw`, `model/NOTES.md`
+"Interrupts"); the comment in `directed_main.cpp` names the capture behind each rule.
 
 ## The wren7 console suites
 

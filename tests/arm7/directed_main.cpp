@@ -14,7 +14,10 @@
 	trap: SWI and the undefined instruction trap, with what R14 holds in the trap's mode and where "movs pc, lr" in
 	the vector goes on (the tables below have the source).
 
-	Checks: adc, sbc, rsc, trap. The test needs no data.
+	fiq, scilv: the interrupt controller of the AICA in front of nFIQ, driven through its registers as a guest
+	drives it, and what SCILV0-2 read back (the comment at fiq_setup() has the source).
+
+	Checks: adc, sbc, rsc, trap, fiq, scilv. The test needs no data.
 */
 #include "arm7_machine.h"
 #include "arm7_suite.h"
@@ -267,6 +270,343 @@ static void run_traps()
 	}
 }
 
+/*
+	The interrupt controller in front of nFIQ, as wren7-rtl measured it on a Dreamcast with the one sample
+	interval (SCIPD bit 10) as the only request (model/NOTES.md, "Interrupts"; the kernel is
+	model/hw/arm/k_blkphase.s, the captures are in model/tests/hw/fiqdiag/hw):
+
+	  - a request reaches nFIQ only with a level other than 0 in SCILV0-2. With all three 0 the enabled, pending
+	    request never interrupts (d1.bin, d4.bin: FIQ enabled over 2048 adds, r0 still has all its samples);
+	    SCILV0 = 0x80 is level 1 and interrupts, as 0xFF in all three, level 7, does
+	  - reading L (0x802D00) is the acknowledge: it releases nFIQ, and it returns the level of the request
+	    (a1.bin: r3 = 1). A handler that reads a RAM word in its place, clears the request with SCIRE and writes
+	    M is entered again as soon as it returns, with one M write (a2.bin) and with four (a4.bin): 256 entries
+	    with 45 and 17 adds in all, fewer than a single sample has room for
+	  - writing bit 0 of M (0x802D04) ends the service: the next request is let in. With the L read and no M
+	    write the first interrupt is the last (a5.bin: one sample taken off r0, the 2048 adds run out). One M
+	    write is enough (a1.bin: all 256 samples)
+	  - SCILV0-2 read back as 0. k_blkphase.s stores the registers as it finds them at 0x1FF100, the second
+	    region of d*.bin: d3.bin and d4.bin have 0 in all three, and an L of 1 and 7, the level the job before
+	    them set up with SCILV0 = 0x80 and with 0xFF in all three
+
+	The job file of d1 to d5 is not kept, model/NOTES.md has what they ran with. The scenarios do what the
+	kernel does, with the bus accesses of its prologue and of its handler made by the test: the vector has a
+	"mov r0, r0" for the entry and "subs pc, lr, #4" for the return.
+*/
+#define AICA_SCIEB 0x80289C
+#define AICA_SCIRE 0x8028A4
+#define AICA_SCILV0 0x8028A8
+#define AICA_L 0x802D00
+#define AICA_M 0x802D04
+
+#define SAMPLE_INTERVAL 0x400
+
+#define MODE_FIQ 0x11
+
+#define FIQ_VECTOR 0x1C
+#define FIQ_MAIN 0x100
+#define FIQ_SLED (FIQ_MAIN + 12)
+
+struct Scenario
+{
+	const char* name;
+	//Leaves what is wrong in text, or nothing
+	void (*run)(std::string& text);
+};
+
+struct ScenarioRun
+{
+	const Scenario* scenario;
+	std::string text;
+};
+
+static bool in_fiq()
+{
+	return (arm7m_cpsr() & 0x1F) == MODE_FIQ;
+}
+
+//The prologue of k_blkphase.s: the levels, nothing pending, nothing in service, only the one sample interval
+//enabled, and FIQs on. The ARM is left in front of a sled of "add r7, r7, #1"
+static void fiq_setup(u32 scilv0, u32 scilv1, u32 scilv2)
+{
+	static const u32 vector[] =
+	{
+		0xE1A00000,		//mov r0, r0
+		0xE25EF004,		//subs pc, lr, #4
+	};
+
+	static const u32 main_code[] =
+	{
+		0xE10F1000,		//mrs r1, cpsr
+		0xE3C11040,		//bic r1, r1, #0x40
+		0xE121F001,		//msr cpsr_c, r1
+	};
+
+	static const u32 add_r7 = 0xE2877001;
+
+	arm7m_power_on();
+	arm7m_clear();
+	memcpy(arm7m_ram() + FIQ_VECTOR, vector, sizeof(vector));
+	memcpy(arm7m_ram() + FIQ_MAIN, main_code, sizeof(main_code));
+
+	for (u32 i = 0; i < 64; i++)
+		memcpy(arm7m_ram() + FIQ_SLED + 4 * i, &add_r7, 4);
+
+	arm7m_release_reset();
+
+	arm7m_read32(AICA_L);
+	arm7m_write32(AICA_SCILV0, scilv0);
+	arm7m_write32(AICA_SCILV0 + 4, scilv1);
+	arm7m_write32(AICA_SCILV0 + 8, scilv2);
+	arm7m_write32(AICA_SCIRE, 0x7FF);
+	arm7m_write32(AICA_M, 1);
+	arm7m_write32(AICA_SCIEB, SAMPLE_INTERVAL);
+
+	arm7m_context()->regs[R15_ARM_NEXT].I = FIQ_MAIN;
+
+	for (u32 i = 0; i < 3; i++)
+		arm7m_step();
+}
+
+//A sample passes and the ARM gets to its next instruction. True: that was the entry of the FIQ, the ARM is behind
+//the first instruction of the vector with the return address in R14_fiq
+static bool sample_interrupts(std::string& text)
+{
+	Arm7Context* ctx = arm7m_context();
+	u32 at = ctx->regs[R15_ARM_NEXT].I;
+
+	arm7m_sample();
+	arm7m_step();
+
+	if (!in_fiq())
+		return false;
+
+	if (ctx->regs[R15_ARM_NEXT].I != FIQ_VECTOR + 4 || ctx->regs[14].I != at + 4)
+		text += " the FIQ is entered with a wrong PC or R14;";
+
+	return true;
+}
+
+//"subs pc, lr, #4" of the vector
+static void fiq_return(std::string& text)
+{
+	arm7m_step();
+
+	if (in_fiq())
+		text += " the return from the FIQ does not leave FIQ mode;";
+}
+
+static void fiq_level_0(std::string& text)
+{
+	fiq_setup(0, 0, 0);
+
+	for (u32 i = 0; i < 4; i++)
+	{
+		if (sample_interrupts(text))
+		{
+			text += " a request of level 0 interrupts;";
+			return;
+		}
+
+		arm7m_step();
+	}
+}
+
+static void fiq_level(std::string& text, u32 scilv0, u32 scilv1, u32 scilv2, u32 level)
+{
+	char number[64];
+
+	fiq_setup(scilv0, scilv1, scilv2);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	u32 l = arm7m_read32(AICA_L);
+
+	if (l != level)
+	{
+		snprintf(number, sizeof(number), " L reads %X, has to be %X;", l, level);
+		text += number;
+	}
+}
+
+static void fiq_level_1(std::string& text)
+{
+	fiq_level(text, 0x80, 0, 0, 1);
+}
+
+static void fiq_level_7(std::string& text)
+{
+	fiq_level(text, 0xFF, 0xFF, 0xFF, 7);
+}
+
+//a5: the handler clears the request and reads L, M is not written
+static void fiq_no_accept(std::string& text)
+{
+	fiq_setup(0x80, 0, 0);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	arm7m_read32(AICA_L);
+	fiq_return(text);
+
+	for (u32 i = 0; i < 4; i++)
+	{
+		arm7m_step();
+
+		if (in_fiq() || sample_interrupts(text))
+		{
+			text += " there is another interrupt though M was not written;";
+			return;
+		}
+	}
+}
+
+//a2, a4: the handler clears the request and writes M, L is not read
+static void fiq_no_acknowledge(std::string& text, u32 m_writes)
+{
+	fiq_setup(0x80, 0, 0);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	for (u32 entry = 0; entry < 3; entry++)
+	{
+		arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+
+		for (u32 i = 0; i < m_writes; i++)
+			arm7m_write32(AICA_M, 1);
+
+		fiq_return(text);
+
+		//no sample passes
+		arm7m_step();
+
+		if (!in_fiq())
+		{
+			text += " nFIQ is released though L was not read;";
+			return;
+		}
+	}
+}
+
+static void fiq_no_acknowledge_1(std::string& text)
+{
+	fiq_no_acknowledge(text, 1);
+}
+
+static void fiq_no_acknowledge_4(std::string& text)
+{
+	fiq_no_acknowledge(text, 4);
+}
+
+//a1: the handler clears the request, reads L and writes M once
+static void fiq_serviced(std::string& text)
+{
+	fiq_setup(0x80, 0, 0);
+
+	for (u32 sample = 0; sample < 3; sample++)
+	{
+		if (!sample_interrupts(text))
+		{
+			text += " a sample does not interrupt;";
+			return;
+		}
+
+		arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+		arm7m_read32(AICA_L);
+		arm7m_write32(AICA_M, 1);
+		fiq_return(text);
+
+		//until the next sample
+		arm7m_step();
+
+		if (in_fiq())
+		{
+			text += " the handler is entered again without a new request;";
+			return;
+		}
+	}
+}
+
+static const Scenario fiq_scenarios[] =
+{
+	{ "level 0", &fiq_level_0 },
+	{ "level 1", &fiq_level_1 },
+	{ "level 7", &fiq_level_7 },
+	{ "L read, M not written", &fiq_no_accept },
+	{ "L not read, M written", &fiq_no_acknowledge_1 },
+	{ "L not read, M written 4 times", &fiq_no_acknowledge_4 },
+	{ "L read, M written", &fiq_serviced },
+};
+
+static void scilv_reads_0(std::string& text, u32 index)
+{
+	char number[64];
+
+	fiq_setup(0, 0, 0);
+	arm7m_write32(AICA_SCILV0 + 4 * index, 0xFF);
+
+	u32 value = arm7m_read32(AICA_SCILV0 + 4 * index);
+
+	if (value != 0)
+	{
+		snprintf(number, sizeof(number), " SCILV%u reads %X behind a write of FF, has to be 0;", index, value);
+		text += number;
+	}
+
+	//it is the register that was written: the request has its level
+	if (!sample_interrupts(text) || arm7m_read32(AICA_L) != (1u << index))
+		text += " the level that was written is not the level of the request;";
+}
+
+static void scilv0_reads_0(std::string& text) { scilv_reads_0(text, 0); }
+static void scilv1_reads_0(std::string& text) { scilv_reads_0(text, 1); }
+static void scilv2_reads_0(std::string& text) { scilv_reads_0(text, 2); }
+
+static const Scenario scilv_scenarios[] =
+{
+	{ "SCILV0", &scilv0_reads_0 },
+	{ "SCILV1", &scilv1_reads_0 },
+	{ "SCILV2", &scilv2_reads_0 },
+};
+
+static void run_scenario(void* arg)
+{
+	ScenarioRun* run = (ScenarioRun*)arg;
+
+	run->scenario->run(run->text);
+}
+
+static void run_scenarios(const char* check, const Scenario* scenarios, size_t count)
+{
+	for (size_t i = 0; i < count; i++)
+	{
+		ScenarioRun run;
+
+		run.scenario = &scenarios[i];
+
+		std::string what = std::string(check) + " case " + scenarios[i].name;
+		TestGuardResult guard = arm7_guarded(what, &run_scenario, &run);
+
+		arm7_count(check, guard == TGR_OK && run.text.empty());
+
+		if (guard == TGR_OK && !run.text.empty())
+			fprintf(arm7_report, "%s case %u: %s:%s\n", check, (u32)i, scenarios[i].name, run.text.c_str());
+	}
+}
+
 int main(int argc, char** argv)
 {
 	static const char test[] = "arm7.directed";
@@ -341,6 +681,12 @@ int main(int argc, char** argv)
 
 	if (arm7_selected("trap"))
 		run_traps();
+
+	if (arm7_selected("fiq"))
+		run_scenarios("fiq", fiq_scenarios, sizeof(fiq_scenarios) / sizeof(fiq_scenarios[0]));
+
+	if (arm7_selected("scilv"))
+		run_scenarios("scilv", scilv_scenarios, sizeof(scilv_scenarios) / sizeof(scilv_scenarios[0]));
 
 	return arm7_suite_end();
 }
