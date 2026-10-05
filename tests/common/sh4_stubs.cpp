@@ -4,12 +4,11 @@
 	interrupts, no TA, no reios, no MMU and no host memory mapping.
 
 	Symbols that a recompiler build takes from its own translation units are in sh4_stubs_norec.cpp, the ones only
-	a recompiler build needs in sh4_stubs_rec.cpp.
+	a recompiler build needs in sh4_stubs_rec.cpp, the ones hw/sh4/SuperH4_impl.cpp has in sh4_stubs_nocpu.cpp.
 */
 #include "types.h"
 
 #include "hw/sh4/sh4_if.h"
-#include "hw/sh4/sh4_interpreter.h"
 #include "hw/sh4/sh4_mem.h"
 #include "hw/sh4/modules/ccn.h"
 #include "hw/sh4/modules/mmu.h"
@@ -18,10 +17,6 @@
 #include "reios/reios.h"
 
 settings_t settings;
-
-//scheduler
-extern "C" int UpdateSystem() { return 0; }
-extern "C" int UpdateSystem_INTC() { return 0; }
 
 //reios
 void DYNACALL reios_trap(u32 op) { }

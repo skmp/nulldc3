@@ -1018,8 +1018,7 @@ void state_Setup(u32 rpc, fpscr_t fpu_cfg)
 	state.cpu.is_delayslot = false;
 	state.cpu.FPR64 = fpu_cfg.PR;
 	state.cpu.FSZ64 = fpu_cfg.SZ;
-	state.cpu.RoundToZero = fpu_cfg.RM == 1;
-	verify(fpu_cfg.RM < 2);
+	state.cpu.RoundToZero = FPSCR_RM_ZERO(fpu_cfg);
 	// what about fp/fs ?
 
 	state.NextOp = NDO_NextOp;

@@ -83,36 +83,10 @@ struct DiffKnown
 static const char known_fd[] =
 	"SR.FD=1: the interpreter notifies \"Full MMU support needed\" where the FPU disable exception would be raised and "
 	"executes the instruction, the dynarec executes it without looking at SR.FD";
-static const char known_rte[] =
-	"RTE: the dynarec loads SR from SSR in front of the delay slot, which then runs on the register bank of the new SR. "
-	"The interpreter runs it on the bank of the old SR";
-static const char known_fpscr_rm[] =
-	"FPSCR.RM = 2 or 3: the dynarec's decoder ends in verify(fpu_cfg.RM < 2) at the next block, the interpreter runs on "
-	"(rounding to nearest)";
-static const char known_sum_order[] =
-	"sum of 4 products: the interpreter adds them one by one, ((p0 + p1) + p2) + p3, the x64 backend in pairs, "
-	"(p0 + p1) + (p2 + p3). Every sum is rounded, and saturates when rounding to zero";
-static const char known_ftrc_nan[] =
-	"FTRC of a NaN with the sign bit clear: 7FFFFFFF in the interpreter (it corrects the host's 80000000 by the sign bit "
-	"of the operand), 80000000 in the x64 backend (cvttss2si as it is)";
-
-static const char known_pr_behind_slot[] =
-	"BSR, BSRF and JSR with a delay slot that reads PR (sts pr,r5 in the directed vectors): the interpreter writes PR "
-	"behind the delay slot, which reads the PR of before the call. The dynarec writes it in front of the delay slot, as "
-	"an SH4 does";
 
 static const DiffKnown known[] =
 {
 	{ 0, SSP_FPU, DK_NOTIFY, known_fd },
-	{ "0000000000101011_sz0_pr0", 0, DK_STATE, known_rte },
-	{ "0000mmmm00000011_sz0_pr0", 0, DK_STATE, known_pr_behind_slot },
-	{ "0100mmmm00001011_sz0_pr0", 0, DK_STATE, known_pr_behind_slot },
-	{ "1011dddddddddddd_sz0_pr0", 0, DK_STATE, known_pr_behind_slot },
-	{ "0100mmmm01100110_sz0_pr0", 0, DK_CRASH, known_fpscr_rm },
-	{ "0100mmmm01101010_sz0_pr0", 0, DK_CRASH, known_fpscr_rm },
-	{ "1111nn0111111101_sz0_pr0", 0, DK_STATE, known_sum_order },
-	{ "1111nnmm11101101_sz0_pr0", 0, DK_STATE, known_sum_order },
-	{ "1111mmmm00111101_sz0_pr0", 0, DK_STATE, known_ftrc_nan },
 };
 
 struct DiffCounts

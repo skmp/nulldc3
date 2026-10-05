@@ -889,14 +889,14 @@ sh4op(i0000_nnnn_0010_0011)
 //bsrf <REG_N>
 sh4op(i0000_nnnn_0000_0011)
 {
-	//TODO: Check pr setting vs real h/w
 	u32 n = GetN(op);
 	u32 newpc = r[n] + next_pc +2;
-	u32 newpr = next_pc + 2;
-	
+
+	//SH7091: PR is written before the delay slot
+	pr = next_pc + 2;
+
 	ExecuteDelayslot(); //WARN : pr and r[n] can change here
-	
-	pr = newpr;
+
 	next_pc = newpc;
 }
 
@@ -905,18 +905,16 @@ sh4op(i0000_nnnn_0000_0011)
 sh4op(i0000_0000_0010_1011)
 {
 	u32 newpc = spc;
-	// FIXME In an RTE delay slot, status register (SR) bits are referenced as follows.
+	// In an RTE delay slot, status register (SR) bits are referenced as follows.
 	// In instruction access, the MD bit is used before modification, and in data access, 
 	// the MD bit is accessed after modification.
 	// The other bits—S, T, M, Q, FD, BL, and RB—after modification are used for delay slot
 	// instruction execution. The STC and STC.L SR instructions access all SR bits after modification.
 	sh4_sr_SetFull(ssr);
+	UpdateSR();	// SH7091: the delay slot runs on the register bank of the new SR
 	ExecuteDelayslot_RTE();
 	next_pc = newpc;
-	if (UpdateSR())
-	{
-		UpdateINTC();
-	}
+	UpdateINTC();	// an interrupt that the new SR lets in is taken at the target, not in front of the delay slot
 }
 
 
@@ -996,12 +994,13 @@ sh4op(i1010_iiii_iiii_iiii)
 // bsr <bdisp12>
 sh4op(i1011_iiii_iiii_iiii)
 {
-	//TODO: check pr vs real h/w
-	u32 newpr = next_pc + 2; //return after delayslot
 	u32 newpc = branch_target_s12(op);
-	ExecuteDelayslot();
 
-	pr = newpr;
+	//SH7091: PR is written before the delay slot
+	pr = next_pc + 2; //return after delayslot
+
+	ExecuteDelayslot(); //WARN : pr can change here
+
 	next_pc=newpc;
 }
 
@@ -1011,7 +1010,9 @@ sh4op(i1100_0011_iiii_iiii)
 	auto sh4mmr = sh4_cpu->sh4mmr.get();
 
 	//printf("trapa 0x%X\n",(GetImm8(op) << 2));
-	CCN_TRA = (GetImm8(op) << 2);
+	//TRA belongs to the exception: with SR.BL = 1 there is none, Do_Exception resets the CPU
+	if (sr.BL == 0)
+		CCN_TRA = (GetImm8(op) << 2);
 	Do_Exception(next_pc,0x160,0x100);
 }
 
@@ -1030,12 +1031,13 @@ sh4op(i0100_nnnn_0000_1011)
 {
 	u32 n = GetN(op);
 
-	//TODO: check pr vs real h/w
-	u32 newpr = next_pc + 2;   //return after delayslot
 	u32 newpc= r[n];
+
+	//SH7091: PR is written before the delay slot
+	pr = next_pc + 2;   //return after delayslot
+
 	ExecuteDelayslot(); //r[n]/pr can change here
 
-	pr = newpr;
 	next_pc=newpc;
 }
 
@@ -2130,6 +2132,7 @@ sh4op(i0100_nnnn_0110_0110)
 	u32 n = GetN(op);
 
 	ReadMemU32(fpscr.full,r[n]);
+	fpscr.full &= FPSCR_MASK;
 
 	UpdateFPSCR();
 	r[n] += 4;
@@ -2155,7 +2158,7 @@ sh4op(i0100_nnnn_0000_0111)
 sh4op(i0100_nnnn_0110_1010)
 {
 	u32 n = GetN(op);
-	fpscr.full = r[n];
+	fpscr.full = r[n] & FPSCR_MASK;
 	UpdateFPSCR();
 }
 

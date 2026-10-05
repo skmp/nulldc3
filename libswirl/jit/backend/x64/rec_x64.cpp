@@ -591,19 +591,20 @@ public:
 
 			case shop_fsqrt:
 				sqrtss(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs1));
+				GenFixNaN(regalloc.MapXRegister(op.rd));
 				break;
 
 			case shop_fmac:
+				// FMAC rounds once: a CPU without FMA calls the helper, mulss and addss would round twice
+				if (!cpu.has(Xbyak::util::Cpu::tFMA))
+				{
+					shil_chf[op.op](&op);
+					break;
+				}
 				if (regalloc.mapf(op.rd) != regalloc.mapf(op.rs1))
 					movss(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs1));
-				if (cpu.has(Xbyak::util::Cpu::tFMA))
-					vfmadd231ss(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs2), regalloc.MapXRegister(op.rs3));
-				else
-				{
-					movss(xmm0, regalloc.MapXRegister(op.rs2));
-					mulss(xmm0, regalloc.MapXRegister(op.rs3));
-					addss(regalloc.MapXRegister(op.rd), xmm0);
-				}
+				vfmadd231ss(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs2), regalloc.MapXRegister(op.rs3));
+				GenFixNaN(regalloc.MapXRegister(op.rd));
 				break;
 
 			case shop_fsrra:
@@ -612,6 +613,7 @@ public:
 				mov(eax, 0x3f800000);	// 1.0
 				movd(regalloc.MapXRegister(op.rd), eax);
 				divss(regalloc.MapXRegister(op.rd), xmm0);
+				GenFixNaN(regalloc.MapXRegister(op.rd));
 				break;
 
 			case shop_fsetgt:
@@ -660,12 +662,14 @@ public:
 					}
 					else
 					{
-						movhlps(xmm1, rd);
-						addps(rd, xmm1);
+						// (p0 + p1) + (p2 + p3), as haddps adds them
 						movaps(xmm1, rd);
-						shufps(xmm1, xmm1,1);
+						shufps(xmm1, xmm1, 0xb1);		//xmm1={p1,p0,p3,p2}
+						addps(rd, xmm1);
+						movhlps(xmm1, rd);
 						addss(rd, xmm1);
 					}
+					GenFixNaN(rd);
 				}
 				break;
 
@@ -704,9 +708,28 @@ public:
 					mulps(xmm2, xword[rax + 32]);  //v2*=vm2
 					mulps(xmm3, xword[rax + 48]);  //v3*=vm3
 
-					addps(xmm0, xmm1);	 //sum it all up
-					addps(xmm2, xmm3);
+					addps(xmm0, xmm1);	 //sum it all up, one by one as sh4_ftrv does
 					addps(xmm0, xmm2);
+					addps(xmm0, xmm3);
+
+					// SH7091: a NaN result is 0x7FBFFFFF, in each of the four
+					{
+						Xbyak::Label no_nan;
+
+						movaps(xmm1, xmm0);
+						cmpunordps(xmm1, xmm0);		//xmm1=mask of the NaNs
+						movmskps(eax, xmm1);
+						test(eax, eax);
+						jz(no_nan);
+						mov(eax, SH4_QNAN32);
+						movd(xmm2, eax);
+						shufps(xmm2, xmm2, 0);
+						andps(xmm2, xmm1);
+						andnps(xmm1, xmm0);
+						orps(xmm1, xmm2);
+						movaps(xmm0, xmm1);
+						L(no_nan);
+					}
 
 					mov(rax, (uintptr_t)op.rd.reg_ptr());
 					movaps(xword[rax], xmm0);
@@ -749,10 +772,12 @@ public:
 				break;
 
 			case shop_cvt_f2i_t:
+				// cvttss2si gives 0x80000000 for a NaN and out of range: FTRC's results, but for 2^31 and above
+				cvttss2si(regalloc.MapRegister(op.rd), regalloc.MapXRegister(op.rs1));
 				mov(rcx, (uintptr_t)&cvtf2i_pos_saturation);
-				movss(xmm0, dword[rcx]);
-				minss(xmm0, regalloc.MapXRegister(op.rs1));
-				cvttss2si(regalloc.MapRegister(op.rd), xmm0);
+				ucomiss(regalloc.MapXRegister(op.rs1), dword[rcx]);
+				mov(eax, 0x7fffffff);
+				cmovae(regalloc.MapRegister(op.rd), eax);
 				break;
 			case shop_cvt_i2f_n:
 			case shop_cvt_i2f_z:
@@ -1247,6 +1272,19 @@ private:
 		if (regalloc.mapf(op.rd) != regalloc.mapf(op.rs1))
 			movss(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs1));
 		(this->*natop)(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs2));
+		GenFixNaN(regalloc.MapXRegister(op.rd));
+	}
+
+	// SH7091: a NaN result is 0x7FBFFFFF (programming manual 6.2.2). Uses eax
+	void GenFixNaN(const Xbyak::Xmm& reg)
+	{
+		Xbyak::Label not_nan;
+
+		ucomiss(reg, reg);
+		jnp(not_nan);
+		mov(eax, SH4_QNAN32);
+		movd(reg, eax);
+		L(not_nan);
 	}
 
 	template<class Ret, class... Params>
@@ -1347,7 +1385,7 @@ private:
 
 const u32 BlockCompiler::float_sign_mask = 0x80000000;
 const u32 BlockCompiler::float_abs_mask = 0x7fffffff;
-const f32 BlockCompiler::cvtf2i_pos_saturation = 2147483520.0f;		// IEEE 754: 0x4effffff;
+const f32 BlockCompiler::cvtf2i_pos_saturation = 2147483648.0f;		// 2^31, IEEE 754: 0x4f000000: FTRC is 0x7fffffff from here on
 void *BlockCompiler::mem_handlers[8];
 
 void X64RegAlloc::Preload(u32 reg, Xbyak::Operand::Code nreg)

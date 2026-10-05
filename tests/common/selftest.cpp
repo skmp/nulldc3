@@ -511,6 +511,15 @@ static void test_policy()
 
 	CHECK(ss_policy_filter(*trapa, t) == SSF_TRAPA_NOP);
 
+	//a TRAPA that goes to its handler is not the nop of the single-step vectors
+	t.cycles.c[2].fetch_addr = 0x8C0F3100;
+	t.final_.s.SR = 0x70000000;
+	CHECK(ss_policy_filter(*trapa, t) == SSF_NONE);
+	t.cycles.c[2].fetch_addr = t.initial.s.PC + 4;
+	CHECK(ss_policy_filter(*trapa, t) == SSF_NONE);
+	t.final_.s.SR = 0;
+	CHECK(ss_policy_filter(*trapa, t) == SSF_TRAPA_NOP);
+
 	//more than one reason: the first one, and the next one when that is left out
 	const SsFilePolicy* ldc_l_sr = ss_policy_find("0100mmmm00000111_sz0_pr0");
 
@@ -551,12 +560,85 @@ static void test_policy()
 	CHECK(ss_policy_filter(*fadd_d, t) == SSF_NONE);
 	t.initial.s.FP0[4] = t.final_.s.FP0[4] = 0;
 
-	//ftrc fr5,fpul
+	//ftrc fr5,fpul of a NaN and of a number above the range: filtered unless the vector expects what an SH4 gives
+	const u32 fpul = t.final_.s.FPUL;
+
 	t.opcodes.op[1] = 0xF53D;
 	t.initial.s.FP0[5] = 0x7FC12345;
+	t.final_.s.FPUL = 0;
 	CHECK(ss_policy_filter(*ftrc, t) == SSF_HOST_NAN);
-	t.initial.s.FP0[5] = 0x4F000000;
+	t.final_.s.FPUL = 0x80000000;
 	CHECK(ss_policy_filter(*ftrc, t) == SSF_NONE);
+
+	t.initial.s.FP0[5] = 0x4F000000;
+	t.final_.s.FPUL = 0x7FFFFF80;
+	CHECK(ss_policy_filter(*ftrc, t) == SSF_FTRC_RANGE);
+	CHECK(ss_policy_filter(*ftrc, t, 1 << SSF_FTRC_RANGE) == SSF_NONE);
+	t.initial.s.FP0[5] = 0x7F800000;
+	CHECK(ss_policy_filter(*ftrc, t) == SSF_FTRC_RANGE);
+	t.final_.s.FPUL = 0x7FFFFFFF;
+	CHECK(ss_policy_filter(*ftrc, t) == SSF_NONE);
+
+	t.initial.s.FP0[5] = 0x4EFFFFFF;	//the largest number in range
+	t.final_.s.FPUL = 0x7FFFFF80;
+	CHECK(ss_policy_filter(*ftrc, t) == SSF_NONE);
+	t.initial.s.FP0[5] = 0xCF800000;	//below the range
+	t.final_.s.FPUL = 0x80000000;
+	CHECK(ss_policy_filter(*ftrc, t) == SSF_NONE);
+
+	t.final_.s.FPUL = fpul;
+
+	//FPSCR bits that an SH4 does not have
+	const SsFilePolicy* lds_fpscr = ss_policy_find("0100mmmm01101010_sz0_pr0");
+
+	CHECK(lds_fpscr != 0);
+	if (lds_fpscr)
+	{
+		t.final_.s.FPSCR = 0x003FFFFF;
+		CHECK(ss_policy_filter(*lds_fpscr, t) == SSF_NONE);
+		t.final_.s.FPSCR = 0x00400000;
+		CHECK(ss_policy_filter(*lds_fpscr, t) == SSF_FPSCR_BITS);
+		CHECK(ss_policy_filter(*lds_fpscr, t, 1 << SSF_FPSCR_BITS) == SSF_NONE);
+		t.final_.s.FPSCR = 0x80040001;
+		CHECK(ss_policy_filter(*lds_fpscr, t) == SSF_FPSCR_BITS);
+		t.final_.s.FPSCR = 0;
+	}
+
+	//RTE to the other register bank: filtered when the delay slot is expected on the bank RTE is entered with
+	const SsFilePolicy* rte = ss_policy_find("0000000000101011_sz0_pr0");
+
+	CHECK(rte != 0);
+	if (rte)
+	{
+		SsTest r = make_test();
+
+		r.opcodes.op[1] = 0x002B;
+		r.initial.s.SR = 0x500000F0;
+		r.initial.s.SSR = 0x700000F0;
+		r.initial.s.R[1] = 0x00001111;
+		r.initial.s.R_[1] = 0x00002222;
+
+		r.final_.s.R[1] = 0x00002222;
+		r.final_.s.R_[1] = 0x00002222;
+		CHECK(ss_policy_filter(*rte, r) == SSF_RTE_BANK);
+		CHECK(ss_policy_filter(*mov_l, r) == SSF_NONE);
+
+		r.final_.s.R[1] = 0x00004444;	//the new bank's R1 is doubled
+		r.final_.s.R_[1] = 0x00001111;
+		CHECK(ss_policy_filter(*rte, r) == SSF_NONE);
+
+		r.initial.s.SSR = 0x500000F0;	//the same bank
+		r.final_.s.R[1] = 0x00002222;
+		r.final_.s.R_[1] = 0x00002222;
+		CHECK(ss_policy_filter(*rte, r) == SSF_NONE);
+
+		r.initial.s.SSR = 0x200000F0;	//RB without MD is bank 0
+		CHECK(ss_policy_filter(*rte, r) == SSF_NONE);
+
+		r.initial.s.SSR = 0x700000F0;	//another delay slot than add r1,r1
+		r.opcodes.op[2] = 0x6803;
+		CHECK(ss_policy_filter(*rte, r) == SSF_NONE);
+	}
 }
 
 //// ss_state

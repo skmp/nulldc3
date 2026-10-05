@@ -148,10 +148,11 @@ shil_compile \
 #define BIN_OP_I4(tp,z,rt,pt) BIN_OP_I_BASE( return ((tp)(pt)r1) z ((tp)(pt)r2); ,u32,rt)
 
 #define BIN_OP_F(z) BIN_OP_I_BASE( return fixNaN(r1 z r2); ,f32,f32)
-#define BIN_OP_FU(z) BIN_OP_I_BASE( return fixNaN(r1 z r2); ,f32,u32)
+#define BIN_OP_FU(z) BIN_OP_I_BASE( return r1 z r2; ,f32,u32)
 
 #define UN_OP_I(z) UN_OP_I_BASE( return z (r1); ,u32)
 #define UN_OP_F(z) UN_OP_I_BASE( return z (r1); ,f32)
+#define UN_OP_FN(z) UN_OP_I_BASE( return fixNaN(z (r1)); ,f32)
 
 #define shil_recimp() \
 shil_compile( \
@@ -171,6 +172,7 @@ shil_compile( \
 
 #define UN_OP_I(z)
 #define UN_OP_F(z)
+#define UN_OP_FN(z)
 #define shil_recimp()
 #endif
 
@@ -674,10 +676,7 @@ shil_opc(cvt_f2i_t)
 shil_canonical
 (
 u32,f1,(f32 f1),
-	if (f1 > 2147483520.0f) // IEEE 754: 0x4effffff
-		return 0x7fffffff;
-	else
-		return (s32)f1;
+	return ftrc32(f1);
 )
 
 shil_compile
@@ -841,7 +840,7 @@ shil_opc_end()
 
 //shop_fsqrt
 shil_opc(fsqrt)
-UN_OP_F(sqrtf)
+UN_OP_FN(sqrtf)
 shil_opc_end()
 
 
@@ -850,14 +849,7 @@ shil_opc(fipr)
 shil_canonical
 (
 f32,f1,(float* fn, float* fm),
-	float idp;
-
-	idp=fn[0]*fm[0];
-	idp+=fn[1]*fm[1];
-	idp+=fn[2]*fm[2];
-	idp+=fn[3]*fm[3];
-
-	return fixNaN(idp);
+	return sh4_fipr(fn, fm);
 )
 
 shil_compile
@@ -877,35 +869,7 @@ shil_opc(ftrv)
 shil_canonical
 (
 void,f1,(float* fd,float* fn, float* fm),
-	float v1;
-	float v2;
-	float v3;
-	float v4;
-
-	v1 = fm[0]  * fn[0] +
-		 fm[4]  * fn[1] +
-		 fm[8]  * fn[2] +
-		 fm[12] * fn[3];
-
-	v2 = fm[1]  * fn[0] +
-		 fm[5]  * fn[1] +
-		 fm[9]  * fn[2] +
-		 fm[13] * fn[3];
-
-	v3 = fm[2]  * fn[0] +
-		 fm[6]  * fn[1] +
-		 fm[10] * fn[2] +
-		 fm[14] * fn[3];
-
-	v4 = fm[3]  * fn[0] +
-		 fm[7]  * fn[1] +
-		 fm[11] * fn[2] +
-		 fm[15] * fn[3];
-
-	fd[0] = fixNaN(v1);
-	fd[1] = fixNaN(v2);
-	fd[2] = fixNaN(v3);
-	fd[3] = fixNaN(v4);
+	sh4_ftrv(fd, fn, fm);
 )
 shil_compile
 (
@@ -921,7 +885,7 @@ shil_opc(fmac)
 shil_canonical
 (
 f32,f1,(float fn, float f0,float fm),
-	return fixNaN(fn + f0 * fm);
+	return fixNaN(fmaf(f0, fm, fn));
 )
 shil_compile
 (
@@ -935,7 +899,7 @@ shil_opc_end()
 
 //shop_fsrra
 shil_opc(fsrra)
-UN_OP_F(1/sqrtf)
+UN_OP_FN(1/sqrtf)
 shil_opc_end()
 
 
@@ -1035,5 +999,6 @@ SHIL_END
 
 #undef UN_OP_I
 #undef UN_OP_F
+#undef UN_OP_FN
 #undef BIN_OP_FU
 #undef shil_recimp

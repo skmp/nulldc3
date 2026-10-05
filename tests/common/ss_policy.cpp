@@ -11,11 +11,9 @@
 static const char known_oix[] =
 	"devcast: the operand cache as ram hack is keyed on address bit 25 alone, not on CCR.OIX and the cache area";
 static const char known_sum_of_products[] =
-	"devcast rounds (and overflows) every product and partial sum to single precision, the vectors carry the fused "
-	"multiply-add of the host that generated them. Neither is the SH4's sum of products";
-static const char known_denormal[] =
-	"devcast: with FPSCR.DN=1 only results are flushed to zero on x86 (MXCSR.FTZ), a denormal operand is not taken "
-	"as zero (MXCSR.DAZ)";
+	"devcast rounds (and overflows) every product and every sum to single precision and adds the products in one "
+	"order in both engines, FIPR in pairs, (p0 + p1) + (p2 + p3), FTRV one by one, ((p0 + p1) + p2) + p3. The vectors "
+	"carry the fused multiply-add of the host that generated them. Neither is the SH4's sum of products";
 
 //One row per vector file: name, instruction, width of the data read and of the data write, flags, known failures
 static const SsFilePolicy policy[] =
@@ -27,7 +25,7 @@ static const SsFilePolicy policy[] =
 	{ "0000000000011001_sz0_pr0", "div0u", 0, 0, 0, 0 },
 	{ "0000000000011011_sz0_pr0", "sleep", 0, 0, PRIV, 0 },
 	{ "0000000000101000_sz0_pr0", "clrmac", 0, 0, 0, 0 },
-	{ "0000000000101011_sz0_pr0", "rte", 0, 0, PRIV, 0 },
+	{ "0000000000101011_sz0_pr0", "rte", 0, 0, PRIV | SSP_RTE, 0 },
 	{ "0000000000111000_sz0_pr0", "ldtlb", 0, 0, PRIV, 0 },
 	{ "0000000001001000_sz0_pr0", "clrs", 0, 0, 0, 0 },
 	{ "0000000001011000_sz0_pr0", "sets", 0, 0, 0, 0 },
@@ -211,7 +209,7 @@ static const SsFilePolicy policy[] =
 	{ "1111nnn011111101_sz0_pr0", "fsca fpul,drn", 0, 0, FPU, 0 },
 	{ "1111nnn0mmm00000_sz0_pr1", "fadd drm,drn", 0, 0, FPRD, 0 },
 	{ "1111nnn0mmm00001_sz0_pr1", "fsub drm,drn", 0, 0, FPRD, 0 },
-	{ "1111nnn0mmm00010_sz0_pr1", "fmul drm,drn", 0, 0, FPRD, known_denormal },
+	{ "1111nnn0mmm00010_sz0_pr1", "fmul drm,drn", 0, 0, FPRD, 0 },
 	{ "1111nnn0mmm00011_sz0_pr1", "fdiv drm,drn", 0, 0, FPRD, 0 },
 	{ "1111nnn0mmm00100_sz0_pr1", "fcmp/eq drm,drn", 0, 0, FPU, 0 },
 	{ "1111nnn0mmm00101_sz0_pr1", "fcmp/gt drm,drn", 0, 0, FPU, 0 },
@@ -239,9 +237,9 @@ static const SsFilePolicy policy[] =
 	{ "1111nnnnmmm10111_sz1_pr0", "fmov xdm,@(r0,rn)", 0, 8, FPU, 0 },
 	{ "1111nnnnmmm11010_sz1_pr0", "fmov xdm,@rn", 0, 8, FPU, 0 },
 	{ "1111nnnnmmm11011_sz1_pr0", "fmov xdm,@-rn", 0, 8, FPU, 0 },
-	{ "1111nnnnmmmm0000_sz0_pr0", "fadd frm,frn", 0, 0, FPR, known_denormal },
-	{ "1111nnnnmmmm0001_sz0_pr0", "fsub frm,frn", 0, 0, FPR, known_denormal },
-	{ "1111nnnnmmmm0010_sz0_pr0", "fmul frm,frn", 0, 0, FPR, known_denormal },
+	{ "1111nnnnmmmm0000_sz0_pr0", "fadd frm,frn", 0, 0, FPR, 0 },
+	{ "1111nnnnmmmm0001_sz0_pr0", "fsub frm,frn", 0, 0, FPR, 0 },
+	{ "1111nnnnmmmm0010_sz0_pr0", "fmul frm,frn", 0, 0, FPR, 0 },
 	{ "1111nnnnmmmm0011_sz0_pr0", "fdiv frm,frn", 0, 0, FPR, 0 },
 	{ "1111nnnnmmmm0100_sz0_pr0", "fcmp/eq frm,frn", 0, 0, FPU, 0 },
 	{ "1111nnnnmmmm0101_sz0_pr0", "fcmp/gt frm,frn", 0, 0, FPU, 0 },
@@ -281,6 +279,9 @@ const SsFilePolicy* ss_policy_find(const std::string& file)
 	return 0;
 }
 
+//The bits FPSCR has: FR SZ PR DN, cause, enable, flag, RM. The other 10 read 0 and are not written
+#define SS_FPSCR_BITS 0x003FFFFF
+
 static bool is_nan32(u32 v)
 {
 	return (v & 0x7F800000) == 0x7F800000 && (v & 0x007FFFFF) != 0;
@@ -317,15 +318,60 @@ static bool result_is_nan(const SsFilePolicy& policy, const SsTest& test)
 	return false;
 }
 
+//FTRC of a NaN that is not expected to give what an SH4 gives for every NaN
 static bool ftrc_of_nan(const SsFilePolicy& policy, const SsTest& test)
 {
 	const u32* fp = test.initial.s.FP0;
 	u32 m = (ss_opcode(test) >> 8) & 0xF;
 
+	if (test.final_.s.FPUL == 0x80000000)
+		return false;
+
 	if (policy.flags & SSP_DOUBLE)
 		return is_nan64(fp[m & 0xE], fp[(m & 0xE) + 1]);
 
 	return is_nan32(fp[m]);
+}
+
+//Single precision FTRC of 2^31 or more (+inf too) that is not expected to give what an SH4 gives. The generator
+//cuts the operand to 2147483520.0f first, whose integer is 7FFFFF80
+static bool ftrc_above_range(const SsFilePolicy& policy, const SsTest& test)
+{
+	u32 operand = test.initial.s.FP0[(ss_opcode(test) >> 8) & 0xF];
+
+	if ((policy.flags & SSP_DOUBLE) || test.final_.s.FPUL == 0x7FFFFFFF)
+		return false;
+
+	return operand >= 0x4F000000 && operand <= 0x7F800000;
+}
+
+//R0-R7 are banked by SR.RB in privileged mode, user mode has bank 0
+static bool sr_bank(u32 sr)
+{
+	return (sr & 0x60000000) == 0x60000000;
+}
+
+//RTE to the other register bank, and the add r1,r1 of the delay slot is expected to have doubled R1 of the bank
+//RTE is entered with. After the change that bank is the inactive one, R_ in a vector
+static bool rte_slot_on_old_bank(const SsTest& test)
+{
+	const SsState& before = test.initial.s;
+	const SsState& after = test.final_.s;
+
+	if (sr_bank(before.SR) == sr_bank(before.SSR) || test.opcodes.op[SS_TEST_INSTRUCTION + 1] != 0x311C)
+		return false;
+
+	bool old_bank = after.R_[1] == before.R[1] * 2 && after.R[1] == before.R_[1];
+	bool new_bank = after.R[1] == before.R_[1] * 2 && after.R_[1] == before.R[1];
+
+	return old_bank && !new_bank;
+}
+
+//TRAPA as the single-step vectors have it: SR stays and the instruction behind it is run. A TRAPA that is taken
+//goes to the handler with SR.BL set, or resets the CPU when SR.BL was set
+static bool trapa_recorded_as_nop(const SsTest& test)
+{
+	return test.final_.s.SR == test.initial.s.SR && test.cycles.c[SS_TEST_INSTRUCTION + 1].fetch_addr == test.initial.s.PC + 4;
 }
 
 SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, u32 ignore)
@@ -334,7 +380,7 @@ SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, 
 
 #define APPLIES(reason) ((ignore & (1 << (reason))) == 0)
 
-	if (APPLIES(SSF_TRAPA_NOP) && (policy.flags & SSP_TRAPA))
+	if (APPLIES(SSF_TRAPA_NOP) && (policy.flags & SSP_TRAPA) && trapa_recorded_as_nop(test))
 		return SSF_TRAPA_NOP;
 
 	//exceptions of the instruction itself come before the ones of its data access
@@ -369,6 +415,15 @@ SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, 
 	if (APPLIES(SSF_HOST_NAN) && (policy.flags & SSP_FTRC) && ftrc_of_nan(policy, test))
 		return SSF_HOST_NAN;
 
+	if (APPLIES(SSF_FTRC_RANGE) && (policy.flags & SSP_FTRC) && ftrc_above_range(policy, test))
+		return SSF_FTRC_RANGE;
+
+	if (APPLIES(SSF_FPSCR_BITS) && (test.final_.s.FPSCR & ~SS_FPSCR_BITS) != 0)
+		return SSF_FPSCR_BITS;
+
+	if (APPLIES(SSF_RTE_BANK) && (policy.flags & SSP_RTE) && rte_slot_on_old_bank(test))
+		return SSF_RTE_BANK;
+
 #undef APPLIES
 
 	return SSF_NONE;
@@ -395,6 +450,9 @@ const char* ss_filter_name(SsFilterReason reason)
 	case SSF_PRIVILEGED:   return "privileged";
 	case SSF_TRAPA_NOP:    return "trapa-nop";
 	case SSF_HOST_NAN:     return "host-nan";
+	case SSF_FPSCR_BITS:   return "fpscr-bits";
+	case SSF_RTE_BANK:     return "rte-bank";
+	case SSF_FTRC_RANGE:   return "ftrc-range";
 	default:               return "?";
 	}
 }
@@ -414,10 +472,20 @@ const char* ss_filter_description(SsFilterReason reason)
 	case SSF_PRIVILEGED:
 		return "privileged instruction with SR.MD=0. The vectors execute it, an SH4 raises an illegal instruction exception";
 	case SSF_TRAPA_NOP:
-		return "TRAPA is recorded as a nop: no SSR/SPC/SR/TRA/EXPEVT change, PC+2";
+		return "TRAPA is recorded as a nop: no SSR/SPC/SR/TRA/EXPEVT change, PC+2. An SH4 takes the TRAPA exception, or "
+		       "is reset by it when SR.BL=1";
 	case SSF_HOST_NAN:
 		return "the instruction produces a NaN (or converts one with FTRC). The expected value is the default NaN of the "
-		       "ARM64 host that generated the vectors (FTRC of a NaN: 0), not the SH4's";
+		       "ARM64 host that generated the vectors (FTRC of a NaN: 0), not the SH4's (FTRC of a NaN: 80000000)";
+	case SSF_FPSCR_BITS:
+		return "the vector expects unimplemented FPSCR bits stored (LDS / LDS.L to FPSCR of a value with bits 22-31 set). "
+		       "An SH4 has the low 22 bits only, the others read 0";
+	case SSF_RTE_BANK:
+		return "RTE to the other register bank: the vector runs the delay slot on the bank of the old SR. An SH4 runs it "
+		       "with the SR that RTE restores, on the new bank";
+	case SSF_FTRC_RANGE:
+		return "single precision FTRC of 2^31 or more, +inf too. The vector has 7FFFFF80: its generator cuts the operand to "
+		       "2147483520.0f first. An SH4 gives 7FFFFFFF";
 	default:
 		return "";
 	}

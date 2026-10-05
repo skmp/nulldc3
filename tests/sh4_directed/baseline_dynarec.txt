@@ -6,7 +6,8 @@
 #
 # file                     total   run exact lenient notified native
 0000000000001011_sz0_pr0       1     1     1       1        0      1
-0000mmmm00000011_sz0_pr0       3     3     3       3        0      3
+0000000000101011_sz0_pr0       9     9     9       9        0      9
+0000mmmm00000011_sz0_pr0       4     4     4       4        0      4
 0000mmmm00100011_sz0_pr0       2     2     2       2        0      2
 0010nnnnmmmm1100_sz0_pr0       7     7     7       7        0      7
 0011nnnnmmmm0000_sz0_pr0       6     6     6       6        0      6
@@ -19,8 +20,10 @@
 0011nnnnmmmm1011_sz0_pr0      12    12    12      12        0      0
 0011nnnnmmmm1110_sz0_pr0      21    21    21      21        0     21
 0011nnnnmmmm1111_sz0_pr0      12    12    12      12        0      0
-0100mmmm00001011_sz0_pr0       1     1     1       1        0      1
+0100mmmm00001011_sz0_pr0       2     2     2       2        0      2
 0100mmmm00101011_sz0_pr0       1     1     1       1        0      1
+0100mmmm01100110_sz0_pr0       5     5     5       5        0      0
+0100mmmm01101010_sz0_pr0       8     8     8       8        0      0
 0100nnnn00010000_sz0_pr0       6     6     6       6        0      6
 0100nnnn00010001_sz0_pr0       5     5     5       5        0      5
 0100nnnn00010101_sz0_pr0       5     5     5       5        0      5
@@ -30,4 +33,8 @@
 10001000iiiiiiii_sz0_pr0       7     7     7       7        0      7
 10001101dddddddd_sz0_pr0       6     6     6       6        0      6
 10001111dddddddd_sz0_pr0       6     6     6       6        0      6
-1011dddddddddddd_sz0_pr0       1     1     1       1        0      1
+1011dddddddddddd_sz0_pr0       2     2     2       2        0      2
+11000011iiiiiiii_sz0_pr0       7     7     7       7        0      0
+1111mmm000111101_sz0_pr1      13    13    13      13        0      0
+1111mmmm00111101_sz0_pr0      14    14    14      14        0     14
+1111nnnnmmmm1110_sz0_pr0       8     8     8       8        0      8

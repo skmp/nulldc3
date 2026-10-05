@@ -16,22 +16,33 @@ if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT}))
 endif()
 
 # The interpreter is part of it: the recompiler falls back to its handlers, and the differential runs both
-nulldc_add_libswirl_library(nulldc_sh4_dynarec
-  SOURCES ${NULLDC_SH4_INTERP_SOURCES}
-          hw/sh4/dyna/decoder.cpp
-          hw/sh4/dyna/shil.cpp
-          hw/sh4/dyna/driver.cpp
-          hw/sh4/dyna/blockmanager.cpp
-          jit/backend/x64/rec_x64.cpp
-          deps/crypto/sha1.cpp
+set(nulldc_sh4_dynarec_sources
+  ${NULLDC_SH4_INTERP_SOURCES}
+  hw/sh4/dyna/decoder.cpp
+  hw/sh4/dyna/shil.cpp
+  hw/sh4/dyna/driver.cpp
+  hw/sh4/dyna/blockmanager.cpp
+  jit/backend/x64/rec_x64.cpp
+  deps/crypto/sha1.cpp
 )
 
-add_executable(sh4_singlestep_dynarec singlestep.cpp dynarec_runner.cpp dynarec_runner.h)
-target_link_libraries(sh4_singlestep_dynarec PRIVATE nulldc_sh4_dynarec nulldc_test_common)
-target_compile_definitions(sh4_singlestep_dynarec PRIVATE
-  NULLDC_SH4_TESTS_DIR="${NULLDC_SH4_TESTS_DIR}"
-  NULLDC_BASELINE="${CMAKE_CURRENT_SOURCE_DIR}/baseline_singlestep.txt"
-)
+nulldc_add_libswirl_library(nulldc_sh4_dynarec SOURCES ${nulldc_sh4_dynarec_sources})
+
+# The same with CANONICAL_TEST: the x64 backend compiles the calls of the interpreter, the jumps, the moves and the
+# memory accesses itself and calls the canonical helper (hw/sh4/dyna/shil_canonical.h) for every other shil opcode.
+# The helpers are what a backend without code of its own for an opcode runs: the x64 backend's FMAC on a CPU
+# without FMA, a build without a JIT
+nulldc_add_libswirl_library(nulldc_sh4_dynarec_canonical SOURCES ${nulldc_sh4_dynarec_sources})
+target_compile_definitions(nulldc_sh4_dynarec_canonical PRIVATE CANONICAL_TEST)
+
+foreach(variant "" _canonical)
+  add_executable(sh4_singlestep_dynarec${variant} singlestep.cpp dynarec_runner.cpp dynarec_runner.h)
+  target_link_libraries(sh4_singlestep_dynarec${variant} PRIVATE nulldc_sh4_dynarec${variant} nulldc_test_common)
+  target_compile_definitions(sh4_singlestep_dynarec${variant} PRIVATE
+    NULLDC_SH4_TESTS_DIR="${NULLDC_SH4_TESTS_DIR}"
+    NULLDC_BASELINE="${CMAKE_CURRENT_SOURCE_DIR}/baseline_singlestep.txt"
+  )
+endforeach()
 
 if(NULLDC_HAVE_SH4_TESTS)
   add_test(NAME sh4.singlestep.dynarec COMMAND sh4_singlestep_dynarec --strict)

@@ -9,6 +9,16 @@ Both run the recompiler of the emulator build: `hw/sh4/dyna` (decoder, shil, dri
 backend. On hosts without that backend they are registered as skipped. `tests/README.md` has the vectors, the
 filter and how a baseline works; `KNOWN_DIFFERENCES.md` has what the two baselines here contain and why.
 
+The recompiler is built a second time with `CANONICAL_TEST` (`nulldc_sh4_dynarec_canonical`,
+`sh4_singlestep_dynarec_canonical`): the x64 backend then compiles the calls of the interpreter, the jumps, the
+moves and the memory accesses itself and calls the canonical helper (`hw/sh4/dyna/shil_canonical.h`) for every
+other shil opcode. The helpers are what a backend without code of its own for an opcode runs, and the two tests
+above do not reach those of the FPU instructions: the backend has code for each (for FMAC on a CPU with FMA).
+`sh4.directed.dynarec.canonical` runs the directed vectors on that build against the baseline of
+`sh4.directed.dynarec`, and `sh4.fpu.scalar.canonical` and `sh4.fpu.vector.canonical` the FPU tests
+(`tests/sh4_fpu/README.md`). It is not run on the single-step vectors: the x64 backend cannot call the helper of
+FSCA (`tests/sh4_fpu/KNOWN_FAILURES.md`, 8.), and those vectors have 242 of it.
+
     dynarec_runner      a vector's instructions as blocks: decoder, shil, x64 backend
     singlestep.cpp      sh4.singlestep.dynarec, an SsSuite (tests/common/ss_suite.h) on the runner
     diff_memory         the guest memory of the differential

@@ -69,6 +69,9 @@ bool SuperH4_impl::setBackend(SuperH4Backends backend) {
 }
 
 void SuperH4_impl::Run() {
+    // the host FP mode is per thread: FPSCR was last written by another one (reset, load state, the thread before)
+    sh4_host_fp_resync();
+
     sh4_backend->Loop();
 }
 
@@ -132,7 +135,8 @@ void SuperH4_impl::Reset(bool Manual)
         old_sr.status = sr.status;
         UpdateSR();
 
-        fpscr.full = 0x0004001;
+        // SH7091 hardware manual, table 2.1: FPSCR is H'00040001 after a reset (DN = 1, RM = 01)
+        fpscr.full = 0x00040001;
         old_fpscr = fpscr;
         UpdateFPSCR();
 

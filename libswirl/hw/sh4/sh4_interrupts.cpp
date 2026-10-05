@@ -172,7 +172,25 @@ bool Do_Exception(u32 epc, u32 expEvn, u32 CallVect)
 {
 	auto sh4mmr = sh4_cpu->sh4mmr.get();
 
-	verify(sr.BL == 0);
+	if (sr.BL)
+	{
+		//SH7091 hardware manual 5.5.3, 5.6.1 (2): a general exception with SR.BL = 1 is a manual reset of the CPU,
+		//the other modules keep their registers. EXPEVT = H'020, SR, VBR, FPSCR and PC as after a reset (table 2.1)
+		CCN_EXPEVT = 0x020;
+
+		vbr = 0;
+
+		sh4_sr_SetFull(0x700000F0);
+		UpdateSR();
+
+		fpscr.full = 0x00040001;
+		UpdateFPSCR();
+
+		next_pc = 0xA0000000;
+
+		return true;
+	}
+
 	CCN_EXPEVT = expEvn;
 
 	ssr = sh4_sr_GetFull();

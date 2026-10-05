@@ -220,6 +220,17 @@ struct fpscr_t
 	};
 };
 
+//SH7091: FPSCR has 22 bits, a console reads 0x003FFFFF back after it loaded 0xFFFFFFFF
+#define FPSCR_MASK 0x003FFFFF
+
+//RM = 01 rounds to zero. RM = 10 and 11 are reserved and the chip is not measured for them: they round by bit 0,
+//as the RTL (v1_fpu: rz = fpscr[0]) and the soft-float reference (sh4_fpdn.h) of shrike4-rtl do
+#define FPSCR_RM_ZERO(fpscr_v) (((fpscr_v).RM & 1) != 0)
+
+//Puts the host FP control register of the calling thread into the mode of FPSCR. That register belongs to a thread:
+//a thread that runs the CPU calls this first, FPSCR may have been written on another one (reset, load state)
+void sh4_host_fp_resync();
+
 
 typedef void RunFP();
 typedef void StopFP();
