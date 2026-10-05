@@ -8,6 +8,7 @@
 #include "dbg_regs_private.h"
 
 #include "hw/aica/aica_mmio.h"
+#include "hw/arm7/SoundCPU.h"
 #include "hw/holly/sh4_mem_area0.h"
 #include "hw/pvr/pvr_mem.h"
 #include "hw/pvr/pvr_regs.h"
@@ -200,9 +201,55 @@ u32 CopyRegisters(u32 addr, u32 count, u8* out, u8* bits, u32 first, ReadWord re
 	return readable;
 }
 
+// The register window of the AICA as byte reads by the ARM7 deliver it. out holds the run [offset, offset +
+// count) of the register file as the SH4 reads it (AICA::DebugReadRegs); the ARM7 reads the same bytes but for
+//   0x2C00, 0x2C01   where the SH4 has ARMRST and VREG and the ARM7 the two bytes of the register file behind
+//                    them, which no accessor delivers: not readable
+//   0x2D00           the interrupt level L of the controller in front of nFIQ, which the sound CPU keeps
+//   0x2D04           M of that controller, which reads 0
+// Marks the readable bytes from bit `first` on and returns their number.
+u32 Arm7RegisterView(u32 offset, u32 count, u8* out, u8* bits, u32 first)
+{
+	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+	u32 level = 0, in_service = 0;
+	bool controller = scpu != nullptr && scpu->DebugGetInterrupt(&level, &in_service);
+	u32 readable = 0;
+
+	for (u32 i = 0; i < count; i++)
+	{
+		bool known = true;
+
+		switch (offset + i)
+		{
+		case 0x2C00:
+		case 0x2C01:
+			out[i] = 0;
+			known = false;
+			break;
+
+		case 0x2D00:
+			out[i] = (u8)level;
+			known = controller;
+			break;
+
+		case 0x2D04:
+			out[i] = 0;
+			break;
+		}
+
+		if (known)
+		{
+			Mark(bits, first + i, 1);
+			readable++;
+		}
+	}
+
+	return readable;
+}
+
 // Copies the run [addr, addr + count) of one region to out, marks its readable bytes from bit `first` on and
 // returns their number. out and bits are zero where nothing is written.
-u32 ReadRun(Region region, u32 addr, u32 count, u8* out, u8* bits, u32 first)
+u32 ReadRun(Target t, Region region, u32 addr, u32 count, u8* out, u8* bits, u32 first)
 {
 	u32 readable = 0;
 
@@ -258,8 +305,13 @@ u32 ReadRun(Region region, u32 addr, u32 count, u8* out, u8* bits, u32 first)
 		AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
 
 		// a run of this region is inside the register file
-		if (aica != nullptr && aica->DebugReadRegs(addr & 0x7FFF, count, out))
-			readable = count;
+		if (aica == nullptr || !aica->DebugReadRegs(addr & 0x7FFF, count, out))
+			break;
+
+		if (t == Target::Arm7)
+			return Arm7RegisterView(addr & 0x7FFF, count, out, bits, first);
+
+		readable = count;
 		break;
 	}
 
@@ -315,7 +367,7 @@ u32 ReadRun(Region region, u32 addr, u32 count, u8* out, u8* bits, u32 first)
 		break;
 	}
 
-	// everything but the register regions is readable as a whole or not at all
+	// everything but the register regions and the ARM7's register window is readable as a whole or not at all
 	Mark(bits, first, readable);
 	return readable;
 }
@@ -349,7 +401,7 @@ u32 Read(Target t, u32 addr, u32 len, u8* out, u8* readableBits)
 		Region region = Locate(t, at, &last);
 		u32 count = (u32)std::min<u64>(len - done, (u64)(last - at) + 1);
 
-		readable += ReadRun(region, at, count, out + done, readableBits, done);
+		readable += ReadRun(t, region, at, count, out + done, readableBits, done);
 		done += count;
 	}
 

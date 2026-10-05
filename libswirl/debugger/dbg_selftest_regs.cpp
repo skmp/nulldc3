@@ -384,8 +384,11 @@ bool ExpectReadable(Target t, u32 addr, mem::Region region)
 		return row != nullptr && !(row->flags & regs::kRegNoReader) && (addr & 3) < row->width / 8u;
 	}
 
+	case mem::Region::AicaRegs:
+		// the ARM7 has the register file where the SH4 has ARMRST and VREG, and nothing delivers those two bytes
+		return !(t == Target::Arm7 && ((addr & 0x7FFF) == 0x2C00 || (addr & 0x7FFF) == 0x2C01));
+
 	default:
-		(void)t;
 		return true;
 	}
 }
@@ -903,6 +906,62 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 
 			RestoreDevice(scpu, state);
 			modes.Report("dc.aica.arm7 in each of the seven modes");
+		}
+
+		// the interrupt controller in front of nFIQ: L and the in-service flag against the save state, and the
+		// ARM7's view of the two registers through memory. Looking is no acknowledge: the state stands, with
+		// its request line
+		if (state.size() > 1 + 4 + 1 + 4 + 4)
+		{
+			const size_t out_at = 1 + 4, level_at = out_at + 1, service_at = level_at + 4;
+			Tally controller;
+
+			auto compare = [&](const std::vector<u8>& bytes) {
+				u32 want_level, want_service;
+				memcpy(&want_level, &bytes[level_at], 4);
+				memcpy(&want_service, &bytes[service_at], 4);
+
+				u32 level = ~want_level, in_service = ~want_service;
+				bool ok = scpu->DebugGetInterrupt(&level, &in_service);
+
+				controller.Add(ok && level == want_level && in_service == want_service, "DebugGetInterrupt gives L %X and in service %X, the save state has %X and %X",
+					level, in_service, want_level, want_service);
+
+				AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
+				u8 file[8] = { }, view[8] = { }, view_bits[1] = { };
+
+				aica->DebugReadRegs(0x2D00, 8, file);
+
+				u32 n = mem::Read(Target::Arm7, 0x00802D00, 8, view, view_bits);
+
+				file[0] = (u8)want_level;
+				file[4] = 0;
+				controller.Add(n == 8 && view_bits[0] == 0xFF && memcmp(view, file, 8) == 0, "the ARM7 at 0x00802D00: %u of 8 bytes, L reads %02X and M reads %02X, with L %X in the save state",
+					n, view[0], view[4], want_level);
+
+				controller.Add(DeviceState(scpu) == bytes, "reading L and M changed the sound CPU");
+			};
+
+			compare(state);
+
+			// a request latched and nFIQ pulled, one that the ARM7 has acknowledged, one whose service has ended
+			// with nFIQ still pulled, and nothing at all
+			const struct { u32 level, service; bool out; } made_up[] = { { 5, 1, true }, { 7, 1, false }, { 1, 0, true }, { 0, 0, false } };
+
+			for (const auto& c : made_up)
+			{
+				std::vector<u8> made = state;
+
+				made[out_at] = c.out;
+				memcpy(&made[level_at], &c.level, 4);
+				memcpy(&made[service_at], &c.service, 4);
+
+				RestoreDevice(scpu, made);
+				compare(made);
+			}
+
+			RestoreDevice(scpu, state);
+			controller.Report("the interrupt controller of the sound CPU against its save state");
 		}
 
 		u32 value = 0x55AA;
@@ -1451,8 +1510,29 @@ DBG_SELFTEST(regs_mem_read, "regs.mem.read")
 		u32 n_sh4 = mem::Read(Target::Sh4, 0xA0700000, 0x8000, sh4_view.data(), nullptr);
 		u32 n_arm = mem::Read(Target::Arm7, 0x00800000, 0x8000, arm_view.data(), nullptr);
 
-		Check(n_sh4 == 0x8000 && n_arm == 0x8000 && sh4_view == file && arm_view == file && DeviceState(aica) == before,
-			"the AICA register file through memory, for both processors, and the AICA stands");
+		// The ARM7 reads the file as the SH4 does, but for four bytes: it has no ARMRST and VREG at 0x2C00 (what it
+		// has there instead nothing delivers), and at 0x2D00 and 0x2D04 it reads its interrupt controller, L and 0
+		SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+		u32 level = ~0u, in_service = ~0u;
+		bool controller = scpu->DebugGetInterrupt(&level, &in_service);
+		std::vector<u8> arm_file = file;
+
+		arm_file[0x2C00] = arm_file[0x2C01] = 0;
+		arm_file[0x2D00] = (u8)level;
+		arm_file[0x2D04] = 0;
+
+		Check(n_sh4 == 0x8000 && sh4_view == file && DeviceState(aica) == before, "the AICA register file through memory for the SH4, and the AICA stands");
+		Check(controller && n_arm == 0x8000 - 2 && arm_view == arm_file, "the AICA register file through memory for the ARM7: %u bytes, first difference at %zX",
+			n_arm, FirstDifference(arm_view, arm_file));
+
+		memset(bits, 0xEE, sizeof(bits));
+		u32 n_window = mem::Read(Target::Arm7, 0x00802BFE, 8, buffer, bits);
+
+		Check(n_window == 6 && bits[0] == 0xF3 && buffer[2] == 0 && buffer[3] == 0 && memcmp(buffer, &file[0x2BFE], 2) == 0 && memcmp(buffer + 4, &file[0x2C02], 4) == 0,
+			"the ARM7 at 0x00802BFE: %u of 8 bytes readable, bits %02X: ARMRST and VREG are the SH4's", n_window, bits[0]);
+
+		n_window = mem::Read(Target::Sh4, 0x00702BFE, 8, buffer, bits);
+		Check(n_window == 8 && bits[0] == 0xFF && memcmp(buffer, &file[0x2BFE], 8) == 0, "the SH4 at 0x00702BFE: %u of 8 bytes readable", n_window);
 
 		u32 seconds = 0;
 		bool write_enable = false;
