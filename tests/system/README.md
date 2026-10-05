@@ -59,6 +59,8 @@ Every test is `system_test.py --case <case>` on one of the two emulators.
 | `fault.segv` `fault.bus` `fault.ill` | a fault that is not a guest memory fault ends the process by that signal, with the `fault_handler: unhandled ...` line, and what was printed before it is in the output | |
 | `fault.on_request` | the fault of these tests comes when the test asks for it and not before: a second after the text of the guest the process still runs and has printed no `fault_handler` line; asked for, the fault ends it, behind that text | |
 | `fault.block` | with `NULLDC_FAULT_BLOCK=1`, and with `config:Debug.BlockOnFault=yes`, the process stays and prints `fault_handler: Blocking` | |
+| `fault.sent` | a SIGSEGV that is sent to a run is not taken for a fault of the guest: `kill -SEGV` on a run on the JIT and on one on the interpreter, and a `raise(SIGSEGV)` on a thread inside the process, each end the run by SIGSEGV within 10 s, with the one line `fault_handler: SIGSEGV sent by pid <the sender> (si_code <0 for kill, -6 for raise>), not a fault: terminating`; with `NULLDC_FAULT_BLOCK=1` the process stays and says `blocking for a debugger` | |
+| `fault.guest` | the faults of the guest are still handled: a run of `guest_spin` on the JIT takes SIGSEGVs the kernel raises for a fault (counted on their way to the handler of the emulator: at least one, 6 on an x86-64 host), and ends at its 20 vblanks with exit code 0 and no `fault_handler` line | |
 | `boot.2ndmix.jit` `boot.2ndmix.interp` | 2ndmix boots under reios with the `none` renderer and runs for 600 vblanks: exit code 0, `reason=vblanks vblanks=600`, the serial port shows the KallistiOS banner, `2ndMix/KallistiOS starting` and `Starting display` | `NULLDC_ELF_DIR` |
 | `boot.hello.jit` `boot.hello.interp` | the same for hello and 30 vblanks: the banner, `Hello world!`, `arch: exit return code 0` | `NULLDC_ELF_DIR` |
 | `determinism` | 2ndmix for 600 vblanks, 6 times on the JIT and 6 times on the interpreter, 4 runs at a time: every run of an engine has the same state hash, part for part. About 8 s | `NULLDC_ELF_DIR` |
@@ -73,7 +75,13 @@ emulator: once the emulator has installed its handler for the signal and the tes
 waits for, a thread of the library writes to a page nothing knows (SIGSEGV), to a mapping behind the end of its
 file (SIGBUS), or executes an undefined instruction (SIGILL). A test creates the file when the text of the guest
 is in the output of the run: the fault is then in a machine that runs, with its config loaded and that text in
-front of it, however long the emulator took to get there.
+front of it, however long the emulator took to get there. `fault.sent` sends its signals at the same point, with
+`kill` from the test and with `raise` from the thread of the library.
+
+For `fault.guest` the library counts instead of faulting. Its `sigaction` is found in front of the one of libc, so
+the handler the emulator installs for SIGSEGV sits behind one that counts the signals with a `si_code` above 0,
+the ones the kernel raises for a fault, into a file. Every guest memory fault is two of them: the fault, and the
+write to a page of its own with which the handler comes back from the work it does outside the signal.
 
 hello returns from `main` into its own start-up code (KallistiOS returns to the PR it was started with, which it
 keeps on the stack it then uses) and stays there, at about a quarter of real time on the JIT; that is the program,

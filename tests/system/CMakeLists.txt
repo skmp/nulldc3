@@ -34,6 +34,8 @@ set(nulldc_system_cases
   "fault.ill:SHIM"
   "fault.on_request:SHIM"
   "fault.block:SHIM"
+  "fault.sent:SHIM"
+  "fault.guest:SHIM"
   "boot.2ndmix.jit:ELF"
   "boot.2ndmix.interp:ELF"
   "boot.hello.jit:ELF"
@@ -70,7 +72,7 @@ if(NOT nulldc_system_skip)
   # Faults the emulator on request, see fault_shim.cpp
   add_library(nulldc_fault_shim MODULE fault_shim.cpp)
   find_package(Threads REQUIRED)
-  target_link_libraries(nulldc_fault_shim PRIVATE Threads::Threads)
+  target_link_libraries(nulldc_fault_shim PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
   set_target_properties(nulldc_fault_shim PROPERTIES PREFIX "" OUTPUT_NAME fault_shim)
 endif()
 

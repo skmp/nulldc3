@@ -427,18 +427,24 @@ def case_frame_refsw2(h):
     check(none.fields['vram'] != run.fields['vram'], 'refsw2 left VRAM as the none renderer does', run)
 
 
-def start_fault(h, tag, kind, keys=(), env=None):
-    """Starts guest_spin with the fault shim and waits for the text of the guest: from there on the handlers are
-    installed, the config is loaded and the machine runs, however long the emulator took to get there. Returns
-    what finish() takes and the path of the file that makes the shim fault when it is created."""
+def start_spin(h, tag, keys=(), engine='interp', env=None):
+    """Starts guest_spin and waits for the text of the guest: from there on the handlers are installed, the
+    config is loaded and the machine runs, however long the emulator took to get there. Returns what finish()
+    takes."""
+    started = h.start(tag, headless(*keys, engine=engine), h.guest('guest_spin'), env=env)
+    if not h.wait_for_output(started, 'guest: running'):
+        check(False, 'the text of the guest did not come: no fault was asked for, no signal sent', h.finish(started))
+    return started
+
+
+def start_fault(h, tag, kind, keys=(), engine='interp', env=None):
+    """start_spin() with the fault shim. Returns what finish() takes and the path of the file that makes the shim
+    fault when it is created."""
     check(h.options.shim and os.path.isfile(h.options.shim), 'no fault shim (--shim)')
     request = os.path.join(h.work, tag, 'fault-now')
     environment = {'LD_PRELOAD': h.options.shim, 'NULLDC_TEST_FAULT': kind, 'NULLDC_TEST_FAULT_WHEN': request}
     environment.update(env or {})
-    started = h.start(tag, headless(*keys, engine='interp'), h.guest('guest_spin'), env=environment)
-    if not h.wait_for_output(started, 'guest: running'):
-        check(False, 'the text of the guest did not come, no fault was asked for', h.finish(started))
-    return started, request
+    return start_spin(h, tag, keys, engine, environment), request
 
 
 def ask_for_fault(request):
@@ -491,6 +497,75 @@ def case_fault_block(h):
     ask_for_fault(request)
     run = h.finish(started, kill_when=lambda log: log.count('fault_handler: Blocking') >= 2)
     check(run.killed_on_purpose, 'the process did not block after the fault (config key)', run)
+
+
+# A signal that is sent ends the process as soon as it is delivered. This is how long that may take on a machine
+# that is busy before the run counts as one that went on.
+SENT_SIGNAL_SECONDS = 10
+
+
+def send_sigsegv(started):
+    """kill -SEGV on a started run."""
+    tag, args, process, log, directory, t0 = started
+    os.kill(process.pid, signal.SIGSEGV)
+
+
+def finish_sent(h, started):
+    """Waits for a run that was just sent a signal, for SENT_SIGNAL_SECONDS at most."""
+    tag, args, process, log, directory, t0 = started
+    return h.finish(started, watchdog=time.time() - t0 + SENT_SIGNAL_SECONDS)
+
+
+def check_sent(run, sender, si_code):
+    """The run was ended by a SIGSEGV that was sent to it, and its diagnostic names the sender."""
+    check(not run.hung, 'the run went on for %d s after a SIGSEGV was sent to it: killed' % SENT_SIGNAL_SECONDS, run)
+    check(run.returncode == -signal.SIGSEGV, 'exit code %s, expected the end by SIGSEGV' % run.returncode, run)
+    lines = [line for line in run.log.splitlines() if line.startswith('fault_handler')]
+    expected = 'fault_handler: SIGSEGV sent by pid %d (si_code %d), not a fault: terminating' % (sender, si_code)
+    check(lines == [expected], 'the diagnostic is not\n    %s' % expected, run)
+    check(run.exit_line is None, 'a nulldc-exit line from a run that a signal ended', run)
+    check('guest: running' in run.log, 'the output in front of the signal is missing', run)
+
+
+def case_fault_sent(h):
+    """A SIGSEGV that is sent to the process is nobody's fault: it ends the run at once, with a diagnostic that
+    names the sender, and is not taken for a guest memory fault."""
+    # kill, from another process. On the JIT the handler is in use for the faults of the guest.
+    for engine in ('jit', 'interp'):
+        started = start_spin(h, 'kill_' + engine, engine=engine)
+        send_sigsegv(started)
+        check_sent(finish_sent(h, started), os.getpid(), 0)
+
+    # raise(), from a thread of the process itself that is not the one of the emulator: si_code is SI_TKILL
+    started, request = start_fault(h, 'raise', 'raise', engine='jit')
+    tag, args, process, log, directory, t0 = started
+    ask_for_fault(request)
+    check_sent(finish_sent(h, started), process.pid, -6)
+
+    # for a debugger the process stays, as it does for a fault
+    started = start_spin(h, 'block', engine='jit', env={'NULLDC_FAULT_BLOCK': '1'})
+    send_sigsegv(started)
+    run = h.finish(started, kill_when=lambda log: log.count('fault_handler: Blocking') >= 2)
+    check(run.killed_on_purpose, 'the process did not block after the signal', run)
+    check('fault_handler: SIGSEGV sent by pid %d (si_code 0), not a fault: blocking for a debugger' % os.getpid()
+          in run.log, 'no diagnostic of the signal', run)
+
+
+def case_fault_guest(h):
+    """The faults of the guest are still handled: a run on the JIT takes SIGSEGVs that the kernel raises for a
+    fault, the handler gives every one of them back to the guest, and the run ends as it was asked to."""
+    check(h.options.shim and os.path.isfile(h.options.shim), 'no fault shim (--shim)')
+    count = os.path.join(h.work, 'segv-faults')
+    run = h.run('guest', headless('config:Exit.AfterVblanks=20', engine='jit'), h.guest('guest_spin'),
+                env={'LD_PRELOAD': h.options.shim, 'NULLDC_TEST_FAULT_COUNT': count})
+    check_clean(run, 'vblanks')
+    check('guest: running' in run.log, 'the text of the guest is not in the output', run)
+    check(os.path.isfile(count), 'the fault shim counted nothing: no %s' % count, run)
+    with open(count, 'rb') as f:
+        faults, = struct.unpack('I', f.read())
+    # a run without one would say nothing about the handler
+    check(faults > 0, 'the run took no SIGSEGV for a fault: nothing went through the handler', run)
+    print('  %d SIGSEGVs for a fault went through the handler' % faults)
 
 
 def case_determinism(h):
@@ -587,6 +662,8 @@ CASES = {
     'fault.ill': lambda h: case_fault(h, 'ill'),
     'fault.on_request': case_fault_on_request,
     'fault.block': case_fault_block,
+    'fault.sent': case_fault_sent,
+    'fault.guest': case_fault_guest,
     'determinism': case_determinism,
     'perf.script': case_perf_script,
 }

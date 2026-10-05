@@ -124,9 +124,23 @@ and ends the process with the default action of the signal: the exit status is 1
 `Fatal error : ...` and end with SIGTRAP (133), as before. stdout is line buffered, so the lines in front of the
 fault are in a redirected log.
 
+A SIGSEGV, SIGBUS or SIGILL that is **sent** to the process is not a fault, and a SIGSEGV that is sent is never
+looked at as a guest memory fault. Sent is what `kill -SEGV <pid>`, `raise`, `tgkill` and `sigqueue` do; the kernel
+gives such a signal a `si_code` of 0 or below. It ends the process as soon as it is delivered, on whichever thread
+and whatever the machine is doing, with one line on stderr
+
+    fault_handler: SIGSEGV sent by pid 179761 (si_code 0), not a fault: terminating
+
+and the default action of the signal, the same exit status as for a fault (139, 135, 132). The pid is the
+sender's; `si_code` is 0 for `kill`, -1 for `sigqueue`, and -6 for `tgkill` and for `raise`, which is a `tgkill` of
+the process to itself (the pid is then the emulator's own). The run prints no `nulldc-exit` line: a run that is to
+end early and say how it ended is given an exit key, not a signal.
+
 To get the old behaviour, the process blocking in the handler so that a native debugger can be attached (set the
 variable `break_segfault` to continue into the fault), set `NULLDC_FAULT_BLOCK=1` in the environment, or
-`config:Debug.BlockOnFault=yes` for faults after the config is loaded.
+`config:Debug.BlockOnFault=yes` for faults after the config is loaded. A signal that was sent blocks the same way,
+its line ending in `blocking for a debugger`; when `break_segfault` is set it is raised again and ends the process,
+since there is no instruction to return to that would fault again.
 
 On WSL2 the kernel pipes core files to a handler that ignores `ulimit -c 0`; the one core size limit that keeps it
 from running is exactly 1 byte (`prlimit --core=1:`, `resource.setrlimit(RLIMIT_CORE, (1, hard))`; `ulimit -c 1` in

@@ -165,13 +165,33 @@ static const char* fault_signal_name(int sn)
 	}
 }
 
+// A signal that was sent to the process or to one of its threads (kill, tgkill, raise, sigqueue) is not a fault of
+// the instruction it interrupts, and it has no fault address: si_addr shares its storage with the pid and the uid of
+// the sender. Linux gives such a signal a si_code of 0 or below, and a positive one to what the kernel raises for a
+// fault.
+static bool signal_was_sent(const siginfo_t* si)
+{
+#if HOST_OS == OS_LINUX
+	return si->si_code <= 0;
+#else
+	return false;
+#endif
+}
+
 static void fatal_error(int sn, siginfo_t* si, void* segfault_ctx)
 {
+	bool sent = signal_was_sent(si);
+	const char* action = fault_blocks ? "blocking for a debugger" : "terminating";
+
 	// stdio may be what faulted, or hold its lock: the line is formatted here and written with write()
 	char line[256];
-	int len = snprintf(line, sizeof(line), "fault_handler: unhandled %s at address %p, pc %p, not a guest memory fault: %s\n",
-		fault_signal_name(sn), si->si_addr, (void*)segfault_get_pc(segfault_ctx),
-		fault_blocks ? "blocking for a debugger" : "terminating");
+	int len;
+	if (sent)
+		len = snprintf(line, sizeof(line), "fault_handler: %s sent by pid %d (si_code %d), not a fault: %s\n",
+			fault_signal_name(sn), (int)si->si_pid, si->si_code, action);
+	else
+		len = snprintf(line, sizeof(line), "fault_handler: unhandled %s at address %p, pc %p, not a guest memory fault: %s\n",
+			fault_signal_name(sn), si->si_addr, (void*)segfault_get_pc(segfault_ctx), action);
 	if (len > (int)sizeof(line) - 1)
 		len = sizeof(line) - 1;
 	if (write(STDERR_FILENO, line, len) < 0) { }
@@ -188,8 +208,9 @@ static void fatal_error(int sn, siginfo_t* si, void* segfault_ctx)
 	signal(sn, SIG_DFL);
 
 	// The signal is blocked while its handler runs and is delivered when the handler returns. Without it a
-	// signal that was sent, not caused by the instruction the handler returns to, would be lost.
-	if (!fault_blocks)
+	// signal that was sent, not caused by the instruction the handler returns to, would be lost. A fault that
+	// blocked for a debugger is left to come again from its instruction, where the debugger then stands.
+	if (!fault_blocks || sent)
 		raise(sn);
 }
 
@@ -204,6 +225,14 @@ static void fatal_signal_handler(int sn, siginfo_t* si, void* segfault_ctx)
 static void fault_handler (int sn, siginfo_t * si, void *segfault_ctx)
 {
 	fault_printf("fault_handler: thread: %p si_addr:%p trap_ptr_fault: %p\n", (void*)pthread_self(), si->si_addr, trap_ptr_fault);
+
+	// Never a guest memory fault. Taken for one, the instruction it interrupted would run again without a fault:
+	// the signal would be lost, and the next guest memory fault refused for it.
+	if (signal_was_sent(si))
+	{
+		fatal_error(sn, si, segfault_ctx);
+		return;
+	}
 
 	if ((unat)si->si_addr == (unat)trap_ptr_fault)
 	{
