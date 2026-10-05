@@ -108,18 +108,6 @@ struct SH4IInterpreter : SuperH4Backend {
         return true;
     }
 
-    // One instruction of Loop(), out of line. Returns its opcode
-    static NOINLINE u32 RunOne()
-    {
-        u32 addr = next_pc;
-        next_pc += 2;
-        u32 op = IReadMem16(addr);
-
-        ExecuteOpcode(op);
-
-        return op;
-    }
-
     // One instruction of the debug loop, with the debugger check in front of it.
     // false: the check stopped and nothing ran, or the instruction ran and its flow report stopped
     static bool DebugStep(s32& l)
@@ -215,21 +203,27 @@ struct SH4IInterpreter : SuperH4Backend {
             try {
 #endif
                 // every instruction of the slice but the last
-                while (l > CPU_RATIO)
+                if (l > CPU_RATIO)
                 {
-                    u32 addr = next_pc;
-                    next_pc += 2;
-                    u32 op = IReadMem16(addr);
+                    do
+                    {
+                        u32 addr = next_pc;
+                        next_pc += 2;
+                        u32 op = IReadMem16(addr);
 
-                    ExecuteOpcode(op);
+                        ExecuteOpcode(op);
 
-                    l -= CPU_RATIO;
+                        l -= CPU_RATIO;
+                    } while (l > CPU_RATIO);
                 }
 
                 // The last one: the loop is only left behind it. It runs apart from the others, so that what it
                 // was is known then and the others keep nothing for that.
                 const u32 addr = next_pc;
-                const u32 op = RunOne();
+                next_pc += 2;
+                const u32 op = IReadMem16(addr);
+
+                ExecuteOpcode(op);
 
                 l -= CPU_RATIO;
 
