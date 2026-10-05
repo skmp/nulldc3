@@ -15,7 +15,7 @@
 	              address rule gives, and RunSample leaves what the steps leave
 	  helpers     decode and encode, the float format at its corners, the view of a step, a core without wave RAM
 	  shifter, address, ring, rules, mixs
-	              the known-answer programs (dsp_known.cpp)
+	              the known-answer programs (dsp_known.cpp), which aica.dsp.capi and aica.dsp.wasm run as well
 */
 #include "dsp_known.h"
 #include "dsp_suite.h"

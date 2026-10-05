@@ -14,8 +14,9 @@
 	  rules     the read latch, the distances from MRD to IWT, a channel in the slot, NOFL of IWT, EFREG, MDEC_CT
 	  mixs      the sends of a sweep, the two banks, the late sends, the CPU's bank
 
-	They are written on KnownMachine, which is nothing but the calls a user of the core has: whatever implements
-	it runs the same set. aica.dsp.api runs it on the core called itself.
+	They are written on KnownMachine, which is nothing but the calls a user of the core has. Whatever implements
+	it runs the same set: the core called itself (aica.dsp.api), its C interface compiled for the host
+	(aica.dsp.capi), and through the trace of that run the WebAssembly module (aica.dsp.wasm).
 
 	Every program runs twice: with its samples executed step by step, and with RunSample.
 */

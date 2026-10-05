@@ -10,8 +10,9 @@
 #	                      programs, step for step
 #	aica_dsp_cases <case> aica.dsp.case.<case>: the DSP programs caique ran on a Dreamcast, on the model with the
 #	                      core in step and on the core alone, against the console's files
-#	aica_dsp_wasm_trace   aica.dsp.capi: the C interface of the core against the core called itself. And what
-#	                      aica.dsp.wasm replays on aica_dsp_core.wasm: wasm_test.mjs, with node
+#	aica_dsp_wasm_trace   aica.dsp.capi: the C interface of the core against the core called itself, on random
+#	                      programs and on the known-answer programs. And what aica.dsp.wasm replays on
+#	                      aica_dsp_core.wasm: wasm_test.mjs, with node
 #	aica_dsp_bench        samples a second, not a test
 #
 #	The model, the programs and the console's files are caique-rtl's and stay there: the tests are compiled with

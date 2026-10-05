@@ -7,7 +7,9 @@
 	aica_dsp_core.h, call for call, with what the core answered. The same calls are made here, through the loader's
 	object and the module's C interface, and every answer has to be the same: what the CPU and a debugger read of a
 	register, the registers by index, the steps up to a breakpoint, the digests of the state blob, of the wave RAM
-	and of the views of every single step, and every array of the loader over its whole length.
+	and of the views of every single step, every array of the loader over its whole length, and words of the wave
+	RAM. The trace ends with the known-answer programs of dsp_known.cpp: the module runs the set that aica.dsp.api
+	runs on the native core, on a wave RAM of up to 16 MB.
 */
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -15,7 +17,7 @@ import { pathToFileURL } from "node:url";
 const T = {
 	REG_WRITE: 1, REG_POKE: 2, RAM_FILL: 3, INPUTS: 4, STEPS: 5, RUN_SAMPLES: 6, RUN: 7, BUS_READ: 8, CHANNEL_FETCH: 9,
 	SWEEP_BEGIN: 10, MIXS_SEND: 11, MIXS_SEND_LATE: 12, SAVE_LOAD: 13, SET: 14, EXTS: 15, CHECK: 16, REG_READ: 17, GET: 18,
-	RESET: 19, END: 20, ARRAYS: 21,
+	RESET: 19, END: 20, ARRAYS: 21, CREATE: 22, RAM_WRITE: 23, RAM_READ: 24, RAM_USED: 25,
 };
 
 //The arrays of the loader, in the order the trace has their digests
@@ -35,7 +37,7 @@ const module = await loadAicaDsp(readFileSync(wasmPath));
 const traceBytes = readFileSync(tracePath);
 const trace = new Uint32Array(traceBytes.buffer, traceBytes.byteOffset, traceBytes.byteLength >> 2);
 
-if (trace[0] !== 0x52544441 || trace[1] !== 2)
+if (trace[0] !== 0x52544441 || trace[1] !== 3)
 {
 	console.error(`${tracePath} is not a trace of this test`);
 	process.exit(2);
@@ -65,8 +67,34 @@ function numbers(hash, array)
 	return hash >>> 0;
 }
 
+//How many bytes are not 0. Nearly all of a wave RAM is 0 when this is asked: by words of 32 bit where it can be
+function used(bytes)
+{
+	let count = 0, from = 0;
+
+	if ((bytes.byteOffset & 3) === 0)
+	{
+		const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.length >>> 2);
+
+		for (let i = 0; i < words.length; i++)
+		{
+			const word = words[i];
+
+			if (word !== 0)
+				count += (word & 0xFF ? 1 : 0) + (word & 0xFF00 ? 1 : 0) + (word & 0xFF0000 ? 1 : 0) + (word >>> 24 ? 1 : 0);
+		}
+
+		from = words.length << 2;
+	}
+
+	for (let i = from; i < bytes.length; i++)
+		count += bytes[i] !== 0 ? 1 : 0;
+
+	return count;
+}
+
 const FNV_START = 2166136261;
-const dsp = module.create(trace[2]);
+let dsp = module.create(trace[2]);
 
 //a second core that is used in between: the first one must not notice
 const other = module.create(trace[2]);
@@ -216,6 +244,26 @@ for (let done = false; !done; operations++)
 	case T.RESET:
 		dsp.reset();
 		other.pokeReg(0x3400 + 16 * (operations & 127), operations);
+		break;
+
+	case T.CREATE:
+		dsp.destroy();
+		dsp = module.create(trace[at++]);
+		break;
+
+	case T.RAM_WRITE:
+		dsp.ram[trace[at]] = trace[at + 1] & 0xFF;
+		dsp.ram[trace[at] + 1] = (trace[at + 1] >>> 8) & 0xFF;
+		at += 2;
+		break;
+
+	case T.RAM_READ:
+		expect(`the word at ${trace[at].toString(16)} of the wave RAM`, dsp.ram[trace[at]] | (dsp.ram[trace[at] + 1] << 8), trace[at + 1]);
+		at += 2;
+		break;
+
+	case T.RAM_USED:
+		expect("the number of bytes of the wave RAM that are not 0", used(dsp.ram), trace[at++]);
 		break;
 
 	case T.END: done = true; break;
