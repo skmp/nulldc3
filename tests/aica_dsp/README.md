@@ -10,11 +10,11 @@ Without it the tests that need it are skipped, or fail with `-DNULLDC_TESTS_REQU
 
 | test | what it runs | data |
 |---|---|---|
-| `aica.dsp.api` | the core's interface on itself: `RunSample` from every step against 128 `StepOne`, state out and in before every step, two cores in turns, every register as the CPU has it, the MIXS banks, the read latch rules on programs small enough to say by hand what they leave | none |
+| `aica.dsp.api` | the core's interface on itself: `RunSample` from every step against 128 `StepOne`, state out and in before every step, two cores in turns, every register as the CPU has it, fields with bits their registers do not have, a wave RAM of 4, 8 and 16 MB. And the known-answer programs: the shifter, the address of a memory step, the ring, the read latch, the MIXS banks, on programs small enough to say by hand what they leave | none |
 | `aica.dsp.diff.random` `aica.dsp.diff.sparse` `aica.dsp.diff.directed` | the core against the DSP of the caique sample model on generated programs, compared behind every step | a caique-rtl checkout |
 | `aica.dsp.case.<case>` | a DSP program caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
-| `aica.dsp.capi` | the C interface of the core (`wasm/aica_dsp_capi.h`), compiled for the host, against the core called itself, call for call | none |
-| `aica.dsp.wasm` | `aica_dsp_core.wasm` and its loader in node against the core compiled for the host and called itself, call for call | emcc (on the PATH, or an emsdk in `EMSDK` or `~/emsdk`) and node; skipped without them |
+| `aica.dsp.capi` | the C interface of the core (`wasm/aica_dsp_capi.h`), compiled for the host, against the core called itself, call for call, on random programs and on the known-answer programs | none |
+| `aica.dsp.wasm` | `aica_dsp_core.wasm` and its loader in node against the core compiled for the host and called itself, call for call, on the same programs | emcc (on the PATH, or an emsdk in `EMSDK` or `~/emsdk`) and node; skipped without them |
 | `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | `wasm/build.sh` finding its emcc, run by sh on a PATH that has none: with the emsdk in `EMSDK` it builds the module, with no emsdk there it says that it has no emcc | an emcc that is in an emsdk, and node; skipped otherwise |
 
 All but `aica.dsp.capi` and the `aica.dsp.wasm` tests count their cases into checks and are gated on
@@ -64,15 +64,68 @@ and reads registers and reads wave RAM. The checks `did:*` count what the compar
 slots lost to a channel, IWT of both kinds, bus reads): a generator that stops producing them changes the
 baseline.
 
+## The known-answer programs
+
+`dsp_known.cpp`: programs whose answer is a number that is written down in the test, with the rule of the
+hardware it follows from. They need no data, so they hold what they cover in a build without a caique checkout
+as well:
+
+| group | what is known |
+|---|---|
+| `shifter` | SHIFTED in the four modes for 18 values of ACC: inside 24 bit, where twice the value leaves 24 bit, where the value does, at the ends of 26 bit and behind them. Which mode doubles, which saturates and at 0x7FFFFF / -0x800000, which cuts; the sum in ACC and its wrap at 26 bit; EWT |
+| `address` | the byte of the wave RAM that an MWT writes and an MRD reads, 28 cases on a wave RAM of 2, 4, 8 and 16 MB: TABLE with its wrap at 64K words, upwards (NXADR, ADRS_REG) and downwards (a negative ADRS_REG), every ring size, MDEC_CT under the ring's mask, ADRS_REG from SHIFTED and from INPUTS, RBP up to 0xFFF, the last word of 2, 4 and 8 MB, and the ring that goes on behind it: at byte 0 where the wave RAM ends there, at the next byte where it is larger. The write has to be the only two bytes of the wave RAM that changed; the read finds other words planted where an address that is cut short, or not cut, would read |
+| `ring` | a word written at MADRS is read at MADRS + 1 by the next sample and at MADRS + 2 by the one after, with MDEC_CT going through 0 |
+| `rules` | the read latch: the distances from MRD to IWT, a second read behind the first, a bus read, MRD with MWT, a channel in the slot, NOFL of IWT; EFREG, ACC of step 127, MDEC_CT |
+| `mixs` | the sends of a sweep, the two banks, the late sends, the CPU's bank |
+
+The programs are written on a machine that is nothing but the calls a user of the core has, and every program
+runs twice, by single steps and with `RunSample`. `aica.dsp.api` runs the set on the core called itself, and
+counts it into its checks. `aica_dsp_wasm_trace` runs the same set through the C interface, and its trace takes
+it to the module: a defect that is in `aica_dsp_core.wasm` only, in a rule the set knows, fails `aica.dsp.wasm`.
+
+### Wave RAM above 2 MB
+
+The core takes any power of two, the header names 8 MB, and the emulator has builds with 8 MB. The caique model
+has a wave RAM of 2 MB and no other (`AicaModel::RAM_SIZE`), so the tests against the model, `aica.dsp.diff.*`
+and `aica.dsp.case.*`, run on 2 MB and say nothing about more. What does:
+
+* `address` of the known-answer programs, on 4, 8 and 16 MB, natively and in the module;
+* `ram-sizes` of `aica.dsp.api`: 160 random programs on each of 4, 8 and 16 MB, with the ring anywhere RBP reaches
+  (the first 8 MB, or all of a smaller wave RAM), in the upper half of that, with 64K words that start in its last
+  16 KB, and as far up as RBP goes. Every memory step has to be at the byte that the address rule, written out in
+  the test, gives for the state in front of it, and a second core that runs the samples with `RunSample` has to
+  leave what the steps leave, in the state and in all of the wave RAM. The checks at the end count the memory
+  steps in the upper half, behind the end of the wave RAM and, on 16 MB, above 8 MB: a generator that stops
+  reaching them fails.
+
+16 MB is more than the hardware has. It is there because a ring at the top of RBP's 8 MB ends 126 KB above them:
+only a wave RAM with room there shows that the core's addresses are not cut at 8 MB.
+
+## Fields with more than their bits
+
+`aica_dsp_core.h` says which bits each field of the state has, and that the core computes with those and ignores
+what else a field holds (a debugger and the typed arrays of the module's loader write fields directly). The check
+`fields` of `aica.dsp.api` takes 96 states with every such field filled beyond its bits, with random bits, with
+all ones and with the largest and smallest numbers of its type, and holds the core against itself on the same
+state cut to its bits (what `LoadState` makes of it): what the CPU reads at every offset, the view of every step
+to the end of the next sample, and the state and wave RAM that a send to each bank, the steps and `RunSample`
+leave, cut again, have to be the same. Under `-fsanitize=undefined` the same check is what shows that no such
+value overflows a sum.
+
 ## The C interface and the module
 
-`aica_dsp_wasm_trace` runs 108 programs on the core twice, call for call: on an `AicaDsp` with the calls of
-`aica_dsp_core.h`, and through the C interface compiled for the host. The second has to answer what the first
-answers, and that is `aica.dsp.capi`: every register as the CPU and as a debugger read it, the registers by index
-after writes with more bits than they have, the steps up to a breakpoint, the state blob, the wave RAM, the view
-of every single step, and every array behind a pointer of the interface as the numbers it holds, over the length
-the header gives it. What a debugger's write and read do other than the CPU's, where a run stops and how a value
-is cut to its register are written out in the test a second time: they are not taken from the interface.
+`aica_dsp_wasm_trace` runs 108 random programs and the known-answer programs on the core twice, call for call: on
+an `AicaDsp` with the calls of `aica_dsp_core.h`, and through the C interface compiled for the host. The second
+has to answer what the first answers, and that is `aica.dsp.capi`: every register as the CPU and as a debugger
+read it, the registers by index after writes with more bits than they have, the steps up to a breakpoint, the
+state blob, the wave RAM, the view of every single step, and every array behind a pointer of the interface as
+the numbers it holds, over the length the header gives it. What a debugger's write and read do other than the
+CPU's, where a run stops and how a value is cut to its register are written out in the tests a second time: they
+are not taken from the interface.
+
+The random programs take turns on a wave RAM of 64 KB, 2 MB and 256 KB. 64 KB is smaller than a ring, so the
+addresses wrap in the wave RAM; 256 KB is more than the 128 KB that TABLE reaches, so TABLE's own wrap is what
+limits it; 2 MB is the console's. The known-answer programs go up to 16 MB.
 
 The trace the tool writes has every call with the answer of the core that was called itself. `aica.dsp.wasm`
 makes the calls on the module through the loader's object and compares with those answers, the arrays as the
@@ -133,7 +186,8 @@ The case sources use C that is not C++, so the tests project enables C when the 
     aica_dsp_diff directed --verbose          # the first difference of each family, with sample, step and register
     aica_dsp_cases dsp_basic --verbose        # every line that is not the console's, both versions
     aica_dsp_api --verbose                    # every check that does not hold
-    aica_dsp_wasm_trace                       # the first answers of the C interface that are not the core's
+    aica_dsp_wasm_trace                       # the first answers of the C interface that are not the core's, and
+                                              # the first known answers the core does not give
     node wasm_test.mjs <build dir>/aica_dsp/wasm/aica_dsp_core.mjs <build dir>/aica_dsp/wasm/aica_dsp_core.wasm \
          <build dir>/aica_dsp/wasm_trace.bin
 
@@ -147,12 +201,13 @@ machine's. The core's README has the ones of the machine it was written on.
 ## Files
 
     dsp_suite.*        options, report, checks and baseline; a reproducible random stream
+    dsp_known.*        the known-answer programs, on a machine of the core's calls
     caique_model.*     the caique sample model behind a wrapper, with the hook between its steps
     dsp_lockstep.*     the core next to the model, step for step; the second core for RunSample
     diff_main.cpp      aica.dsp.diff.*: the generated programs
     cases_main.cpp     aica.dsp.case.*: the two machines, caique's case interface on them, the console's files
-    api_main.cpp       aica.dsp.api
-    wasm_trace.cpp     aica.dsp.capi: the C interface against the core's own calls; writes those calls and the
-                       core's answers for aica.dsp.wasm
+    api_main.cpp       aica.dsp.api: the interface, and the known-answer programs on the core
+    wasm_trace.cpp     aica.dsp.capi: the C interface against the core's own calls, on random programs and on
+                       the known-answer programs; writes those calls and the core's answers for aica.dsp.wasm
     wasm_test.mjs      aica.dsp.wasm: the replay on the module, in node
     bench_main.cpp     aica_dsp_bench
