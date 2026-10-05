@@ -1,10 +1,18 @@
 /*
-	aica_dsp_wasm_trace: what aica.dsp.wasm replays.
+	aica_dsp_wasm_trace: aica.dsp.capi, and what aica.dsp.wasm replays.
 
-	Runs programs on the DSP core through its C interface (hw/aica/dsp_core/wasm/aica_dsp_capi.h), compiled for
-	this machine, and writes every call it makes into a trace, with what the core answered: the registers the CPU
-	reads, and digests of the state blob, of the wave RAM and of the views of the single steps. wasm_test.mjs
-	makes the same calls on aica_dsp_core.wasm through its loader and has to get the same answers.
+	Runs programs on the DSP core twice, call for call: on an AicaDsp with the calls of aica_dsp_core.h, and through
+	the C interface (hw/aica/dsp_core/wasm/aica_dsp_capi.h) compiled for this machine. What the interface answers
+	has to be what the core answers when it is called itself: the registers as the CPU and a debugger read them,
+	the registers by index, the state blob, the wave RAM, the views of the single steps, the arrays behind the
+	pointers, the steps up to a breakpoint. That is aica.dsp.capi.
+
+	Every call goes into a trace, with the answer of the core that was called itself. wasm_test.mjs makes the same
+	calls on aica_dsp_core.wasm through its loader and has to get the same answers: aica.dsp.wasm. The C interface
+	is in the module, not in what the module is compared with.
+
+	    aica_dsp_wasm_trace                 aica.dsp.capi: fails when an answer of the C interface is not the core's
+	    aica_dsp_wasm_trace <trace file>    writes the trace
 
 	The trace is 32 bit little endian words: "ADTR", a version, the size of the wave RAM, then operations, each
 	its number and its arguments (the T_ list below, which wasm_test.mjs has as well).
@@ -25,7 +33,7 @@ enum
 	T_INPUTS = 4,			//on, sent, fetch low, fetch high, 16 sums, 64 words
 	T_STEPS = 5,			//count: single steps, the view of each goes into the view digest
 	T_RUN_SAMPLES = 6,		//count
-	T_RUN = 7,				//count, 4 words of stop bits; expects: steps done
+	T_RUN = 7,				//count, 4 words of stop bits, all 0: run without stops; expects: steps done
 	T_BUS_READ = 8,			//word
 	T_CHANNEL_FETCH = 9,	//word
 	T_SWEEP_BEGIN = 10,
@@ -39,13 +47,28 @@ enum
 	T_GET = 18,				//index; expects: value
 	T_RESET = 19,
 	T_END = 20,
+	T_ARRAYS = 21,			//expects: the digest of every array behind a pointer, as numbers (arrays() has the order)
 };
 
+#define TRACE_VERSION 2
 #define TRACE_RAM_SIZE 0x10000u
+#define FNV_START 2166136261u
 
 static std::vector<uint32_t> trace;
+static uint32_t operations, answers, differ;
+
+//The C interface
 static AicaDspHandle* h;
-static uint32_t view_digest, checks;
+static uint32_t capi_views;
+
+//The core that is called itself, and what a handle has around its core: the wave RAM, the inputs of the samples and
+//whether they are on, the view of the last single step
+static AicaDsp core;
+static std::vector<uint8_t> core_ram;
+static AicaDspSampleInputs core_inputs;
+static bool core_inputs_on = true;
+static AicaDspStepView core_view;
+static uint32_t core_views;
 
 static uint32_t fnv(uint32_t hash, const uint8_t* data, size_t size)
 {
@@ -55,19 +78,81 @@ static uint32_t fnv(uint32_t hash, const uint8_t* data, size_t size)
 	return hash;
 }
 
-static void op(uint32_t number) { trace.push_back(number); }
+//An array as the numbers it holds: of every element its value in 32 bit and whether it is negative. Elements of
+//another width or signedness, more or fewer of them, are another digest. wasm_test.mjs has the same
+template <typename T> static uint32_t numbers(uint32_t hash, const T* data, size_t count)
+{
+	for (size_t i = 0; i < count; i++)
+	{
+		const int64_t value = data[i];
+		const uint32_t low = (uint32_t)value;
+		const uint8_t bytes[5] = { (uint8_t)low, (uint8_t)(low >> 8), (uint8_t)(low >> 16), (uint8_t)(low >> 24), (uint8_t)(value < 0) };
+
+		hash = fnv(hash, bytes, sizeof(bytes));
+	}
+
+	return hash;
+}
+
+template <typename T, size_t N> static uint32_t numbers(uint32_t hash, const T (&data)[N])
+{
+	return numbers(hash, data, N);
+}
+
+static void op(uint32_t number) { trace.push_back(number); operations++; }
 static void arg(uint32_t value) { trace.push_back(value); }
+
+//An answer of the C interface against the core's
+static void same(const char* what, uint32_t capi, uint32_t value)
+{
+	answers++;
+
+	if (capi != value && differ++ < 10)
+		printf("operation %u: %s is %x through the C interface, %x in the core\n", operations - 1, what, capi, value);
+}
+
+//The same, for an answer that the module has to give as well
+static void answer(const char* what, uint32_t capi, uint32_t value)
+{
+	arg(value);
+	same(what, capi, value);
+}
+
+static const AicaDspSampleInputs* core_in()
+{
+	return core_inputs_on ? &core_inputs : nullptr;
+}
+
+static int32_t sign_extended(uint32_t value, int bits)
+{
+	const uint32_t sign = 1u << (bits - 1);
+
+	return (int32_t)(((value & (2 * sign - 1)) ^ sign) - sign);
+}
 
 static void reg_write(uint32_t off, uint32_t value)
 {
 	op(T_REG_WRITE); arg(off); arg(value);
 	aica_dsp_reg_write(h, off, value);
+	core.RegWrite(off, value);
 }
 
+//A debugger writes what the CPU writes, and the two things the CPU cannot: the low byte of MEMS, and EXTS
 static void reg_poke(uint32_t off, uint32_t value)
 {
 	op(T_REG_POKE); arg(off); arg(value);
 	aica_dsp_reg_poke(h, off, value);
+
+	if (off >= 0x4400 && off < 0x4500 && !(off & 4))
+	{
+		int32_t& mems = core.MEMS[(off - 0x4400) / 8];
+
+		mems = (mems & ~0xFF) | (int32_t)(value & 0xFF);
+	}
+	else if (off == 0x45C0 || off == 0x45C4)
+		core.EXTS[(off - 0x45C0) / 4] = (int16_t)value;
+	else
+		core.RegWrite(off, value);
 }
 
 static void ram_fill(uint32_t seed)
@@ -83,6 +168,7 @@ static void ram_fill(uint32_t seed)
 		x ^= x >> 17;
 		x ^= x << 5;
 		ram[i] = (uint8_t)x;
+		core_ram[i] = (uint8_t)x;
 	}
 }
 
@@ -94,12 +180,17 @@ static void inputs(DspRandom& rnd, bool on, int fetches)
 
 	op(T_INPUTS); arg(on); arg(sent); arg(low); arg(high);
 
+	core_inputs_on = on;
+	core_inputs.mixs_sent = (uint16_t)sent;
+	core_inputs.fetch = ((uint64_t)high << 32) | low;
+
 	for (int i = 0; i < 16; i++)
 	{
 		int32_t sum = (int32_t)(rnd.Bits(24) << 8) >> 8;
 
 		arg((uint32_t)sum);
 		aica_dsp_inputs_mixs(h)[i] = sum;
+		core_inputs.mixs[i] = sum;
 	}
 
 	for (int k = 0; k < 64; k++)
@@ -108,6 +199,7 @@ static void inputs(DspRandom& rnd, bool on, int fetches)
 
 		arg(word);
 		aica_dsp_inputs_fetch_words(h)[k] = (uint16_t)word;
+		core_inputs.fetch_word[k] = (uint16_t)word;
 	}
 
 	aica_dsp_set_inputs(h, on, sent, low, high);
@@ -120,7 +212,10 @@ static void steps(uint32_t count)
 	for (uint32_t i = 0; i < count; i++)
 	{
 		aica_dsp_step(h);
-		view_digest = fnv(view_digest, (const uint8_t*)aica_dsp_view(h), AICA_DSP_STEP_VIEW_WORDS * 4);
+		capi_views = fnv(capi_views, (const uint8_t*)aica_dsp_view(h), AICA_DSP_STEP_VIEW_WORDS * 4);
+
+		core.StepOne(core_in(), &core_view);
+		core_views = fnv(core_views, (const uint8_t*)&core_view, sizeof(core_view));
 	}
 }
 
@@ -129,9 +224,13 @@ static void run_samples(uint32_t count)
 	op(T_RUN_SAMPLES); arg(count);
 
 	for (uint32_t i = 0; i < count; i++)
+	{
 		aica_dsp_run_sample(h);
+		core.RunSample(core_in());
+	}
 }
 
+//stops: 128 bytes, or none
 static void run(uint32_t count, const uint8_t* stops)
 {
 	op(T_RUN); arg(count);
@@ -141,45 +240,215 @@ static void run(uint32_t count, const uint8_t* stops)
 		uint32_t bits = 0;
 
 		for (int i = 0; i < 32; i++)
-			bits |= (uint32_t)(stops[32 * w + i] != 0) << i;
+			bits |= (uint32_t)(stops && stops[32 * w + i] != 0) << i;
 
 		arg(bits);
 	}
 
-	arg(aica_dsp_run(h, count, stops));
+	//where it ends: in front of the first breakpoint behind the step it starts at, or when count steps are done
+	uint32_t until = 0;
+
+	while (until < count)
+	{
+		until++;
+
+		if (stops && stops[(core.step + until) & 127])
+			break;
+	}
+
+	for (uint32_t i = 0; i < until; i++)
+		core.StepOne(core_in(), &core_view);
+
+	answer("the number of steps to the breakpoint", aica_dsp_run(h, count, stops), until);
 }
 
-static void check()
+static void bus_read(uint32_t word)
 {
-	std::vector<uint8_t> blob(aica_dsp_state_size());
+	op(T_BUS_READ); arg(word);
+	aica_dsp_bus_read(h, word);
+	core.BusRead((uint16_t)word);
+}
+
+static void channel_fetch(uint32_t word)
+{
+	op(T_CHANNEL_FETCH); arg(word);
+	aica_dsp_channel_fetch(h, word);
+	core.ChannelFetch((uint16_t)word);
+}
+
+static void sweep_begin()
+{
+	op(T_SWEEP_BEGIN);
+	aica_dsp_sweep_begin(h);
+	core.SweepBegin();
+}
+
+static void mixs_send(uint32_t bus, uint32_t value, bool late)
+{
+	op(late ? T_MIXS_SEND_LATE : T_MIXS_SEND); arg(bus); arg(value);
+
+	if (late)
+	{
+		aica_dsp_mixs_send_late(h, bus, (int32_t)value);
+		core.MixsSendLate(bus, (int32_t)value);
+	}
+	else
+	{
+		aica_dsp_mixs_send(h, bus, (int32_t)value);
+		core.MixsSend(bus, (int32_t)value);
+	}
+}
+
+//A reset leaves the wave RAM and the inputs, and no view of a step
+static void reset()
+{
+	op(T_RESET);
+	aica_dsp_reset(h);
+	core.Reset();
+	memset(&core_view, 0, sizeof(core_view));
+}
+
+static void save_load()
+{
+	op(T_SAVE_LOAD);
+
+	std::vector<uint8_t> blob(aica_dsp_state_size()), core_blob(AicaDsp::StateSize());
 
 	aica_dsp_save_state(h, blob.data());
+	core.SaveState(core_blob.data());
+	same("the size of a state", (uint32_t)blob.size(), (uint32_t)core_blob.size());
 
-	op(T_CHECK);
-	arg(fnv(2166136261u, blob.data(), blob.size()));
-	arg(fnv(2166136261u, aica_dsp_ram(h), TRACE_RAM_SIZE));
-	arg(view_digest);
+	aica_dsp_reset(h);
+	core.Reset();
+	memset(&core_view, 0, sizeof(core_view));
 
-	view_digest = 2166136261u;
-	checks++;
+	same("LoadState of its own state", aica_dsp_load_state(h, blob.data(), (uint32_t)blob.size()),
+		core.LoadState(core_blob.data(), (uint32_t)core_blob.size()));
+	same("LoadState of a cut state", aica_dsp_load_state(h, blob.data(), (uint32_t)blob.size() - 1), 0);
 }
 
-static void reg_read(uint32_t off)
+//A debugger's write of a register that is no array: the value, cut to the bits the register has
+static void set(uint32_t index, uint32_t value)
 {
-	op(T_REG_READ); arg(off); arg(aica_dsp_reg_read(h, off)); arg(aica_dsp_reg_peek(h, off));
-	checks++;
+	op(T_SET); arg(index); arg(value);
+	aica_dsp_set(h, index, (int32_t)value);
+
+	switch (index)
+	{
+	case AICA_DSP_REG_STEP: core.step = (uint8_t)(value % 128); break;
+	case AICA_DSP_REG_SAMPLES: core.samples = value; break;
+	case AICA_DSP_REG_MDEC_CT: core.MDEC_CT = (uint16_t)value; break;
+	case AICA_DSP_REG_RBPL: core.RBPL = (uint16_t)value; break;
+	case AICA_DSP_REG_ACC: core.ACC = sign_extended(value, 26); break;
+	case AICA_DSP_REG_Y_REG: core.Y_REG = sign_extended(value, 24); break;
+	case AICA_DSP_REG_FRC_REG: core.FRC_REG = (uint16_t)(value % 0x2000); break;
+	case AICA_DSP_REG_ADRS_REG: core.ADRS_REG = (uint16_t)(value % 0x1000); break;
+	case AICA_DSP_REG_LATCH: core.latch = (uint16_t)value; break;
+	case AICA_DSP_REG_LATCH_COPY: core.latch_copy = (uint16_t)value; break;
+	case AICA_DSP_REG_MEMVAL: core.memval = (uint16_t)value; break;
+	case AICA_DSP_REG_NOFL_PIPE: core.nofl_pipe = (uint8_t)(value % 4); break;
+	case AICA_DSP_REG_MIXS_DSP: core.mixs_dsp = (uint8_t)(value % 2); break;
+	case AICA_DSP_REG_MIXS_FILL: core.mixs_fill = (uint8_t)(value % 2); break;
+	default: break;
+	}
 }
 
 static void get(uint32_t index)
 {
-	op(T_GET); arg(index); arg((uint32_t)aica_dsp_get(h, index));
-	checks++;
+	uint32_t value = 0;
+
+	switch (index)
+	{
+	case AICA_DSP_REG_STEP: value = core.step; break;
+	case AICA_DSP_REG_SAMPLES: value = core.samples; break;
+	case AICA_DSP_REG_MDEC_CT: value = core.MDEC_CT; break;
+	case AICA_DSP_REG_RBPL: value = core.RBPL; break;
+	case AICA_DSP_REG_ACC: value = (uint32_t)core.ACC; break;
+	case AICA_DSP_REG_Y_REG: value = (uint32_t)core.Y_REG; break;
+	case AICA_DSP_REG_FRC_REG: value = core.FRC_REG; break;
+	case AICA_DSP_REG_ADRS_REG: value = core.ADRS_REG; break;
+	case AICA_DSP_REG_LATCH: value = core.latch; break;
+	case AICA_DSP_REG_LATCH_COPY: value = core.latch_copy; break;
+	case AICA_DSP_REG_MEMVAL: value = core.memval; break;
+	case AICA_DSP_REG_NOFL_PIPE: value = core.nofl_pipe; break;
+	case AICA_DSP_REG_MIXS_DSP: value = core.mixs_dsp; break;
+	case AICA_DSP_REG_MIXS_FILL: value = core.mixs_fill; break;
+	default: break;
+	}
+
+	op(T_GET); arg(index);
+	answer("a register by its index", (uint32_t)aica_dsp_get(h, index), value);
+}
+
+static void exts(uint32_t index, uint32_t value)
+{
+	op(T_EXTS); arg(index); arg(value);
+	aica_dsp_exts(h)[index] = (int16_t)value;
+	core.EXTS[index] = (int16_t)value;
+}
+
+//Every pointer of the interface, over as many elements as aica_dsp_capi.h says it has
+static void arrays()
+{
+	int32_t view[AICA_DSP_STEP_VIEW_WORDS];
+
+	memcpy(view, &core_view, sizeof(view));
+
+	uint32_t mpro = FNV_START;
+
+	for (const auto& row : core.MPRO)
+		mpro = numbers(mpro, row);
+
+	op(T_ARRAYS);
+	answer("the array of COEF", numbers(FNV_START, aica_dsp_coef(h), 128), numbers(FNV_START, core.COEF));
+	answer("the array of MADRS", numbers(FNV_START, aica_dsp_madrs(h), 64), numbers(FNV_START, core.MADRS));
+	answer("the array of MPRO", numbers(FNV_START, aica_dsp_mpro(h), 128 * 4), mpro);
+	answer("the array of TEMP", numbers(FNV_START, aica_dsp_temp(h), 128), numbers(FNV_START, core.TEMP));
+	answer("the array of MEMS", numbers(FNV_START, aica_dsp_mems(h), 32), numbers(FNV_START, core.MEMS));
+	answer("the array of MIXS", numbers(FNV_START, aica_dsp_mixs(h), 2 * 16), numbers(numbers(FNV_START, core.MIXS[0]), core.MIXS[1]));
+	answer("the array of EFREG", numbers(FNV_START, aica_dsp_efreg(h), 16), numbers(FNV_START, core.EFREG));
+	answer("the array of EXTS", numbers(FNV_START, aica_dsp_exts(h), 2), numbers(FNV_START, core.EXTS));
+	answer("the array of the view", numbers(FNV_START, aica_dsp_view(h), AICA_DSP_STEP_VIEW_WORDS), numbers(FNV_START, view));
+	answer("the array of the inputs' sums", numbers(FNV_START, aica_dsp_inputs_mixs(h), 16), numbers(FNV_START, core_inputs.mixs));
+	answer("the array of the inputs' fetch words", numbers(FNV_START, aica_dsp_inputs_fetch_words(h), 64), numbers(FNV_START, core_inputs.fetch_word));
+}
+
+static void check()
+{
+	std::vector<uint8_t> blob(aica_dsp_state_size()), core_blob(AicaDsp::StateSize());
+
+	aica_dsp_save_state(h, blob.data());
+	core.SaveState(core_blob.data());
+
+	op(T_CHECK);
+	answer("the digest of the state", fnv(FNV_START, blob.data(), blob.size()), fnv(FNV_START, core_blob.data(), core_blob.size()));
+	answer("the digest of the wave RAM", fnv(FNV_START, aica_dsp_ram(h), aica_dsp_ram_size(h)), fnv(FNV_START, core_ram.data(), core_ram.size()));
+	answer("the digest of the step views", capi_views, core_views);
+
+	capi_views = core_views = FNV_START;
+
+	arrays();
+}
+
+//What the CPU reads, and what a debugger reads: the same, and RBP / RBL and EXTS where the CPU reads 0
+static void reg_read(uint32_t off)
+{
+	uint32_t shown = core.RegRead(off);
+
+	if (off == 0x2804)
+		shown = core.RBPL;
+	else if (off == 0x45C0 || off == 0x45C4)
+		shown = (uint16_t)core.EXTS[(off - 0x45C0) / 4];
+
+	op(T_REG_READ); arg(off);
+	answer("what the CPU reads", aica_dsp_reg_read(h, off), core.RegRead(off));
+	answer("what a debugger reads", aica_dsp_reg_peek(h, off), shown);
 }
 
 static void program(DspRandom& rnd, int rows, bool sparse)
 {
-	op(T_RESET);
-	aica_dsp_reset(h);
+	reset();
+	arrays();
 	ram_fill(rnd.Bits(32) | 1);
 
 	for (int i = 0; i < 128; i++)
@@ -189,8 +458,14 @@ static void program(DspRandom& rnd, int rows, bool sparse)
 		reg_write(0x4004 + 8 * i, rnd.Bits(16));
 	}
 
+	//a debugger's write of a register the CPU writes is the CPU's write
 	for (int i = 0; i < 64; i++)
-		reg_write(0x3200 + 4 * i, rnd.Bits(16));
+	{
+		if (i & 1)
+			reg_poke(0x3200 + 4 * i, rnd.Bits(16));
+		else
+			reg_write(0x3200 + 4 * i, rnd.Bits(16));
+	}
 
 	for (int i = 0; i < 32; i++)
 	{
@@ -211,19 +486,72 @@ static void program(DspRandom& rnd, int rows, bool sparse)
 		}
 	}
 
-	reg_write(0x2804, rnd.Bits(15) | (rnd.Chance(8) ? 0x8000 : 0));
+	if (rnd.Chance(2))
+		reg_poke(0x2804, rnd.Bits(15) | (rnd.Chance(8) ? 0x8000 : 0));
+	else
+		reg_write(0x2804, rnd.Bits(15) | (rnd.Chance(8) ? 0x8000 : 0));
 
-	op(T_SET); arg(AICA_DSP_REG_MDEC_CT);
-	uint32_t ct = rnd.Bits(16);
-	arg(ct);
-	aica_dsp_set(h, AICA_DSP_REG_MDEC_CT, (int32_t)ct);
+	set(AICA_DSP_REG_MDEC_CT, rnd.Bits(16));
+}
+
+//What no handle of the trace shows: the functions without a handle, a wave RAM size that is none, a core without
+//wave RAM
+static void without_trace(DspRandom& rnd)
+{
+	same("the version of the interface", aica_dsp_api_version(), AICA_DSP_API_VERSION);
+	same("the size of the wave RAM", aica_dsp_ram_size(h), TRACE_RAM_SIZE);
+	same("the fields of a step, in bytes", (uint32_t)sizeof(AicaDspInst), 24);
+
+	AicaDspHandle* odd = aica_dsp_create(3 * TRACE_RAM_SIZE);
+
+	same("a core with a wave RAM that is no power of two", odd != nullptr, 0);
+	aica_dsp_destroy(odd);
+
+	AicaDspHandle* bare = aica_dsp_create(0);
+
+	same("a core without wave RAM", bare && !aica_dsp_ram(bare) && !aica_dsp_ram_size(bare), 1);
+
+	if (bare)
+	{
+		aica_dsp_run_sample(bare);
+		same("its samples", (uint32_t)aica_dsp_get(bare, AICA_DSP_REG_SAMPLES), 1);
+		aica_dsp_destroy(bare);
+	}
+
+	for (int i = 0; i < 1000; i++)
+	{
+		uint16_t words[4], back[4], core_back[4];
+		uint8_t fields[sizeof(AicaDspInst)];
+		AicaDspInst inst;
+
+		for (uint16_t& word : words)
+			word = (uint16_t)rnd.Bits(16);
+
+		aica_dsp_decode(words, fields);
+		AicaDspDecode(words, &inst);
+		same("a decoded step", memcmp(fields, &inst, sizeof(inst)) == 0, 1);
+
+		aica_dsp_encode(fields, back);
+		AicaDspEncode(&inst, core_back);
+		same("an encoded step", memcmp(back, core_back, sizeof(back)) == 0, 1);
+
+		const int32_t value = sign_extended(rnd.Bits(24), 24);
+
+		same("a packed value", aica_dsp_pack(value), AicaDspPack(value));
+		same("an unpacked word", (uint32_t)aica_dsp_unpack(words[0]), (uint32_t)AicaDspUnpack(words[0]));
+	}
+
+	void* memory = aica_dsp_alloc(128);
+
+	same("memory for the host", memory != nullptr, 1);
+	aica_dsp_free(memory);
 }
 
 int main(int argc, char** argv)
 {
-	if (argc < 2)
+	if (argc > 2 || (argc == 2 && argv[1][0] == '-'))
 	{
-		fprintf(stderr, "aica_dsp_wasm_trace <trace file>\n");
+		fprintf(stderr, "aica_dsp_wasm_trace [<trace file>]\n");
 		return 2;
 	}
 
@@ -232,11 +560,27 @@ int main(int argc, char** argv)
 	DspRandom rnd(0x7ACE00ull);
 
 	trace.push_back(0x52544441);	//"ADTR"
-	trace.push_back(1);
+	trace.push_back(TRACE_VERSION);
 	trace.push_back(TRACE_RAM_SIZE);
 
 	h = aica_dsp_create(TRACE_RAM_SIZE);
-	view_digest = 2166136261u;
+
+	if (!h)
+	{
+		fprintf(stderr, "no core through the C interface\n");
+		return 2;
+	}
+
+	core_ram.assign(TRACE_RAM_SIZE, 0);
+	core.Init(core_ram.data(), TRACE_RAM_SIZE);
+	capi_views = core_views = FNV_START;
+
+	//A handle starts with its inputs on and nothing in them: the sample begins a sweep of its own behind the one
+	//that was called
+	sweep_begin();
+	mixs_send(5, 0x12345, false);
+	run_samples(1);
+	check();
 
 	int index = 0;
 
@@ -253,27 +597,25 @@ int main(int argc, char** argv)
 
 				inputs(rnd, !calls, (index + n) % 3);
 
-				op(T_EXTS); arg(0); uint32_t e0 = rnd.Bits(16); arg(e0);
-				aica_dsp_exts(h)[0] = (int16_t)e0;
-				op(T_EXTS); arg(1); uint32_t e1 = rnd.Bits(16); arg(e1);
-				aica_dsp_exts(h)[1] = (int16_t)e1;
+				//EXTS through its array, and as a debugger's write
+				for (uint32_t i = 0; i < 2; i++)
+				{
+					if (n & 1)
+						reg_poke(0x45C0 + 4 * i, rnd.Bits(16));
+					else
+						exts(i, rnd.Bits(16));
+				}
 
 				if (calls)
 				{
 					//a sample with its events call by call
-					op(T_SWEEP_BEGIN);
-					aica_dsp_sweep_begin(h);
+					sweep_begin();
 
 					for (int i = 0; i < 4; i++)
 					{
 						uint32_t bus = rnd.Bits(4), value = rnd.Bits(24);
 
-						op(i == 3 ? T_MIXS_SEND_LATE : T_MIXS_SEND); arg(bus); arg(value);
-
-						if (i == 3)
-							aica_dsp_mixs_send_late(h, bus, (int32_t)value);
-						else
-							aica_dsp_mixs_send(h, bus, (int32_t)value);
+						mixs_send(bus, value, i == 3);
 					}
 
 					for (int part = 0; part < 4; part++)
@@ -281,15 +623,9 @@ int main(int argc, char** argv)
 						uint32_t word = rnd.Bits(16);
 
 						if (part & 1)
-						{
-							op(T_CHANNEL_FETCH); arg(word);
-							aica_dsp_channel_fetch(h, word);
-						}
+							channel_fetch(word);
 						else
-						{
-							op(T_BUS_READ); arg(word);
-							aica_dsp_bus_read(h, word);
-						}
+							bus_read(word);
 
 						steps(32);
 					}
@@ -300,30 +636,33 @@ int main(int argc, char** argv)
 				{
 					//single steps, then the rest in one go, with the state out and in again in between
 					steps(1 + rnd.Below(127));
-					op(T_SAVE_LOAD);
-
-					std::vector<uint8_t> blob(aica_dsp_state_size());
-
-					aica_dsp_save_state(h, blob.data());
-					aica_dsp_reset(h);
-					aica_dsp_load_state(h, blob.data(), (uint32_t)blob.size());
+					save_load();
 					run_samples(1);
 				}
 				else if (n == 2)
 				{
-					//up to breakpoints
+					//up to breakpoints, and once without any
 					uint8_t stops[128];
 
 					for (int i = 0; i < 128; i++)
 						stops[i] = rnd.Chance(24);
 
 					for (int k = 0; k < 6; k++)
-						run(1 + rnd.Below(200), stops);
+						run(1 + rnd.Below(200), k == 4 ? nullptr : stops);
 
 					run_samples(1);
 				}
 				else
+				{
+					//every register that is no array, written as a debugger does, with more bits than it has
+					for (uint32_t r = 0; r < AICA_DSP_REG_COUNT; r++)
+						set(r, rnd.Bits(32));
+
+					for (uint32_t r = 0; r < AICA_DSP_REG_COUNT; r++)
+						get(r);
+
 					run_samples(3);
+				}
 
 				check();
 
@@ -342,7 +681,17 @@ int main(int argc, char** argv)
 	}
 
 	op(T_END);
+	without_trace(rnd);
 	aica_dsp_destroy(h);
+
+	printf("%d programs, %u operations, %u answers of the C interface compared with the core's, %u differ\n", index, operations,
+		answers, differ);
+
+	if (argc < 2)
+	{
+		printf(differ ? "aica.dsp.capi: FAIL\n" : "aica.dsp.capi: PASS\n");
+		return differ ? 1 : 0;
+	}
 
 	FILE* f = fopen(argv[1], "wb");
 
@@ -361,7 +710,7 @@ int main(int argc, char** argv)
 
 	fclose(f);
 
-	printf("%s: %zu words, %d programs, %u answers to compare\n", argv[1], trace.size(), index, checks);
+	printf("%s: %zu words\n", argv[1], trace.size());
 
 	return 0;
 }

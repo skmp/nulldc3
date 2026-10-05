@@ -13,13 +13,14 @@ Without it the tests that need it are skipped, or fail with `-DNULLDC_TESTS_REQU
 | `aica.dsp.api` | the core's interface on itself: `RunSample` from every step against 128 `StepOne`, state out and in before every step, two cores in turns, every register as the CPU has it, the MIXS banks, the read latch rules on programs small enough to say by hand what they leave | none |
 | `aica.dsp.diff.random` `aica.dsp.diff.sparse` `aica.dsp.diff.directed` | the core against the DSP of the caique sample model on generated programs, compared behind every step | a caique-rtl checkout |
 | `aica.dsp.case.<case>` | a DSP program caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
-| `aica.dsp.wasm` | `aica_dsp_core.wasm` and its loader in node against the core compiled for the host, call for call | emcc (on the PATH, or an emsdk in `EMSDK` or `~/emsdk`) and node; skipped without them |
+| `aica.dsp.capi` | the C interface of the core (`wasm/aica_dsp_capi.h`), compiled for the host, against the core called itself, call for call | none |
+| `aica.dsp.wasm` | `aica_dsp_core.wasm` and its loader in node against the core compiled for the host and called itself, call for call | emcc (on the PATH, or an emsdk in `EMSDK` or `~/emsdk`) and node; skipped without them |
 
-All but `aica.dsp.wasm` count their cases into checks and are gated on `baseline.txt`: a check that passes fewer
-cases than its baseline, or has another number of cases, fails, and ctest runs the tests with `--strict`, where
-more passes than the baseline fail as well until the baseline is updated (`<executable> ... --update-baseline`)
-and committed. `KNOWN_FAILURES.md` has the reason for every check that is below its total. `aica.dsp.wasm` is a
-list of answers that all have to be the same.
+All but `aica.dsp.capi` and `aica.dsp.wasm` count their cases into checks and are gated on `baseline.txt`: a check
+that passes fewer cases than its baseline, or has another number of cases, fails, and ctest runs the tests with
+`--strict`, where more passes than the baseline fail as well until the baseline is updated
+(`<executable> ... --update-baseline`) and committed. `KNOWN_FAILURES.md` has the reason for every check that is
+below its total. `aica.dsp.capi` and `aica.dsp.wasm` are lists of answers that all have to be the same.
 
 ## Step for step: `dsp_lockstep`
 
@@ -60,6 +61,21 @@ Every sample also gets random sends, channel fetches, bus reads and EXTS, and be
 and reads registers and reads wave RAM. The checks `did:*` count what the compared steps did (reads, writes,
 slots lost to a channel, IWT of both kinds, bus reads): a generator that stops producing them changes the
 baseline.
+
+## The C interface and the module
+
+`aica_dsp_wasm_trace` runs 108 programs on the core twice, call for call: on an `AicaDsp` with the calls of
+`aica_dsp_core.h`, and through the C interface compiled for the host. The second has to answer what the first
+answers, and that is `aica.dsp.capi`: every register as the CPU and as a debugger read it, the registers by index
+after writes with more bits than they have, the steps up to a breakpoint, the state blob, the wave RAM, the view
+of every single step, and every array behind a pointer of the interface as the numbers it holds, over the length
+the header gives it. What a debugger's write and read do other than the CPU's, where a run stops and how a value
+is cut to its register are written out in the test a second time: they are not taken from the interface.
+
+The trace the tool writes has every call with the answer of the core that was called itself. `aica.dsp.wasm`
+makes the calls on the module through the loader's object and compares with those answers, the arrays as the
+loader's typed arrays over their whole length. So the C interface and the loader are both on the side that is
+tested: a defect in `aica_dsp_capi.cpp` fails both tests, one in `aica_dsp_core.mjs` fails `aica.dsp.wasm`.
 
 ## The cases
 
@@ -115,6 +131,7 @@ The case sources use C that is not C++, so the tests project enables C when the 
     aica_dsp_diff directed --verbose          # the first difference of each family, with sample, step and register
     aica_dsp_cases dsp_basic --verbose        # every line that is not the console's, both versions
     aica_dsp_api --verbose                    # every check that does not hold
+    aica_dsp_wasm_trace                       # the first answers of the C interface that are not the core's
     node wasm_test.mjs <build dir>/aica_dsp/wasm/aica_dsp_core.mjs <build dir>/aica_dsp/wasm/aica_dsp_core.wasm \
          <build dir>/aica_dsp/wasm_trace.bin
 
@@ -133,6 +150,7 @@ machine's. The core's README has the ones of the machine it was written on.
     diff_main.cpp      aica.dsp.diff.*: the generated programs
     cases_main.cpp     aica.dsp.case.*: the two machines, caique's case interface on them, the console's files
     api_main.cpp       aica.dsp.api
-    wasm_trace.cpp     what aica.dsp.wasm replays: the calls and answers of the native core
+    wasm_trace.cpp     aica.dsp.capi: the C interface against the core's own calls; writes those calls and the
+                       core's answers for aica.dsp.wasm
     wasm_test.mjs      aica.dsp.wasm: the replay on the module, in node
     bench_main.cpp     aica_dsp_bench

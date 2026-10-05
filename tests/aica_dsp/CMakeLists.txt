@@ -8,14 +8,15 @@
 #	                      programs, step for step
 #	aica_dsp_cases <case> aica.dsp.case.<case>: the DSP programs caique ran on a Dreamcast, on the model with the
 #	                      core in step and on the core alone, against the console's files
-#	aica_dsp_wasm_trace   what aica.dsp.wasm replays on aica_dsp_core.wasm: wasm_test.mjs, with node
+#	aica_dsp_wasm_trace   aica.dsp.capi: the C interface of the core against the core called itself. And what
+#	                      aica.dsp.wasm replays on aica_dsp_core.wasm: wasm_test.mjs, with node
 #	aica_dsp_bench        samples a second, not a test
 #
 #	The model, the programs and the console's files are caique-rtl's and stay there: the tests are compiled with
 #	its sources from the checkout (NULLDC_CAIQUE_DIR) and read its captures from there. What this directory has
 #	of caique is the harness around them: cases_main.cpp and dsp_lockstep.cpp name the caique files they follow,
-#	with the licence. Without a checkout the tests are skipped. All but aica.dsp.wasm are gated on baseline.txt,
-#	see README.md.
+#	with the licence. Without a checkout the tests are skipped. All but aica.dsp.capi and aica.dsp.wasm are gated
+#	on baseline.txt, see README.md.
 #
 
 string(REPLACE "-fpermissive" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
@@ -145,8 +146,11 @@ else()
 endif()
 
 
-## The WebAssembly build ##
+## The C interface and the WebAssembly build ##
 #
+#	aica_dsp_wasm_trace drives the core through its C interface and with its own calls. Run by itself it compares
+#	the two: aica.dsp.capi, which needs nothing. The trace it writes has the answers of the core's own calls, for
+#	aica.dsp.wasm.
 #	aica.dsp.wasm needs emcc and node. emcc: on the PATH, or the emsdk in the environment's EMSDK or in ~/emsdk.
 #
 
@@ -157,6 +161,9 @@ add_executable(aica_dsp_wasm_trace
 )
 target_link_libraries(aica_dsp_wasm_trace PRIVATE nulldc_aica_dsp_test)
 target_compile_definitions(aica_dsp_wasm_trace PRIVATE AICA_DSP_CAPI)
+
+add_test(NAME aica.dsp.capi COMMAND aica_dsp_wasm_trace)
+set_tests_properties(aica.dsp.capi PROPERTIES TIMEOUT 120)
 
 find_program(NULLDC_NODE node)
 find_program(NULLDC_EMCC emcc HINTS "$ENV{EMSDK}/upstream/emscripten" "$ENV{HOME}/emsdk/upstream/emscripten")
@@ -188,7 +195,7 @@ else()
     OUTPUT "${nulldc_dsp_wasm_trace}"
     COMMAND aica_dsp_wasm_trace "${nulldc_dsp_wasm_trace}"
     DEPENDS aica_dsp_wasm_trace
-    COMMENT "Trace of the native AICA DSP core for aica.dsp.wasm"
+    COMMENT "Trace of the AICA DSP core for aica.dsp.wasm"
     VERBATIM
   )
 

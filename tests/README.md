@@ -41,17 +41,19 @@ way.
 | `aica.dsp.api` | the AICA DSP core (`libswirl/hw/aica/dsp_core`) on itself: a sample in one go against its 128 steps from every step, state out and in, two cores in turns, its registers, MIXS banks and read latch rules | none |
 | `aica.dsp.diff.random` `aica.dsp.diff.sparse` `aica.dsp.diff.directed` | the AICA DSP core against the DSP of the caique sample model on generated programs, compared behind every step | a caique-rtl checkout |
 | `aica.dsp.case.dsp_basic` `.dsp_mem` `.dsp_mem2` `.dsp_mem3` `.dsp_wslot` `.dsp_unpack` `.dsp_pack` `.dsp_temp` `.dsp_coll` `.sh4_latch` `.mdec_hold` | the DSP programs caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
-| `aica.dsp.wasm` | the WebAssembly build of the AICA DSP core in node against the core compiled for the host | emcc and node, skipped without them |
+| `aica.dsp.capi` | the C interface of the AICA DSP core, compiled for the host, against the core called itself | none |
+| `aica.dsp.wasm` | the WebAssembly build of the AICA DSP core in node, through its loader and its C interface, against the core compiled for the host | emcc and node, skipped without them |
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it.
-The AICA DSP tests but `aica.dsp.api` need `-DNULLDC_CAIQUE_DIR=<path to caique-rtl>` unless caique-rtl sits next to
-the repository; they compile its sample model and its DSP programs (C) from there and read its console captures.
+The `aica.dsp.diff.*` and `aica.dsp.case.*` tests need `-DNULLDC_CAIQUE_DIR=<path to caique-rtl>` unless caique-rtl
+sits next to the repository; they compile its sample model and its DSP programs (C) from there and read its console
+captures.
 
-Every test but `common.selftest`, `sh4.core` and `aica.dsp.wasm` is gated on a baseline file, and ctest runs them
-with `--strict`: a count that is worse than its baseline fails, and so does one that is better, until the baseline
-is updated and committed. `common.selftest`, `sh4.core` and `aica.dsp.wasm` are lists of checks that all have to
-hold.
+Every test but `common.selftest`, `sh4.core`, `aica.dsp.capi` and `aica.dsp.wasm` is gated on a baseline file, and
+ctest runs them with `--strict`: a count that is worse than its baseline fails, and so does one that is better,
+until the baseline is updated and committed. `common.selftest`, `sh4.core`, `aica.dsp.capi` and `aica.dsp.wasm` are
+lists of checks that all have to hold.
 
 More about the suites:
 
@@ -79,7 +81,7 @@ More about the suites:
     arm7/              the ARM7 interpreter: vendor programs, directed cases, wren7 console suites (README.md,
                        KNOWN_FAILURES.md)
     aica_dsp/          the AICA DSP core: its interface, the caique model step for step, caique's console
-                       captures, the WebAssembly build (README.md, KNOWN_FAILURES.md)
+                       captures, the C interface and the WebAssembly build (README.md, KNOWN_FAILURES.md)
     vendor/            the submodules
     files/             fixtures
 

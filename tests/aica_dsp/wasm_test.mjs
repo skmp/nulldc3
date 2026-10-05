@@ -3,10 +3,11 @@
 
 	    node wasm_test.mjs <aica_dsp_core.mjs> <aica_dsp_core.wasm> <trace>
 
-	The trace is what aica_dsp_wasm_trace (wasm_trace.cpp) did to the native core through the C interface, call for
-	call, with what the core answered. The same calls are made here, through the loader's object, and every answer
-	has to be the same: what the CPU and a debugger read of a register, and the digests of the state blob, of the
-	wave RAM and of the views of every single step.
+	The trace is what aica_dsp_wasm_trace (wasm_trace.cpp) did to the native core with the calls of
+	aica_dsp_core.h, call for call, with what the core answered. The same calls are made here, through the loader's
+	object and the module's C interface, and every answer has to be the same: what the CPU and a debugger read of a
+	register, the registers by index, the steps up to a breakpoint, the digests of the state blob, of the wave RAM
+	and of the views of every single step, and every array of the loader over its whole length.
 */
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -14,8 +15,11 @@ import { pathToFileURL } from "node:url";
 const T = {
 	REG_WRITE: 1, REG_POKE: 2, RAM_FILL: 3, INPUTS: 4, STEPS: 5, RUN_SAMPLES: 6, RUN: 7, BUS_READ: 8, CHANNEL_FETCH: 9,
 	SWEEP_BEGIN: 10, MIXS_SEND: 11, MIXS_SEND_LATE: 12, SAVE_LOAD: 13, SET: 14, EXTS: 15, CHECK: 16, REG_READ: 17, GET: 18,
-	RESET: 19, END: 20,
+	RESET: 19, END: 20, ARRAYS: 21,
 };
+
+//The arrays of the loader, in the order the trace has their digests
+const ARRAYS = ["coef", "madrs", "mpro", "temp", "mems", "mixs", "efreg", "exts", "view", "inputsMixs", "inputsFetchWords"];
 
 const [loaderPath, wasmPath, tracePath] = process.argv.slice(2);
 
@@ -31,7 +35,7 @@ const module = await loadAicaDsp(readFileSync(wasmPath));
 const traceBytes = readFileSync(tracePath);
 const trace = new Uint32Array(traceBytes.buffer, traceBytes.byteOffset, traceBytes.byteLength >> 2);
 
-if (trace[0] !== 0x52544441 || trace[1] !== 1)
+if (trace[0] !== 0x52544441 || trace[1] !== 2)
 {
 	console.error(`${tracePath} is not a trace of this test`);
 	process.exit(2);
@@ -43,6 +47,22 @@ function fnv(hash, bytes)
 		hash = Math.imul(hash ^ bytes[i], 16777619) >>> 0;
 
 	return hash;
+}
+
+//An array as the numbers it holds: of every element its value in 32 bit and whether it is negative
+function numbers(hash, array)
+{
+	for (let i = 0; i < array.length; i++)
+	{
+		const value = array[i];
+
+		for (let shift = 0; shift < 32; shift += 8)
+			hash = Math.imul(hash ^ ((value >>> shift) & 0xFF), 16777619);
+
+		hash = Math.imul(hash ^ (value < 0 ? 1 : 0), 16777619);
+	}
+
+	return hash >>> 0;
 }
 
 const FNV_START = 2166136261;
@@ -146,7 +166,7 @@ for (let done = false; !done; operations++)
 			stops[i] = (trace[at + (i >> 5)] >>> (i & 31)) & 1;
 
 		at += 4;
-		expect("the number of steps to the breakpoint", dsp.run(count, stops), trace[at++]);
+		expect("the number of steps to the breakpoint", dsp.run(count, stops.some((stop) => stop) ? stops : null), trace[at++]);
 		break;
 	}
 
@@ -174,6 +194,12 @@ for (let done = false; !done; operations++)
 		expect("the digest of the wave RAM", fnv(FNV_START, dsp.ram), trace[at++]);
 		expect("the digest of the step views", viewDigest, trace[at++]);
 		viewDigest = FNV_START;
+		break;
+
+	case T.ARRAYS:
+		for (const name of ARRAYS)
+			expect(`the array ${name}`, numbers(FNV_START, dsp[name]), trace[at++]);
+
 		break;
 
 	case T.REG_READ:
@@ -209,6 +235,20 @@ expect("a decoded SHIFT", fields.SHIFT, 3);
 expect("an encoded row", module.encode(fields).reduce((sum, word) => sum + word, 0), 0xFFFE + 0xFFFE + 0xFFFF + 0xFF80);
 expect("pack(-1)", module.pack(-1), 0xE7FF);
 expect("unpack(0xFFFF)", module.unpack(0xFFFF), -1);
+
+//a wave RAM has a power of two as its size
+let refused = false;
+
+try
+{
+	module.create(3 * trace[2]).destroy();
+}
+catch
+{
+	refused = true;
+}
+
+expect("a core with a wave RAM that is no power of two", refused ? 0 : 1, 0);
 
 dsp.destroy();
 other.destroy();
