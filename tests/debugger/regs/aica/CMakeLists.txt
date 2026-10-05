@@ -20,8 +20,9 @@ if(REGS_SANITIZE AND NOT MSVC)
   target_link_options(aica_test PRIVATE -fsanitize=address,undefined)
 endif()
 
-# The loop flag of a channel: clear in a generator created in memory that held anything, one bit for the guest
-# and for the debugger
+# The state of a channel that no register write sets: the same in a generator created in memory that held
+# anything, for the guest, for the debugger and in the samples. The loop flag is one bit for the guest and for
+# the debugger
 add_test(NAME aica.channels COMMAND aica_test channels)
 
 # The real-time clock is pinned by config:Debug.FixedRtc and by config:Dreamcast.RTC

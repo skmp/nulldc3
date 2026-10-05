@@ -21,7 +21,7 @@ little that the two units reference from the rest of the emulator.
 
 | test | what it checks |
 | --- | --- |
-| `aica.channels` | The loop flag of a channel. A sound generator is created in memory that was filled with ones: no channel has its flag set, neither for a guest read of the channel status (`LP`, bit 15 of `0x2810`) nor for the debugger (`DebugGetChannel`, `DebugReadCommonReg`). The flag is one byte of the save state; whatever that byte holds, the guest and the debugger see its bit 0, the debugger's reads leave it and the guest's read clears it. |
+| `aica.channels` | The state of a channel that no register write sets. A sound generator is created in memory that was filled with ones: no channel has its loop flag set, neither for a guest read of the channel status (`LP`, bit 15 of `0x2810`) nor for the debugger (`DebugGetChannel`, `DebugReadCommonReg`), and every channel has its play position (`CA`, `0x2814`), its low-frequency oscillator and its filter envelope at 0. Generators created in memory filled with different bytes play the same samples and show the guest the same registers: with a loop, with a loop under the amplitude modulation of an oscillator the guest never reset, and with the noise generator. The loop flag is one byte of the save state; whatever that byte holds, the guest and the debugger see its bit 0, the debugger's reads leave it and the guest's read clears it. |
 | `aica.rtc` | The keys that pin the real-time clock: `config:Debug.FixedRtc`, and `config:Dreamcast.RTC` when the first is missing or 0. Neither key, or the keys in another section, leave the clock to the host. |
 
 What needs the machine is not here but in the emulator's selftest (`libswirl/debugger/dbg_selftest_regs.cpp`,

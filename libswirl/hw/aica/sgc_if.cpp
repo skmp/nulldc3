@@ -384,6 +384,14 @@ struct ChannelEx
 
 	void Init()
 	{
+		//state no register write sets. The LFO steps on from its phase until LFORE and the noise generator from
+		//its last value: both start at 0. The guest reads CA, and the debugger the filter envelope too, of a
+		//channel that was never keyed on
+		lfo.state=0;
+		noise_state=0;
+		CA=0;
+		FEG.value=0;
+
 		for (u32 i=0;i<0x80;i++)
 			RegWrite(i);
 		disable();

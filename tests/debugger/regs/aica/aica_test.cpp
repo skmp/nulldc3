@@ -3,9 +3,9 @@
 	sound regression harness (libswirl/hw/aica/aica_hash.cpp), linked without the rest of the emulator: what
 	they reference from there is at the end of this file.
 
-	aica_test channels    the loop flag of a channel: clear until the channel passes a loop end, whatever the
-	                      memory the generator was created in held, and the same bit for the guest and for
-	                      the debugger
+	aica_test channels    the state of a channel that no register write sets: the same whatever the memory the
+	                      generator was created in held, for the guest, for the debugger and in what is played;
+	                      the loop flag is the same bit for the guest and for the debugger
 	aica_test rtc         the keys of the configuration that pin the real-time clock
 
 	Exit code 0 when every check held.
@@ -17,6 +17,7 @@
 #include "hw/aica/sgc_if.h"
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_sched.h"
+#include "oslib/audiostream.h"
 #include "serialize.h"
 #include "stdclass.h"
 #include "types.h"
@@ -104,6 +105,167 @@ namespace
 		return (aica_reg[0x2811] & 0x80) != 0;
 	}
 
+	// The play position of the selected channel as a guest reads it: CA, 0x2814
+	u32 GuestReadsPlayPosition(SGC* sgc)
+	{
+		sgc->ReadCommonReg(0x2814, false);
+
+		return aica_reg[0x2814] | (aica_reg[0x2815] << 8);
+	}
+
+	// A 16-bit write to a register of a channel, as the AICA hands it to the generator
+	void WriteChannelReg(SGC* sgc, u32 channel, u32 reg, u32 value)
+	{
+		aica_reg[channel * 0x80 + reg] = (u8)value;
+		aica_reg[channel * 0x80 + reg + 1] = (u8)(value >> 8);
+		sgc->WriteChannelReg8(channel, reg);
+		sgc->WriteChannelReg8(channel, reg + 1);
+	}
+
+	// The audio stream of a generator that plays
+	struct SampleSink : AudioStream
+	{
+		std::vector<s16> samples;
+
+		void InitAudio() override { }
+		void TermAudio() override { }
+
+		void WriteSample(s16 right, s16 left) override
+		{
+			samples.push_back(right);
+			samples.push_back(left);
+		}
+	};
+
+	// What one channel plays
+	enum Voice
+	{
+		VOICE_WAVE,		// a loop of 16 samples
+		VOICE_LFO,		// the same loop with the amplitude modulation of the oscillator, which the guest does not reset
+		VOICE_NOISE,	// the noise generator
+	};
+
+	const u32 played_channel = 7;
+	const u32 silent_channel = 40;
+	const u32 played_ticks = 64;	// of 32 samples: the oscillator of VOICE_LFO goes around 8 times
+
+	// What a run gives to the outside
+	struct Played
+	{
+		// to the audio stream
+		std::vector<s16> samples;
+
+		// the status and the play position (0x2810..0x2815) as the guest reads them after every tick, of the
+		// channel that plays and of one that was never keyed on; then the register file
+		std::vector<u8> regs;
+
+		// the oscillator of the channel that plays, after every tick
+		std::vector<u8> phases;
+	};
+
+	// Creates a generator in memory filled with one byte, on a machine that is empty otherwise, starts one
+	// channel and plays
+	Played Play(u8 fill, Voice voice)
+	{
+		Played played;
+		SampleSink sink;
+
+		memset(aica_reg, 0, sizeof(aica_reg));
+		memset(aica_ram, 0, sizeof(aica_ram));
+
+		alloc_fill = fill;
+		SGC* sgc = SGC::Create(&sink, aica_reg, &dsp, aica_ram, sizeof(aica_ram));
+		alloc_fill = 0xFF;
+
+		const u32 wave_at = 0x10000;
+
+		for (u32 i = 0; i < 16; i++)
+		{
+			u32 sample = 0x1000 + i * 0x300;
+
+			aica_ram[wave_at + i * 2] = (u8)sample;
+			aica_ram[wave_at + i * 2 + 1] = (u8)(sample >> 8);
+		}
+
+		aica_reg[0x2800] = 0x0F;										// MVOL: full volume
+		WriteChannelReg(sgc, played_channel, 0x04, wave_at & 0xFFFF);	// SA, low part
+		WriteChannelReg(sgc, played_channel, 0x08, 0);					// LSA
+		WriteChannelReg(sgc, played_channel, 0x0C, 16);					// LEA
+		WriteChannelReg(sgc, played_channel, 0x10, 0x001F);				// AR: at full level with the first sample, and held
+		WriteChannelReg(sgc, played_channel, 0x24, 0x0F00);				// DISDL: to both outputs, not attenuated
+
+		if (voice == VOICE_LFO)
+			WriteChannelReg(sgc, played_channel, 0x1C, 0x7C07);			// LFOF 31: a step per sample; ALFOWS sawtooth, ALFOS 7; LFORE stays 0
+
+		// KYONEX, KYONB, LPCTL, 16-bit PCM or the noise generator (SSCTL), SA high part
+		WriteChannelReg(sgc, played_channel, 0x00, (voice == VOICE_NOISE ? 0xC600 : 0xC200) | (wave_at >> 16));
+
+		for (u32 tick = 0; tick < played_ticks; tick++)
+		{
+			sgc->AICA_Sample32();
+
+			for (u32 channel : { played_channel, silent_channel })
+			{
+				SelectChannel(channel);
+				sgc->ReadCommonReg(0x2810, false);
+				sgc->ReadCommonReg(0x2814, false);
+				played.regs.insert(played.regs.end(), &aica_reg[0x2810], &aica_reg[0x2816]);
+			}
+
+			AicaChannelDebug shown = {};
+			sgc->DebugGetChannel(played_channel, &shown);
+			played.phases.push_back(shown.lfoState);
+		}
+
+		played.regs.insert(played.regs.end(), aica_reg, aica_reg + sizeof(aica_reg));
+		played.samples = sink.samples;
+
+		delete sgc;
+		return played;
+	}
+
+	// The first place where two runs differ, or the size of the shorter
+	template<typename T>
+	size_t FirstDifference(const std::vector<T>& a, const std::vector<T>& b)
+	{
+		size_t i = 0;
+
+		while (i < a.size() && i < b.size() && a[i] == b[i])
+			i++;
+
+		return i;
+	}
+
+	// A generator plays the same, and shows the guest the same, whatever the memory it was created in held
+	void TestPlaysFromAnyMemory(Voice voice, const char* name)
+	{
+		Played reference = Play(0x00, voice);
+
+		size_t sounding = 0;
+		for (s16 sample : reference.samples)
+			sounding += sample != 0;
+
+		Check(reference.samples.size() == played_ticks * 32 * 2 && sounding > reference.samples.size() / 2, "%s: %zu samples of %u ticks, %zu of them not 0",
+			name, reference.samples.size(), played_ticks, sounding);
+
+		for (u8 fill : { (u8)0xFF, (u8)0x5A })
+		{
+			Played played = Play(fill, voice);
+
+			size_t at = FirstDifference(played.samples, reference.samples);
+			Check(played.samples == reference.samples, "%s: a generator created in memory of %02X plays as one created in memory of 00: sample %zu is %d, not %d",
+				name, fill, at, at < played.samples.size() ? played.samples[at] : 0, at < reference.samples.size() ? reference.samples[at] : 0);
+
+			at = FirstDifference(played.regs, reference.regs);
+			Check(played.regs == reference.regs, "%s: the guest reads the same from a generator created in memory of %02X: byte %zu is %02X, not %02X",
+				name, fill, at, at < played.regs.size() ? played.regs[at] : 0, at < reference.regs.size() ? reference.regs[at] : 0);
+
+			at = FirstDifference(played.phases, reference.phases);
+			Check(played.phases == reference.phases, "%s: the oscillator of a generator created in memory of %02X runs as that of one created in memory of 00: after tick %zu it is at %02X, not %02X",
+				name, fill, at, at < played.phases.size() ? played.phases[at] : 0, at < reference.phases.size() ? reference.phases[at] : 0);
+		}
+	}
+
 	std::vector<u8> SaveState(SGC* sgc)
 	{
 		void* data = nullptr;
@@ -133,21 +295,33 @@ namespace
 		allocated = alloc_bytes - allocated;
 		Check(allocated >= 64 * 64, "the generator and its 64 channels come from the operator new that fills: %zu bytes", allocated);
 
-		// no channel was keyed on: none has passed a loop end. The debugger's reads come first, a guest read
-		// clears the flag
+		// no channel was keyed on: none has passed a loop end, none has a play position, and the oscillator
+		// and the filter envelope of each stand at 0. The debugger's reads come first, a guest read clears
+		// the loop flag
 		for (u32 channel = 0; channel < 64; channel++)
 		{
 			AicaChannelDebug shown = {};
 			u32 status = 0xFFFFFFFF;
+			u32 position = 0xFFFFFFFF;
 
 			shown.looped = true;
+			shown.lfoState = 0xFF;
+			shown.fegValue = 0xFFFFFFFF;
+			shown.ca = 0xFFFFFFFF;
 			SelectChannel(channel);
 
-			bool ok = sgc->DebugGetChannel(channel, &shown) && sgc->DebugReadCommonReg(0x2810, &status);
+			bool ok = sgc->DebugGetChannel(channel, &shown) && sgc->DebugReadCommonReg(0x2810, &status) && sgc->DebugReadCommonReg(0x2814, &position);
 
 			Check(ok && !shown.looped && (status & 0x8000) == 0, "channel %u was never keyed on: the debugger shows looped %d, status %04X",
 				channel, shown.looped, status);
 			Check(!GuestReadsLoopFlag(sgc), "channel %u was never keyed on: the guest reads LP set", channel);
+
+			Check(ok && shown.lfoState == 0 && shown.alfo == 0 && shown.plfo == 0, "channel %u was never keyed on: the debugger shows the oscillator at %02X, giving %02X and %02X",
+				channel, shown.lfoState, shown.alfo, shown.plfo);
+			Check(ok && shown.fegValue == 0, "channel %u was never keyed on: the debugger shows the filter envelope at %08X", channel, shown.fegValue);
+			Check(ok && shown.ca == 0 && position == 0 && GuestReadsPlayPosition(sgc) == 0,
+				"channel %u was never keyed on: the debugger shows the play position %08X and CA %04X, the guest reads CA %04X",
+				channel, shown.ca, position, GuestReadsPlayPosition(sgc));
 		}
 
 		// The flag is a byte of the save state and one bit to the guest. The byte stands behind the loop
@@ -201,6 +375,25 @@ namespace
 		}
 
 		delete sgc;
+
+		// What is played does not come from the memory of the generator either. The oscillator is the phase
+		// the amplitude modulation is worked out from, the noise generator has no other start than its last
+		// value
+		TestPlaysFromAnyMemory(VOICE_WAVE, "a loop");
+		TestPlaysFromAnyMemory(VOICE_LFO, "a loop with amplitude modulation");
+		TestPlaysFromAnyMemory(VOICE_NOISE, "noise");
+
+		// the three are different sounds, and the oscillator that was never reset started at 0: it steps once per sample
+		Played wave = Play(0xFF, VOICE_WAVE);
+		Played lfo = Play(0xFF, VOICE_LFO);
+		Played noise = Play(0xFF, VOICE_NOISE);
+
+		Check(lfo.samples != wave.samples && noise.samples != wave.samples && noise.samples != lfo.samples,
+			"the amplitude modulation and the noise generator are heard: first differences at samples %zu, %zu and %zu",
+			FirstDifference(lfo.samples, wave.samples), FirstDifference(noise.samples, wave.samples), FirstDifference(noise.samples, lfo.samples));
+
+		for (u32 tick = 0; tick < 8 && tick < lfo.phases.size(); tick++)
+			Check(lfo.phases[tick] == (u8)((tick + 1) * 32), "the oscillator of a channel started at 0: after %u samples it is at %02X", (tick + 1) * 32, lfo.phases[tick]);
 	}
 
 	// The configuration the emulator's units read: "section:key" and its number
