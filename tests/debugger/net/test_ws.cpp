@@ -419,6 +419,28 @@ static void TestQueue() {
 		CHECK_EQ((size_t)c.queued, 5 * kMergeBytes + 2);
 	}
 
+	// The bound is on what already waits. A message of any size is taken while no more than kMaxQueuedBytes
+	// are ahead of it; the first message after that cuts the client off.
+	{
+		Conn c(kNoSocket, kLimit);
+		Push(c, "reply", true);
+		Push(c, std::string(kMaxQueuedBytes + 100, 'x'), true);
+		CHECK(!c.overflow);
+		CHECK_EQ((size_t)c.queued, kMaxQueuedBytes + 105);
+		Push(c, "tick", true);
+		CHECK(c.overflow);
+		CHECK_EQ((size_t)c.queued, kMaxQueuedBytes + 105);
+	}
+	{
+		Conn c(kNoSocket, kLimit);
+		Push(c, std::string(kMaxQueuedBytes, 'x'), true);
+		Push(c, "y", true);		// exactly the bound was waiting
+		CHECK(!c.overflow);
+		Push(c, "z", true);
+		CHECK(c.overflow);
+		CHECK_EQ((size_t)c.queued, kMaxQueuedBytes + 1);
+	}
+
 	// What a plain response queues is not bounded here: files are bounded where they are read.
 	{
 		Conn c(kNoSocket, kLimit);

@@ -59,7 +59,9 @@ public:
 	bool HasClients() const;	// lock-free: at least one WebSocket client is open
 
 	// Queue a message and return; nothing here waits for the socket. Unknown or closed clients are ignored.
-	// A client that lets more than 16 MiB pile up is disconnected.
+	// A client that lets more than 16 MiB pile up is disconnected: a message that finds more than that
+	// waiting is not queued and the client is dropped. The bound is not on the message, one of any size is
+	// taken; a message of 16 MiB or more leaves no room for the next until the client has read some of it.
 	void SendText(uint32_t client, std::string text);
 	void SendBinary(uint32_t client, std::string bytes);
 	void BroadcastText(const std::string& text);

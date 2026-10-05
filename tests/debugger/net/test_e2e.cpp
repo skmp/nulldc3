@@ -343,6 +343,14 @@ static void TestWebSocket(Server& server, Recorder& rec, int port) {
 	CHECK_EQ(frame.opcode, 2);
 	CHECK(frame.payload == Pattern(8388608));
 
+	// A message may be larger than the 16 MiB a client is allowed to leave waiting, also right behind a
+	// message that is not written yet: both commands arrive together, so both replies are queued together.
+	REQUIRE(ws.Send(TestClient::Frame(1, "echo:first") + TestClient::Frame(1, "binary:16777217")));
+	CHECK_EQ(Text(ws), std::string("first"));
+	REQUIRE(ws.ReadFrame(&frame, 20000));
+	CHECK_EQ(frame.opcode, 2);
+	CHECK(frame.payload == Pattern(16777217));
+
 	// A send from another thread interrupts the idle network thread: the message is on the wire at once,
 	// not at the thread's next periodic look (250 ms).
 	long long quickest = 1000000;
@@ -620,7 +628,8 @@ static void TestSlowClient(Server& server, Recorder& rec, int port) {
 	REQUIRE(rec.WaitClosed(closed + 1));
 	CHECK(rec.WasClosed(slowId));
 	CHECK(sent >= 16 && sent < 200);
-	CHECK(mostQueued > (8u << 20) && mostQueued <= (16u << 20));
+	// the bound is on what waits when a message arrives, so the last message taken comes on top of it
+	CHECK(mostQueued > (8u << 20) && mostQueued <= (16u << 20) + chunk.size() + 10);
 	CHECK_EQ(server.QueuedBytes(slowId), (size_t)0);
 	printf("slow client: dropped after %d MiB, at most %zu bytes queued\n", sent, mostQueued);
 	CHECK(slow.WaitClosed(10000));

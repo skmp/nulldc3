@@ -885,12 +885,13 @@ struct Conn {
 // memory than a 2 byte pong counts for, and merged chunks go out in one write. Chunks still end where a
 // message ends.
 //
-// bounded: a WebSocket client that does not read is cut off at kMaxQueuedBytes; the network thread sees the
-// flag and drops it.
+// bounded: a WebSocket client that has more than kMaxQueuedBytes waiting is cut off; the network thread sees
+// the flag and drops it. The bound is on what waits ahead of the chunk, not on the chunk: a message larger
+// than the bound still reaches a client that keeps up.
 void Push(Conn& c, std::string chunk, bool bounded) {
 	if (c.overflow || chunk.empty())
 		return;
-	if (bounded && c.queued + chunk.size() > kMaxQueuedBytes) {
+	if (bounded && c.queued > kMaxQueuedBytes) {
 		c.overflow = true;
 		return;
 	}
