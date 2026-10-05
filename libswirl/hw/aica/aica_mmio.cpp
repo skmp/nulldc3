@@ -45,6 +45,10 @@ struct AICARTC_impl : MMIODevice
 
 	u32 GetRTC_now()
 	{
+		// config:Dreamcast.RTC pins the clock: every run starts at that second, whatever the time of the host is
+		if (settings.dreamcast.RTC != 0)
+			return (u32)((20 * 365 + 5) * 24 * 60 * 60 + settings.dreamcast.RTC);
+
 		// The Dreamcast Epoch time is 1/1/50 00:00 but without support for time zone or DST.
 		// We compute the TZ/DST current time offset and add it to the result
 		// as if we were in the UTC time zone (as well as the DC Epoch)
@@ -136,6 +140,10 @@ MMIODevice* AICA::CreateRTC() {
 
 u32 libAICA_GetRTC_now() {
 	return sh4_cpu->GetA0H<AICARTC_impl>(A0H_RTC)->GetRTC_now();
+}
+
+u32 libAICA_GetRTC() {
+	return sh4_cpu->GetA0H<AICARTC_impl>(A0H_RTC)->RealTimeClock;
 }
 
 struct AicaDevice final : AICA {
