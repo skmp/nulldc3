@@ -38,6 +38,7 @@ set(nulldc_system_cases
   "boot.hello.jit:ELF"
   "boot.hello.interp:ELF"
   "frame.refsw2:ELF,LLE"
+  "determinism:ELF"
 )
 
 find_package(Python3 COMPONENTS Interpreter)

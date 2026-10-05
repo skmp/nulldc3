@@ -60,6 +60,7 @@ Every test is `system_test.py --case <case>` on one of the two emulators.
 | `fault.block` | with `NULLDC_FAULT_BLOCK=1`, and with `config:Debug.BlockOnFault=yes`, the process stays and prints `fault_handler: Blocking` | |
 | `boot.2ndmix.jit` `boot.2ndmix.interp` | 2ndmix boots under reios with the `none` renderer and runs for 600 vblanks: exit code 0, `reason=vblanks vblanks=600`, the serial port shows the KallistiOS banner, `2ndMix/KallistiOS starting` and `Starting display` | `NULLDC_ELF_DIR` |
 | `boot.hello.jit` `boot.hello.interp` | the same for hello and 30 vblanks: the banner, `Hello world!`, `arch: exit return code 0` | `NULLDC_ELF_DIR` |
+| `determinism` | 2ndmix for 600 vblanks, 6 times on the JIT and 6 times on the interpreter, 4 runs at a time: every run of an engine has the same state hash, part for part. About 8 s | `NULLDC_ELF_DIR` |
 | `frame.refsw2` (default build only) | refsw2 runs headless: after 240 vblanks of 2ndmix the exit line has the hash of a 640x480 frame, `Exit.FramePng` wrote a valid PNG of that size that is not an empty frame, and the run differs from the same run with the `none` renderer in VRAM and in nothing else of the state hash | `NULLDC_ELF_DIR` |
 
 In every run that is expected to end by itself, the output must not have `Fatal error`, `Verify Failed` or
@@ -73,6 +74,63 @@ nothing knows (SIGSEGV), to a mapping behind the end of its file (SIGBUS), or ex
 hello returns from `main` into its own start-up code (KallistiOS returns to the PR it was started with, which it
 keeps on the stack it then uses) and stays there, at about a quarter of real time on the JIT; that is the program,
 not the emulator, and the reason its run is cut after 30 vblanks.
+
+## Determinism
+
+A run is the same every time, to the bit of its state hash, when it is made the way `system.determinism` makes
+it: **headless, `config:Dreamcast.RTC` set, `audio:backend=none`**, a renderer that does not need GL. That is what a
+test that compares state has to use. The JIT and the interpreter each repeat themselves; they do not agree with
+each other (`docs/nulldc3/automated-runs.md`, the exit line).
+
+What was measured for that (2026-10-05, 2ndmix and hello, runs in parallel batches of 12 to 16 on a machine that
+was busy with other work, load 30 to 60 on 24 threads):
+
+| run | runs | different state hashes |
+|---|---|---|
+| RTC not pinned, 2ndmix 600 vblanks, JIT | 400 | 73, different in `ram` only |
+| RTC not pinned, 2ndmix 600 vblanks, interpreter | 400 | 122, different in `ram` only |
+| 2ndmix 600 vblanks, JIT / interpreter, default build | 1400 / 1400 | 1 / 1 |
+| 2ndmix 4000 vblanks, JIT / interpreter, default build | 400 / 400 | 1 / 1 |
+| 2ndmix 600 vblanks, JIT / interpreter, `-DHAS_TA_LLE=OFF` build | 400 / 400 | 1 / 1 |
+| hello 60 vblanks, JIT / interpreter | 400 / 400 | 1 / 1 |
+| 2ndmix 300 vblanks with refsw2, JIT, headless | 24 | 1 |
+
+What makes two runs of the same program differ, and what was done about it:
+
+* **The real-time clock.** It is loaded from the time of the host at every reset, KallistiOS reads it while it
+  boots and keeps it in RAM: two runs that start in different seconds differ from there on (the first two rows:
+  as many hashes as seconds the runs started in). `config:Dreamcast.RTC` pins it, and with it the time in the flash
+  system block and the clock of a VMU.
+* **Input through the window.** With a window, a key or a mouse button that reaches it is input of the first
+  controller. A synthetic Return key (START) sent to the window of a run of 2ndmix made the demo return from `main`,
+  where the same run without the event, and the headless run, ended in the same state hash. This is what a run
+  on a desktop that is in use picks up now and then. Headless mode sets up no host input at all.
+* **Uninitialised members**, found with valgrind (memcheck, interpreter): the time of a pending reconnect of the
+  maple bus, which its vblank compares with the scheduler time on every frame, and the state of a `cResetEvent`
+  on POSIX hosts. Both are initialised now. Forcing the first to a value that triggers (the devices are created a
+  second time) did not change the state hash of 2ndmix; it is fixed because nothing says that holds for every
+  program. With the two fixes memcheck reports no error for hello (30 vblanks) and 2ndmix (200 vblanks; `none` in
+  both builds, refsw2), and each of those runs under valgrind, a tenth as fast, ends in the state hash of the
+  native run.
+
+What was checked and does not reach the guest:
+
+* The pace of the frames and the hand-over of frames to the thread of the user interface: a run with a window ends
+  in the state hash of the headless run with the same renderer (`none` in both builds; refsw2, 16 runs; and with
+  `gles` on a GPU in the `-DHAS_TA_LLE=OFF` build the hash is the one of `none`).
+* The audio backend: the AICA pushes samples to it and uses nothing that comes back; `aica.LimitFPS` only makes
+  the push wait (by reading `oslib/audiostream.cpp`, not by measurement: a real backend plays sound).
+* What the heap holds (glibc `MALLOC_PERTURB_` with four fill patterns), where the stack is (5000 bytes more of
+  environment), where the address space is (ASLR, on in every run), how loaded the machine is.
+
+What is left:
+
+* With a window and a software renderer of the default build, the render runs on the thread of the user interface
+  from the write of STARTRENDER until the emulator thread waits for it at the end of the render time; in between
+  it reads the lists and textures and writes the framebuffer in VRAM while the guest runs. No run of 2ndmix showed
+  a difference from it. Headless mode renders on the emulator thread, at STARTRENDER.
+* The hashes say little about the sound side: 2ndmix leaves AICA RAM the same at 600 and at 4000 vblanks.
+* The JIT and the interpreter end in different states on a program that depends on time.
 
 ## How a run is made
 

@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 
 # The guest programs of guest/*.s, assembled (README.md has how). Raw images for 8C010000.
 GUESTS = {
@@ -448,6 +449,33 @@ def case_fault_block(h):
     check(run.killed_on_purpose, 'the process did not block after the fault (config key)', run)
 
 
+def case_determinism(h):
+    """The same run gives the same state hash every time, with the JIT and with the interpreter."""
+    repeats = 6
+    plan = [(engine, i) for engine in ('jit', 'interp') for i in range(repeats)]
+
+    def one(item):
+        engine, i = item
+        keys = headless('config:pvr.backend=none', 'config:Exit.AfterVblanks=600', 'config:Exit.StateHash=yes',
+                        engine=engine)
+        return engine, h.finish(h.start('%s_%d' % (engine, i), keys, h.elf('2ndmix.elf')))
+
+    with ThreadPoolExecutor(4) as pool:
+        results = list(pool.map(one, plan))
+
+    for engine in ('jit', 'interp'):
+        runs = [run for e, run in results if e == engine]
+        for run in runs:
+            check_clean(run, 'vblanks')
+            check_hash(run)
+        first = runs[0]
+        for run in runs[1:]:
+            differing = [f for f in HASH_FIELDS if run.fields[f] != first.fields[f]]
+            check(not differing, '%s: run %s differs from run %s in %s\n  %s\n  %s' % (
+                engine, run.tag, first.tag, ', '.join(differing), first.exit_line, run.exit_line), run)
+        print('  %s: %d runs, hash %s' % (engine, len(runs), first.fields['hash']))
+
+
 CASES = {
     'help': case_help,
     'guest_exit.jit': lambda h: case_guest_exit(h, 'jit'),
@@ -468,6 +496,7 @@ CASES = {
     'fault.bus': lambda h: case_fault(h, 'bus'),
     'fault.ill': lambda h: case_fault(h, 'ill'),
     'fault.block': case_fault_block,
+    'determinism': case_determinism,
 }
 
 
