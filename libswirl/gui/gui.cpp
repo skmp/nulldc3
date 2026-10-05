@@ -44,6 +44,7 @@
 
 #include "libswirl.h"
 #include "gui/gui_renderer.h"
+#include "utils/run_control.h"
 
 bool game_started;
 
@@ -1075,7 +1076,11 @@ struct ReicastUI_impl : GUI {
     }
 };
 
+GUI* CreateHeadlessGUI();
+
 GUI* GUI::Create() {
+    if (runctl_headless())
+        return CreateHeadlessGUI();
 
     return new ReicastUI_impl();
 }

@@ -37,4 +37,4 @@ struct norend : Renderer
 // Registered in every build: with TA_LLE the TA still runs, CORE is what is left out
 Renderer* rend_norend(u8* vram) { return new ::norend(); }
 
-static auto norend = RegisterRendererBackend(rendererbackend_t{ "none", "No PVR Rendering", -2, rend_norend });
+static auto norend = RegisterRendererBackend(rendererbackend_t{ "none", "No PVR Rendering", -2, rend_norend, true });

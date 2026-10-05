@@ -6,6 +6,7 @@
 
 #include "run_control.h"
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <vector>
@@ -19,6 +20,10 @@
 
 #include "deps/xxhash/xxhash.h"
 
+#define STB_IMAGE_WRITE_STATIC
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "deps/stb/stb_image_write.h"
+
 namespace {
 
 typedef std::chrono::steady_clock wall_clock;
@@ -26,17 +31,26 @@ typedef std::chrono::steady_clock wall_clock;
 struct RunControl
 {
 	// the keys
+	bool headless = false;
 	u32 exit_vblanks = 0;		// 0: no limit
 	u64 exit_cycles = 0;		// 0: no limit
 	bool exit_on_guest_exit = false;
 	bool state_hash = false;
+	bool frame_hash = false;
+	string frame_png;
 
-	// the run. Emulator thread
+	// the run. Emulator thread, but for exit_code
 	u32 vblanks = 0;
 	bool exiting = false;
 	const char* exit_reason = "";
 	u64 first_vblank_cycles = 0;
 	wall_clock::time_point first_vblank_wall;
+	std::atomic<int> exit_code { 0 };
+
+	// the last frame a renderer presented
+	std::vector<u32> frame;
+	int frame_width = 0;
+	int frame_height = 0;
 };
 
 RunControl run_control;
@@ -145,8 +159,34 @@ void finish()
 			(unsigned long long)parts[3], (unsigned long long)parts[4], (unsigned long long)parts[5]);
 	}
 
+	if (rc.frame_hash)
+	{
+		if (rc.frame.empty())
+			printf(" frame=none");
+		else
+			printf(" frame=%016llx frame_size=%dx%d",
+				(unsigned long long)hash_of(rc.frame.data(), rc.frame.size() * sizeof(u32)), rc.frame_width, rc.frame_height);
+	}
+
 	printf("\n");
 	fflush(stdout);
+
+	if (!rc.frame_png.empty() && !rc.frame.empty())
+	{
+		// B G R A to R G B A, opaque: the framebuffer has no alpha
+		std::vector<u32> rgba(rc.frame.size());
+		for (size_t i = 0; i < rgba.size(); i++)
+		{
+			u32 p = rc.frame[i];
+			rgba[i] = 0xFF000000u | ((p & 0xFF) << 16) | (p & 0xFF00) | ((p >> 16) & 0xFF);
+		}
+
+		if (!stbi_write_png(rc.frame_png.c_str(), rc.frame_width, rc.frame_height, 4, rgba.data(), rc.frame_width * 4))
+		{
+			printf("Exit.FramePng: cannot write %s\n", rc.frame_png.c_str());
+			rc.exit_code = 1;
+		}
+	}
 
 	g_GUIRenderer->Stop();
 }
@@ -171,6 +211,7 @@ void runctl_configure()
 {
 	RunControl& rc = runctl();
 
+	rc.headless = cfgLoadBool("config", "Headless", false);
 	rc.exit_vblanks = (u32)std::max<s32>(0, cfgLoadInt("config", "Exit.AfterVblanks", 0));
 
 	double seconds = atof(cfgLoadStr("config", "Exit.AfterSeconds", "0").c_str());
@@ -178,10 +219,17 @@ void runctl_configure()
 
 	rc.exit_on_guest_exit = cfgLoadBool("config", "Exit.OnGuestExit", false);
 	rc.state_hash = cfgLoadBool("config", "Exit.StateHash", false);
+	rc.frame_png = cfgLoadStr("config", "Exit.FramePng", "");
+	rc.frame_hash = cfgLoadBool("config", "Exit.FrameHash", false) || !rc.frame_png.empty();
 
-	// A run that ends by itself leaves emu.cfg as it is
-	if (rc.exit_vblanks != 0 || rc.exit_cycles != 0 || rc.exit_on_guest_exit)
+	// A run that ends by itself, or that has no user interface to change a setting with, leaves emu.cfg as it is
+	if (rc.headless || rc.exit_vblanks != 0 || rc.exit_cycles != 0 || rc.exit_on_guest_exit)
 		cfgSetReadOnly();
+}
+
+bool runctl_headless()
+{
+	return runctl().headless;
 }
 
 void runctl_vblank()
@@ -204,9 +252,37 @@ bool runctl_guest_exit()
 {
 	RunControl& rc = runctl();
 
-	if (!rc.exit_on_guest_exit)
+	// without a user interface nothing can follow the end of the program
+	if (!rc.exit_on_guest_exit && !rc.headless)
 		return false;
 
 	request_exit("guest-exit");
 	return true;
+}
+
+bool runctl_present(const u32* pixels, int width, int height)
+{
+	RunControl& rc = runctl();
+
+	if (rc.frame_hash && width > 0 && height > 0)
+	{
+		rc.frame.assign(pixels, pixels + (size_t)width * height);
+		rc.frame_width = width;
+		rc.frame_height = height;
+	}
+
+	return rc.headless;
+}
+
+void runctl_fail(const char* reason)
+{
+	printf("nulldc-exit: reason=error error=\"%s\"\n", reason);
+	fflush(stdout);
+
+	runctl().exit_code = 1;
+}
+
+int runctl_exit_code()
+{
+	return runctl().exit_code;
 }

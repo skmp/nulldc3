@@ -26,6 +26,7 @@
 
 #include "libswirl.h"
 #include "hw/pvr/Renderer_if.h"
+#include "utils/run_control.h"
 
 #if defined(TARGET_EMSCRIPTEN)
 	#include "emscripten.h"
@@ -105,6 +106,10 @@ void emit_WriteCodeCache();
 
 void os_SetupInput()
 {
+	// a headless run has no host input: nothing a person or a device does reaches the guest
+	if (runctl_headless())
+		return;
+
 #if defined(USE_EVDEV)
 	input_evdev_init();
 #endif
@@ -185,6 +190,9 @@ void os_LaunchFromURL(const string& url)
 
 void os_CreateWindow()
 {
+	if (runctl_headless())
+		return;
+
 	#if defined(SUPPORT_DISPMANX)
 		dispmanx_window_create();
 	#endif
@@ -542,7 +550,7 @@ int main(int argc, wchar* argv[])
 		x11_window_destroy();
 	#endif
 
-	return 0;
+	return runctl_exit_code();
 }
 #endif
 #endif

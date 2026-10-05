@@ -14,6 +14,7 @@
 #include "oslib/oslib.h"
 #include "input/gamepad.h"
 #include "gui/gui_partials.h"
+#include "utils/run_control.h"
 
 std::unique_ptr<GUIRenderer> g_GUIRenderer;
 
@@ -602,6 +603,11 @@ struct GUIRenderer_impl : GUIRenderer {
     }
 };
 
+GUIRenderer* CreateHeadlessGUIRenderer();
+
 GUIRenderer* GUIRenderer::Create(GUI* gui) {
+    if (runctl_headless())
+        return CreateHeadlessGUIRenderer();
+
     return new GUIRenderer_impl();
 };
