@@ -330,8 +330,17 @@ void OnElfLoaded(const void* image, size_t size);
 	SH4 code breakpoints and steps: what the SH4 backends call (dbg_sh4.cpp). Everything is (E) only.
 
 	A check is code in front of one guest instruction that calls dbg_sh4_Check and can stop there. A JIT
-	decoder asks dbg_sh4_WantsCheck for every instruction it decodes that is not a delay slot and emits a
-	check where it says so; an interpreter-type loop asks in front of every instruction it executes.
+	decoder asks dbg_sh4_WantsCheck for every instruction it decodes that is not a delay slot. In a block
+	that is compiled it emits a check where the query says so only on a backend with
+	ngen_features::DebugChecks (hw/sh4/dyna/decoder.h); on any other JIT a compiled block gets no check and
+	no flow report, whatever the query answers. Armed addresses do reach the decoder of such a JIT while its
+	own Loop() runs: an address is armed while a breakpoint on it is enabled, and the interpreter fallback is
+	selected only while one is active (emu::UseFallbackLoop), which an enabled breakpoint is not while the
+	active mask lacks its category (emu::SetActiveMask, dbg_emu.h): with the category muted, for one, or
+	once the last client has been gone for the grace period.
+	The decode that sh4_fallback_loop() and sh4_fallback_step() (hw/sh4/sh4_dbg.h) make for their charges
+	carries the checks on every backend: they take the refunds from them and compile nothing.
+	An interpreter-type loop asks in front of every instruction it executes.
 	The armed set changes only in the park context, or under L while no emulator thread exists: never while a
 	block is decoded or executing. Each change made on (E) discards the compiled blocks of the address's page
 	through SuperH4Backend::DebugDiscardPage of the active backend, sh4_cpu->DebugBackend() (hw/sh4/sh4_if.h).
@@ -343,9 +352,9 @@ extern u32 dbg_sh4_armed;
 // Is the address armed? Compared under the address rule (dbg::sh4::MaskAddr). No side effects.
 bool dbg_sh4_IsArmed(u32 pc);
 
-// Does the instruction at pc get a check in front of it? has_slot: its opcode has the Delayslot type bit.
+// Is a check wanted in front of the instruction at pc? has_slot: its opcode has the Delayslot type bit.
 // A breakpoint on a delay slot is checked in front of its branch; this is never asked for an instruction
-// that runs as the delay slot of the instruction in front of it.
+// that runs as the delay slot of the instruction in front of it. Whether the asker emits the check: above.
 static inline bool dbg_sh4_WantsCheck(u32 pc, bool has_slot)
 {
 	if (likely(dbg_sh4_armed == 0))
@@ -371,10 +380,11 @@ bool dbg_sh4_AnyArmed(u32 pc, u32 bytes);
 // its slice counter and leaves its loop at once: no further guest instruction, no UpdateSystem().
 extern "C" u32 DYNACALL dbg_sh4_Check(u32 pc, u32 refund, u32 block_end);
 
-// Non-zero while a step-out is pending. A JIT decoder then marks the blocks that end with a call or a
-// return and their epilogue reports to dbg_sh4_CheckFlow; an interpreter-type loop reports after each call
-// and RTS it executed, and its RTE handler reports itself. Changes like the armed set, with a discard
-// through SuperH4Backend::DebugDiscardFlow.
+// Non-zero while a step-out is pending. The decoder of a JIT with ngen_features::DebugChecks then marks the
+// blocks that end with a call or a return and their epilogue reports to dbg_sh4_CheckFlow; an
+// interpreter-type loop, sh4_fallback_loop() included, reports after each call and RTS it executed, and its
+// RTE handler reports itself. Changes like the armed set, with a discard through
+// SuperH4Backend::DebugDiscardFlow.
 extern u32 dbg_sh4_stepout;
 
 // The flow report: flow is a DbgSh4Flow other than DBG_SH4_FLOW_NONE. Called after the call or return and

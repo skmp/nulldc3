@@ -16,7 +16,8 @@
 
 	Terms
 	  armed address        an address with at least one enabled listed breakpoint, or with a temporary breakpoint.
-	                       Backends put a check in front of armed addresses
+	                       A backend with SH4DBG_NATIVE puts a check in front of armed addresses, and so does the
+	                       interpreter fallback; the blocks a JIT without it compiles have none (debugger.h)
 	  active               a listed breakpoint stops only while its category is in the active mask; a temporary
 	                       breakpoint is always active. Activity is tested at each arrival, in the check
 	  temporary breakpoint an armed address with a stack condition, made by a step-over; never listed
@@ -132,7 +133,10 @@ void OnPcWritten();
 
 // Does the interpreter fallback have work on a backend without native breakpoints? True while an enabled
 // listed breakpoint exists and its category is active, a temporary breakpoint exists, or a step-out is
-// pending. No side effects. Also callable under L while no emulator thread exists.
+// pending. An armed set that is not empty does not make it true: while the active mask lacks the category
+// of the enabled listed breakpoints, the backend's own Loop() runs with their addresses armed, and what a JIT
+// without native breakpoints compiles then gets no check (debugger.h).
+// No side effects. Also callable under L while no emulator thread exists.
 bool FallbackWanted();
 
 } }
