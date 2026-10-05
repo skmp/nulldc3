@@ -91,11 +91,12 @@ void SetActiveMask(u32 categories);
 // pc & 0x1FFFFFFF. Steps and slot breakpoints in translated code are not supported.
 int StepCheck(const char** why);
 
-// Park loop, when the park context is left for a resume, after the deferred interrupt acceptance and
-// sh4_host_fp_resync(). Arms the resume exemption iff Sh4cntx.pc has the key of the pc that the last
-// OnStop() recorded and dbg_sh4_WantsCheck is true for it (opcode read through dbg::mem), and a check will
-// be made by what runs next: the active backend has SH4DBG_NATIVE or FallbackWanted() is true. Keeps the
-// owed remainder if Sh4cntx.pc is exactly its pc, drops it otherwise.
+// Park loop, when the park context is left for a resume or at the first Park() of a thread that follows a
+// thread exit taken in a debugger stop, after the deferred interrupt acceptance and sh4_host_fp_resync().
+// Arms the resume exemption iff Sh4cntx.pc has the key of the pc that the last OnStop() recorded and
+// dbg_sh4_WantsCheck is true for it (opcode read through dbg::mem), and a check will be made by what runs
+// next: the active backend has SH4DBG_NATIVE or FallbackWanted() is true. Keeps the owed remainder if
+// Sh4cntx.pc is exactly its pc, drops it otherwise.
 void PrepareResume();
 
 // Park loop, at the same point, for a step of one instruction. Arms the exemption as PrepareResume() does

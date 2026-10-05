@@ -280,6 +280,10 @@ enum : u32 {
 //   g_stop_latched; makes the interrupt acceptance that the latch deferred; calls sh4_host_fp_resync(); for a
 //   resume arms the SH4 resume exemption; sets CpuRunning and clears g_parked, unless a host stop or a guest
 //   exit is pending; for a resume invokes the listener with Running.
+// - The first Park() of a thread that follows a thread exit taken in a debugger stop (the host stopped the
+//   machine while the thread before it was parked) is a resume of that stop: the debugger pause that was in
+//   force before the host stop is not applied again, and dbg::emu calls dbg::sh4::PrepareResume() there, so
+//   that the instruction of the stop executes and its breakpoint does not stop again at once.
 //
 // Returns PARK_RUN after leaving, with CpuRunning set and g_stop_latched clear.
 // Returns PARK_EVALUATE, with CpuRunning clear, whenever a stop reason of the machine may be pending: after
