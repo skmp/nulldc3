@@ -38,6 +38,7 @@
 
 #include "libswirl.h"
 #include "cfg/cfg.h"
+#include "gui/gui_renderer.h"
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_dbg.h"
 #include "hw/sh4/sh4_mem.h"
@@ -1962,6 +1963,106 @@ DBG_SELFTEST_GUEST(emu_reset, "emu.reset")
 }
 
 /*
+	emu.resetruns: a machine that is being reset counts as running. Its cpu is stopped for the reset and its
+	emulator thread goes on: a host that took it for stopped would end its user interface under that thread,
+	where it stops a running machine first.
+*/
+namespace {
+
+struct {
+	int phase;
+	u32 stop0;
+	std::atomic<bool> otherFailed { false };
+	std::atomic<u32> samples { 0 }, stopped { 0 };
+	std::atomic<int> rvCall { 99 };
+} rr;
+
+// The other thread looks at the machine as a host does, as often as it can, while the reset happens; then it
+// pauses the guest
+void ResetWatch(bool by_call)
+{
+	if (!WaitLifetime(Lifetime::Running))
+	{
+		rr.otherFailed = true;
+		return;
+	}
+
+	std::thread caller;
+
+	if (by_call)
+		caller = std::thread([] { rr.rvCall = emu::Call(emu::CC_WRITE, [] { emu::Reset(); }); });
+
+	Clock::time_point t0 = Clock::now();
+
+	while (MsSince(t0) < 120)
+	{
+		if (emu::GetRunState().lifetime == Lifetime::Running && !sh4_cpu->IsRunning())
+			rr.stopped++;
+
+		rr.samples++;
+	}
+
+	if (caller.joinable())
+		caller.join();
+
+	if (!PauseAndWait(rr.stop0))
+		rr.otherFailed = true;
+}
+
+void ResetWatchBegin(const emu::RunState& stop, bool by_call)
+{
+	Goto(by_call ? EMU_G_spin : EMU_G_softreset);
+	WriteMem32(kMarkerAddr, kMarker);
+
+	rr.stop0 = stop.stopId;
+	rr.samples = 0;
+	rr.stopped = 0;
+
+	Resume();
+
+	OtherStart([by_call] { ResetWatch(by_call); });
+}
+
+void ResetWatchEnd(const emu::RunState& stop, const char* what)
+{
+	OtherJoin();
+
+	Check(!rr.otherFailed && stop.cause == StopCause::Pause && ReadMem32(kMarkerAddr) != kMarker, "%s: the machine was reset and ran on", what);
+	Check(rr.stopped == 0 && rr.samples > 1000, "%s: it counted as running every time a host looked (it did not %u times of %u)", what, rr.stopped.load(), rr.samples.load());
+}
+
+}
+
+DBG_SELFTEST_GUEST(emu_resetruns, "emu.resetruns")
+{
+	switch (rr.phase)
+	{
+	case 0:
+		if (!Ready(stop))
+			return false;
+
+		rr.phase = 1;
+		ResetWatchBegin(stop, false);
+		return false;
+
+	case 1:
+		ResetWatchEnd(stop, "a reset by the guest");
+
+		rr.phase = 2;
+		ResetWatchBegin(stop, true);
+		return false;
+
+	case 2:
+		ResetWatchEnd(stop, "a reset by a call");
+		Check(rr.rvCall == 0, "the call of the reset returned 0 (%d)", rr.rvCall.load());
+		break;
+	}
+
+	rr.phase = 0;
+	return true;
+}
+
+/*
 	emu.exit: the guest ends the run while the thread is parked. (What a headless run does when the guest
 	returns to the BIOS is in emuexit.*: the process ends.)
 */
@@ -2879,4 +2980,47 @@ DBG_SELFTEST_GUEST(emuwin_exit, "emuwin.exit")
 DBG_SELFTEST_GUEST(emuwin_exitpending, "emuwin.exitpending")
 {
 	return WindowExit(stop, true);
+}
+
+// The close button of the window while the guest resets the machine. Another thread does what the window does
+// for its close button (linux-dist/x11.cpp), in the moment in which it finds the cpu stopped for the reset, or
+// when it has looked for that in vain: the process ends either way
+DBG_SELFTEST_GUEST(emuwin_closereset, "emuwin.closereset")
+{
+	static int phase;
+
+	if (phase == 0)
+	{
+		if (!Ready(stop))
+			return false;
+
+		Goto(EMU_G_softreset);
+		phase = 1;
+		seen_mode = SEEN_PRINT_ALL;
+
+		Check(stop.lifetime == Lifetime::Parked, "the guest is about to reset the machine, and the window is closed while it does");
+
+		std::thread([] {
+			Clock::time_point t0 = Clock::now();
+			bool stopped = false;
+
+			while (!stopped && MsSince(t0) < 500)
+				stopped = emu::GetRunState().lifetime == Lifetime::Running && !sh4_cpu->IsRunning();
+
+			printf("emuwin: close: %s\n", stopped ? "the cpu was found stopped for the reset" : "the machine counted as running all through the reset");
+			fflush(stdout);
+
+			if (virtualDreamcast && sh4_cpu->IsRunning())
+				virtualDreamcast->Stop([] { g_GUIRenderer->Stop(); });
+			else
+				g_GUIRenderer->Stop();
+		}).detach();
+
+		Resume();
+		return false;
+	}
+
+	// not reached: nothing stops the guest again
+	Check(false, "the emulator thread parked (\"%s\") where the close button should have ended the run", StopCauseName(stop.cause));
+	return false;
 }

@@ -8,9 +8,11 @@
 #   run 2   the escape key, twice; then the close button
 #   run 3   the close button, with nothing before it
 #
-# then, with a window as well, the session emu.reset (a reset of the guest while parked and with a pause pending)
-# and a guest that returns to the BIOS (sessions emuwin.exit, emuwin.exitpending): the thread ends, the window
-# stays. It says for each whether the machine did what it has to: one line "PASS <session>: <item>" or
+# then, with a window as well, the session emu.reset (a reset of the guest while parked and with a pause pending),
+# a guest that returns to the BIOS (sessions emuwin.exit, emuwin.exitpending): the thread ends, the window
+# stays; and the close button in the moment in which the guest resets the machine (session emuwin.closereset,
+# ten runs).
+# It says for each whether the machine did what it has to: one line "PASS <session>: <item>" or
 # "FAIL <session>: <item>". The output of every run is <work dir>/<session>.<run>/log.txt.
 #
 # It needs a display (DISPLAY, default :0) and a C compiler with Xlib for xsend.c. The events are sent to the
@@ -73,8 +75,12 @@ start() {
 	case "$session" in
 	parked)  wait_line 30 'SelfTest: emuwin.parked: ok: parked: "pause"' ;;
 	pending) wait_line 30 'the guest runs from here' ;;
+	closereset) wait_line 30 'the guest is about to reset the machine' ;;
 	*)       wait_line 30 'the guest is about to return to the BIOS' ;;
 	esac || { bad "run $1: the session did not come to its state"; return 1; }
+
+	# a run that closes its window itself may be gone by now
+	[ "$session" = closereset ] && return 0
 
 	win=$(comm -13 <(echo "$before") <("$xsend" list | sort) | head -1)
 	[ -n "$win" ] || { bad "run $1: no window"; return 1; }
@@ -233,9 +239,25 @@ reset_and_exit() {
 	done
 }
 
+# close_in_reset: the session closes its window itself, as the window does for its close button, while the guest
+# resets the machine
+close_in_reset() {
+	local i
+
+	session=closereset
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		if start $i; then
+			the_end "run $i: the close button while the guest resets the machine ends the process"
+		else
+			stop_now
+		fi
+	done
+}
+
 checklist parked
 checklist pending
 reset_and_exit
+close_in_reset
 
 [ $fail -eq 0 ] && echo "window checklist: every item passed" || echo "window checklist: FAILED"
 exit $fail

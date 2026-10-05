@@ -42,6 +42,7 @@
 #include "hw/arm7/SoundCPU.h"
 #include "utils/run_control.h"
 #include "hw/sh4/sh4_dbg.h"
+#include "hw/sh4/SuperH4_impl.h"
 #include "debugger/debugger.h"
 
 #define fault_printf(...)
@@ -796,6 +797,9 @@ struct Dreamcast_impl : VirtualDreamcast {
 
                 // not when the machine was asked to stop as well
                 StartCpu(false);
+
+                // the cpu runs again, or the machine is about to stop
+                static_cast<SuperH4_impl*>(sh4_cpu)->resetting = false;
 #ifdef SCRIPTING
                 luabindings_onreset();
 #endif
@@ -1141,11 +1145,19 @@ struct Dreamcast_impl : VirtualDreamcast {
     // Called on the emulator thread for soft reset
     void RequestReset()
     {
+        SuperH4_impl* cpu = static_cast<SuperH4_impl*>(sh4_cpu);
+
         callback_lock.Lock();
         stop_reasons |= GUEST_RESET;
+
+        // The machine goes on counting as running while its cpu is stopped for the reset: a host that takes
+        // it for stopped ends its user interface under this thread. Not when it has been asked to stop
+        if (!(stop_reasons & (HOST_STOP | GUEST_EXIT)))
+            cpu->resetting = true;
+
         callback_lock.Unlock();
 
-        sh4_cpu->Stop();
+        cpu->StopForReset();
     }
 
     // Called on the emulator thread when the guest program has ended

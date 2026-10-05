@@ -136,8 +136,16 @@ void SuperH4_impl::Run() {
 }
 
 // Any thread. A stop request also ends a debugger stop: a parked machine counts as running (IsRunning), and
-// the park loop is woken so that the emulator thread takes the request
+// the park loop is woken so that the emulator thread takes the request. A machine that is being reset counts
+// as running no longer either
 void SuperH4_impl::Stop()
+{
+    resetting = false;
+
+    StopForReset();
+}
+
+void SuperH4_impl::StopForReset()
 {
     sh4_int_bCpuRun = false;
     dbg::g_parked = false;
@@ -212,11 +220,16 @@ void SuperH4_impl::Reset(bool Manual)
     }
 }
 
-// A machine that the debugger has stopped (latched, parked, in a step) counts as running: its emulator
-// thread exists, and the host UI stops it like a running one
+// A machine that the debugger has stopped (latched, parked, in a step) counts as running, and so does one
+// that is being reset: its emulator thread exists and has not been asked to stop, and the host UI stops it
+// like a running one
+//
+// The three hand over to one another on the emulator thread, the next one set before the one before it is
+// cleared. Read in this order, the cpu's a second time at the end, no hand-over is read as a machine that
+// does not run
 bool SuperH4_impl::IsRunning()
 {
-    return sh4_int_bCpuRun || dbg::g_parked;
+    return sh4_int_bCpuRun || dbg::g_parked || resetting || sh4_int_bCpuRun;
 }
 
 SuperH4_impl::SuperH4_impl() {

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "types.h"
+#include <atomic>
 #include <memory>
 
 struct SuperH4Backend;
@@ -23,6 +24,12 @@ struct SuperH4_impl final : SuperH4 {
     // a fresh slice counter (SuperH4Backend::ResetSlice)
     bool slice_reset_owed = false;
 
+    // A reset of the machine is on its way: the emulator thread has stopped the cpu for it and starts it again
+    // behind it. The machine counts as running all through (IsRunning), so that the host stops it as it stops
+    // a running one and does not take it for stopped. The machine sets it, before StopForReset() and only
+    // while it has not been asked to stop; Stop() clears it, and the emulator thread when the reset is done
+    std::atomic<bool> resetting { false };
+
     void SetA0Handler(Area0Hanlders slot, MMIODevice* dev);
     MMIODevice* GetA0Handler(Area0Hanlders slot);
 
@@ -35,6 +42,10 @@ struct SuperH4_impl final : SuperH4 {
     void Run();
 
     void Stop();
+
+    // Emulator thread: the cpu leaves its loop as for Stop(), for a reset of the machine: resetting is left
+    // as the machine set it
+    void StopForReset();
 
     void Start();
 
