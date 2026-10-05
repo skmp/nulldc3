@@ -1,5 +1,5 @@
-// WebSocket handshake and framing of dbg_net.cpp against the vectors of RFC 6455.
-// The translation unit under test is included, not linked: the parsers are internal to it.
+// WebSocket handshake and framing of dbg_net.cpp against the vectors of RFC 6455, and the output queue of a
+// connection. The translation unit under test is included, not linked: the parsers are internal to it.
 
 #include "../../../libswirl/debugger/dbg_net.cpp"
 
@@ -330,6 +330,106 @@ static void TestUtf8() {
 	CHECK(ValidUtf8("a\0b", 3));
 }
 
+// Memory a connection's queue holds, as far as the queue can tell.
+static size_t Held(const Conn& c) {
+	size_t bytes = 0;
+	for (const std::string& chunk : c.queue)
+		bytes += sizeof(std::string) + chunk.capacity();
+	return bytes;
+}
+
+static std::string Joined(const Conn& c) {
+	std::string all;
+	for (const std::string& chunk : c.queue)
+		all += chunk;
+	return all;
+}
+
+static void TestQueue() {
+	// One pong per ping for a client that never reads: the bound on bytes has to bound the memory as well.
+	{
+		Conn c(kNoSocket, kLimit);
+		std::string pong = FrameHeader(kOpPong, 0);
+		size_t pushed = 0;
+		while (!c.overflow && pushed < 100000000) {
+			Push(c, pong, true);
+			pushed++;
+		}
+		CHECK(c.overflow);
+		CHECK(c.queued >= kMaxQueuedBytes - pong.size() && c.queued <= kMaxQueuedBytes + pong.size());
+		CHECK_EQ(Joined(c).size(), (size_t)c.queued);
+		CHECK(c.queue.size() <= 2 * c.queued / kMergeBytes + 1);
+		CHECK(Held(c) <= 2 * c.queued + (1u << 20));
+		printf("%zu pongs: %zu bytes queued in %zu chunks that hold %zu bytes\n", pushed - 1, (size_t)c.queued, c.queue.size(), Held(c));
+
+		// cut off: nothing more is taken
+		size_t queued = c.queued;
+		Push(c, pong, true);
+		Push(c, pong, false);
+		CHECK_EQ((size_t)c.queued, queued);
+	}
+
+	// Messages of mixed sizes: every byte in order, and no chunk ends inside a message.
+	{
+		Conn c(kNoSocket, kLimit);
+		std::string all;
+		std::vector<size_t> ends;
+		uint32_t seed = 1;
+		for (int i = 0; i < 3000; i++) {
+			seed = seed * 1664525u + 1013904223u;
+			size_t size = (seed >> 8) % 7 == 0 ? (seed >> 12) % 30000 : 1 + (seed >> 12) % 300;
+			std::string message(size, (char)('a' + i % 26));
+			Push(c, message, i % 2 == 0);
+			all += message;
+			ends.push_back(all.size());
+		}
+		CHECK(!c.overflow);
+		CHECK_EQ((size_t)c.queued, all.size());
+		CHECK(Joined(c) == all);
+		size_t at = 0;
+		bool whole = true, merged = true;
+		for (size_t i = 0; i < c.queue.size(); i++) {
+			at += c.queue[i].size();
+			if (!std::binary_search(ends.begin(), ends.end(), at))
+				whole = false;
+			if (i > 0 && c.queue[i - 1].size() + c.queue[i].size() <= kMergeBytes)
+				merged = false;
+		}
+		CHECK(whole);
+		CHECK(merged);		// two neighbours that would have fitted one chunk
+		CHECK(c.queue.size() <= 2 * c.queued / kMergeBytes + 1);
+	}
+
+	// A chunk is closed when the next message would take it past kMergeBytes; larger messages stand alone.
+	{
+		Conn c(kNoSocket, kLimit);
+		Push(c, std::string(kMergeBytes - 1, 'a'), true);
+		Push(c, "b", true);
+		Push(c, "c", true);
+		Push(c, std::string(kMergeBytes, 'd'), true);
+		Push(c, std::string(3 * kMergeBytes, 'e'), true);
+		Push(c, "", true);
+		Push(c, "f", true);
+		REQUIRE(c.queue.size() == 5);
+		CHECK_EQ(c.queue[0], std::string(kMergeBytes - 1, 'a') + "b");
+		CHECK_EQ(c.queue[1], std::string("c"));
+		CHECK_EQ(c.queue[2].size(), kMergeBytes);
+		CHECK_EQ(c.queue[3].size(), 3 * kMergeBytes);
+		CHECK_EQ(c.queue[4], std::string("f"));
+		CHECK_EQ((size_t)c.queued, 5 * kMergeBytes + 2);
+	}
+
+	// What a plain response queues is not bounded here: files are bounded where they are read.
+	{
+		Conn c(kNoSocket, kLimit);
+		Push(c, "HTTP/1.1 200 OK\r\n\r\n", false);
+		Push(c, std::string(kMaxQueuedBytes + 1, 'x'), false);
+		CHECK(!c.overflow);
+		CHECK_EQ(c.queue.size(), (size_t)2);
+		CHECK_EQ((size_t)c.queued, kMaxQueuedBytes + 20);
+	}
+}
+
 int main() {
 	TestHandshake();
 	TestEncode();
@@ -340,5 +440,6 @@ int main() {
 	TestDecodeOversize();
 	TestDecodeClose();
 	TestUtf8();
+	TestQueue();
 	return Finish("test_ws");
 }

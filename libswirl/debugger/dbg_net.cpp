@@ -98,6 +98,7 @@ const size_t kMaxRequestLine = 2048;
 const size_t kMaxRequestHead = 8192;		// request line + headers + the empty line
 const size_t kMaxHeaders = 64;
 const size_t kMaxQueuedBytes = 16u << 20;	// per WebSocket client
+const size_t kMergeBytes = 16u << 10;		// queued output is merged into chunks of up to this size
 const size_t kMaxStaticFile = 64u << 20;	// files from Options::webRoot are read whole
 const size_t kMaxHttpConnections = 32;		// connections that are not WebSocket clients
 const int kStallMs = 10000;					// an HTTP connection that makes no progress is closed
@@ -874,6 +875,28 @@ struct Conn {
 	bool overflow = false;
 };
 
+// Server::Impl::mutex held. Queues a chunk of whole messages for a connection.
+//
+// A small chunk is appended to the last one instead of getting an entry of its own: an entry costs far more
+// memory than a 2 byte pong counts for, and merged chunks go out in one write. Chunks still end where a
+// message ends.
+//
+// bounded: a WebSocket client that does not read is cut off at kMaxQueuedBytes; the network thread sees the
+// flag and drops it.
+void Push(Conn& c, std::string chunk, bool bounded) {
+	if (c.overflow || chunk.empty())
+		return;
+	if (bounded && c.queued + chunk.size() > kMaxQueuedBytes) {
+		c.overflow = true;
+		return;
+	}
+	c.queued += chunk.size();
+	if (!c.queue.empty() && c.queue.back().size() + chunk.size() <= kMergeBytes)
+		c.queue.back() += chunk;
+	else
+		c.queue.push_back(std::move(chunk));
+}
+
 void SetOption(sock_t s, int level, int name, int value) {
 	setsockopt(s, level, name, (const char*)&value, sizeof(value));
 }
@@ -986,19 +1009,6 @@ struct Server::Impl {
 		char byte = 0;
 		if (send(wakeFd, &byte, 1, kSendFlags) != 1)
 			wakePending = false;
-	}
-
-	// mutex held. A WebSocket client that does not read is cut off at kMaxQueuedBytes; the network thread
-	// sees the flag and drops it.
-	void Push(Conn& c, std::string chunk, bool bounded) {
-		if (c.overflow || chunk.empty())
-			return;
-		if (bounded && c.queued + chunk.size() > kMaxQueuedBytes) {
-			c.overflow = true;
-		} else {
-			c.queued += chunk.size();
-			c.queue.push_back(std::move(chunk));
-		}
 	}
 
 	// The wake-up is sent with the mutex held: a client found in the map means the network thread has
@@ -1416,7 +1426,7 @@ void Server::BroadcastText(const std::string& text) {
 	std::string frame = FrameHeader(kOpText, text.size()) + text;
 	std::lock_guard<std::mutex> lock(s.mutex);
 	for (const auto& client : s.clients)
-		s.Push(*client.second, frame, true);
+		Push(*client.second, frame, true);
 	if (!s.clients.empty())
 		s.Wake();
 }
