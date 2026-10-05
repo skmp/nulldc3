@@ -129,6 +129,12 @@ struct ASICDevice_impl final : ASIC {
 		return tmp;
 	}
 
+	bool DebugReadISTNRM(u32* value)
+	{
+		*value = Read_SB_ISTNRM(SB_ISTNRM_addr);
+		return true;
+	}
+
 	void Write_SB_ISTNRM(u32 addr, u32 data)
 	{
 		/* writing a 1 clears the interrupt */

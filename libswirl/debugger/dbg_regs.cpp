@@ -15,7 +15,6 @@
 #include "hw/arm7/arm7_context.h"
 #include "hw/gdrom/gdromv3.h"
 #include "hw/holly/sb.h"
-#include "hw/holly/sh4_mem_area0.h"
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_interpreter.h"
 #include "hw/sh4/sh4_mmr.h"
@@ -410,7 +409,5 @@ bool ReadSbRegisterAt(uint32_t addr, uint32_t* value)
 
 } }
 
-// The device accessors that are free functions give nothing yet. Their place is hw/gdrom/gdromv3.cpp and hw/holly/sh4_mem_area0.cpp.
+// The device accessors that are free functions give nothing yet. Their place is hw/gdrom/gdromv3.cpp.
 bool gdrom_DebugGetState(GDRomDebugState*) { return false; }
-bool area0_DebugRom(const u8**, u32*) { return false; }
-bool area0_DebugNvmem(const u8**, u32*) { return false; }

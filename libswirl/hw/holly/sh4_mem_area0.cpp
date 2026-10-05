@@ -127,6 +127,26 @@ bool LoadHle(const string& root) {
 	return reios_init(sys_rom.data, sys_nvmem.data);
 }
 
+bool area0_DebugRom(const u8** data, u32* size)
+{
+	if (sys_rom.data == nullptr)
+		return false;
+
+	*data = sys_rom.data;
+	*size = sys_rom.size;
+	return true;
+}
+
+bool area0_DebugNvmem(const u8** data, u32* size)
+{
+	if (sys_nvmem.data == nullptr)
+		return false;
+
+	*data = sys_nvmem.data;
+	*size = sys_nvmem.size;
+	return true;
+}
+
 u32 ReadFlash(u32 addr,u32 sz) { return sys_nvmem.Read(addr,sz); }
 void WriteFlash(u32 addr,u32 data,u32 sz) { sys_nvmem.Write(addr,data,sz); }
 
