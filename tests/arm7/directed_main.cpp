@@ -22,7 +22,8 @@
 
 	fiq, scilv: the interrupt controller of the AICA in front of nFIQ, driven through its registers as a guest
 	drives it, and what SCILV0-2 read back (the comment at fiq_setup() has the source). Two cases of fiq have an
-	ARMRST in the middle of a handler, with no capture behind them (the comment at fiq_armrst_in_service()).
+	ARMRST in the middle of a handler, with no capture behind them (the comment at fiq_armrst_in_service()), and
+	one of scilv has the register behind SCILV2, which reads back (the comment at scilv_mcieb_reads_back()).
 
 	reset: what the release of ARMRST writes and what it leaves, out of four modes (the comment at reset_case() has
 	the source).
@@ -588,6 +589,7 @@ static void run_traps()
 #define AICA_SCIEB 0x80289C
 #define AICA_SCIRE 0x8028A4
 #define AICA_SCILV0 0x8028A8
+#define AICA_MCIEB 0x8028B4
 #define AICA_L 0x802D00
 #define AICA_M 0x802D04
 
@@ -1066,11 +1068,38 @@ static void scilv0_reads_0(std::string& text) { scilv_reads_0(text, 0); }
 static void scilv1_reads_0(std::string& text) { scilv_reads_0(text, 1); }
 static void scilv2_reads_0(std::string& text) { scilv_reads_0(text, 2); }
 
+//MCIEB, the register behind SCILV2, is not one of them: it reads what was written. The value is the one the console's
+//runner writes to it from the SH4 for every job (wren7-rtl model/hw/runner.c). No capture has a read of MCIEB: the
+//word that has to come back is what the emulator read there before SCILV0-2 read as 0 (base behaviour, not measured)
+static void scilv_mcieb_reads_back(std::string& text)
+{
+	char number[64];
+
+	fiq_setup(0xFF, 0xFF, 0xFF);
+	arm7m_write32(AICA_MCIEB, 0x20);
+
+	u32 scilv2 = arm7m_read32(AICA_SCILV0 + 8);
+	u32 mcieb = arm7m_read32(AICA_MCIEB);
+
+	if (scilv2 != 0)
+	{
+		snprintf(number, sizeof(number), " SCILV2 reads %X behind a write of FF, has to be 0;", scilv2);
+		text += number;
+	}
+
+	if (mcieb != 0x20)
+	{
+		snprintf(number, sizeof(number), " MCIEB reads %X behind a write of 20, has to be 20;", mcieb);
+		text += number;
+	}
+}
+
 static const Scenario scilv_scenarios[] =
 {
 	{ "SCILV0", &scilv0_reads_0 },
 	{ "SCILV1", &scilv1_reads_0 },
 	{ "SCILV2", &scilv2_reads_0 },
+	{ "MCIEB, behind SCILV2, reads back", &scilv_mcieb_reads_back },
 };
 
 /*

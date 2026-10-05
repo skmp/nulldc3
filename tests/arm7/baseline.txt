@@ -47,7 +47,7 @@ arm7.directed            mul-rd-rm               18    18
 arm7.directed            mul-rd-rm-c             10    10
 arm7.directed            trap                     4     4
 arm7.directed            fiq                     10    10
-arm7.directed            scilv                    3     3
+arm7.directed            scilv                    4     4
 arm7.directed            reset                    4     4
 arm7.directed            power-on                 4     4
 #

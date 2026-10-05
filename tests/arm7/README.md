@@ -67,6 +67,10 @@ level 0; SCILV0-2 read back as 0. What has to happen is what a Dreamcast did in 
 (`model/tests/hw/fiqdiag/hw`, `model/NOTES.md` "Interrupts"); the comment in `directed_main.cpp` names the
 capture behind each rule.
 
+A fourth case of `scilv` is about where the registers that read 0 end: MCIEB, the register behind SCILV2, reads
+back what was written to it. No capture reads MCIEB, the case holds what the emulator did before SCILV0-2 read
+as 0.
+
 Two cases of `fiq` have no capture behind them. They hold and release ARMRST in the middle of a handler, between
 its read of L and its write of M, and in front of the read of L: the program behind the first, which writes M in
 its handler only as the ARM crt0 of KallistiOS does, has to get an interrupt with every sample, and the one
