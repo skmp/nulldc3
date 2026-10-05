@@ -29,6 +29,21 @@ enum : uint8_t {
 	kRegNoReader = 4,		// no reader without side effects exists: Read() fails, the value shows as "n/a"
 };
 
+// The SH4 on-chip registers behind a read function have no accessor in hw/sh4, and the function is never
+// called. What dbg_regs.cpp gives for each of them, as a register and as bytes of dbg::mem:
+//   TMU TCNT0..2                  kRegComputed: the down counter as its read function works it out, from
+//                                 tmu_ch_base, tmu_shift and tmu_mask (non-static globals of
+//                                 hw/sh4/modules/tmu.cpp, which dbg_regs.cpp declares extern itself) and the
+//                                 scheduler's time, sh4_sched_now64()
+//   CCN CPU_VERSION               kRegComputed: the constant its read function returns, 0x040205C1
+//   CCN PRR, INTC IPRD,           kRegComputed: 0, which their read functions return whatever the state
+//   SCIF SCFDR2, TMU TCPR2
+//   BSC PDTRA                     kRegNoReader, "n/a": the value is put together from PCTRA, the cable setting
+//                                 and the last value written to PDTRA, which only the module keeps
+//   SCIF SCFSR2, SCIF SCFRDR2     kRegNoReader, "n/a": the read looks at, or takes a byte from, the serial
+//                                 input of the host
+// The registers of the SCI are kRegNoReader as well, for another reason: the emulator has none of them.
+
 // Node::flags
 enum : uint8_t {
 	kNodeBase       = 1,	// carried by every running tick; other nodes only by full ticks
