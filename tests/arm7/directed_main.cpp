@@ -17,10 +17,12 @@
 	ror: the logical operations with a ROR by a register as operand 2, with an amount of 0, of 32 and around them
 	(the table has the source).
 
+	mul-rd-rm: MUL and MLA, with and without S, with Rd == Rm (the table has the source).
+
 	fiq, scilv: the interrupt controller of the AICA in front of nFIQ, driven through its registers as a guest
 	drives it, and what SCILV0-2 read back (the comment at fiq_setup() has the source).
 
-	Checks: adc, sbc, rsc, ror, trap, fiq, scilv. The test needs no data.
+	Checks: adc, sbc, rsc, ror, mul-rd-rm, trap, fiq, scilv. The test needs no data.
 */
 #include "arm7_machine.h"
 #include "arm7_suite.h"
@@ -307,6 +309,84 @@ static void run_ror()
 		Insn in = { c.opcode, { c.rn, c.rm, RD_BEFORE, c.rs }, c.flags, c.rd_after, c.flags_after, FN | FZ | FC | FV };
 
 		run_insn("ror", i, in);
+	}
+}
+
+/*
+	MUL and MLA with Rd == Rm. The multiplier writes Rd before its first step, with 0 or with Rn for MLA, and
+	reads Rm again in every step: MUL gives 0 whatever the operands are, and MLA is not the product (ARM7DI data
+	sheet 4.6.1: "zero" and "meaningless").
+
+	The console has both in the 1024 records of wren7-rtl's multiplier probe (model/tests/hw/mulsem, the kernel is
+	model/hw/arm/k_mulsem.s): "muls r9, r9, r5" leaves 0 in every record, and the MLA rows are records of it with
+	the word "mla r0, r0, r5, r6" leaves. In record 37, with Rs = 1, that is twice Rn: the one step adds Rm, which
+	is Rd, and Rd is Rn by then.
+
+	The probe has MUL only with S and MLA only without. They are one multiplier: MUL has to leave the 0 of MULS,
+	MLAS the word of MLA, and the S forms N and Z of what they leave. V stays (the probe's MULS and MLAS with
+	Rd != Rm). No capture has C behind the S forms with Rd == Rm, it is not compared.
+
+	Rd = Rm = r2, Rs = r1, Rn = r0.
+*/
+#define MUL_RD_RM  0xE0020192
+#define MULS_RD_RM 0xE0120192
+#define MLA_RD_RM  0xE0220192
+#define MLAS_RD_RM 0xE0320192
+
+struct MulCase
+{
+	u32 opcode;
+	u32 rm;
+	u32 rs;
+	u32 rn;				//MUL does not use it and has to leave it alone
+	u32 flags;
+	u32 rd_after;
+	u32 flags_after;
+	u32 flags_mask;
+};
+
+//the flags that are compared
+#define ALL_FLAGS (FN | FZ | FC | FV)
+#define NZV_FLAGS (FN | FZ | FV)
+
+static const MulCase mul_rd_rm[] =
+{
+	//             Rm          Rs          Rn          in                  Rd after    after         compared
+	//MUL: 0, the flags stay. Operands of the records 37, 0 and 2
+	{ MUL_RD_RM,  0x4D5D160D, 0x00000001, 0x11111111, FN | FC | FV,      0x00000000, FN | FC | FV, ALL_FLAGS },
+	{ MUL_RD_RM,  0x00004000, 0x050C368D, 0x11111111, FZ,                0x00000000, FZ,           ALL_FLAGS },
+	{ MUL_RD_RM,  0x5079FC5D, 0xDABF5585, 0x11111111, 0,                 0x00000000, 0,            ALL_FLAGS },
+	{ MUL_RD_RM,  0xFFFFFFFF, 0xFFFFFFFF, 0x11111111, FN | FV,           0x00000000, FN | FV,      ALL_FLAGS },
+
+	//MULS: 0 and Z. Records 37 and 2
+	{ MULS_RD_RM, 0x4D5D160D, 0x00000001, 0x11111111, FN | FV,           0x00000000, FZ | FV,      NZV_FLAGS },
+	{ MULS_RD_RM, 0x5079FC5D, 0xDABF5585, 0x11111111, FN | FC,           0x00000000, FZ,           NZV_FLAGS },
+
+	//MLA: the console's word, the flags stay. Records 37, 101, 19, 0, 2 and 4
+	{ MLA_RD_RM,  0x4D5D160D, 0x00000001, 0x00000084, FN | FZ,           0x00000108, FN | FZ,      ALL_FLAGS },
+	{ MLA_RD_RM,  0xFCA904E7, 0x00000002, 0xAAAAAAAA, FC,                0xAAAAAAAE, FC,           ALL_FLAGS },
+	{ MLA_RD_RM,  0xB64CFDF7, 0x0000005D, 0x000000DC, 0,                 0xFFD4CBD8, 0,            ALL_FLAGS },
+	{ MLA_RD_RM,  0x00004000, 0x050C368D, 0x1DCE4E7B, FZ | FV,           0xA2AACDFE, FZ | FV,      ALL_FLAGS },
+	{ MLA_RD_RM,  0x5079FC5D, 0xDABF5585, 0x2DCFC8AE, FN,                0x3A2AF8CC, FN,           ALL_FLAGS },
+	{ MLA_RD_RM,  0x20000000, 0x7FFFFFFF, 0x91E47F62, FN | FC | FV,      0x00000000, FN | FC | FV, ALL_FLAGS },
+
+	//MLAS: the same words, with their N and Z
+	{ MLAS_RD_RM, 0x4D5D160D, 0x00000001, 0x00000084, FN | FZ | FV,      0x00000108, FV,           NZV_FLAGS },
+	{ MLAS_RD_RM, 0xFCA904E7, 0x00000002, 0xAAAAAAAA, FZ | FC,           0xAAAAAAAE, FN,           NZV_FLAGS },
+	{ MLAS_RD_RM, 0xB64CFDF7, 0x0000005D, 0x000000DC, FZ | FV,           0xFFD4CBD8, FN | FV,      NZV_FLAGS },
+	{ MLAS_RD_RM, 0x00004000, 0x050C368D, 0x1DCE4E7B, 0,                 0xA2AACDFE, FN,           NZV_FLAGS },
+	{ MLAS_RD_RM, 0x5079FC5D, 0xDABF5585, 0x2DCFC8AE, FN | FZ | FC,      0x3A2AF8CC, 0,            NZV_FLAGS },
+	{ MLAS_RD_RM, 0x20000000, 0x7FFFFFFF, 0x91E47F62, FN | FV,           0x00000000, FZ | FV,      NZV_FLAGS },
+};
+
+static void run_mul_rd_rm()
+{
+	for (u32 i = 0; i < sizeof(mul_rd_rm) / sizeof(mul_rd_rm[0]); i++)
+	{
+		const MulCase& c = mul_rd_rm[i];
+		Insn in = { c.opcode, { c.rn, c.rs, c.rm, 0x33333333 }, c.flags, c.rd_after, c.flags_after, c.flags_mask };
+
+		run_insn("mul-rd-rm", i, in);
 	}
 }
 
@@ -830,6 +910,9 @@ int main(int argc, char** argv)
 
 	if (arm7_selected("ror"))
 		run_ror();
+
+	if (arm7_selected("mul-rd-rm"))
+		run_mul_rd_rm();
 
 	if (arm7_selected("trap"))
 		run_traps();

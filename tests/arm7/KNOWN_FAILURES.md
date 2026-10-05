@@ -12,7 +12,7 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 |---|---|---|---|---|
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 2 | 2 |
 
-Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 103/103, the r1 and the CPSR of the 45 vendor jobs,
+Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 121/121, the r1 and the CPSR of the 45 vendor jobs,
 the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
 
 ### D7: where a reset finds the ARM
