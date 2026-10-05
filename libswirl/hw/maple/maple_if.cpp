@@ -292,7 +292,7 @@ struct MapleDevice final : MMIODevice {
 #endif
 	}
 
-	u64 reconnect_time;
+	u64 reconnect_time = 0;	// 0: no reconnect is pending
 	void handle_reconnect_periodical()
 	{
 		if (reconnect_time != 0 && reconnect_time <= sh4_sched_now64())

@@ -23,6 +23,7 @@ void  cfgSaveBool(const wchar * Section, const wchar * Key, bool BoolValue);
 bool  cfgLoadBool(const wchar * Section, const wchar * Key,bool Default);
 s32  cfgExists(const wchar * Section, const wchar * Key);
 void cfgSetVirtual(const wchar * lpSection, const wchar * lpKey, const wchar * lpString);
+void cfgSetReadOnly();
 
 bool ParseCommandLine(int argc,wchar* argv[]);
 

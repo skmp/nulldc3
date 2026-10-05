@@ -26,6 +26,7 @@
 
 #include "libswirl.h"
 #include "hw/pvr/Renderer_if.h"
+#include "utils/run_control.h"
 
 #if defined(TARGET_EMSCRIPTEN)
 	#include "emscripten.h"
@@ -105,6 +106,10 @@ void emit_WriteCodeCache();
 
 void os_SetupInput()
 {
+	// a headless run has no host input: nothing a person or a device does reaches the guest
+	if (runctl_headless())
+		return;
+
 #if defined(USE_EVDEV)
 	input_evdev_init();
 #endif
@@ -185,6 +190,9 @@ void os_LaunchFromURL(const string& url)
 
 void os_CreateWindow()
 {
+	if (runctl_headless())
+		return;
+
 	#if defined(SUPPORT_DISPMANX)
 		dispmanx_window_create();
 	#endif
@@ -365,6 +373,7 @@ std::vector<string> find_system_data_dirs()
 }
 
 void common_linux_setup();
+void common_linux_fault_block(bool block);
 #if FEAT_HAS_SERIAL_TTY
 bool common_serial_pty_setup();
 #endif
@@ -466,7 +475,9 @@ void os_gl_term()
 
 int main(int argc, wchar* argv[])
 {
-
+	// A process that a signal ends loses what stdio still holds: with a file or a pipe behind stdout
+	// that would be the lines right before the fault
+	setvbuf(stdout, nullptr, _IOLBF, 0);
 
 	#ifdef TARGET_PANDORA
 		signal(SIGSEGV, clean_exit);
@@ -500,8 +511,15 @@ int main(int argc, wchar* argv[])
 
 	settings.profile.run_counts=0;
 
-	if (reicast_init(argc, argv))
+	int init_rv = reicast_init(argc, argv);
+	if (init_rv == rv_cli_finish)
+		return 0;	// -help: the usage text is all that was asked for
+	if (init_rv)
 		die("Reicast initialization failed\n");
+
+	// see fatal_error() in linux/common.cpp, the environment has the same switch for faults before this point
+	if (cfgLoadBool("config", "Debug.BlockOnFault", false))
+		common_linux_fault_block(true);
     
     #if FEAT_HAS_SERIAL_TTY
     bool cleanup_pty_symlink = common_serial_pty_setup();
@@ -532,7 +550,7 @@ int main(int argc, wchar* argv[])
 		x11_window_destroy();
 	#endif
 
-	return 0;
+	return runctl_exit_code();
 }
 #endif
 #endif

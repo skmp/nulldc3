@@ -52,6 +52,10 @@ struct ConfigFile {
 
 		void delete_section(const std::string& section_name);
 		void delete_entry(const std::string& section_name, const std::string& entry_name);
+
+		/* virtual entries: they shadow the entries of the file and are never saved */
+		bool has_virtual_entry(const std::string& section_name, const std::string& entry_name);
+		void delete_virtual_entry(const std::string& section_name, const std::string& entry_name);
 };
 
 } // namespace emucfg

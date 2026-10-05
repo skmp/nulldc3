@@ -34,11 +34,27 @@ void savecfgf()
 		fclose(cfgfile);
 	}
 }
+// A value given on the command line (cfgSetVirtual) belongs to this run only. SaveSettings writes every setting
+// back: one that still has its command line value is not written, the file keeps what it has for it. Another
+// value replaces the command line one, for the rest of the run and in the file.
+// *same* is whether the value that is being saved is the one the command line gave.
+static bool cfgKeepsVirtual(const std::string& section, const std::string& key, bool same)
+{
+	if (!cfgdb.has_virtual_entry(section, key))
+		return false;
+	if (same)
+		return true;
+	cfgdb.delete_virtual_entry(section, key);
+	return false;
+}
+
 void  cfgSaveStr(const wchar * Section, const wchar * Key, const wchar * String)
 {
 	const std::string section(Section);
 	const std::string key(Key);
 	const std::string value(String);
+	if (cfgKeepsVirtual(section, key, cfgdb.get(section, key, "") == value))
+		return;
 	if (cfgHasGameSpecificConfig())
 	{
 		if (cfgdb.get(section, key, "") == value)
@@ -68,9 +84,10 @@ void  cfgSaveStr(const wchar * Section, const wchar * Key, const wchar * String)
 
 	Config parameters can be read from the config file , and can be given at the command line
 	-cfg section:key=value -> defines a value at command line
-	If a cfgSave* is made on a value defined by command line , then the command line value is replaced by it
+	If a cfgSave* is made on a value defined by command line with another value, then the command line value is
+	replaced by it. A cfgSave* of the value the command line gave is not written (cfgKeepsVirtual)
 
-	cfg values set by command line are not written to the cfg file , unless a cfgSave* is used
+	cfg values set by command line are not written to the cfg file , unless a cfgSave* changes them
 */
 
 ///////////////////////////////
@@ -152,6 +169,9 @@ string  cfgLoadStr(const wchar * Section, const wchar * Key, const wchar* Defaul
 //These are helpers , mainly :)
 void  cfgSaveInt(const wchar * Section, const wchar * Key, s32 Int)
 {
+	// compared as a number: the command line may have it in another spelling (0x10, 016)
+	if (cfgKeepsVirtual(Section, Key, cfgdb.get_int(Section, Key, 0) == Int))
+		return;
 	char str[32];
 	sprintf(str, "%d", Int);
 	cfgSaveStr(Section, Key, str);
@@ -168,6 +188,9 @@ s32 cfgLoadInt(const wchar * Section, const wchar * Key,s32 Default)
 
 void  cfgSaveBool(const wchar * Section, const wchar * Key, bool BoolValue)
 {
+	// compared as a bool: the command line may have it as 1, true or on
+	if (cfgKeepsVirtual(Section, Key, cfgdb.get_bool(Section, Key, false) == BoolValue))
+		return;
 	cfgSaveStr(Section, Key, BoolValue ? "yes" : "no");
 }
 
@@ -183,6 +206,12 @@ bool  cfgLoadBool(const wchar * Section, const wchar * Key,bool Default)
 void cfgSetVirtual(const wchar * Section, const wchar * Key, const wchar * String)
 {
 	cfgdb.set(string(Section), string(Key), string(String), true);
+}
+
+// From here on the config file is left as it is: what a cfgSave* sets is there for the run and never written
+void cfgSetReadOnly()
+{
+	save_config = false;
 }
 
 void cfgSetGameId(const char *id)

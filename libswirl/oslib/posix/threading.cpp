@@ -45,6 +45,7 @@ void SleepMs(unsigned count) {
 cResetEvent::cResetEvent() {
 	pthread_mutex_init(&mutx, NULL);
 	pthread_cond_init(&cond, NULL);
+	state = false;	// not signalled: the first Wait() waits for a Set()
 }
 cResetEvent::~cResetEvent() {
 }
@@ -98,7 +99,8 @@ bool cResetEvent::Wait(unsigned msec)//Wait for signal , then reset
 void cResetEvent::Wait()//Wait for signal , then reset
 {
 	pthread_mutex_lock( &mutx );
-	if (!state)
+	// pthread_cond_wait may return without a signal: only a Set() ends the wait
+	while (!state)
 	{
 		pthread_cond_wait( &cond, &mutx );
 	}

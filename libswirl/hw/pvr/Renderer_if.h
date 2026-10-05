@@ -35,6 +35,7 @@ struct rendererbackend_t {
 	string desc;
 	int priority;
 	Renderer* (*create)(u8* vram);
+	bool headless = false;	// works without a GL context: what it presents goes to runctl_present
 };
 
 struct Renderer

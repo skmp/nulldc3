@@ -92,7 +92,8 @@ u8* generic_fault_handler ()
 
 	fault_printf("generic_fault_handler\n");
 	
-	if (virtualDreamcast->HandleFault(trap_si_addr, &ctx))
+	// a fault before there is a machine is nobody's to handle
+	if (virtualDreamcast && virtualDreamcast->HandleFault(trap_si_addr, &ctx))
 	{
 		fault_printf("generic_fault_handler: final pc: %p, trap pc: %p\n", ctx.pc, trap_pc);
 		context_to_segfault(&ctx);
@@ -137,28 +138,109 @@ naked void re_raise_fault()
     );
 }
 
+// A fault that is not a guest memory fault ends the process: a line on stderr, then the default action of the
+// signal (exit status 128 + signal, a core file where they are enabled).
+// Blocking here instead, so that a native debugger can be attached and set break_segfault, is opt-in:
+// NULLDC_FAULT_BLOCK=1 in the environment, or config:Debug.BlockOnFault=yes once the config is loaded.
 bool break_segfault = false;
-static void fatal_error()
-{
-    while(!break_segfault)
-    {
-        printf("fault_handler: Blocking before restoring default SIGSEGV handler\n");
-        sleep(1);
-    }
 
-    signal(SIGSEGV, SIG_DFL);
+// Written by the thread of main only, while the emulator starts: from the environment before it has created a
+// thread, from the config key before the emulator thread exists. Read by the signal handlers, on whichever
+// thread faults.
+static bool fault_blocks = false;
+
+void common_linux_fault_block(bool block)
+{
+	fault_blocks = block;
 }
+
+static const char* fault_signal_name(int sn)
+{
+	switch (sn)
+	{
+	case SIGSEGV: return "SIGSEGV";
+	case SIGBUS: return "SIGBUS";
+	case SIGILL: return "SIGILL";
+	default: return "signal";
+	}
+}
+
+// A signal that was sent to the process or to one of its threads (kill, tgkill, raise, sigqueue) is not a fault of
+// the instruction it interrupts, and it has no fault address: si_addr shares its storage with the pid and the uid of
+// the sender. Linux gives such a signal a si_code of 0 or below, and a positive one to what the kernel raises for a
+// fault.
+static bool signal_was_sent(const siginfo_t* si)
+{
+#if HOST_OS == OS_LINUX
+	return si->si_code <= 0;
+#else
+	return false;
+#endif
+}
+
+static void fatal_error(int sn, siginfo_t* si, void* segfault_ctx)
+{
+	bool sent = signal_was_sent(si);
+	const char* action = fault_blocks ? "blocking for a debugger" : "terminating";
+
+	// stdio may be what faulted, or hold its lock: the line is formatted here and written with write()
+	char line[256];
+	int len;
+	if (sent)
+		len = snprintf(line, sizeof(line), "fault_handler: %s sent by pid %d (si_code %d), not a fault: %s\n",
+			fault_signal_name(sn), (int)si->si_pid, si->si_code, action);
+	else
+		len = snprintf(line, sizeof(line), "fault_handler: unhandled %s at address %p, pc %p, not a guest memory fault: %s\n",
+			fault_signal_name(sn), si->si_addr, (void*)segfault_get_pc(segfault_ctx), action);
+	if (len > (int)sizeof(line) - 1)
+		len = sizeof(line) - 1;
+	if (write(STDERR_FILENO, line, len) < 0) { }
+
+	if (fault_blocks)
+	{
+		while(!break_segfault)
+		{
+			printf("fault_handler: Blocking before restoring default %s handler\n", fault_signal_name(sn));
+			sleep(1);
+		}
+	}
+
+	signal(sn, SIG_DFL);
+
+	// The signal is blocked while its handler runs and is delivered when the handler returns. Without it a
+	// signal that was sent, not caused by the instruction the handler returns to, would be lost. A fault that
+	// blocked for a debugger is left to come again from its instruction, where the debugger then stands.
+	if (!fault_blocks || sent)
+		raise(sn);
+}
+
+#if HOST_OS != OS_DARWIN
+// SIGBUS and SIGILL are never a guest memory fault here
+static void fatal_signal_handler(int sn, siginfo_t* si, void* segfault_ctx)
+{
+	fatal_error(sn, si, segfault_ctx);
+}
+#endif
 
 static void fault_handler (int sn, siginfo_t * si, void *segfault_ctx)
 {
 	fault_printf("fault_handler: thread: %p si_addr:%p trap_ptr_fault: %p\n", (void*)pthread_self(), si->si_addr, trap_ptr_fault);
+
+	// Never a guest memory fault. Taken for one, the instruction it interrupted would run again without a fault:
+	// the signal would be lost, and the next guest memory fault refused for it.
+	if (signal_was_sent(si))
+	{
+		fatal_error(sn, si, segfault_ctx);
+		return;
+	}
 
 	if ((unat)si->si_addr == (unat)trap_ptr_fault)
 	{
 		if (!in_handler) {
 			fault_printf("fault_handler: !in_handler\n");
 
-            fatal_error();
+            fatal_error(sn, si, segfault_ctx);
+            return;
 		}
 
 		segfault_load(segfault_ctx);
@@ -174,7 +256,8 @@ static void fault_handler (int sn, siginfo_t * si, void *segfault_ctx)
 		{
 			fault_printf("fault_handler: double fault\n");
 
-            fatal_error();
+            fatal_error(sn, si, segfault_ctx);
+            return;
 		}
 		
 		in_handler = true;
@@ -183,7 +266,7 @@ static void fault_handler (int sn, siginfo_t * si, void *segfault_ctx)
 		{
 			fault_printf("fault_handler: trap not handled\n");
 
-            fatal_error();
+            fatal_error(sn, si, segfault_ctx);
 		}
 		else 
 		{
@@ -239,6 +322,9 @@ static void install_fault_handler(void)
 
 	auto libc_sigaction = get_sigaction();
 
+	const char* block = getenv("NULLDC_FAULT_BLOCK");
+	fault_blocks = block != nullptr && block[0] != 0 && block[0] != '0';
+
 	libc_sigaction(SIGSEGV, &act, &segv_oact);
 #if HOST_OS == OS_DARWIN
     //this is broken on osx/ios/mach in general
@@ -246,11 +332,16 @@ static void install_fault_handler(void)
     
     act.sa_sigaction = sigill_handler;
     libc_sigaction(SIGILL, &act, &segv_oact);
+#else
+	act.sa_sigaction = fatal_signal_handler;
+	libc_sigaction(SIGBUS, &act, &segv_oact);
+	libc_sigaction(SIGILL, &act, &segv_oact);
 #endif
 }
 #else  // !defined(TARGET_NO_EXCEPTIONS)
 // No exceptions/nvmem dummy handlers.
 void install_fault_handler(void) {}
+void common_linux_fault_block(bool block) {}
 #endif // !defined(TARGET_NO_EXCEPTIONS)
 
 #include <errno.h>

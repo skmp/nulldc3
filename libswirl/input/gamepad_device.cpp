@@ -103,6 +103,7 @@ bool GamepadDevice::gamepad_btn_input(u32 code, bool pressed)
 			if (pressed) {
 				refsw2_do_dump = true;
 			}
+			break;
 		}
 		case EMU_BTN_TRIGGER_LEFT:
 			lt[_maple_port] = pressed ? 255 : 0;

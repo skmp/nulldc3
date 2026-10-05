@@ -16,6 +16,7 @@ extern u32 FrameCount;
 #include "hw/pvr/pvr_regs.h"
 #include "hw/pvr/pvr_mem.h"
 #include "rend/TexCache.h"
+#include "utils/run_control.h"
 
 #include <set>
 
@@ -288,6 +289,10 @@ struct refmisterrend : Renderer
             }
             break;
         }
+
+        // without a GL context the frame is done here
+        if (runctl_present(pb.data(), width, SPG_CONTROL.interlace ? height * 2 : height))
+            return;
         
 	// TODO softrend without X11 (SDL f.e.)
     //die("Softrend doesn't know how to update the screen");
@@ -337,5 +342,5 @@ struct refmisterrend : Renderer
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 };
-static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refmister", "mister prototyping", 3, [](u8* vram) { return (Renderer*) new refmisterrend(vram); } });
+static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refmister", "mister prototyping", 3, [](u8* vram) { return (Renderer*) new refmisterrend(vram); }, true });
 #endif
