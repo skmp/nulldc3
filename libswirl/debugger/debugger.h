@@ -362,6 +362,9 @@ extern u32 dbg_sh4_stepout;
 // Returns non-zero to stop: it has latched the stop as dbg_sh4_Check does; nothing is owed, the block was
 // charged in full. The caller leaves its loop at once; for an RTE it first makes the UpdateINTC() call it
 // would have made (under the latch that call accepts nothing and leaves the acceptance owed).
+// The report can stop behind the block that used the slice up, before the loop tested its counter: a Loop()
+// entered with a slice counter that is not positive and no remainder to run does the end-of-slice work
+// before its first block (hw/sh4/sh4_if.h).
 extern "C" u32 DYNACALL dbg_sh4_CheckFlow(u32 flow);
 
 // From Do_Interrupt and Do_Exception, on every call: an interrupt or exception is being accepted (TRAPA

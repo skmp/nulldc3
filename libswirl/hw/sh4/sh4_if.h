@@ -425,11 +425,16 @@ s32 rcb_poffs(T* ptr)
 enum {
 	// Breakpoint checks, Step() and the flow reports of a step-out are implemented: the debugger checks
 	// (debugger/debugger.h) are made by this backend's own code, in front of the instructions the debugger
-	// armed. Without it the debugger runs breakpoints and steps on the interpreter fallback (sh4_dbg.h).
+	// armed. A JIT without it gets its breakpoints and steps from the interpreter fallback (sh4_dbg.h).
 	SH4DBG_NATIVE = 1,
 
-	// Sh4cntx is complete, pc included, whenever the backend calls UpdateSystem(). Without it the context is
-	// complete only after Loop() returned.
+	// Sh4cntx is complete, pc included, whenever the backend calls UpdateSystem(): at a slice end, and from the
+	// SLEEP handler inside a block (a JIT that sets the bit closes every span, the FP registers included, in
+	// front of the SLEEP fallback). Without it the context is complete only after Loop() returned.
+	// A backend states the bit itself when it meets all of this; none does by default, and the interpreter and
+	// the x64 JIT do once they implement the debugger support of this header. Whatever reads SH4 state inside
+	// UpdateSystem() reads it only under the bit (the debugger's slice hook, the sound regression harness), so
+	// its output for a backend changes at the point where that backend starts to report the bit.
 	SH4DBG_CTX_AT_SLICE = 2,
 };
 
@@ -446,6 +451,9 @@ struct SuperH4Backend {
 
         The slice counter is the number of cycles left until the next UpdateSystem(). A backend with
         SH4DBG_NATIVE keeps it when Loop() returns and continues from it when Loop() or Step() is entered again.
+        A Loop() entered with a counter that is not positive and no remainder to run (dbg_sh4_TakeRemainder,
+        debugger/debugger.h: a flow report stopped behind the block that used the slice up) does the
+        end-of-slice work before its first block. After a remainder it tests the counter as after any block.
     */
 
     // SH4DBG_* bits. Constant for the life of the backend.
@@ -465,7 +473,10 @@ struct SuperH4Backend {
     // sh4_sched_now64() + SH4_TIMESLICE - SliceCyclesLeft(). 0 when the backend does not expose it.
     virtual int  SliceCyclesLeft()                        { return 0; }
 
-    // Sets the slice counter to SH4_TIMESLICE. From SuperH4_impl::Reset only.
+    // Sets the slice counter(s) of this backend to SH4_TIMESLICE; a JIT also the one of the interpreter
+    // fallback (sh4_dbg.h). Called by SuperH4_impl for a machine reset: in Reset() on the installed backend,
+    // and after a setBackend() that follows a Reset() which no emulator thread has run since (StartGame resets
+    // while Init()'s interpreter is installed; dc_run installs the configured backend afterwards).
     virtual void ResetSlice()                             { }
 
     // Discards every compiled block that overlaps the 4 KiB page of the guest address, in every mirror of
