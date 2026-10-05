@@ -274,30 +274,29 @@ extern "C" u32 DYNACALL dbg_sh4_Check(u32 pc, u32 refund, u32 block_end)
 			return 0;
 	}
 
+	// Nothing stops while the category of the listed breakpoints is not active and no temporary breakpoint
+	// exists: the arrivals of a muted session cost a call and a test
+	if (temp_count == 0 && !(active_mask & dbg::CategoryBit(dbg::Category::Sh4)))
+		return 0;
+
 	dbg::StopCause cause;
 	u32 id;
 
-	bool pc_armed = IsArmedKey(key);
-
-	if (!pc_armed || !Evaluate(key, &cause, &id))
+	if (!Evaluate(key, &cause, &id))
 	{
-		// A delayed branch is checked for its slot as well. When the pc is not armed itself the check is there
-		// for the slot; when it is, the opcode says whether there is one.
-		u32 slot_key = dbg::sh4::MaskAddr(pc + 2);
-
-		if (!IsArmedKey(slot_key))
+		// A delayed branch is checked for its slot as well
+		if (!Evaluate(dbg::sh4::MaskAddr(pc + 2), &cause, &id))
 			return 0;
 
-		if (pc_armed)
+		// When the pc is not armed itself the check is there for the slot. When it is, the opcode says
+		// whether the instruction has one.
+		if (IsArmedKey(key))
 		{
 			u16 op;
 
 			if (!ReadOpcode(pc, &op) || !HasSlot(op))
 				return 0;
 		}
-
-		if (!Evaluate(slot_key, &cause, &id))
-			return 0;
 	}
 
 	Ctx().pc = pc;
