@@ -63,7 +63,11 @@ test starts. Headless, nothing else plays the host.
 `window_checklist.sh <devcast> <work dir>` does at the window of the emulator what a person does there, once
 with the emulator thread parked and once with a pause asked for all the time (the sessions `emuwin.parked` and
 `emuwin.pending`): the menu key and the buttons of the menu (Save State, Load State, Restart, Resume, Exit), the
-escape key, and the close button of the window. Then it reads the title of the window at two stops of one
+escape key, and the close button of the window. Then two actions that the window finds in one pass over its
+events, the second while the machine is on its way to the stop of the first: the close button twice, and the
+escape key with the close button behind it, with the guest running (`emuwin.running`), parked and with a pause
+asked for all the time; a guest that is stopped while it runs in these sessions has a frame queued for the
+window, as a program that draws has at most moments. Then it reads the title of the window at two stops of one
 thread, with the guest running in between (`emuwin.twice`), and has the window closed in the moment in which
 the guest resets the machine, ten times (`emuwin.closereset`, which does what the window does for its close
 button as soon as it finds the cpu stopped for the reset). It needs a display (`DISPLAY`, default `:0`) and `xsend`, which

@@ -8,6 +8,11 @@
 #   run 2   the escape key, twice; then the close button
 #   run 3   the close button, with nothing before it
 #
+# then two actions in one batch of events, the second while the machine is on its way to the stop of the first:
+# the close button twice, and the escape key with the close button behind it. Several runs each, with the guest
+# running (session emuwin.running), parked and with a pause asked for all the time; a guest that is stopped
+# while it runs has a frame queued for the window, as a program that draws has at most moments;
+#
 # then, with a window as well, the session emu.reset (a reset of the guest while parked and with a pause pending),
 # a guest that returns to the BIOS (sessions emuwin.exit, emuwin.exitpending): the thread ends, the window
 # stays; the title of the window at two stops of one thread (session emuwin.twice); and the close button in the
@@ -74,7 +79,7 @@ start() {
 
 	case "$session" in
 	parked)  wait_line 30 'SelfTest: emuwin.parked: ok: parked: "pause"' ;;
-	pending) wait_line 30 'the guest runs from here' ;;
+	pending|running) wait_line 30 'the guest runs from here' ;;
 	twice)   wait_line 30 'the first stop; the guest runs on in a while' ;;
 	closereset) wait_line 30 'the guest is about to reset the machine' ;;
 	*)       wait_line 30 'the guest is about to return to the BIOS' ;;
@@ -203,6 +208,30 @@ checklist() {
 	fi
 }
 
+# twice <session> <runs>: two actions of the host that the window finds in one pass over its events. The first
+# stops the machine; the second comes while the emulator thread is on its way out and has frames queued for
+# the window to draw
+twice() {
+	local i
+
+	session=$1
+	for i in $(seq 1 $2); do
+		if start close2-$i; then
+			"$xsend" close2 $win
+			the_end "run $i: the close button twice in a row ends the process, without a hang"
+		else
+			stop_now
+		fi
+
+		if start keyclose-$i; then
+			"$xsend" keyclose $win $KEY_ESC
+			the_end "run $i: the escape key and the close button in a row end the process, without a hang"
+		else
+			stop_now
+		fi
+	done
+}
+
 # reset_and_exit: with a window, a reset of the guest and an exit of the guest
 reset_and_exit() {
 	# the session emu.reset: the reset register while parked, with a pause pending, resets by calls
@@ -284,6 +313,9 @@ close_in_reset() {
 
 checklist parked
 checklist pending
+twice running 3
+twice parked 3
+twice pending 10
 reset_and_exit
 title_twice
 close_in_reset

@@ -27,7 +27,8 @@
 	  emuhang.*  the emulator thread stays parked: no Exit.* key ends a run whose emulated time stands still
 	  emuwin.*   for a run with a window, which a person or tests/debugger/selftest/window_checklist.sh works
 	             the keys, the close button and the menu of: the emulator thread is kept parked, or with a
-	             pause pending, and every state that is published is printed
+	             pause pending, or left running, and every state that is published is printed. A guest that
+	             is stopped while it runs leaves a frame queued for the window, as a program that draws does
 
 	Checks are counted in sums where a test repeats something thousands of times: one line says how often a
 	property held.
@@ -240,6 +241,7 @@ enum ProbeMode {
 	PROBE_PAUSE_WHEN_STOPPING,		// asks for a pause in the slice in which the machine stopped its cpu
 	PROBE_EVENT_HOST_STOP,			// raises the event once outside a SLEEP wait, and has the host stop the machine in
 									// that slice
+	PROBE_FRAME_WHEN_STOPPING,		// queues a frame for the window in the slice in which the machine stopped its cpu
 };
 
 // Counts the machines of the session: a scheduler callback belongs to the machine it was registered with
@@ -358,6 +360,19 @@ int ProbeTick(void*, int, int, int)
 				probe.stopSawRunning = sh4_cpu->IsRunning();
 				probe.stopSawLatch = g_stop_latched;
 			});
+		}
+		break;
+
+	case PROBE_FRAME_WHEN_STOPPING:
+		if (!c.CpuRunning && !probe.asked)
+		{
+			probe.asked = true;
+
+			// A guest that draws has a frame on its way to the window at most moments; here the thread leaves
+			// with one for certain. Behind the frames of the guest, and with nothing to draw or to swap: what
+			// counts is that the window has a frame to take while the emulator thread is on its way out
+			g_GUIRenderer->WaitQueueEmpty();
+			g_GUIRenderer->QueueEmulatorFrame([] { return false; });
 		}
 		break;
 
@@ -3501,6 +3516,7 @@ DBG_SELFTEST_GUEST(emuwin_pending, "emuwin.pending")
 			return false;
 
 		Goto(EMU_G_busy_tmu);
+		ProbeMode_(PROBE_FRAME_WHEN_STOPPING, 0);
 		phase = 1;
 		seen_mode = SEEN_PRINT_CHANGES;
 
@@ -3523,6 +3539,30 @@ DBG_SELFTEST_GUEST(emuwin_pending, "emuwin.pending")
 	}
 
 	Resume();
+	return false;
+}
+
+// The guest runs, and the debugger leaves it alone
+DBG_SELFTEST_GUEST(emuwin_running, "emuwin.running")
+{
+	static int phase;
+
+	if (phase == 0)
+	{
+		if (!Ready(stop))
+			return false;
+
+		Goto(EMU_G_busy_tmu);
+		ProbeMode_(PROBE_FRAME_WHEN_STOPPING, 0);
+		phase = 1;
+		seen_mode = SEEN_PRINT_ALL;
+
+		Check(stop.lifetime == Lifetime::Parked, "the guest runs from here, and nothing stops it");
+		Resume();
+		return false;
+	}
+
+	Check(false, "the emulator thread parked (\"%s\") where nothing should have stopped the guest", StopCauseName(stop.cause));
 	return false;
 }
 

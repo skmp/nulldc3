@@ -7,6 +7,8 @@
 	    xsend key <window> <keycode>     a key pressed and released (keycodes of the X server: 23 Tab, 9 Escape)
 	    xsend click <window> <x> <y>     the left button pressed and released at a point of the window
 	    xsend close <window>             the close button of the window manager
+	    xsend close2 <window>            the close button twice, both in one batch of events
+	    xsend keyclose <window> <keycode>   a key pressed and the close button, both in one batch of events
 	    xsend title <window>             prints the name of the window
 	    xsend size <window>              prints its width and height
 
@@ -58,7 +60,7 @@ int main(int argc, char** argv)
 {
 	if (argc < 2 || (argc < 3 && strcmp(argv[1], "list") != 0))
 	{
-		fprintf(stderr, "usage: xsend list | key <window> <keycode> | click <window> <x> <y> | close <window> | title <window> | size <window>\n");
+		fprintf(stderr, "usage: xsend list | key <window> <keycode> | click <window> <x> <y> | close <window> | close2 <window> | keyclose <window> <keycode> | title <window> | size <window>\n");
 		return 2;
 	}
 
@@ -139,18 +141,36 @@ int main(int argc, char** argv)
 		e.type = ButtonRelease;
 		XSendEvent(display, w, False, ButtonReleaseMask, &e);
 	}
-	else if (strcmp(what, "close") == 0)
+	else if (strcmp(what, "close") == 0 || strcmp(what, "close2") == 0 || (strcmp(what, "keyclose") == 0 && argc == 4))
 	{
 		XEvent e;
 
-		memset(&e, 0, sizeof(e));
-		e.type = ClientMessage;
-		e.xclient.window = w;
-		e.xclient.message_type = XInternAtom(display, "WM_PROTOCOLS", False);
-		e.xclient.format = 32;
-		e.xclient.data.l[0] = (long)XInternAtom(display, "WM_DELETE_WINDOW", False);
-		e.xclient.data.l[1] = CurrentTime;
-		XSendEvent(display, w, False, NoEventMask, &e);
+		/* Nothing is flushed between the events: the window finds them together, in one pass over its queue */
+		if (strcmp(what, "keyclose") == 0)
+		{
+			memset(&e, 0, sizeof(e));
+			e.type = KeyPress;
+			e.xkey.display = display;
+			e.xkey.window = w;
+			e.xkey.root = attr.root;
+			e.xkey.subwindow = None;
+			e.xkey.time = CurrentTime;
+			e.xkey.same_screen = True;
+			e.xkey.keycode = (unsigned int)atoi(argv[3]);
+			XSendEvent(display, w, False, KeyPressMask, &e);
+		}
+
+		for (int i = 0; i < (strcmp(what, "close2") == 0 ? 2 : 1); i++)
+		{
+			memset(&e, 0, sizeof(e));
+			e.type = ClientMessage;
+			e.xclient.window = w;
+			e.xclient.message_type = XInternAtom(display, "WM_PROTOCOLS", False);
+			e.xclient.format = 32;
+			e.xclient.data.l[0] = (long)XInternAtom(display, "WM_DELETE_WINDOW", False);
+			e.xclient.data.l[1] = CurrentTime;
+			XSendEvent(display, w, False, NoEventMask, &e);
+		}
 	}
 	else if (strcmp(what, "title") == 0)
 	{
