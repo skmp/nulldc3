@@ -9,11 +9,18 @@
 #include <functional>
 #include "debugger.h"
 
+#if !defined(NULLDC_DEBUGGER)
+#error dbg_emu.h is for debugger sources: NULLDC_DEBUGGER is not defined
+#endif
+
 /*
 	dbg::emu: the debugger on the emulator thread — lifetime, the call queue, the slice hook, the stop latch,
 	the park loop and the sequencing of run control (dbg_emu.cpp) — and the types every debugger module
 	shares. Debugger sources include this header; emulator code includes debugger.h, which has the threads,
 	the lifetime states and the contexts this header refers to.
+
+	This header and those that include it (dbg_sh4.h, dbg_core.h, dbg_mem.h, dbg_callstack.h, dbg_selftest.h)
+	exist only in builds with NULLDC_DEBUGGER: debugger.h has stand-ins for a build without it, these have none.
 */
 
 namespace dbg {

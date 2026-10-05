@@ -11,6 +11,8 @@
 /*
 	dbg::symbols: the symbols of the ELF that reios loaded (dbg_symbols.cpp). It reads the .symtab of the
 	image itself and links without the emulator; this header uses <cstdint> names for that reason.
+	A source that is built without the emulator includes neither debugger.h nor dbg_emu.h: without
+	NULLDC_DEBUGGER debugger.h has an empty stand-in for OnElfLoaded(), which is not the function below.
 
 	There is one table for the SH4. Addresses are compared by their low 29 bits, as SH4 code addresses are in
 	builds without MMU. The table has no lock: OnElfLoaded() is called on (E), everything else on (E) or on a

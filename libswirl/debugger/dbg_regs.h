@@ -10,7 +10,8 @@
 /*
 	dbg::regs: the device tree. The tables (dbg_regs_tables.cpp) are constant and link without the emulator;
 	the readers and writers (dbg_regs.cpp) do not. This header uses <cstdint> names so that the tables build
-	on their own; uint32_t is the tree's u32.
+	on their own; uint32_t is the tree's u32. A source that is built without the emulator includes neither
+	debugger.h nor dbg_emu.h.
 
 	The tree is a flat list of nodes; each names the node it is shown under. A node carries registers (name,
 	width), the events it lists and the panels it offers. Clients take structure and names from
