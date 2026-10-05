@@ -83,9 +83,6 @@ struct DiffKnown
 static const char known_fd[] =
 	"SR.FD=1: the interpreter notifies \"Full MMU support needed\" where the FPU disable exception would be raised and "
 	"executes the instruction, the dynarec executes it without looking at SR.FD";
-static const char known_rte[] =
-	"RTE: the dynarec loads SR from SSR in front of the delay slot, which then runs on the register bank of the new SR. "
-	"The interpreter runs it on the bank of the old SR";
 static const char known_sum_order[] =
 	"sum of 4 products: the interpreter adds them one by one, ((p0 + p1) + p2) + p3, the x64 backend in pairs, "
 	"(p0 + p1) + (p2 + p3). Every sum is rounded, and saturates when rounding to zero";
@@ -96,7 +93,6 @@ static const char known_ftrc_nan[] =
 static const DiffKnown known[] =
 {
 	{ 0, SSP_FPU, DK_NOTIFY, known_fd },
-	{ "0000000000101011_sz0_pr0", 0, DK_STATE, known_rte },
 	{ "1111nn0111111101_sz0_pr0", 0, DK_STATE, known_sum_order },
 	{ "1111nnmm11101101_sz0_pr0", 0, DK_STATE, known_sum_order },
 	{ "1111mmmm00111101_sz0_pr0", 0, DK_STATE, known_ftrc_nan },

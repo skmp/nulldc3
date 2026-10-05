@@ -3,8 +3,9 @@
 	0xFFFFFFFF, 0x7FFFFFFF, 0x80000000) with T clear and set, and the delayed branches with a delay slot that
 	changes what the branch uses: T, the register it jumps through, PR. The single-step vectors are random and
 	have none of these: no ADDC whose sum is 0xFFFFFFFF with T set, for one, and add r1,r1 in every delay slot,
-	which leaves T and PR as they are. And the loads of FPSCR, which the single-step vectors expect to store bits
-	that the register does not have.
+	which leaves T and PR as they are. And what the single-step vectors expect another way than an SH4 does it:
+	the loads of FPSCR (they store bits that the register does not have) and RTE to the other register bank (they
+	run the delay slot on the bank of the old SR).
 
 	sh4_directed_gen <dir> writes vector files in the format of the single-step vectors and under their file
 	names (ss_format.h), so the suites run them as they run those and the policy table applies as it is. A vector
@@ -39,6 +40,8 @@
 #define OP_MOV_R4_R3 0x6343
 #define OP_LDS_R4_PR 0x442A
 #define OP_STS_PR_R5 0x052A
+#define OP_MOV_R0_R8 0x6803
+#define OP_MOVT_R8 0x0829
 
 struct Case
 {
@@ -471,6 +474,46 @@ static const Jump jumps[] =
 	{ "0000mmmm00000011_sz0_pr0", 0x0303, OP_LDS_R4_PR, JUMP_OFFSET, JUMP_RETURN + JUMP_OFFSET, JUMP_OFFSET, JUMP_R5,     JUMP_R4 },
 };
 
+//// RTE: SR = SSR and PC = SPC, then the delay slot. The delay slot runs with the SR that is restored: S, T, M, Q,
+//// FD, BL and RB are used after modification, only its instruction fetch uses the MD of before (SH7091 hardware
+//// manual 7.1, Delayed Branches; "SR = SSR; PC = SPC; Delay_Slot(temp + 2);" in the programming manual).
+//// A console's delay slot reads R0 of the new bank and the new T (shrike4-rtl,
+//// tools/hw/exceptions-intc/results_run1.txt, rte_slot_rb and rte_slot_t). The instruction is at PC_BASE + 2, its
+//// delay slot copies R0 or T into r8
+
+struct Rte
+{
+	u32 sr;				//SR going in
+	u32 ssr;
+	u32 spc;
+	u16 slot;			//OP_MOV_R0_R8 or OP_MOVT_R8
+	u32 r8_after;
+};
+
+#define SR_RB 0x20000000
+
+#define RTE_TARGET 0x8C0F2000
+#define RTE_USER_TARGET 0x0C0F2000	//user mode cannot fetch from P1
+#define RTE_R0 0xA0A00000			//R0 of the bank RTE is entered with (base_state())
+#define RTE_R0_BANK 0xB0B00000		//R0 of the other bank
+
+static const Rte rtes[] =
+{
+	//R0 in the delay slot is R0 of the bank SSR selects
+	//SR in            SSR         SPC              slot          r8 after
+	{ SR_BASE,         0x700000F0, RTE_TARGET,      OP_MOV_R0_R8, RTE_R0_BANK },	//bank 0 -> 1
+	{ SR_BASE | SR_RB, 0x500000F0, RTE_TARGET,      OP_MOV_R0_R8, RTE_R0_BANK },	//bank 1 -> 0
+	{ SR_BASE | SR_RB, 0x700000F0, RTE_TARGET,      OP_MOV_R0_R8, RTE_R0 },			//stays
+	{ SR_BASE,         0x500000F0, RTE_TARGET,      OP_MOV_R0_R8, RTE_R0 },
+	{ SR_BASE | SR_RB, 0x000000F0, RTE_USER_TARGET, OP_MOV_R0_R8, RTE_R0_BANK },	//to user mode: bank 0
+
+	//T in the delay slot is the T of SSR
+	{ SR_BASE,         0x500000F1, RTE_TARGET,      OP_MOVT_R8,   1 },
+	{ SR_BASE | FT,    0x500000F0, RTE_TARGET,      OP_MOVT_R8,   0 },
+	{ SR_BASE,         0x700000F1, RTE_TARGET,      OP_MOVT_R8,   1 },				//with the bank
+	{ SR_BASE | SR_RB | FT, 0x500000F0, RTE_TARGET, OP_MOVT_R8,   0 },
+};
+
 //// LDS Rm,FPSCR and LDS.L @Rm+,FPSCR: FPSCR has 22 bits (FR SZ PR DN, cause, enable, flag, RM), the 10 above them
 //// read 0 and are not written. A console reads 003FFFFF back after it loaded FFFFFFFF (shrike4-rtl,
 //// tools/hw/exceptions-intc/results_run1.txt, "A masks"). FR selects the FP bank: loading another FR than the
@@ -635,6 +678,42 @@ static void make_jump_vector(const Jump& j, SsTest& t)
 	end_vector(t, j.next);
 }
 
+//R0-R7 are banked by SR.RB in privileged mode, user mode has bank 0
+static bool sr_bank(u32 sr)
+{
+	return (sr & 0x60000000) == 0x60000000;
+}
+
+static void make_rte_vector(const Rte& r, SsTest& t)
+{
+	begin_vector(t);
+
+	t.initial.s.SR = r.sr;
+	t.initial.s.SSR = r.ssr;
+	t.initial.s.SPC = r.spc;
+
+	t.final_.s = t.initial.s;
+
+	t.final_.s.SR = r.ssr;
+
+	//R is the bank that is active, R_ the other one
+	if (sr_bank(r.sr) != sr_bank(r.ssr))
+	{
+		for (u32 i = 0; i < 8; i++)
+		{
+			t.final_.s.R[i] = t.initial.s.R_[i];
+			t.final_.s.R_[i] = t.initial.s.R[i];
+		}
+	}
+
+	t.final_.s.R[8] = r.r8_after;
+
+	t.opcodes.op[SS_TEST_INSTRUCTION] = 0x002B;
+	t.opcodes.op[SS_TEST_INSTRUCTION + 1] = r.slot;
+
+	end_vector(t, r.spc);
+}
+
 static void make_fpscr_vector(const FpscrLoad& l, SsTest& t)
 {
 	begin_vector(t);
@@ -712,6 +791,15 @@ int main(int argc, char** argv)
 
 		make_jump_vector(jumps[j], t);
 		files[jumps[j].file].push_back(t);
+		vectors++;
+	}
+
+	for (size_t r = 0; r < sizeof(rtes) / sizeof(rtes[0]); r++)
+	{
+		SsTest t;
+
+		make_rte_vector(rtes[r], t);
+		files["0000000000101011_sz0_pr0"].push_back(t);
 		vectors++;
 	}
 

@@ -13,8 +13,8 @@ Measured on x86-64 (GCC 13, a CPU with SSE3 and FMA, without AVX-512), x64 backe
 | | vectors |
 |---|---|
 | run | 91,989 |
-| identical | 79,039 |
-| different | 12,325 (crash 0, path 0, bus 0, state 442, notify 11,883) |
+| identical | 79,220 |
+| different | 12,144 (crash 0, path 0, bus 0, state 261, notify 11,883) |
 | both-crash | 625 |
 | both-notify | 0: no vector on which both engines carry on from a notification of the emulator code |
 | native | 76,038: the instruction under test is native code in the dynarec. 35 files have none |
@@ -26,19 +26,10 @@ A vector with more than one difference is counted under the first of crash, path
 
 | file | instruction | kind | vectors | cause |
 |---|---|---|---|---|
-| `0000000000101011` | RTE | state | 181 | delay slot register bank |
 | `1111nn0111111101` | FTRV XMTRX,FVn | state | 196 | order of the sum of products |
 | `1111nnmm11101101` | FIPR FVm,FVn | state | 64 | order of the sum of products |
 | `1111mmmm00111101` | FTRC FRm,FPUL | state | 1 | NaN operand |
 | 66 files, every FPU instruction | | notify | 11,883 | SR.FD is only looked at by the interpreter |
-
-**RTE, delay slot register bank.** The dynarec's decoder (`sh4dec(i0000_0000_0010_1011)`, `hw/sh4/dyna/decoder.cpp`)
-emits SR = SSR and `shop_sync_sr` (`UpdateSR`, which swaps the R0-R7 banks) in front of the delay slot. The
-interpreter (`hw/sh4/interpr/sh4_opcodes.cpp`) sets SR, executes the delay slot and calls `UpdateSR` after it. When
-the bank selected by SSR is not the one RTE is entered with, the `add r1,r1` of the delay slot doubles R1 of the new
-bank in the dynarec and R1 of the old bank in the interpreter: R1 and R1_BANK differ, nothing else does. The
-interpreter's own comment quotes the manual on it: RB after modification is used for the delay slot instruction,
-which is what the dynarec does. The single-step vectors expect what the interpreter does.
 
 **FTRV and FIPR, order of the sum of products.** The interpreter adds the four products one by one,
 `((p0 + p1) + p2) + p3` (`sh4_fpu.cpp`). The x64 backend multiplies with `mulps` and adds in pairs,
@@ -88,16 +79,15 @@ Same vectors, filter and comparison as `sh4.singlestep.interp`.
 
 | | interpreter | dynarec |
 |---|---|---|
-| run | 73,967 | 73,967 |
-| pass-exact | 73,473 | 73,338 |
-| pass-lenient | 73,632 | 73,516 |
-| failed | 335 (248 crash) | 451 (248 crash) |
+| run | 73,851 | 73,851 |
+| pass-exact | 73,357 | 73,338 |
+| pass-lenient | 73,516 | 73,516 |
+| failed | 335 (248 crash) | 335 (248 crash) |
 
 The files in which the dynarec passes fewer vectors than the interpreter:
 
 | file | instruction | run | interpreter exact / lenient | dynarec exact / lenient | cause |
 |---|---|---|---|---|---|
-| `0000000000101011` | RTE | 252 | 252 / 252 | 136 / 136 | delay slot register bank, above. The vectors expect the old bank |
 | `1111nn0111111101` | FTRV XMTRX,FVn | 242 | 95 / 211 | 85 / 211 | order of the sum of products, above |
 | `1111nnmm11101101` | FIPR FVm,FVn | 223 | 178 / 215 | 169 / 215 | order of the sum of products, above |
 
@@ -106,13 +96,14 @@ else the dynarec does not pass, the interpreter does not pass either (`tests/com
 
 ## sh4.directed.*
 
-The hand-written vectors of `tests/sh4_directed` (213 in 28 files). What they expect is the SH-4 software manual's
+The hand-written vectors of `tests/sh4_directed` (222 in 29 files). What they expect is the SH-4 software manual's
 description of the instruction. Both engines pass all of them, and `sh4.directed.differential` finds no difference.
 
 The delay slots: BSR, BSRF and JSR write PR in front of the delay slot (`sts pr,r5` in it reads the return address
 of the call, `lds r4,pr` in it is the later write and stays), RTS returns to the PR it is entered with (`lds r4,pr`
 in the delay slot), JMP, BRAF and BSRF go by the register they are entered with (`mov r4,r3` in the delay slot of a
-jump through R3), BT/S and BF/S test the T they are entered with.
+jump through R3), BT/S and BF/S test the T they are entered with, and the delay slot of RTE runs with the SR that
+RTE restores (`mov r0,r8` in it reads R0 of the new bank, `movt r8` the new T).
 
 ## Not measured on a console
 

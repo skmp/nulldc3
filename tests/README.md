@@ -32,7 +32,7 @@ way.
 | `sh4.singlestep.interp` | every single-step vector through the SH4 interpreter, gated on `sh4_singlestep/baseline.txt` | `vendor/sh4-tests` |
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
-| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses) | none |
+| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses, RTE with a delay slot that reads what it restores, loads of FPSCR) | none |
 | `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them, the host rounding mode of every FPSCR.RM | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | ADC, SBC and RSC at the edges with the carry clear and set, hand-written results | none |
@@ -97,6 +97,7 @@ an SH4 does not do are filtered, each with a reason:
 | `trapa-nop` | TRAPA, recorded as a nop |
 | `host-nan` | the instruction produces a NaN, or converts one with FTRC: the expected value is the host's |
 | `fpscr-bits` | the vector expects unimplemented FPSCR bits stored: LDS / LDS.L to FPSCR of a value with bits 22-31 set. An SH4 has the low 22 bits, the others read 0 |
+| `rte-bank` | RTE to the other register bank: the vector runs the delay slot on the bank of the old SR, an SH4 on the bank of the SR that RTE restores |
 
 Nothing else is skipped. The report has one line per file: total / run / pass-exact / pass-lenient / failed /
 filtered by reason, and a line for its notified vectors if it has any, then the totals and, for every file with
@@ -105,9 +106,8 @@ vectors that are not an exact pass, what its policy says about them.
 The FPU results in the vectors are host arithmetic. They are an oracle for the `fast` timing tier only, not for
 an exact FPU.
 
-Things the vectors do that devcast currently does as well, and that pass for that reason: the delay slot of RTE
-runs on the register bank of the old SR, SR.RB is forced to 0 when SR.MD=0, SLEEP is executed again until an
-interrupt arrives.
+Things the vectors do that devcast currently does as well, and that pass for that reason: SR.RB is forced to 0
+when SR.MD=0, SLEEP is executed again until an interrupt arrives.
 
 ### The baseline
 
@@ -167,6 +167,12 @@ vectors)
 * JMP @r3, BRAF r3 and BSRF r3 with `mov r4,r3` in the delay slot: they go by the r3 they are entered with,
 * JSR @r3, BSR and BSRF r3 with `sts pr,r5` in the delay slot: r5 gets the return address of the call,
 * JSR @r3, BSR and BSRF r3 with `lds r4,pr` in the delay slot: PR is left with what the delay slot loads.
+
+The delay slot of RTE runs with the SR that RTE restores: on its register bank, with its T. The single-step
+vectors that return to the other bank expect the `add r1,r1` of the delay slot on the old one (`rte-bank`, 116 of the
+252 that can be run). The file has RTE to the other bank, both ways and to user mode, and to the same bank, with
+`mov r0,r8` in the delay slot, and RTE to another T with `movt r8` in it (9 vectors): r8 gets R0 of the new bank and
+the new T, which is what a console's delay slot reads.
 
 All but one of the single-step vectors of LDS Rm,FPSCR and LDS.L @Rm+,FPSCR that can be run load a value with
 bits that FPSCR does not have, and expect them stored (`fpscr-bits`). The file has the loads instead (13 vectors):

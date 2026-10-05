@@ -27,7 +27,7 @@ static const SsFilePolicy policy[] =
 	{ "0000000000011001_sz0_pr0", "div0u", 0, 0, 0, 0 },
 	{ "0000000000011011_sz0_pr0", "sleep", 0, 0, PRIV, 0 },
 	{ "0000000000101000_sz0_pr0", "clrmac", 0, 0, 0, 0 },
-	{ "0000000000101011_sz0_pr0", "rte", 0, 0, PRIV, 0 },
+	{ "0000000000101011_sz0_pr0", "rte", 0, 0, PRIV | SSP_RTE, 0 },
 	{ "0000000000111000_sz0_pr0", "ldtlb", 0, 0, PRIV, 0 },
 	{ "0000000001001000_sz0_pr0", "clrs", 0, 0, 0, 0 },
 	{ "0000000001011000_sz0_pr0", "sets", 0, 0, 0, 0 },
@@ -331,6 +331,28 @@ static bool ftrc_of_nan(const SsFilePolicy& policy, const SsTest& test)
 	return is_nan32(fp[m]);
 }
 
+//R0-R7 are banked by SR.RB in privileged mode, user mode has bank 0
+static bool sr_bank(u32 sr)
+{
+	return (sr & 0x60000000) == 0x60000000;
+}
+
+//RTE to the other register bank, and the add r1,r1 of the delay slot is expected to have doubled R1 of the bank
+//RTE is entered with. After the change that bank is the inactive one, R_ in a vector
+static bool rte_slot_on_old_bank(const SsTest& test)
+{
+	const SsState& before = test.initial.s;
+	const SsState& after = test.final_.s;
+
+	if (sr_bank(before.SR) == sr_bank(before.SSR) || test.opcodes.op[SS_TEST_INSTRUCTION + 1] != 0x311C)
+		return false;
+
+	bool old_bank = after.R_[1] == before.R[1] * 2 && after.R[1] == before.R_[1];
+	bool new_bank = after.R[1] == before.R_[1] * 2 && after.R_[1] == before.R[1];
+
+	return old_bank && !new_bank;
+}
+
 SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, u32 ignore)
 {
 	const SsState& initial = test.initial.s;
@@ -375,6 +397,9 @@ SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, 
 	if (APPLIES(SSF_FPSCR_BITS) && (test.final_.s.FPSCR & ~SS_FPSCR_BITS) != 0)
 		return SSF_FPSCR_BITS;
 
+	if (APPLIES(SSF_RTE_BANK) && (policy.flags & SSP_RTE) && rte_slot_on_old_bank(test))
+		return SSF_RTE_BANK;
+
 #undef APPLIES
 
 	return SSF_NONE;
@@ -402,6 +427,7 @@ const char* ss_filter_name(SsFilterReason reason)
 	case SSF_TRAPA_NOP:    return "trapa-nop";
 	case SSF_HOST_NAN:     return "host-nan";
 	case SSF_FPSCR_BITS:   return "fpscr-bits";
+	case SSF_RTE_BANK:     return "rte-bank";
 	default:               return "?";
 	}
 }
@@ -428,6 +454,9 @@ const char* ss_filter_description(SsFilterReason reason)
 	case SSF_FPSCR_BITS:
 		return "the vector expects unimplemented FPSCR bits stored (LDS / LDS.L to FPSCR of a value with bits 22-31 set). "
 		       "An SH4 has the low 22 bits only, the others read 0";
+	case SSF_RTE_BANK:
+		return "RTE to the other register bank: the vector runs the delay slot on the bank of the old SR. An SH4 runs it "
+		       "with the SR that RTE restores, on the new bank";
 	default:
 		return "";
 	}

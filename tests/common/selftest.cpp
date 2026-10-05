@@ -573,6 +573,42 @@ static void test_policy()
 		CHECK(ss_policy_filter(*lds_fpscr, t) == SSF_FPSCR_BITS);
 		t.final_.s.FPSCR = 0;
 	}
+
+	//RTE to the other register bank: filtered when the delay slot is expected on the bank RTE is entered with
+	const SsFilePolicy* rte = ss_policy_find("0000000000101011_sz0_pr0");
+
+	CHECK(rte != 0);
+	if (rte)
+	{
+		SsTest r = make_test();
+
+		r.opcodes.op[1] = 0x002B;
+		r.initial.s.SR = 0x500000F0;
+		r.initial.s.SSR = 0x700000F0;
+		r.initial.s.R[1] = 0x00001111;
+		r.initial.s.R_[1] = 0x00002222;
+
+		r.final_.s.R[1] = 0x00002222;
+		r.final_.s.R_[1] = 0x00002222;
+		CHECK(ss_policy_filter(*rte, r) == SSF_RTE_BANK);
+		CHECK(ss_policy_filter(*mov_l, r) == SSF_NONE);
+
+		r.final_.s.R[1] = 0x00004444;	//the new bank's R1 is doubled
+		r.final_.s.R_[1] = 0x00001111;
+		CHECK(ss_policy_filter(*rte, r) == SSF_NONE);
+
+		r.initial.s.SSR = 0x500000F0;	//the same bank
+		r.final_.s.R[1] = 0x00002222;
+		r.final_.s.R_[1] = 0x00002222;
+		CHECK(ss_policy_filter(*rte, r) == SSF_NONE);
+
+		r.initial.s.SSR = 0x200000F0;	//RB without MD is bank 0
+		CHECK(ss_policy_filter(*rte, r) == SSF_NONE);
+
+		r.initial.s.SSR = 0x700000F0;	//another delay slot than add r1,r1
+		r.opcodes.op[2] = 0x6803;
+		CHECK(ss_policy_filter(*rte, r) == SSF_NONE);
+	}
 }
 
 //// ss_state
