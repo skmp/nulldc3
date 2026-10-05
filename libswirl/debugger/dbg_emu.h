@@ -290,7 +290,9 @@ int Resume();
 
 // Inside a CC_EXEC call. Validates a step and arms it; the park loop executes it after the call returns,
 // and publishes a new stop when it completed (StopCause::Step unless a breakpoint or event ended it). A
-// step over or out that turns into a resume publishes Running first.
+// step over or out that turns into a resume publishes Running first. A step of any kind is complete,
+// without executing anything, when the interrupt acceptance that the latch deferred accepts an interrupt on
+// the way out of the park context: the stop is at the vector (dbg::sh4::PrepareStep).
 // Returns 0 when armed. Otherwise nothing is armed and it returns
 //   kErrNotPaused     the thread is not parked, or an action is already armed
 //   kErrNotSupported  the target cannot be stepped (Arm7 and Dsp until their run control exists; Over and

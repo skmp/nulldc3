@@ -152,6 +152,8 @@ namespace emu {
 //      breakpoint), or if g_in_sleep is clear and a pause was requested or a call of another class is queued.
 //      A pause request or queued call met while g_in_sleep is set stays pending; once it has been pending
 //      for 250 ms of host time it is latched wherever the hook is called from.
+//      For a queued call alone the latch has no cause: Run() returns for a service excursion, which is no
+//      stop and publishes nothing.
 // Lifetime Parked (a step is executing): runs no call; latches the stop if a freezing cause is recorded,
 // which ends the step at this slice boundary.
 //
