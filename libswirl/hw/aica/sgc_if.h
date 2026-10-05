@@ -10,6 +10,7 @@
 
 struct dsp_context_t;
 struct AudioStream;
+struct AicaChannelDebug;
 
 union fp_22_10
 {
@@ -70,6 +71,17 @@ struct SGC {
 	virtual void WriteCommonReg8(u32 reg,u32 data) = 0;
 	virtual bool channel_serialize(void **data, unsigned int *total_size) = 0;
 	virtual bool channel_unserialize(void **data, unsigned int *total_size) = 0;
+
+	//Debugger access, without side effects. Same threads as AICA::DebugReadRegs (aica_mmio.h). The defaults are
+	//those of a sound generator that gives the debugger nothing
+
+	//The 16 bits of the common register at reg (even, 0x2800..0x2816) as ReadCommonReg and a read of the register
+	//file deliver them, with the register file left as it is: the MIDI flags of 0x2808, the status of the
+	//selected channel in 0x2810 without clearing its loop flag, its play position in 0x2814
+	virtual bool DebugReadCommonReg(u32 reg, u32* value) { return false; }
+
+	//The state of channel 0..63; false for any other
+	virtual bool DebugGetChannel(u32 channel, AicaChannelDebug* out) { return false; }
 
 	virtual ~SGC() { }
 };

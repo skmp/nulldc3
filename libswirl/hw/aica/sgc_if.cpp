@@ -5,6 +5,7 @@
 
 
 #include "sgc_if.h"
+#include "aica_mmio.h"
 #include "dsp.h"
 #include "dsp_backend.h"
 #include "aica_mem.h"
@@ -12,6 +13,8 @@
 #include <math.h>
 #include <algorithm>
 #include "serialize.h"
+#include "aica_hash.h"
+#include "debugger/debugger.h"
 
 using namespace std;
 #undef FAR
@@ -381,9 +384,26 @@ struct ChannelEx
 
 	void Init()
 	{
+		//state no register write sets. The LFO steps on from its phase until LFORE and the noise generator from
+		//its last value: both start at 0. The guest reads CA, and the debugger the filter envelope too, of a
+		//channel that was never keyed on
+		lfo.state=0;
+		noise_state=0;
+		CA=0;
+		FEG.value=0;
+
+		//written at key on and read by the channel after it. Until then the debugger shows them: the fraction of
+		//the play position and the two decoded samples
+		step.full=0;
+		s0=0;
+		s1=0;
+
 		for (u32 i=0;i<0x80;i++)
 			RegWrite(i);
 		disable();
+
+		//the guest reads LP of a channel that was never keyed on
+		loop.looped=0;
 	}
 	void disable()
 	{
@@ -507,6 +527,9 @@ struct ChannelEx
 
 			StepStreamInitial(this);
 
+			DBG_EVENT(dbg::EV_AICA_KEY_ON, "channel %d: start %06X, loop %04X..%04X%s", ChanelNumber, (u32)(SA - aica_ram), loop.LSA, loop.LEA,
+				ccd->LPCTL ? "" : ", no loop");
+
 			key_printf("[%d] KEY_ON %s @ %f Hz, loop : %d\n",-1,stream_names[ccd->PCMS],(44100.0*update_rate)/1024,ccd->LPCTL); //fixme channel number
 		}
 		else
@@ -518,6 +541,8 @@ struct ChannelEx
 	{
 		if (AEG.state!=EG_Release)
 		{
+			DBG_EVENT(dbg::EV_AICA_KEY_OFF, "channel %d", ChanelNumber);
+
 			key_printf("[%d] KEY_OFF -> Release\n",-1); // fixme channel number
 			SetAegState(EG_Release);
 			//switch to release state
@@ -885,6 +910,8 @@ void StreamStep(ChannelEx* ch)
 
 		if (ca_t >= ch->loop.LEA)
 		{
+			DBG_EVENT(dbg::EV_AICA_LOOP, "channel %d: loop end %04X, %s", ch->ChanelNumber, ch->loop.LEA, LPCTL ? "loops" : "stops");
+
 			ch->loop.looped = 1;
 			CA = ch->loop.LSA;
 			if (LPCTL)
@@ -1193,6 +1220,65 @@ struct SGC_impl : SGC {
 		}
 	}
 
+	bool DebugReadCommonReg(u32 reg, u32* value)
+	{
+		reg &= ~1;
+
+		if (reg < 0x2800 || reg > 0x2816)
+			return false;
+
+		u32 rv = aica_reg[reg] | (aica_reg[reg + 1] << 8);
+		u32 chan = CommonData->MSLC;
+
+		switch (reg)
+		{
+		case 0x2808:
+			//MIEMP, MOEMP
+			rv |= (1 << 8) | (1 << 11);
+			break;
+
+		case 0x2810:
+			//EG, SGC, LP
+			rv = (Chans[chan].AEG.GetValue() & 0x1FFF) | ((Chans[chan].AEG.state & 3) << 13) | ((Chans[chan].loop.looped & 1) << 15);
+			break;
+
+		case 0x2814:
+			rv = Chans[chan].CA & 0xFFFF;
+			break;
+		}
+
+		*value = rv;
+		return true;
+	}
+
+	bool DebugGetChannel(u32 channel, AicaChannelDebug* out)
+	{
+		if (channel >= 64)
+			return false;
+
+		ChannelEx& ch = Chans[channel];
+
+		out->enabled = ch.enabled;
+		//the bit the guest reads as LP
+		out->looped = (ch.loop.looped & 1) != 0;
+		out->aegState = (u8)ch.AEG.state;
+		out->fegState = (u8)ch.FEG.state;
+		//the envelope is kept as an attenuation, 0x3FF silent
+		out->aegLevel = 0x3FF - std::min(std::max(ch.AEG.GetValue(), 0), 0x3FF);
+		out->fegValue = ch.FEG.value;
+		out->ca = ch.CA;
+		out->caFraction = ch.step.fp;
+		out->step = ch.update_rate;
+		//the output moves from s0 to s1 as the fraction of the play position grows
+		out->sampleCurrent = ch.s1;
+		out->samplePrevious = ch.s0;
+		out->lfoState = ch.lfo.state;
+		out->alfo = ch.lfo.alfo;
+		out->plfo = ch.lfo.plfo;
+
+		return true;
+	}
+
 	void WriteCommonReg8(u32 reg, u32 data)
 	{
 		WriteMemArr(aica_reg, reg, data, 1);
@@ -1329,6 +1415,7 @@ struct SGC_impl : SGC {
 			pl = mixl;
 			pr = mixr;
 
+			aica_hash_sample(mixr, mixl);
 			audio_stream->WriteSample(mixr, mixl);
 		}
 	}
@@ -1426,6 +1513,7 @@ struct SGC_impl : SGC {
 		pl = mixl;
 		pr = mixr;
 
+		aica_hash_sample(mixr, mixl);
 		audio_stream->WriteSample(mixr, mixl);
 	}
 
