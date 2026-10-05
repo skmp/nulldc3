@@ -20,7 +20,9 @@ the figures of the machine this was written on.
 A run is one process. It ends itself with `config:Exit.AfterSeconds` and prints its own speed: emulated time over
 wall time, both from the first vblank on (`docs/nulldc3/automated-runs.md`), so process start-up and the loading of
 the program are not in the figure; the start of the program itself is. Runs are made one after the other. The
-clock is pinned and there is no audio backend, so every run does the same work.
+clock is pinned and there is no audio backend, so every run does the same work. A program that returns to the BIOS
+before the time is up ends its run there (`reason=guest-exit`, with a window as well), and the script stops with
+an error: a run that was not as long as asked gives no figure.
 
 Rules the script keeps:
 

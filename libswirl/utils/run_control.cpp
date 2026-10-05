@@ -40,6 +40,12 @@ struct RunControl
 	bool frame_hash = false;
 	string frame_png;
 
+	// A run that has no user interface, or that a key ends: nobody is there to act on what it does
+	bool automated() const
+	{
+		return headless || exit_vblanks != 0 || exit_cycles != 0 || exit_on_guest_exit;
+	}
+
 	// the run. Emulator thread, but for exit_code: the emulator thread and the thread of the user interface set
 	// it, main returns it
 	u32 vblanks = 0;
@@ -227,7 +233,7 @@ void runctl_configure()
 	rc.frame_hash = cfgLoadBool("config", "Exit.FrameHash", false) || !rc.frame_png.empty();
 
 	// A run that ends by itself, or that has no user interface to change a setting with, leaves emu.cfg as it is
-	if (rc.headless || rc.exit_vblanks != 0 || rc.exit_cycles != 0 || rc.exit_on_guest_exit)
+	if (rc.automated())
 		cfgSetReadOnly();
 }
 
@@ -256,8 +262,10 @@ bool runctl_guest_exit()
 {
 	RunControl& rc = runctl();
 
-	// without a user interface nothing can follow the end of the program
-	if (!rc.exit_on_guest_exit && !rc.headless)
+	// Only a run with a person in front of it goes on with a stopped machine. In an automated one nothing can
+	// follow the end of the program: there is no user interface, or no vblank left for another exit key to
+	// end the run at
+	if (!rc.automated())
 		return false;
 
 	request_exit("guest-exit");

@@ -17,7 +17,7 @@ A complete headless run:
 | `config:Headless` | `yes` | No window, no GL context, no host input. Linux only. See below. |
 | `config:Exit.AfterVblanks` | N | The run ends at the N-th vblank since the start of the process. |
 | `config:Exit.AfterSeconds` | S (a decimal number) | The run ends at the first vblank at or after S emulated seconds (S x 200,000,000 SH4 cycles of the scheduler). |
-| `config:Exit.OnGuestExit` | `yes` | The run ends when the guest program returns to the BIOS (the exit hook of reios, `REIOS: Exit`). Always so in headless mode. |
+| `config:Exit.OnGuestExit` | `yes` | The run ends when the guest program returns to the BIOS (the exit hook of reios, `REIOS: Exit`). Always so in headless mode and with `Exit.AfterVblanks` or `Exit.AfterSeconds`. |
 | `config:Exit.StateHash` | `yes` | The exit line has a hash of the state of the machine. |
 | `config:Exit.FrameHash` | `yes` | The exit line has a hash of the last frame a software renderer presented. |
 | `config:Exit.FramePng` | a path | That frame is written there as a PNG (implies `Exit.FrameHash`). |
@@ -34,6 +34,12 @@ with a backend and `config:aica.LimitFPS`, the default, the run is held at real 
 The three exit conditions are checked on the emulator thread: the vblank ones in the vblank of the SPG, the guest
 exit in the exit hook. The CPU is stopped there, at a fixed point of the guest program, and the process then takes
 the shutdown path of a closed window. The exit code is 0.
+
+A guest program that returns to the BIOS ends every run that has `Headless` or one of the three exit keys, with
+`reason=guest-exit`, with a window as well as without one: the exit hook stops the CPU, no vblank follows, and a
+limit of vblanks or seconds would never be reached. A run that asked for N vblanks or S seconds has to look at
+`reason` to know that it got them. Only a run with none of these keys keeps its window after the program has
+ended, with the CPU stopped, for the person in front of it.
 
 A run with `Headless` or with one of `Exit.AfterVblanks`, `Exit.AfterSeconds`, `Exit.OnGuestExit` never writes
 `emu.cfg`: settings are not saved, the file is byte for byte what it was (an `emu.cfg` that does not exist is still

@@ -46,6 +46,7 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `arm7.directed` | hand-written cases: ADC, SBC and RSC at the edges with the carry clear and set, the logical operations with a ROR by a register, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2, the register behind them and M read back, what a reset of the ARM writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
 | `cfg.overrides` | the config store and the command line parser on a config file of their own: a value `-config` gave is in effect for the run and is not what a save of the settings writes to `emu.cfg`, a changed one is written, and a read-only store (the automated runs) writes nothing | none |
+| `runctl.guest_exit.*` | `utils/run_control.cpp` on the config store, with stand-ins for the machine and the user interface, one process per run (`window`: no key, `key`: `Exit.OnGuestExit`, `vblanks`: `Exit.AfterVblanks`, `seconds`: `Exit.AfterSeconds`, `headless`): a guest program that returns to the BIOS ends every run but the first, with `reason=guest-exit` on the exit line and the user interface stopped, and leaves the first to its window | none |
 | `system.*` | the emulator binary of the default build, headless: `-help`, the keys that end a run and the line it prints, the pinned RTC, `emu.cfg` left alone, what a fatal fault does, programs that boot under reios on the JIT and on the interpreter with their serial output, the software renderer into a PNG, and a run that is repeated and has to end in the same state hash every time (`system/README.md` has the list, and what a deterministic run takes) | none, or the programs of `NULLDC_ELF_DIR` |
 | `system.hle.*` | the same on the emulator built with `-DHAS_TA_LLE=OFF` | none, or the programs of `NULLDC_ELF_DIR` |
 
@@ -53,10 +54,10 @@ The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_W
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
 run on Linux hosts with python3.
 
-Every test but `common.selftest`, `sh4.core`, `cfg.overrides` and the system tests is gated on a baseline file,
-and ctest runs them with `--strict`: a count that is worse than its baseline fails, and so does one that is better,
-until the baseline is updated and committed. `common.selftest`, `sh4.core`, `cfg.overrides` and each system test
-are lists of checks that all have to hold.
+Every test but `common.selftest`, `sh4.core`, `cfg.overrides`, `runctl.guest_exit.*` and the system tests is gated
+on a baseline file, and ctest runs them with `--strict`: a count that is worse than its baseline fails, and so does
+one that is better, until the baseline is updated and committed. `common.selftest`, `sh4.core`, `cfg.overrides`,
+each `runctl.guest_exit.*` test and each system test are lists of checks that all have to hold.
 
 More about the suites:
 
@@ -82,6 +83,7 @@ More about the suites:
     arm7/              the ARM7 interpreter: vendor programs, directed cases, wren7 console suites (README.md,
                        KNOWN_FAILURES.md)
     cfg/               the config store: -config overrides and what a save writes
+    run_control/       the keys that end a run: which runs the end of the guest program ends
     system/            the emulator binary, headless, on guest programs (README.md)
     perf/              not a test: perf.py measures the speed of the emulator on a guest program (README.md),
                        BASELINE.md has the figures of one machine

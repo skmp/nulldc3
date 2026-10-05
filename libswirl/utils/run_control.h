@@ -23,7 +23,8 @@ bool runctl_headless();
 void runctl_vblank();
 
 // Emulator thread: the guest program returned to the BIOS.
-// True: the run ends here, and the CPU is stopped for the caller
+// True: the run ends here, and the CPU is stopped for the caller. So in headless mode and with any of the keys
+// that end a run; false leaves the machine to the caller, for a person at the window
 bool runctl_guest_exit();
 
 // A frame on its way to the screen: width x height pixels, 4 bytes each, B G R A in memory.
