@@ -1,13 +1,14 @@
 /*
 	Directed SH4 vectors: the carry, borrow, overflow and compare instructions on operands at the edges (0,
-	0xFFFFFFFF, 0x7FFFFFFF, 0x80000000) with T clear and set, and the delayed conditional branches with a delay
-	slot that changes T. The single-step vectors are random and have none of these: no ADDC whose sum is
-	0xFFFFFFFF with T set, for one, and add r1,r1 in every delay slot, which leaves T as it is.
+	0xFFFFFFFF, 0x7FFFFFFF, 0x80000000) with T clear and set, and the delayed branches with a delay slot that
+	changes what the branch uses: T, the register it jumps through, PR. The single-step vectors are random and
+	have none of these: no ADDC whose sum is 0xFFFFFFFF with T set, for one, and add r1,r1 in every delay slot,
+	which leaves T and PR as they are.
 
 	sh4_directed_gen <dir> writes vector files in the format of the single-step vectors and under their file
 	names (ss_format.h), so the suites run them as they run those and the policy table applies as it is. A vector
 	is nop / the instruction / nop / nop on a state that has a value of its own in every register, and nop /
-	the branch / clrt or sett / nop for a branch. Nothing but Rn, T, Q and PC may change.
+	the branch / its delay slot / nop for a branch. Nothing but what the table of the vector names may change.
 
 	What an instruction leaves is written down by hand in the tables, from its definition in the SH-4 software
 	manual. Nothing of it comes from an emulator.
@@ -27,10 +28,14 @@
 #define SR_BASE 0x500000F0
 
 #define PC_BASE 0x8C010000
+#define PR_BASE 0x8C0F6000
 
 #define OP_NOP 0x0009
 #define OP_CLRT 0x0008
 #define OP_SETT 0x0018
+#define OP_MOV_R4_R3 0x6343
+#define OP_LDS_R4_PR 0x442A
+#define OP_STS_PR_R5 0x052A
 
 struct Case
 {
@@ -414,6 +419,49 @@ static const Branch branches[] =
 	{ "10001111dddddddd_sz0_pr0", 0x8FF0, OP_CLRT, FT, BRANCH_NONE,   0 },
 };
 
+//// Delayed jumps and calls: where it goes is taken, and PR is written, in front of the delay slot (PR = PC + 4,
+//// PC = ... and then Delay_Slot() in the manual's descriptions). A delay slot that loads the register the
+//// jump goes through, or PR, does not move it, and one that stores PR behind a call stores the return address.
+//// The instruction is at PC_BASE + 2 and goes through r3, the delay slot loads from r4 or stores to r5
+
+struct Jump
+{
+	const char* file;
+	u16 opcode;
+	u16 slot;			//the delay slot
+	u32 r3;				//r3 going in
+	u32 next;			//where the instruction behind the delay slot is run from
+	u32 r3_after;
+	u32 r5_after;
+	u32 pr_after;
+};
+
+#define JUMP_R3 0x8C020000		//jmp and jsr go there
+#define JUMP_OFFSET 0x00000100	//braf and bsrf go that far
+#define JUMP_BACK 0xFFFFFF00
+#define JUMP_R4 0x8C0E0000		//what the delay slot loads
+#define JUMP_R5 0xA0A50A0F		//r5 of base_state()
+#define JUMP_RETURN (PC_BASE + 6)	//PR behind a call
+
+static const Jump jumps[] =
+{
+	//rts returns to the PR it is entered with
+	//file                        opcode  slot          r3 in        next                       r3 after     r5 after     PR after
+	{ "0000000000001011_sz0_pr0", 0x000B, OP_LDS_R4_PR, JUMP_R3,     PR_BASE,                   JUMP_R3,     JUMP_R5,     JUMP_R4 },
+
+	//jmp @r3, braf r3 and bsrf r3 go by the r3 they are entered with
+	{ "0100mmmm00101011_sz0_pr0", 0x432B, OP_MOV_R4_R3, JUMP_R3,     JUMP_R3,                   JUMP_R4,     JUMP_R5,     PR_BASE },
+	{ "0000mmmm00100011_sz0_pr0", 0x0323, OP_MOV_R4_R3, JUMP_OFFSET, JUMP_RETURN + JUMP_OFFSET, JUMP_R4,     JUMP_R5,     PR_BASE },
+	{ "0000mmmm00100011_sz0_pr0", 0x0323, OP_MOV_R4_R3, JUMP_BACK,   JUMP_RETURN + JUMP_BACK,   JUMP_R4,     JUMP_R5,     PR_BASE },
+	{ "0000mmmm00000011_sz0_pr0", 0x0303, OP_MOV_R4_R3, JUMP_OFFSET, JUMP_RETURN + JUMP_OFFSET, JUMP_R4,     JUMP_R5,     JUMP_RETURN },
+	{ "0000mmmm00000011_sz0_pr0", 0x0303, OP_MOV_R4_R3, JUMP_BACK,   JUMP_RETURN + JUMP_BACK,   JUMP_R4,     JUMP_R5,     JUMP_RETURN },
+
+	//jsr @r3, bsr and bsrf r3: the delay slot sees the PR of the call
+	{ "0100mmmm00001011_sz0_pr0", 0x430B, OP_STS_PR_R5, JUMP_R3,     JUMP_R3,                   JUMP_R3,     JUMP_RETURN, JUMP_RETURN },
+	{ "1011dddddddddddd_sz0_pr0", 0xB010, OP_STS_PR_R5, JUMP_R3,     JUMP_RETURN + 0x10 * 2,    JUMP_R3,     JUMP_RETURN, JUMP_RETURN },
+	{ "0000mmmm00000011_sz0_pr0", 0x0303, OP_STS_PR_R5, JUMP_OFFSET, JUMP_RETURN + JUMP_OFFSET, JUMP_OFFSET, JUMP_RETURN, JUMP_RETURN },
+};
+
 //Every register has a value that no other one has, so an instruction that touches the wrong one shows
 static void base_state(SsState& s)
 {
@@ -437,7 +485,7 @@ static void base_state(SsState& s)
 	s.DBR = 0x8C0F5000;
 	s.MACL = 0x11112222;
 	s.MACH = 0x33334444;
-	s.PR = 0x8C0F6000;
+	s.PR = PR_BASE;
 	s.FPSCR = 0x00040001;
 	s.FPUL = 0x55556666;
 }
@@ -521,6 +569,25 @@ static void make_branch_vector(const Branch& b, SsTest& t)
 	end_vector(t, b.next);
 }
 
+static void make_jump_vector(const Jump& j, SsTest& t)
+{
+	begin_vector(t);
+
+	t.initial.s.R[3] = j.r3;
+	t.initial.s.R[4] = JUMP_R4;
+
+	t.final_.s = t.initial.s;
+
+	t.final_.s.R[3] = j.r3_after;
+	t.final_.s.R[5] = j.r5_after;
+	t.final_.s.PR = j.pr_after;
+
+	t.opcodes.op[SS_TEST_INSTRUCTION] = j.opcode;
+	t.opcodes.op[SS_TEST_INSTRUCTION + 1] = j.slot;
+
+	end_vector(t, j.next);
+}
+
 int main(int argc, char** argv)
 {
 	if (argc != 2)
@@ -551,6 +618,15 @@ int main(int argc, char** argv)
 
 		make_branch_vector(branches[b], t);
 		files[branches[b].file].push_back(t);
+		vectors++;
+	}
+
+	for (size_t j = 0; j < sizeof(jumps) / sizeof(jumps[0]); j++)
+	{
+		SsTest t;
+
+		make_jump_vector(jumps[j], t);
+		files[jumps[j].file].push_back(t);
 		vectors++;
 	}
 

@@ -32,7 +32,7 @@ way.
 | `sh4.singlestep.interp` | every single-step vector through the SH4 interpreter, gated on `sh4_singlestep/baseline.txt` | `vendor/sh4-tests` |
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
-| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes T) | none |
+| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses) | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | ADC, SBC and RSC at the edges with the carry clear and set, hand-written results | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
@@ -151,6 +151,17 @@ Every delay slot of the single-step vectors is `add r1,r1`, which leaves T as it
 its delay slot passes all of them as well. The same file has BT/S and BF/S, taken (forwards and backwards) and not
 taken, with `clrt` or `sett` in the delay slot (12 vectors).
 
+`add r1,r1` leaves PR as it is as well, and moves a jump through a register only when that register is r1. A
+delayed jump or call takes where it goes, and a call writes PR, in front of its delay slot. The file has (9
+vectors)
+
+* RTS with `lds r4,pr` in the delay slot: it returns to the PR it is entered with,
+* JMP @r3, BRAF r3 and BSRF r3 with `mov r4,r3` in the delay slot: they go by the r3 they are entered with,
+* JSR @r3, BSR and BSRF r3 with `sts pr,r5` in the delay slot: r5 gets the return address of the call.
+
+The interpreter does not pass the last three: it writes PR behind the delay slot. The dynarec passes them, and
+the differential has the difference; `sh4_dynarec/KNOWN_DIFFERENCES.md` has more on it.
+
 What an instruction leaves is written down from its definition in the SH-4 software manual, nothing of it comes
 from an emulator.
 
@@ -164,7 +175,8 @@ submodule.
 
 A new case is a row in a table of `directed_gen.cpp`, then a build and `--update-baseline` of the three. A
 hand-written vector that is not an exact pass is a wrong row or a defect of the emulator: find out which before
-the baseline is committed.
+the baseline is committed, and a defect goes into the `known` list of the suite that has it (`sh4_singlestep/main.cpp`,
+`sh4_dynarec/singlestep.cpp`, `sh4_dynarec/differential.cpp`) and into `sh4_dynarec/KNOWN_DIFFERENCES.md`.
 
 ## Adding a suite
 

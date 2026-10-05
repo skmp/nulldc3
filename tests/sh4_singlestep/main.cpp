@@ -26,6 +26,20 @@ static void run(const SsTest& test)
 	}
 }
 
+//What the interpreter does not pass and the dynarec does. sh4_dynarec/KNOWN_DIFFERENCES.md has the details
+static const char known_pr_behind_slot[] =
+	"interpreter: BSR, BSRF and JSR write PR behind their delay slot, an SH4 in front of it (PR = PC + 4, then Delay_Slot() "
+	"in the manual). A delay slot that reads PR reads the one of before the call. Only the directed vectors have such a "
+	"delay slot (sts pr,r5)";
+
+static const SsSuiteKnown known[] =
+{
+	{ "0000mmmm00000011_sz0_pr0", false, 0, known_pr_behind_slot },
+	{ "0100mmmm00001011_sz0_pr0", false, 0, known_pr_behind_slot },
+	{ "1011dddddddddddd_sz0_pr0", false, 0, known_pr_behind_slot },
+	{ 0, false, 0, 0 },
+};
+
 int main(int argc, char** argv)
 {
 	SsSuite suite;
@@ -34,7 +48,7 @@ int main(int argc, char** argv)
 	suite.vectors_dir = NULLDC_SH4_TESTS_DIR;
 	suite.baseline = NULLDC_BASELINE;
 	suite.ordered_fetches = true;
-	suite.known = 0;
+	suite.known = known;
 	suite.init = 0;
 	suite.run = &run;
 	suite.native = 0;
