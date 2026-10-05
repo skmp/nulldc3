@@ -189,7 +189,12 @@ const u32 kMaxMessageBytes      = 1u << 20;		// inbound message; the transport c
 const u32 kCallTimeoutMs        = 2000;			// emu::Call waits this long for a call that has not started
 const u32 kPauseLivenessMs      = 250;			// a pause request or queued call met inside a SLEEP wait is latched
 												// after this long
-const u32 kClientGraceMs        = 10000;		// after the last client left, breakpoints stay active this long
+const u32 kClientGraceMs        = 10000;		// after the last client left, breakpoints stay active this long.
+												// When it expires with no client connected, the core (dbg_core, on (C))
+												// clears the active mask (a CC_TABLE call with SetActiveMask(0)) and
+												// releases a parked thread (a CC_EXEC call with Resume()). dbg::emu has no
+												// timer for this. The time starts at a disconnect only, so a start park
+												// waits for its first client without limit
 const u32 kCaptureTimeoutMs     = 5000;			// state.recordSgcFrames
 
 namespace emu {
