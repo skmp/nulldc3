@@ -377,9 +377,10 @@ bool dbg_sh4_AnyArmed(u32 pc, u32 bytes);
 //              charges per instruction and has no blocks
 // Returns 0 to continue: guest state was only read; registers are reloaded from the context after the call.
 // Returns non-zero to stop in front of the instruction: it has written Sh4cntx.pc = pc, recorded
-// { pc, block_end, refund } as the owed remainder (none when block_end is 0) and latched the stop
-// (dbg::emu::LatchStop: g_stop_latched and g_parked set, CpuRunning cleared). The caller adds refund to
-// its slice counter and leaves its loop at once: no further guest instruction, no UpdateSystem().
+// { pc, block_end, refund } as the owed remainder (none when block_end is 0, or when the check stopped a
+// step: the block of a step is its one instruction and a later resume dispatches normally) and latched the
+// stop (dbg::emu::LatchStop: g_stop_latched and g_parked set, CpuRunning cleared). The caller adds refund
+// to its slice counter and leaves its loop at once: no further guest instruction, no UpdateSystem().
 extern "C" u32 DYNACALL dbg_sh4_Check(u32 pc, u32 refund, u32 block_end);
 
 // Non-zero while a step-out is pending. The decoder of a JIT with ngen_features::DebugChecks then marks the
@@ -401,7 +402,8 @@ extern u32 dbg_sh4_stepout;
 extern "C" u32 DYNACALL dbg_sh4_CheckFlow(u32 flow);
 
 // From Do_Interrupt and Do_Exception, on every call: an interrupt or exception is being accepted (TRAPA
-// included). Counts handler levels for a pending step-out; no other effect, does not stop.
+// included). Counts handler levels for a pending step-out and clears the resume exemption (the instruction
+// of the stop has not run when its handler returns to it); does not stop.
 void dbg_sh4_OnException();
 
 // Did a check or flow report stop? True from a non-zero return of dbg_sh4_Check / dbg_sh4_CheckFlow until
