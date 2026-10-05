@@ -62,10 +62,10 @@ iteration (`model/tests/hw/timing/SUMMARY.txt`).
 None gets an interrupt either. The checks `fiq` and `scilv` drive the interrupt controller in front of nFIQ
 through the registers a guest has for it, with the one sample interval as the request: a request of level 0
 does not interrupt, level 1 and 7 do and L reads the level; reading L releases nFIQ and nothing else does;
-writing bit 0 of M lets the next request in and nothing else does; L reads 0 behind a job whose requests had
-level 0; SCILV0-2 read back as 0. What has to happen is what a Dreamcast did in wren7-rtl's `fiqdiag` jobs
-(`model/tests/hw/fiqdiag/hw`, `model/NOTES.md` "Interrupts"); the comment in `directed_main.cpp` names the
-capture behind each rule.
+writing bit 0 of M lets the next request in and nothing else a handler does lets it in; L reads 0 behind a job
+whose requests had level 0; SCILV0-2 read back as 0. What has to happen is what a Dreamcast did in wren7-rtl's
+`fiqdiag` jobs (`model/tests/hw/fiqdiag/hw`, `model/NOTES.md` "Interrupts"); the comment in `directed_main.cpp`
+names the capture behind each rule.
 
 A fourth case of `scilv` is about where the registers that read 0 end: MCIEB, the register behind SCILV2, reads
 back what was written to it. No capture reads MCIEB, the case holds what the emulator did before SCILV0-2 read
@@ -76,10 +76,11 @@ job `ldrm_c4_n256` of `fiqcost` reads it there), with the request still in servi
 before and not measured. And only bit 0 of a write ends a service, which is not measured either: every kernel of
 the console writes 1.
 
-Two more cases of `fiq` have no capture behind them. They hold and release ARMRST in the middle of a handler, between
-its read of L and its write of M, and in front of the read of L: the program behind the first, which writes M in
-its handler only as the ARM crt0 of KallistiOS does, has to get an interrupt with every sample, and the one
-behind the second is interrupted as soon as it turns FIQs on. `KNOWN_FAILURES.md` (D5) has why.
+Two more cases of `fiq` have no capture behind them. They hold and release ARMRST in the middle of a handler,
+between its read of L and its write of M, and in front of the read of L. The release of ARMRST ends a service as
+a write of bit 0 of M does, and leaves nFIQ: the program behind the first, which writes M in its handler only as
+the ARM crt0 of KallistiOS does, has to get an interrupt with every sample, and the one behind the second is
+interrupted as soon as it turns FIQs on. `KNOWN_FAILURES.md` (D5) has why.
 
 The jobs that run here are reset in SVC mode, with the flags their kernel leaves. The check `reset` holds and
 releases ARMRST in FIQ, SVC, IRQ and user mode with other flags: R14_svc and SPSR_svc take the PC and the CPSR,
