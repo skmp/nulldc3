@@ -4,8 +4,9 @@
 #
 # Writes OUT: every file below DIST as a gzip stream in a brace-initialised unsigned char array (string
 # literals and .incbin are not portable to MSVC), and the table dbg_webui.cpp looks files up in. The
-# directory is listed here, at build time, because the bundler names its assets by content hash. An empty
-# DIST gives the empty table.
+# directory is listed here, at build time, because the bundler names its assets by content hash. Hidden
+# names (a leading '.', files and directories) are left out: the server answers no path that has one. An
+# empty DIST gives the empty table.
 
 cmake_minimum_required(VERSION 3.10)
 
@@ -64,12 +65,23 @@ if(NOT DIST STREQUAL "")
     endforeach()
   endif()
 
+  # The listing separates the names with ';' and leaves one inside a name as it is, so such a name would
+  # arrive in pieces.
+  file(GLOB_RECURSE cut RELATIVE "${DIST}" "${DIST}/*;*")
+  if(NOT cut STREQUAL "")
+    message(FATAL_ERROR "nullDC devtools UI: ${DIST}/${cut}: this file name cannot be embedded")
+  endif()
+
   file(GLOB_RECURSE files RELATIVE "${DIST}" "${DIST}/*")
   list(SORT files)
   set(index 0)
   foreach(path IN LISTS files)
-    # Names go into a C string and a CMake list as they are.
-    if(NOT path MATCHES "^[-A-Za-z0-9 !#%&'()+,./=@^_{}~]+$")
+    if(path MATCHES "(^|/)[.]")
+      continue()
+    endif()
+    # Names go into a C string and a CMake list as they are. A piece of a path that a ';' in a directory
+    # name has cut is no file.
+    if(NOT path MATCHES "^[-A-Za-z0-9 !#%&'()+,./=@^_{}~]+$" OR NOT EXISTS "${DIST}/${path}")
       message(FATAL_ERROR "nullDC devtools UI: ${DIST}/${path}: this file name cannot be embedded")
     endif()
     file(SIZE "${DIST}/${path}" raw_size)

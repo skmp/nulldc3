@@ -8,6 +8,7 @@
 #   incomplete  a directory named explicitly that is not a bundle stops the configure step
 #   rebuilt     a rebuilt bundle (other asset names, other version) is embedded by the next build
 #   corrupt     files that do not match the bundle's own manifest stop the build
+#   names       hidden files are left out, a file name that cannot be embedded stops the build
 
 set(project "${CMAKE_CURRENT_LIST_DIR}")
 set(build "${WORK}/build")
@@ -221,6 +222,24 @@ elseif(CASE STREQUAL "corrupt")
   expect_failure("build with a listed file missing")
   expect_output("assets/app-aaaa1111.js is listed in bundle-info.json but missing")
 
+elseif(CASE STREQUAL "names")
+  # what a file manager or a bundler leaves behind: hidden files and directories
+  write_bundle("${WORK}/bundle" 3 "1.0.0" "aaaa1111" sha256)
+  file(WRITE "${WORK}/bundle/.DS_Store" "x")
+  file(WRITE "${WORK}/bundle/.vite/manifest.json" "{}")
+  file(WRITE "${WORK}/bundle/assets/.cache/chunk-cccc3333.js" "x")
+  configure("${WORK}/tree" "-DNULLDC_DEVTOOLS_DIST=${WORK}/bundle")
+  expect_success("configure")
+  build()
+  expect_success("build with hidden files in the bundle")
+  expect_data("\"assets/app-aaaa1111.js\", file0")
+  expect_data("\"bundle-info.json\", file1")
+  expect_data("\"index.html\", file2")
+  expect_no_data("file3")
+  expect_no_data("DS_Store")
+  expect_no_data("manifest")
+  expect_no_data("cccc3333")
+
   # a name that cannot be written into the table
   file(REMOVE_RECURSE "${build}")
   write_bundle("${WORK}/bundle" 3 "1.0.0" "aaaa1111" sha256)
@@ -229,6 +248,25 @@ elseif(CASE STREQUAL "corrupt")
   expect_success("configure")
   build()
   expect_failure("build with a file name that cannot be embedded")
+  expect_output("assets/odd\\[1\\].js: this file name cannot be embedded")
+
+  # a ';' separates the entries where the files are listed: in a file name, in a directory name
+  file(REMOVE_RECURSE "${build}")
+  write_bundle("${WORK}/bundle" 3 "1.0.0" "aaaa1111" sha256)
+  file(WRITE "${WORK}/bundle/assets/semi;colon.js" "x")
+  configure("${WORK}/tree" "-DNULLDC_DEVTOOLS_DIST=${WORK}/bundle")
+  expect_success("configure")
+  build()
+  expect_failure("build with a ';' in a file name")
+  expect_output("assets/semi;colon.js: this file name cannot be embedded")
+
+  file(REMOVE_RECURSE "${build}")
+  write_bundle("${WORK}/bundle" 3 "1.0.0" "aaaa1111" sha256)
+  file(WRITE "${WORK}/bundle/semi;colon/app.js" "x")
+  configure("${WORK}/tree" "-DNULLDC_DEVTOOLS_DIST=${WORK}/bundle")
+  expect_success("configure")
+  build()
+  expect_failure("build with a ';' in a directory name")
   expect_output("this file name cannot be embedded")
 
 else()

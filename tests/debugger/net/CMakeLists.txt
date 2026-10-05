@@ -104,8 +104,9 @@ else()
   set_tests_properties(interop_ws PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP:")
 endif()
 
-# The embed step itself: which bundle is picked, what stops the configure step, what a rebuilt bundle does.
-foreach(case off auto mismatch incomplete rebuilt corrupt)
+# The embed step itself: which bundle is picked, what stops the configure step, what a rebuilt bundle does,
+# which files of a bundle are embedded.
+foreach(case off auto mismatch incomplete rebuilt corrupt names)
   add_test(NAME embed_${case} COMMAND "${CMAKE_COMMAND}"
     "-DCASE=${case}" "-DTREE=${tree}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/embed_check/${case}" "-DGENERATOR=${CMAKE_GENERATOR}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_check/run.cmake")

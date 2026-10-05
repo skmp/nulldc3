@@ -1,5 +1,5 @@
 // The embedded UI: what the build wrote into dbg_webui_data.cpp must be the bundle directory, file for
-// file, and the server must serve it, compressed or inflated as the client asks.
+// file except for hidden names, and the server must serve it, compressed or inflated as the client asks.
 //
 //   test_webui [bundle directory the build embedded; empty or absent when it embedded none]
 
@@ -78,8 +78,14 @@ static void TestBundle(int port, const std::string& dir) {
 	for (const auto& entry : fs::recursive_directory_iterator(dir)) {
 		if (!entry.is_regular_file())
 			continue;
-		onDisk++;
 		std::string path = fs::relative(entry.path(), dir).generic_string();
+		// A hidden name, file or directory, is not part of the UI: not embedded, and no path with one is served.
+		if (path[0] == '.' || path.find("/.") != std::string::npos) {
+			CHECK(webui::Find(path) == nullptr);
+			CHECK_EQ(TestClient::Get(port, "/" + path).status, 404);
+			continue;
+		}
+		onDisk++;
 		std::string content = ReadAll(entry.path());
 
 		const webui::File* file = webui::Find(path);
