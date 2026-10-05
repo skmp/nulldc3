@@ -536,7 +536,9 @@ static void gate_b3()
 	neutrality(interp, "fast");
 	neutrality(fallback, "fast");
 
-	//with idleskip off a block costs one and a half times the sum of its instructions
+	//With idleskip off a block costs one and a half times the sum of its instructions, rounded down, and no more
+	//than half a slice: the 224 instructions of the block that the size limit ended cost 224 cycles, not 336.
+	//An fp instruction adds nothing to the sum
 	settings.dynarec.idleskip = false;
 	neutrality(jit, "idleskip off");
 	neutrality(fallback, "idleskip off");
@@ -2381,8 +2383,8 @@ static void gate_b14()
 	settings.dynarec.idleskip = true;
 
 	check(by_step.same_all(by_run), "jit, idleskip off: %u steps through integer code and a run to the same instruction: the same registers", n);
-	note("jit, idleskip off: time of %u steps %llu, of the run %llu: a block costs one and a half times its instructions, rounded down", n,
-		(unsigned long long)a.time(), (unsigned long long)b.time());
+	note("jit, idleskip off: time of %u steps %llu, of the run %llu: a block costs one and a half times its instructions, rounded down, and at most half a slice",
+		n, (unsigned long long)a.time(), (unsigned long long)b.time());
 
 	//the interpreter fallback steps as the interpreter computes, at the cost of the jit's one-instruction blocks
 	machine_reset(ENGINE_FALLBACK);

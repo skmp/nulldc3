@@ -25,9 +25,9 @@
 	config:Dynarec.idleskip=no is these gates with idleskip off.
 
 	Times are compared as differences between two stops of one run. In a session with the forced fallback
-	the loop that runs the guest, and with it the slice counter that tells the time, changes with the
-	breakpoints: a run that is timed begins with a breakpoint on its first instruction, and its time is taken
-	from that stop on.
+	the loop that runs the guest changes with the breakpoints, and behind a recompiler whose loop starts a
+	slice of its own at every entry the slice counter that tells the time changes with it: a run that is
+	timed begins with a breakpoint on its first instruction, and its time is taken from that stop on.
 */
 
 #include "dbg_selftest.h"
