@@ -80,17 +80,46 @@ does not.
 
 ## The call sites of run control
 
-Four calls into the mechanism live in files that belong to run control. While those files do not have them,
-the build of these tests compiles copies of the two files with the calls put in (`CMakeLists.txt`,
-`sh4bp_callsites`); a file that has its call is compiled as it is.
+The mechanism is called from files that belong to run control (`dbg::emu`, `SuperH4_impl`, the interrupt
+controller, the opcode handlers) and to the register writer. This is every such call, as the headers
+declare it (`debugger/debugger.h`, `debugger/dbg_sh4.h`, `hw/sh4/sh4_if.h`, `hw/sh4/sh4_dbg.h`).
 
 | File | Where | The call |
 | --- | --- | --- |
+| `hw/sh4/SuperH4_impl.cpp` | `DebugBackend()` | returns the backend object that `Run()` drives |
+| | `Run()`, once per entry | `dbg::emu::UseFallbackLoop() ? sh4_fallback_loop() : backend->Loop()` |
+| | `Step()` | forwards to `backend->Step()` |
+| | `Reset()`, and after a `setBackend()` that follows a `Reset()` which no emulator thread has run since | `backend->ResetSlice()` |
+| | first statement of `UpdateSystem()` | `if (unlikely(dbg::g_stop_latched)) return 1;` |
+| | `UpdateSystem()`, behind the scheduler tick | `dbg::emu::SliceHook()` when `dbg::g_attn` is not zero |
 | `hw/sh4/sh4_interrupts.cpp` | first statement of `UpdateINTC()` | `if (unlikely(dbg::g_stop_latched)) { dbg::g_intc_deferred = true; return 0; }` |
-| `hw/sh4/sh4_interrupts.cpp` | `Do_Interrupt()` and `Do_Exception()`, on every call, in front of the first change of the context | `dbg_sh4_OnException();` |
+| | `Do_Interrupt()` and `Do_Exception()`, on every call, in front of the first change of the context | `dbg_sh4_OnException();` |
 | `hw/sh4/interpr/sh4_opcodes.cpp` | the `rte` handler, between `next_pc = newpc;` and its `UpdateINTC();` | `if (unlikely(dbg_sh4_stepout != 0)) dbg_sh4_CheckFlow(DBG_SH4_FLOW_RTE);` |
-| `hw/sh4/interpr/sh4_opcodes.cpp` | the wait loop of the `sleep` handler | `dbg::g_in_sleep` set around the loop; in front of each `UpdateSystem_INTC()`: `if (dbg::g_stop_latched) { dbg::g_sleep_cut = true; ` leave and re-execute `}` |
+| | the wait loop of the `sleep` handler | `dbg::g_in_sleep` set around the loop; in front of each `UpdateSystem_INTC()`: `if (dbg::g_stop_latched) { dbg::g_sleep_cut = true; ` leave and re-execute `}` |
+| `debugger/dbg_emu.cpp` | `LatchStop()`, which the checks and flow reports call to stop | sets `g_stop_latched` and `g_parked`, clears `CpuRunning`, keeps the cause and id it is given |
+| | `OnEmuThread()` | true on the emulator thread: `dbg::sh4` discards compiled blocks only then |
+| | `SetSh4Breakpoints()`, in the park context, or under the lifetime lock without an emulator thread | `dbg::sh4::SetBreakpoints(ids, addrs, n)` |
+| | `SetActiveMask()`, the same | `dbg::sh4::SetActiveMask(categories)` |
+| | `UseFallbackLoop()` | `dbg::sh4::FallbackWanted()`, on a JIT without `SH4DBG_NATIVE` (`DebugBackend()->DebugCaps()`) or with `Debugger:ForceFallback` |
+| | `GetSh4Engine()` | `DebugBackend()->DebugCaps()` and `SliceCyclesLeft()` |
+| | `Step()`, for every kind of SH4 step | `dbg::sh4::StepCheck(&why)`: not zero refuses the step, nothing is armed |
+| | `Park()`, entering a stop: once per published stop, in front of the listener; after `Run()` returned with a stop decided, after every step (executed, or complete at a vector), for the start park, for a reset made while paused. Not for a service excursion | `dbg::sh4::OnStop(&info)` |
+| | a guest reset, a loaded state and `OnThreadExiting()`: temporary breakpoints and a pending step-out end without a stop | `dbg::sh4::OnStop(nullptr)` |
+| | `OnGuestStateReplaced()`: a reset, a loaded state | `dbg::sh4::OnPcWritten()` |
+| | `Park()`, leaving the park context: the latch cleared, the deferred interrupt acceptance made, `sh4_host_fp_resync()` called; then, for a resume | `dbg::sh4::PrepareResume()` |
+| | the same point, a step of one instruction | `dbg::sh4::PrepareStep()`, then with `CpuRunning` set for its duration `backend->Step()`, or `sh4_fallback_step()` where breakpoints and steps use the fallback |
+| | the same point, a step over | `dbg::sh4::PrepareStepOver()`: true, `PrepareResume()` and `Run()`; false, as a step of one instruction |
+| | the same point, a step out | `dbg::sh4::PrepareStepOut()`, `PrepareResume()` and `Run()` |
+| | the same point, any step whose interrupt acceptance accepted an interrupt | `dbg::sh4::PrepareStep()` alone: the step is complete at the vector, nothing executes |
+| | the same point, the end of a service excursion | none of the `Prepare` functions |
+| `debugger/dbg_regs.cpp` | a write of the SH4 PC | `dbg::sh4::OnPcWritten()` |
 
-The rest of run control's side is `machine.cpp`: `UpdateSystem()` with the latch test in front and the slice
-hook behind the tick, `dbg::emu::LatchStop`, and leaving and entering the park context in the order of
-`dbg::emu::Park()`.
+The discards of compiled blocks (`DebugDiscardPage`, `DebugDiscardFlow`) are made by `dbg::sh4` itself,
+through `sh4_cpu->DebugBackend()`.
+
+Four of these calls are in files that the gates compile: the two of `hw/sh4/sh4_interrupts.cpp` and the two
+of `hw/sh4/interpr/sh4_opcodes.cpp`. While those files do not have them, the build of these tests compiles
+copies of the two files with the calls put in (`CMakeLists.txt`, `sh4bp_callsites`); a file that has its
+call is compiled as it is. The rest of run control's side is `machine.cpp`: `UpdateSystem()` with the latch
+test in front and the slice hook behind the tick, `dbg::emu::LatchStop`, and leaving and entering the park
+context in the order of `dbg::emu::Park()`.
