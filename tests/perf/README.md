@@ -3,7 +3,7 @@
 `perf.py` runs a guest program for a fixed emulated time and reports how fast that went, in percent of real time
 (100 = a Dreamcast). It is a tool, not a ctest test: nothing here passes or fails on a number (`system.perf.script`
 runs it on a program of the system tests and checks that its figures are there, not what they are). `BASELINE.md`
-has the figures of the machine this was written on.
+has the figures of the machine this was written on, measured while it was quiet.
 
     # no rendering: headless, the none renderer. Any build of the emulator.
     python3 tests/perf/perf.py --emulator <devcast> --program <2ndmix.elf>
@@ -29,10 +29,9 @@ A run is one process. It ends itself with `config:Exit.AfterSeconds`, and two fi
   of all its threads and from its start to its end (`getrusage` of the child). It is what the run costs. Time
   the process waits for a core is not in it; what the other work on the machine does to a core that is running
   still is, and `BASELINE.md` has how far that moved it on one machine. Headless, one thread does the work, and
-  a run that never waits for a core differs in the two only by the start and the end of the process and by how
-  the kernel's CPU clock runs against its wall clock (`BASELINE.md`: 1.08 CPU seconds per second on its
-  machine). With a window the thread of the user interface uses CPU time as well, and the figure is well below
-  the speed.
+  on a quiet machine the two figures agree within about 2 % (`BASELINE.md`): the CPU time has the start and the
+  end of the process in it, which the speed leaves out. With a window the thread of the user interface uses CPU
+  time as well, and the figure is well below the speed.
 
 Runs are made one after the other. The clock is pinned and there is no audio backend, so every run does the same
 work. A program that returns to the BIOS
@@ -50,6 +49,7 @@ Rules the script keeps:
   software rasteriser is refused, or with `--allow-software-gl` measured and labelled `gl-software`, never
   `gl-gpu`.
 * **The load of the machine is recorded**, not controlled. Figures from a busy machine are lower and wider, both
-  of them (`BASELINE.md` has the same row at different loads), and the 1 minute average that is recorded trails
-  what the machine is doing and does not say which figure to expect. Two builds are compared by running them in
-  turn (`BASELINE.md`, "Comparing two binaries"), not by two measurements made at different times.
+  of them (`BASELINE.md`, "What load does"), and the 1 minute average that is recorded trails what the machine
+  is doing and does not say which figure to expect. A figure to keep is measured with that average below 10, as
+  the baseline was. Two builds are compared by running them in turn and by the CPU seconds of their runs, not by
+  two measurements made at different times.
