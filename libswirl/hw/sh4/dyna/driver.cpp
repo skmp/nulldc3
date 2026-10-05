@@ -527,6 +527,25 @@ static int fallback_slice = SH4_TIMESLICE;
 // The guest last ran on the fallback loop: its counter is the one that tells the time
 static bool fallback_ran;
 
+// The two loops take turns in one slice where the backend's loop keeps its counter: whichever runs goes on from
+// the counter of the one that ran before it, so that the slice ends where it would have without the switch.
+// Behind a backend that starts a slice of its own at every entry the fallback keeps to its own counter.
+static void fallback_Enter()
+{
+	if (!fallback_ran && rdv_ngen->KeepsSlice())
+		fallback_slice = rdv_ngen->SliceCyclesLeft();
+
+	fallback_ran = true;
+}
+
+static void fallback_Leave()
+{
+	if (fallback_ran && rdv_ngen->KeepsSlice())
+		rdv_ngen->SetSliceCyclesLeft(fallback_slice);
+
+	fallback_ran = false;
+}
+
 // The decoded block, reused from block to block
 static RuntimeBlockInfo* fallback_blk;
 
@@ -613,7 +632,7 @@ void sh4_fallback_loop()
 {
 	u32 end_pc, cycles;
 
-	fallback_ran = true;
+	fallback_Enter();
 
 	if (dbg_sh4_TakeRemainder(next_pc, &end_pc, &cycles))
 	{
@@ -639,7 +658,7 @@ void sh4_fallback_loop()
 
 void sh4_fallback_step()
 {
-	fallback_ran = true;
+	fallback_Enter();
 
 	if (fallback_RunBlock(1, 0, -1))
 		fallback_SliceEnd();
@@ -668,7 +687,7 @@ struct recSH4 : SuperH4Backend {
         verify(rcb_noffs(&next_pc) == -184);
 
 #if defined(NULLDC_DEBUGGER)
-        fallback_ran = false;
+        fallback_Leave();
 #endif
 
         // Resuming in the block that a debugger check interrupted: its rest runs first, as one block that ends
@@ -702,7 +721,7 @@ struct recSH4 : SuperH4Backend {
         sh4_dyna_rcb = (u8*)& Sh4cntx + sizeof(Sh4cntx);
 
 #if defined(NULLDC_DEBUGGER)
-        fallback_ran = false;
+        fallback_Leave();
 #endif
 
         DecodeLimits one = { 1, 0, -1, false };

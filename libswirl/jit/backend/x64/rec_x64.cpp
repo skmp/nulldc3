@@ -1669,6 +1669,16 @@ struct X64NGenBackend : NGenBackend
 	{
 		cycle_counter = SH4_TIMESLICE;
 	}
+
+	bool KeepsSlice()
+	{
+		return true;
+	}
+
+	void SetSliceCyclesLeft(int cycles)
+	{
+		cycle_counter = cycles;
+	}
 	
 };
 

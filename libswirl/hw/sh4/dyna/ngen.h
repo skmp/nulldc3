@@ -146,13 +146,18 @@ struct NGenBackend
 
 	virtual bool Rewrite(rei_host_context_t* ctx) = 0;
 
-	// The slice counter of Mainloop: the cycles left until it calls UpdateSystem. A backend with
-	// ngen_features::DebugChecks keeps the counter when Mainloop returns and continues from it when Mainloop or
-	// RunBlock is entered again. 0 from a backend that does not expose it
+	// The slice counter of Mainloop: the cycles left until it calls UpdateSystem. 0 from a backend that does not
+	// expose it
 	virtual int SliceCyclesLeft() { return 0; }
 
 	// Sets that counter to SH4_TIMESLICE, for a machine reset
 	virtual void ResetSlice() { }
+
+	// Does Mainloop keep the counter when it returns, and continue from it when it or RunBlock is entered again?
+	// A backend with ngen_features::DebugChecks does. The interpreter fallback (hw/sh4/sh4_dbg.h) then goes on
+	// from SliceCyclesLeft() behind Mainloop and hands its own counter back with SetSliceCyclesLeft()
+	virtual bool KeepsSlice() { return false; }
+	virtual void SetSliceCyclesLeft(int cycles) { }
 
 	// assembly exports
 

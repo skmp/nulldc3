@@ -1277,6 +1277,251 @@ static void gate_b12()
 
 
 /*
+	The forced fallback is selected and dropped while the guest runs: the two loops take turns in the slices of
+	one run, and the state at a later slice end is that of a run on either of them alone.
+*/
+struct Rng
+{
+	u32 s;
+
+	u32 next()
+	{
+		s ^= s << 13;
+		s ^= s >> 17;
+		s ^= s << 5;
+		return s;
+	}
+
+	u32 below(u32 n) { return next() % n; }
+};
+
+static Rng sw_rng;
+static u32 sw_count;	//excursions made
+static u32 sw_wait;		//excursions until the next switch
+static u32 sw_mode;
+static u32 sw_arm;		//what an excursion of the modes 4 and 5 arms
+static u64 sw_switches;	//changes of the loop that runs the guest
+
+enum
+{
+	SW_NONE,
+	SW_SELECT_ONCE,		//the fallback is selected in the first excursion
+	SW_DROP_ONCE,		//dropped in the first excursion
+	SW_TOGGLE,			//selected and dropped in turns, in every excursion
+	SW_ARM_ONCE,		//the first excursion arms sw_arm, which the guest reaches
+	SW_RANDOM,			//selected and dropped at slice ends that sw_rng picks, some of the times with an address that the guest reaches
+};
+
+//addresses of the integer workload inside its blocks, at their start and on slots
+static const u32 sw_pool[] = {
+	G_work_long_mid, G_work_long + 4, G_work_long_2nd, G_work_poll_mid, G_work_jsr_slot, G_leaf, G_work_bfs_slot,
+	G_work_ldc + 2, G_work_call_slot, G_irq_rte, G_work_poll, G_work_after_call,
+};
+
+static void sw_excursion()
+{
+	const u32 never = G_line;
+	const bool wanted = dbg::sh4::FallbackWanted();
+
+	sw_count++;
+
+	switch (sw_mode)
+	{
+	case SW_SELECT_ONCE:
+		if (sw_count == 1)
+			bps({ never });
+		break;
+
+	case SW_DROP_ONCE:
+		if (sw_count == 1)
+			bps({ });
+		break;
+
+	case SW_TOGGLE:
+		if (wanted)
+			bps({ });
+		else
+			bps({ never });
+		break;
+
+	case SW_ARM_ONCE:
+		if (sw_count == 1)
+			bps({ sw_arm });
+		break;
+
+	case SW_RANDOM:
+		if (sw_wait != 0)
+		{
+			sw_wait--;
+			break;
+		}
+
+		sw_wait = sw_rng.below(3);
+
+		if (wanted)
+			bps({ });
+		else if (sw_rng.below(3) == 0)
+			bps({ never, sw_pool[sw_rng.below(sizeof(sw_pool) / sizeof(sw_pool[0]))] });
+		else
+			bps({ never });
+		break;
+	}
+
+	if (wanted != dbg::sh4::FallbackWanted())
+		sw_switches++;
+}
+
+static void sw_start(const WorkSetup& w, u32 mode, u32 every, u32 seed = 1)
+{
+	work_start(w);
+
+	sw_mode = mode;
+	sw_count = 0;
+	sw_wait = 0;
+	sw_switches = 0;
+	sw_rng.s = seed;
+
+	knobs.excursion_every = every;
+	knobs.excursion = sw_excursion;
+}
+
+static void gate_switch()
+{
+	const u32 never = G_line;
+
+	for (bool idleskip : { true, false })
+	{
+		settings.dynarec.idleskip = idleskip;
+
+		const char* timing = idleskip ? "fast" : "idleskip off";
+
+		//once, and in turns, at slice ends
+		for (u64 slices : { 600u, 601u, 607u })
+		{
+			const WorkSetup jit = { ENGINE_JIT, slices, false, true };
+			const WorkSetup fb = { ENGINE_FALLBACK, slices, false, true };
+
+			work_start(jit);
+			MachineState base = work_run();
+
+			sw_start(jit, SW_TOGGLE, 100);
+			MachineState s = work_run();
+			check(s == base && counters.excursions >= 5, "%s, %llu slices: the jit with an address armed and disarmed every 100 slices has the state of its run without (%s)",
+				timing, (unsigned long long)slices, str(base));
+
+			sw_start(fb, SW_SELECT_ONCE, 100);
+			s = work_run();
+			check(s == base && machine_used_fallback() && sw_switches == 1, "%s, %llu slices: the fallback selected once, behind 100 slices of the jit's loop: the jit's state (%s)",
+				timing, (unsigned long long)slices, str(s));
+
+			sw_start(fb, SW_DROP_ONCE, 100);
+			bps({ never });
+			s = work_run();
+			check(s == base && !machine_used_fallback() && sw_switches == 1, "%s, %llu slices: the fallback dropped once, behind 100 slices of its own: the jit's state (%s)",
+				timing, (unsigned long long)slices, str(s));
+
+			sw_start(fb, SW_TOGGLE, 100);
+			s = work_run();
+			check(s == base && sw_switches >= 5, "%s, %llu slices: the fallback selected and dropped every 100 slices: the jit's state (%s)", timing,
+				(unsigned long long)slices, str(s));
+		}
+
+		//The time a stop shows is that of the loop it was made in: a stop inside a block of the fallback, in
+		//the first slice it runs, shows what the jit's own check shows there
+		for (u32 at : { (u32)G_work_long_mid, (u32)G_work_poll_mid, (u32)G_work_jsr_slot })
+		{
+			const WorkSetup jit = { ENGINE_JIT, 400, false, true };
+			const WorkSetup fb = { ENGINE_FALLBACK, 400, false, true };
+
+			sw_arm = at;
+
+			sw_start(jit, SW_ARM_ONCE, 97);
+			MachineStop j = machine_resume();
+			MachineState js = machine_state();
+
+			sw_start(fb, SW_ARM_ONCE, 97);
+			MachineStop f = machine_resume();
+			MachineState fs = machine_state();
+
+			check(is_bp(j, 1, f.pc) && is_bp(f, 1, j.pc) && machine_used_fallback() && fs == js,
+				"%s: the first stop of a fallback that was selected behind 97 slices of the jit's loop, at %08X: state and time are those of the jit's stop (%s)",
+				timing, f.pc, str(fs));
+
+			//and dropped in that stop: the rest of the block runs in the jit's loop
+			bps({ });
+			MachineState end = work_run();
+
+			work_start(jit);
+			MachineState base = work_run();
+
+			check(end == base && !machine_used_fallback(), "%s: dropped in that stop, inside the block: the jit's state at the end (%s)", timing, str(end));
+		}
+
+		//at random points: slice ends both ways, and inside a block from the fallback to the jit's loop
+		{
+			const u64 slices = 3000;
+			const WorkSetup jit = { ENGINE_JIT, slices, false, true };
+			const WorkSetup fb = { ENGINE_FALLBACK, slices, false, true };
+
+			work_start(jit);
+			MachineState base = work_run();
+
+			work_start(fb);
+			bps({ never });
+			MachineState alone = work_run();
+			check(alone == base && machine_used_fallback(), "%s: %llu slices on the fallback alone: the jit's state (%s)", timing, (unsigned long long)slices,
+				str(alone));
+
+			for (u32 seed : { 1u, 2463534242u })
+			{
+				u64 inside = 0, stops = 0;
+
+				sw_start(fb, SW_RANDOM, 1, seed);
+
+				for (;;)
+				{
+					MachineStop s = machine_resume();
+
+					if (!s.debugger)
+						break;
+
+					//a stop inside a block of the fallback
+					stops++;
+
+					switch (sw_rng.below(4))
+					{
+					case 0:
+					case 1:
+						//the rest of the block runs in the jit's loop
+						bps({ });
+						sw_switches++;
+						inside++;
+						break;
+
+					case 2:
+						//and here on the fallback
+						bps({ never });
+						break;
+
+					default:
+						break;
+					}
+				}
+
+				MachineState s = machine_state();
+
+				check(sw_switches >= 1000 && inside >= 50, "%s, seed %u: the loop changed %llu times, at random slice ends and inside %llu blocks (%llu stops)",
+					timing, seed, (unsigned long long)sw_switches, (unsigned long long)inside, (unsigned long long)stops);
+				check(s == base, "%s, seed %u: the state behind them is that of a run that never changes its loop (%s)", timing, seed, str(s));
+			}
+		}
+	}
+
+	settings.dynarec.idleskip = true;
+}
+
+
+/*
 	B13 and B14: n instructions by stepping against the same n by running
 */
 
@@ -2080,6 +2325,7 @@ const Gate gates[] = {
 	{ "b9", "B9 self-modifying code under an armed page", gate_b9 },
 	{ "b10", "B10 no stale remainder after a written pc, a step, a reset", gate_b10 },
 	{ "b12", "B12 the interpreter fallback charges by decoder blocks", gate_b12 },
+	{ "switch", "the forced fallback selected and dropped while the guest runs: no slice end moves", gate_switch },
 	{ "b13", "B13 interpreter: n steps equal a run of n instructions", gate_b13 },
 	{ "b14", "B14 jit: n steps equal a run to the n-th instruction", gate_b14 },
 	{ "slot", "the interpreter between a conditional branch that is not taken and its slot: steps, arming, stops", gate_slot },
