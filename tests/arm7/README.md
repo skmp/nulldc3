@@ -10,7 +10,7 @@ what is written to them, and a sample passes only when a test says so (`arm7_mac
 | test | what it runs | data |
 |---|---|---|
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast, from reset to their end marker: no error bit in r1 (`r1 & 0x3FFFFFFF == 0`) and the pinned r0-r14 and CPSR at the end | `tests/vendor/arm7di-tests-dreamcast` (submodule) |
-| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), the logical operations with a ROR by a register amount of 0, of 32 and around them, MUL and MLA with Rd == Rm, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA and what SCILV0-2 read back | none |
+| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), the logical operations with a ROR by a register amount of 0, of 32 and around them, MUL and MLA with Rd == Rm, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA and what SCILV0-2 read back, what a reset writes and what it leaves | none |
 | `arm7.wren7.vendor` | the same programs as console jobs: r1 and CPSR against the console's | wren7-rtl |
 | `arm7.wren7.qemu_diff` | 4 x 1000 random instructions (data processing, MUL/MLA, LDR/STR, LDM/STM, SWP): registers, flags and memory of every case against the console's | wren7-rtl |
 | `arm7.wren7.mulsem` | 1024 multiplier inputs: MUL(S)/MLA(S) results and flags, and the Rd == Rm forms, against the console's | wren7-rtl |
@@ -60,6 +60,12 @@ does not interrupt, level 1 and 7 do and L reads the level; reading L releases n
 writing bit 0 of M lets the next request in and nothing else does; SCILV0-2 read back as 0. What has to happen
 is what a Dreamcast did in wren7-rtl's `fiqdiag` jobs (`model/tests/hw/fiqdiag/hw`, `model/NOTES.md`
 "Interrupts"); the comment in `directed_main.cpp` names the capture behind each rule.
+
+The jobs that run here are reset in SVC mode, with the flags their kernel leaves. The check `reset` holds and
+releases ARMRST in FIQ, SVC, IRQ and user mode with other flags: R14_svc and SPSR_svc take the PC and the CPSR,
+the CPSR gets SVC mode with I and F set, the PC is 0, and N, Z, C and V, the other registers and the bank of the
+mode that is left stay (data sheet 3.5). `d4.bin` of `fiqdiag` is a job that was reset out of FIQ mode: the
+first case has the CPSR that reset found.
 
 ## The wren7 console suites
 

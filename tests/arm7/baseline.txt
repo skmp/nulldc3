@@ -47,6 +47,7 @@ arm7.directed            mul-rd-rm               18    18
 arm7.directed            trap                     4     4
 arm7.directed            fiq                      7     7
 arm7.directed            scilv                    3     3
+arm7.directed            reset                    4     4
 #
 # Pinned: what a test has to find again, word for word. arm7.vendor: r0-r14 and CPSR at the end marker of
 # every program.

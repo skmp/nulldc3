@@ -22,7 +22,10 @@
 	fiq, scilv: the interrupt controller of the AICA in front of nFIQ, driven through its registers as a guest
 	drives it, and what SCILV0-2 read back (the comment at fiq_setup() has the source).
 
-	Checks: adc, sbc, rsc, ror, mul-rd-rm, trap, fiq, scilv. The test needs no data.
+	reset: what the release of ARMRST writes and what it leaves, out of four modes (the comment at reset_case() has
+	the source).
+
+	Checks: adc, sbc, rsc, ror, mul-rd-rm, trap, fiq, scilv, reset. The test needs no data.
 */
 #include "arm7_machine.h"
 #include "arm7_suite.h"
@@ -811,6 +814,122 @@ static const Scenario scilv_scenarios[] =
 	{ "SCILV2", &scilv2_reads_0 },
 };
 
+/*
+	The reset: ARMRST is held and released. R14_svc and SPSR_svc take the PC and the CPSR, the CPSR gets SVC mode
+	with I and F set, and the PC is 0 (ARM7DI data sheet 3.5). Nothing else is written: N, Z, C and V stay, and so
+	does every other register, the banks of the other modes among them.
+
+	The console has it out of FIQ mode in wren7-rtl's fiqdiag (model/tests/hw/fiqdiag/hw). d3.bin ends in its FIQ
+	handler with CPSR = 0x600000D1. d4.bin, the job behind it, has that word in SPSR_svc and the address the ARM
+	was spinning at in R14_svc, and the CPSR it ends with, 0x60000093, still has Z and C and no N or V. The
+	reset out of SVC mode is in model/tests/hw/bringup (arm7.wren7.bringup).
+
+	A case gets to its mode and flags with "msr cpsr, r0" at RESET_AT and is reset behind that instruction. It
+	looks at the registers in SVC mode, and then at the bank of its mode again, to which the same instruction at
+	0 takes it back.
+*/
+#define MSR_CPSR_R0 0xE129F000
+#define MODE_USR 0x10
+#define RESET_AT 0x40
+
+//what the registers hold: r0 to r12 and the bank of SVC, and the bank of the mode of the case
+#define SVC_VALUE(r) (0x10000000 + (r))
+#define MODE_VALUE(r) (0x20000000 + (r))
+#define SVC_SPSR_BEFORE 0x00000010
+
+static void reset_expect(std::string& text, const std::string& what, u32 value, u32 expected)
+{
+	char number[64];
+
+	if (value == expected)
+		return;
+
+	snprintf(number, sizeof(number), " is %08X, has to be %08X;", value, expected);
+	text += " " + what + number;
+}
+
+//cpsr: the CPSR the reset finds. spsr: the SPSR of that mode, for the modes that have one and keep it (the reset
+//writes the one of SVC)
+static void reset_case(std::string& text, u32 cpsr, u32 spsr)
+{
+	Arm7Context* ctx = arm7m_context();
+	const u32 msr = MSR_CPSR_R0;
+	const u32 mode = cpsr & 0x1F;
+	const bool own_bank = mode != MODE_SVC;
+	const bool own_spsr = own_bank && mode != MODE_USR;
+	const u32 bank = mode == MODE_FIQ ? 8 : 13;		//the first register of the mode's bank
+
+	arm7m_power_on();
+	arm7m_clear();
+	memcpy(arm7m_ram(), &msr, 4);
+	memcpy(arm7m_ram() + RESET_AT, &msr, 4);
+	arm7m_release_reset();
+
+	ctx->regs[0].I = cpsr;
+
+	for (u32 r = 1; r <= 14; r++)
+		ctx->regs[r].I = SVC_VALUE(r);
+
+	ctx->regs[RN_SPSR].I = SVC_SPSR_BEFORE;
+	ctx->regs[R15_ARM_NEXT].I = RESET_AT;
+	arm7m_step();
+
+	if (arm7m_cpsr() != cpsr)
+	{
+		text += " msr cpsr, r0 does not get to the mode of the case;";
+		return;
+	}
+
+	if (own_bank)
+	{
+		for (u32 r = bank; r <= 14; r++)
+			ctx->regs[r].I = MODE_VALUE(r);
+	}
+
+	if (own_spsr)
+		ctx->regs[RN_SPSR].I = spsr;
+
+	arm7m_hold_reset();
+	arm7m_release_reset();
+
+	reset_expect(text, "the address of the next instruction", ctx->regs[R15_ARM_NEXT].I, 0);
+	reset_expect(text, "CPSR", arm7m_cpsr(), (cpsr & 0xF0000000) | 0xC0 | MODE_SVC);
+	reset_expect(text, "SPSR_svc", ctx->regs[RN_SPSR].I, cpsr);
+	reset_expect(text, "r0", ctx->regs[0].I, cpsr);
+
+	//r14: the address of the instruction the ARM was at, as in arm7.wren7.bringup
+	for (u32 r = 1; r <= 14; r++)
+		reset_expect(text, "r" + std::to_string(r) + " in SVC mode", ctx->regs[r].I, r == 14 ? RESET_AT + 4 : SVC_VALUE(r));
+
+	//msr cpsr, r0
+	arm7m_step();
+	reset_expect(text, "CPSR back in the mode", arm7m_cpsr(), cpsr);
+
+	for (u32 r = 1; r <= 14; r++)
+	{
+		u32 expected = (own_bank && r >= bank) ? MODE_VALUE(r) : r == 14 ? RESET_AT + 4 : SVC_VALUE(r);
+
+		reset_expect(text, "r" + std::to_string(r) + " back in the mode", ctx->regs[r].I, expected);
+	}
+
+	if (mode != MODE_USR)
+		reset_expect(text, "SPSR back in the mode", ctx->regs[RN_SPSR].I, own_spsr ? spsr : cpsr);
+}
+
+//d4.bin
+static void reset_fiq(std::string& text) { reset_case(text, 0x600000D1, 0x90000010); }
+static void reset_svc(std::string& text) { reset_case(text, 0xF0000013, 0); }
+static void reset_irq(std::string& text) { reset_case(text, 0x00000092, 0xF0000010); }
+static void reset_usr(std::string& text) { reset_case(text, 0x90000010, 0); }
+
+static const Scenario reset_scenarios[] =
+{
+	{ "out of FIQ mode, Z and C set", &reset_fiq },
+	{ "out of SVC mode, all flags set", &reset_svc },
+	{ "out of IRQ mode, no flag set", &reset_irq },
+	{ "out of user mode, N and V set", &reset_usr },
+};
+
 static void run_scenario(void* arg)
 {
 	ScenarioRun* run = (ScenarioRun*)arg;
@@ -922,6 +1041,9 @@ int main(int argc, char** argv)
 
 	if (arm7_selected("scilv"))
 		run_scenarios("scilv", scilv_scenarios, sizeof(scilv_scenarios) / sizeof(scilv_scenarios[0]));
+
+	if (arm7_selected("reset"))
+		run_scenarios("reset", reset_scenarios, sizeof(reset_scenarios) / sizeof(reset_scenarios[0]));
 
 	return arm7_suite_end();
 }
