@@ -144,6 +144,7 @@ if(${HOST_OS} EQUAL ${OS_LINUX})
   add_definitions(-DLUA_USE_LINUX)
 endif()
 # add_definitions(-DFEAT_NO_RWX_PAGES)
+include(${d_core}/debugger/debugger.cmake)
 
 ### deps.cmake #################################################################################
 
