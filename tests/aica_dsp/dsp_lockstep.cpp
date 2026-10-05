@@ -565,16 +565,16 @@ void DspLockstep::ViewDue(int step)
 	due.mixs_bank = (int32_t)((*m.samples - 1) & 1);
 
 	const uint32_t ira = (w1 >> 7) & 0x3F;
-	int64_t inputs = 0;
+	int64_t source = 0;
 
 	if (ira <= 0x1F)
-		inputs = m.MEMS[ira];
+		source = m.MEMS[ira];
 	else if (ira <= 0x2F)
-		inputs = (int64_t)m.MIXS_bank[due.mixs_bank][ira - 0x20] * 16;
+		source = (int64_t)m.MIXS_bank[due.mixs_bank][ira - 0x20] * 16;
 	else if (ira <= 0x31)
-		inputs = (int64_t)m.EXTS[ira - 0x30] * 256;
+		source = (int64_t)m.EXTS[ira - 0x30] * 256;
 
-	due.INPUTS = sign_extend(inputs, 24);
+	due.INPUTS = sign_extend(source, 24);
 
 	switch ((w2 >> 4) & 3)
 	{
