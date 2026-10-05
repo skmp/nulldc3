@@ -2096,6 +2096,297 @@ DBG_SELFTEST_GUEST(emu_fp, "emu.fp")
 #endif
 
 /*
+	emu.step: steps, as far as run control goes: the stop of a step, and a reset of the guest, a host stop, a
+	call and an event breakpoint while a step executes. The step itself is the SH4 backend's; in a build whose
+	backend cannot step, what is left of the test is that a step is refused and nothing is armed.
+*/
+namespace {
+
+struct {
+	int phase;
+	u32 stop0, pc0, n;
+	u32 bad;
+	bool can;
+	std::atomic<bool> otherFailed { false };
+
+	// a host stop during a step
+	HostStop host;
+	std::atomic<bool> runningInStep { false }, runningAfterStop { true };
+	double msToStopped;
+	emu::RunState stopped;
+
+	// a call during a step
+	Where read;
+	std::atomic<int> rvExec { 99 }, rvStep { 99 };
+} sp;
+
+// A step of the SH4, armed
+bool StepArm()
+{
+	const char* why = "";
+	int rv = emu::Step(Target::Sh4, StepKind::Into, &why);
+
+	if (rv != 0)
+		Check(false, "a step was refused: %d %s, pc %08X", rv, why ? why : "", Ctx().pc);
+
+	return rv == 0;
+}
+
+// The five instructions in front of the SLEEP of g_sleep_masked
+const u32 kStepsToSleep = 5;
+
+}
+
+DBG_SELFTEST_GUEST(emu_step, "emu.step")
+{
+	Sh4Context& c = Ctx();
+
+	switch (sp.phase)
+	{
+	case 0:
+	{
+		if (!Ready(stop))
+			return false;
+
+		Goto(EMU_G_spin);
+
+		Check(emu::Step(Target::Arm7, StepKind::Into) == kErrNotSupported && emu::Step(Target::Dsp, StepKind::Over) == kErrNotSupported,
+			"the ARM7 and the DSP have no steps: -32004");
+
+		const char* why = "";
+		int rv = emu::Step(Target::Sh4, StepKind::Into, &why);
+
+		sp.can = rv == 0;
+
+		if (!sp.can)
+		{
+			Check(rv == kErrNotSupported || rv == kErrCannotStep, "this build does not step the SH4 here: the step is refused (%d %s)", rv, why ? why : "");
+			Check(emu::Step(Target::Sh4, StepKind::Over) == rv && emu::Step(Target::Sh4, StepKind::Out) == rv, "and so are a step over and a step out");
+
+			emu::RunState now = emu::GetRunState();
+
+			Check(now.lifetime == Lifetime::Parked && now.stopId == stop.stopId, "nothing was armed: the thread stays parked on its stop");
+			Note("the rest of emu.step needs a backend that steps");
+			break;
+		}
+
+		Check(emu::Step(Target::Sh4, StepKind::Into) == kErrNotPaused && emu::Resume() == kErrNotPaused, "with a step armed, a second action is refused");
+
+		TakeSeen();
+		sp.stop0 = stop.stopId;
+		sp.pc0 = c.pc;
+		sp.n = 0;
+		sp.bad = 0;
+		sp.phase = 1;
+		return false;
+	}
+
+	case 1:
+		// sixteen steps in a row: each is one stop
+		if (stop.cause != StopCause::Step || stop.stopId != sp.stop0 + 1 || stop.lifetime != Lifetime::Parked
+			|| !sh4_cpu->IsRunning() || c.CpuRunning || !g_stop_latched)
+			sp.bad++;
+
+		if (sp.n == 0)
+			Check(c.pc == sp.pc0 + 2, "a step executes one instruction (pc %08X after %08X)", c.pc, sp.pc0);
+
+		sp.stop0 = stop.stopId;
+
+		if (++sp.n < 16)
+		{
+			if (StepArm())
+				return false;
+			break;
+		}
+
+		{
+			std::vector<Seen> list = TakeSeen();
+			bool only_steps = list.size() == 16;
+
+			for (const Seen& s : list)
+				only_steps = only_steps && s.lifetime == Lifetime::Parked && s.cause == StopCause::Step && s.onEmu;
+
+			Check(sp.bad == 0 && only_steps, "16 steps: each a new stop that says step, parked all through, and no Running in between: %s", SeenText(list).c_str());
+		}
+
+		// The guest writes the reset register in a step: the 5th instruction of the routine
+		Goto(EMU_G_softreset);
+		sp.n = 0;
+		sp.phase = 2;
+
+		if (StepArm())
+			return false;
+		break;
+
+	case 2:
+		sp.stop0 = stop.stopId;
+
+		if (++sp.n < 5)
+		{
+			if (stop.cause != StopCause::Step)
+				Check(false, "a step in front of the write stops with \"%s\"", StopCauseName(stop.cause));
+
+			if (sp.n == 4)
+				TakeSeen();
+
+			if (StepArm())
+				return false;
+			break;
+		}
+
+		{
+			std::vector<Seen> list = TakeSeen();
+
+			Check(stop.cause == StopCause::Reset && AtResetVector() && stop.lifetime == Lifetime::Parked && sh4_cpu->IsRunning(),
+				"a reset of the guest in a step: the machine is reset and parked, reason reset (\"%s\", pc %08X)", StopCauseName(stop.cause), c.pc);
+			Check(SeenIs(list, { { Lifetime::Parked, StopCause::Reset } }), "the step and the reset are one stop: %s", SeenText(list).c_str());
+		}
+
+		sp.phase = 3;
+		[[fallthrough]];
+
+	case 3:
+		// boot again
+		if (!Ready(stop))
+			return false;
+
+		// A host stop while a step executes: the step is a SLEEP that nothing ends, with slices that take time
+		Goto(EMU_G_sleep_masked);
+		sp.n = 0;
+		sp.phase = 4;
+
+		if (StepArm())
+			return false;
+		break;
+
+	case 4:
+		if (++sp.n < kStepsToSleep)
+		{
+			if (StepArm())
+				return false;
+			break;
+		}
+
+		Check(c.pc == EMU_G_sleep_masked_at, "the pc is on the SLEEP (%08X)", c.pc);
+
+		probe.slowUs = 300;
+		TakeSeen();
+		sp.phase = 5;
+
+		OtherStart([] {
+			Nap(60);
+
+			sp.runningInStep = sh4_cpu->IsRunning();
+
+			Clock::time_point t0 = Clock::now();
+
+			virtualDreamcast->Stop([] {
+				sp.host.callbacks++;
+				sp.host.onEmu = emu::OnEmuThread();
+			});
+
+			sp.runningAfterStop = sh4_cpu->IsRunning();
+
+			if (!WaitLifetime(Lifetime::Stopped))
+			{
+				sp.otherFailed = true;
+				return;
+			}
+
+			sp.msToStopped = MsSince(t0);
+			sp.stopped = emu::GetRunState();
+
+			virtualDreamcast->Resume();
+		});
+
+		if (StepArm())
+			return false;
+		break;
+
+	case 5:
+		OtherJoin();
+
+		Check(!sp.otherFailed && sp.host.callbacks == 1 && sp.host.onEmu && sp.stopped.cause == StopCause::HostStopped,
+			"a host stop during a step ends the thread: the callback ran once, the state is Stopped, host-stopped");
+		Check(sp.runningInStep && !sp.runningAfterStop, "the machine counts as running while the step executes, and no longer once the stop is asked for");
+		Check(sp.msToStopped > 100, "the stop is taken when the step has returned: the SLEEP waited on (%.0f ms)", sp.msToStopped);
+
+		{
+			std::vector<Seen> list = TakeSeen();
+
+			Check(stop.cause == StopCause::Start && SeenIs(list, { { Lifetime::Stopped, StopCause::HostStopped }, { Lifetime::Running, StopCause::NoCause }, { Lifetime::Parked, StopCause::Start } }),
+				"the stop of that step was never published: %s", SeenText(list).c_str());
+		}
+
+		// A call that arrives while a step executes waits for the park loop
+		Check(c.pc == EMU_G_sleep_masked_at, "the pc is on the SLEEP again: the step ended at the bound of the wait (%08X)", c.pc);
+
+		ProbeOn();
+		probe.slowUs = 300;
+		TakeSeen();
+
+		sp.stop0 = stop.stopId;
+		sp.phase = 6;
+
+		OtherStart([] {
+			Nap(60);
+
+			// taken behind the step, which has parked by then
+			CallHere(&sp.read, emu::CC_READ);
+
+			// and another step, for the test to get a stop
+			sp.rvExec = emu::Call(emu::CC_EXEC, [] { sp.rvStep = emu::Step(Target::Sh4, StepKind::Into); });
+		});
+
+		if (StepArm())
+			return false;
+		break;
+
+	case 6:
+		// the stop of the first step: the other thread is still in its calls, which the park loop takes now
+		if (stop.stopId == sp.stop0 + 1)
+		{
+			Check(stop.cause == StopCause::Step && c.pc == EMU_G_sleep_masked_at, "a step on a SLEEP that nothing ends stops on the SLEEP again (\"%s\")", StopCauseName(stop.cause));
+			probe.slowUs = 0;
+			return false;
+		}
+
+		OtherJoin();
+
+		Check(sp.read.Ran(true, Lifetime::Parked), "a call made while a step executed ran in the park loop, behind the step (rv %d)", sp.read.rv.load());
+		Check(sp.rvExec == 0 && sp.rvStep == 0 && stop.cause == StopCause::Step && stop.stopId == sp.stop0 + 2, "a step armed by a call is executed and stops");
+
+		// An event breakpoint while a step executes ends the step at that slice
+		EventBreakpoints(true);
+		emu::SetActiveMask(~0u);
+		ProbeMode_(PROBE_EVENT_SLEEP_IDLE, 40);
+
+		sp.stop0 = stop.stopId;
+		sp.phase = 7;
+
+		if (StepArm())
+			return false;
+		break;
+
+	case 7:
+		Check(stop.cause == StopCause::Event && stop.breakpointId == 3 && stop.stopId == sp.stop0 + 1, "an event breakpoint in a step: the stop is the event's (\"%s\", id %u)", StopCauseName(stop.cause), stop.breakpointId);
+		Check(probe.calls == probe.raisedAtCalls && sh4_sched_now64() == probe.raisedAtTime && g_sleep_cut && c.pc == EMU_G_sleep_masked_at,
+			"the step ended in the slice that raised the event, with the wait cut and the pc on the SLEEP");
+		break;
+	}
+
+	EventBreakpoints(false);
+	ProbeOn();
+	OtherJoin();
+
+	if (!AtResetVector())
+		Goto(EMU_G_spin);
+
+	sp.phase = 0;
+	return true;
+}
+
+/*
 	emuexit.*: the guest returns to the BIOS. A headless run ends there: the process ends with the exit line of
 	the run, reason guest-exit, and not with the summary of this driver.
 */
