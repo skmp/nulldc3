@@ -146,21 +146,22 @@ Checked: 227740 flag sets (every encoding counted as identical or normalised-equ
 1299 pc-relative addresses, 500 literal values.
 
 `arm7_objdump_selftest` (`arm7_objdump.py --self-test`) holds the comparison to these figures. It takes the dump and
-changes one field on every encoding that allows the change; each of the 16 changed dumps must come back unexplained
-on exactly the encodings the field is checked on:
+changes one field on every encoding that allows the change. Each of the 16 changed dumps must come back unexplained
+on exactly the changed encodings among the 227740 whose validity and text agree with objdump; the self-test works
+out itself which ones those are. Where a figure above counts the field, the two numbers must be the same:
 
 | change | on | must be reported on |
 |---|---|---|
-| one of the six flags, set <-> clear | every encoding | 227740 |
-| branch target wrong; branch target removed | every `b` / `bl` | 28042 |
+| one of the six flags, set <-> clear | every encoding | 227740 = flag sets |
+| branch target wrong; branch target removed | every `b` / `bl` | 28042 = branch targets |
 | branch target added | every other encoding | 199698 (227740 - 28042) |
-| pc-relative address wrong; its size wrong; address and `@` comment removed | every encoding that has one | 1299 |
+| pc-relative address wrong; its size wrong; address and `@` comment removed | every encoding that has one | 1299 = pc-relative addresses |
 | pc-relative address and `@` comment added | every other encoding | 226441 (227740 - 1299) |
-| literal value wrong; `= value` removed | every pc-relative load inside the image | 500 |
+| literal value wrong; `= value` removed | every pc-relative load inside the image | 500 = literal values |
 | `= value` added | every other pc-relative address | 799 (1299 - 500) |
 
-The 21624 encodings with an explained difference are compared for validity and text only: objdump has no
-statement about the fields of an instruction it does not know.
+The 21624 encodings with an explained difference are compared for validity and text only: objdump describes
+another instruction there, or none.
 
 Per class (decode of the ARM7DI data sheet):
 

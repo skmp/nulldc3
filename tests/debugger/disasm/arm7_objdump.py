@@ -525,7 +525,7 @@ def corruptions():
     One entry per way an info field compare() counts as checked can be wrong: (name, population, change).
     change() takes the pc, the text and the info of one encoding and returns text and info with that field wrong,
     removed or added, or None when the encoding gives it nothing to change. population names the encodings the
-    change has to be reported on, a key of the counts in self_test().
+    change applies to; where it is a key of 'checked', that figure has to be their number.
     """
     def without(info, key):
         return {k: v for k, v in info.items() if k != key}
@@ -607,27 +607,41 @@ def corruptions():
 def self_test(ops, obj, expect, ours):
     """
     Checks compare() itself: with one info field wrong, removed or added on every encoding that allows it, exactly
-    the encodings of that field's population have to come back unexplained. Returns the exit status.
+    the changed encodings have to come back unexplained, as far as their validity and text agree with objdump.
+    Returns the exit status.
     """
     counts, _, _, _, checked, _ = compare(ops, obj, expect, ours)
     if counts['unexplained']:
         print('  needs a dump without unexplained differences, this one has %d' % counts['unexplained'])
         return 1
 
-    # an encoding whose validity and text agree is checked for the fields it has and for not having the others;
-    # one that differs in a documented way is not checked for any
-    accepted = counts['identical'] + counts['normalised']
-    population = dict(checked)
-    population['encodings without a branch target'] = accepted - checked['branch targets']
-    population['encodings without a literal'] = accepted - checked['literal addresses']
-    population['literal addresses without a value'] = checked['literal addresses'] - checked['literal values']
+    # every field is checked where validity and text agree, and no field where they differ in a documented way.
+    # Which encodings agree is worked out here, not taken from compare()
+    agree = []
+    for (obj_valid, want, _, _), (text, info) in zip(expect, ours):
+        our_text = ' '.join(text.partition(' @ ')[0].split())
+        agree.append(obj_valid == (info['flags'][0] == 'v') and want == our_text)
+    if sum(agree) != counts['identical'] + counts['normalised']:
+        print('  %d encodings agree in validity and text, %d counted as identical or normalised-equal'
+              % (sum(agree), counts['identical'] + counts['normalised']))
+        return 1
 
     status = 0
-    for name, key, change in corruptions():
-        corrupted = [change(BASE + 4 * index, text, info) or (text, info) for index, (text, info) in enumerate(ours)]
+    for name, population, change in corruptions():
+        corrupted = list(ours)
+        due = 0
+        for index, (text, info) in enumerate(ours):
+            changed = change(BASE + 4 * index, text, info)
+            if changed:
+                corrupted[index] = changed
+                due += agree[index]
         reported = compare(ops, obj, expect, corrupted)[0]['unexplained']
-        verdict = '' if reported == population[key] > 0 else '  NOT ALL REPORTED'
-        print('  %-21s unexplained on %6d of %6d %s%s' % (name, reported, population[key], key, verdict))
+        verdict = ''
+        if reported != due or not due:
+            verdict = '  NOT ALL REPORTED'
+        elif checked.get(population, due) != due:
+            verdict = '  BUT %d COUNTED AS CHECKED' % checked[population]
+        print('  %-21s unexplained on %6d of %6d %s%s' % (name, reported, due, population, verdict))
         if verdict:
             status = 1
     return status
