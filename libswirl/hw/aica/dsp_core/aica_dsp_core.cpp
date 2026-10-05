@@ -787,9 +787,14 @@ static void plan_build(AicaDsp& d)
 }
 
 //The plan is the one of the program that is in MPRO now. Looked at before every sample: MPRO is a field anybody
-//can write. One flat loop without an early exit, which compilers turn into a few vector compares
+//can write. One flat loop without an early exit, which compilers turn into a few vector compares.
+//A plan that is not valid is not read: Init, Reset and LoadState clear only the flag, and the storage of a core
+//is whatever its owner allocated
 static inline bool plan_current(const AicaDsp& d)
 {
+	if (!d.plan.valid)
+		return false;
+
 	const uint16_t* was = &d.plan.mpro[0][0];
 	const uint16_t* is = &d.MPRO[0][0];
 	uint16_t differs = 0;
@@ -797,7 +802,7 @@ static inline bool plan_current(const AicaDsp& d)
 	for (uint32_t i = 0; i < AICA_DSP_STEPS * 4; i++)
 		differs |= (uint16_t)(was[i] ^ is[i]);
 
-	return d.plan.valid && differs == 0;
+	return differs == 0;
 }
 
 /*
