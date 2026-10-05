@@ -387,8 +387,11 @@ void reios_exit() {
 		printf("-----------------\n");
 		printf("REIOS: Exit\n");
 		printf("-----------------\n");
-		if (!runctl_guest_exit())
-			sh4_cpu->Stop();
+
+		// The emulator thread ends for a guest exit, and has to know that this is why its cpu stopped. An
+		// automated run ends with it
+		virtualDreamcast->RequestExit();
+		runctl_guest_exit();
 	}
 
 	p_sh4rcb->cntx.pc = hook_addr(&reios_exit);
