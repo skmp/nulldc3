@@ -15,6 +15,7 @@ Measured on x86-64 (GCC 13, a CPU with SSE3 and FMA, without AVX-512), x64 backe
 | identical | 78,891 |
 | different | 12,473 (crash 299, path 0, bus 0, state 442, notify 11,732) |
 | both-crash | 625 |
+| both-notify | 0: no vector on which both engines carry on from a notification of the emulator code |
 | native | 76,038: the instruction under test is native code in the dynarec. 35 files have none |
 | filtered | 24,511 (unaligned 23,524, odd-pc 987) |
 

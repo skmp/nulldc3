@@ -18,6 +18,7 @@ enum DiffKind
 	DK_IDENTICAL,
 	DK_HANG,		//an engine does not finish
 	DK_BOTH_CRASH,	//both engines end in the same die()/verify()/signal
+	DK_BOTH_NOTIFY,	//the engines agree in everything, also in what the emulator code notifies of (msgboxf) on the way
 	DK_CRASH,		//one engine ends that way and the other runs through, or they end in different ones
 	DK_PATH,		//the instructions are run from different addresses
 	DK_BUS,			//the data accesses differ
@@ -40,6 +41,7 @@ struct EngineResult
 	std::string message;			//how it ended, if it did not run through
 	u32 notifications;				//msgboxf calls it carried on from
 	std::string notification;		//the last of them
+	std::vector<std::string> notification_texts;	//their different texts (test_guard_msgbox_text)
 	SsState state;
 	std::vector<SsBusAccess> bus;	//data accesses
 	std::vector<u32> path;			//addresses the instructions were run from

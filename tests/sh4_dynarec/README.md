@@ -56,13 +56,15 @@ The memory (`diff_memory`) returns the vector's opcodes for fetches, the vector'
 and a value made of the address anywhere else, whatever the order of the accesses. Only the vectors devcast cannot
 run are filtered (`unaligned`, `odd-pc`): 91,989 of 116,500 run.
 
-A vector is *identical*, *different* (by the first of: crash, path, bus, state, notify) or *both-crash* (both
-engines end in the same `die()` / `verify()` / signal). The baseline has these counts per file. The test fails when
-a file
+A vector is *identical*, *different* (by the first of: crash, path, bus, state, notify), *both-crash* (both
+engines end in the same `die()` / `verify()` / signal) or *both-notify* (the engines agree in everything, and both
+carry on from the same notifications of the emulator code: that is not an identical vector). The baseline has these
+counts per file. The test fails when a file
 
 * has fewer identical vectors than its baseline, runs fewer, or has fewer whose instruction is native,
-* has more vectors than its baseline that differ by crash, path, bus or state, or that crash in both engines. A
-  difference may go away or become a notification; it may not become a difference of another kind,
+* has more vectors than its baseline that differ by crash, path, bus or state, that crash in both engines or that
+  both engines notify on. A difference may go away or become a notification in one engine; it may not become a
+  difference of another kind,
 
 and then lists the vectors of the kinds of difference the file has more of, each with its opcode, PR/SZ, FPSCR, SR
 and what differs:
@@ -71,8 +73,11 @@ and what differs:
       state 1, baseline 0 (the final states differ):
         #383 op F43D PR=0 SZ=0, FPSCR 00000001 (FR=0 DN=0 RM=1), SR 700083B3 (MD=1 RB=1 BL=1 FD=1): state: FPUL interpreter 7FFFFFFF dynarec 80000000; ...
 
-An engine that hangs fails the test as well. Every other count that is not the baseline's (more identical vectors,
-notifications that come or go, fewer of another kind) is reported, and fails with `--strict`, as ctest runs it.
+An engine that hangs fails the test as well, and so does a notification an engine carries on from that the policy
+does not announce by its text (`ss_policy_notification` in `tests/common/ss_policy.cpp`; today that is "Full MMU
+support needed" for an FPU instruction with SR.FD=1), whatever the baseline says. Every other count that is not the
+baseline's (more identical vectors, notifications of one engine that come or go, fewer of another kind) is reported,
+and fails with `--strict`, as ctest runs it.
 
 ## Looking at a failure, updating a baseline
 

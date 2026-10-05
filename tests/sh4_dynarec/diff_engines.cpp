@@ -11,13 +11,14 @@
 #include <cstdio>
 #include <cstring>
 
-const char* const diff_kind_name[DK_COUNT] = { "identical", "hang", "both-crash", "crash", "path", "bus", "state", "notify" };
+const char* const diff_kind_name[DK_COUNT] = { "identical", "hang", "both-crash", "both-notify", "crash", "path", "bus", "state", "notify" };
 
 const char* const diff_kind_description[DK_COUNT] =
 {
 	"",
 	"an engine does not finish",
 	"both engines end in the same die()/verify()/signal, there are no results to compare",
+	"the engines agree, and both carry on from the same notifications of the emulator code (msgboxf)",
 	"one engine ends in die()/verify()/a signal and the other runs through, or they end in different ones",
 	"the instructions are run from different addresses",
 	"the data accesses differ",
@@ -61,6 +62,9 @@ static void run_engine(const SsTest& test, bool interpreter, EngineResult& resul
 	result.message = test_guard_message();
 	result.notifications = result.guard == TGR_OK ? test_guard_msgbox_count() : 0;
 	result.notification = result.notifications ? test_guard_last_msgbox() : "";
+	result.notification_texts.clear();
+	for (u32 n = 0; n < test_guard_msgbox_texts() && result.notifications; n++)
+		result.notification_texts.push_back(test_guard_msgbox_text(n));
 	result.bus = diff_mem_log();
 	result.native = !interpreter && dynarec_native(SS_TEST_INSTRUCTION);
 
@@ -229,7 +233,7 @@ DiffKind diff_compare(const EngineResult& i, const EngineResult& d, std::string&
 			kind = DK_STATE;
 	}
 
-	if (i.notifications != d.notifications || i.notification != d.notification)
+	if (i.notifications != d.notifications || i.notification != d.notification || i.notification_texts != d.notification_texts)
 	{
 		std::string notify;
 
@@ -244,6 +248,11 @@ DiffKind diff_compare(const EngineResult& i, const EngineResult& d, std::string&
 
 		if (kind == DK_IDENTICAL)
 			kind = DK_NOTIFY;
+	}
+	else if (kind == DK_IDENTICAL && i.notifications)
+	{
+		what = diff_format("both-notify: both engines notify %u times, last \"%s\"", i.notifications, i.notification.c_str());
+		kind = DK_BOTH_NOTIFY;
 	}
 
 	return kind;
@@ -297,7 +306,30 @@ bool diff_compare_selfcheck()
 	b = same;
 	b.notifications = 1;
 	b.notification = "notification";
+	b.notification_texts.push_back(b.notification);
 	ok = ok && diff_compare(a, b, what) == DK_NOTIFY;
+
+	//the same notification in both is not identical, another one or another number of them is a difference
+	EngineResult both = a;
+	both.notifications = 1;
+	both.notification = "notification";
+	both.notification_texts.push_back(both.notification);
+	ok = ok && diff_compare(both, b, what) == DK_BOTH_NOTIFY;
+
+	b.notifications = 2;
+	ok = ok && diff_compare(both, b, what) == DK_NOTIFY;
+
+	b.notifications = 1;
+	b.notification = "another notification";
+	b.notification_texts[0] = b.notification;
+	ok = ok && diff_compare(both, b, what) == DK_NOTIFY;
+
+	b.state.FPUL ^= 1;
+	ok = ok && diff_compare(both, b, what) == DK_STATE;
+
+	b.notification = both.notification;
+	b.notification_texts = both.notification_texts;
+	ok = ok && diff_compare(both, b, what) == DK_STATE;
 
 	b = same;
 	b.guard = TGR_DIE;

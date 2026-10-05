@@ -10,19 +10,23 @@
 	What a vector expects plays no part. Only the vectors that devcast cannot run are filtered: unaligned data
 	accesses and odd PCs (ss_policy.h).
 
-	Per file the report has: total / run / identical / different / both-crash / native / filtered, how the
-	different ones differ and the first of them with its opcode, FPSCR and SR, and what differs in it.
-	  identical    the engines agree on all of the above
-	  different    they do not. By what differs first: crash (one engine ends in die()/verify()/a signal and the
-	               other runs through, or they end in different ones), path, bus, state, notify
+	Per file the report has: total / run / identical / different / both-crash / both-notify / native / filtered,
+	how the different ones differ and the first of them with its opcode, FPSCR and SR, and what differs in it.
+	  identical    the engines agree on all of the above, and the emulator code notifies of nothing
+	  different    they do not agree. By what differs first: crash (one engine ends in die()/verify()/a signal
+	               and the other runs through, or they end in different ones), path, bus, state, notify
 	  both-crash   both engines end in the same die()/verify()/signal: there are no results to compare
+	  both-notify  the engines agree, and both carry on from the same notifications of the emulator code
 	  native       the dynarec turned the instruction under test into native code. For the others it calls the
 	               interpreter's handler, and the two engines agree because they are one
 
 	The baseline has the counts of every file. The run fails when
 	  - a file has fewer identical vectors than its baseline, runs fewer vectors or has fewer native ones
-	  - a file has more vectors than its baseline that differ by crash, path, bus or state, or that crash in both
-	    engines. A difference may go away or become a notification, it may not become one of another kind
+	  - a file has more vectors than its baseline that differ by crash, path, bus or state, that crash in both
+	    engines or that both engines notify on. A difference may go away or become a notification in one engine,
+	    it may not become one of another kind
+	  - an engine carries on from a notification that the policy does not announce by its text
+	    (ss_policy_notification), whatever the baseline says
 	  - an engine hangs
 	  - a vector file is not in the policy table or not in the baseline, or the other way around
 	and lists the vectors of the kinds of difference that the file has more of than its baseline.
@@ -140,10 +144,23 @@ struct DiffBaseline
 	u32 native;
 };
 
-//A kind of difference that a file may not have more of than its baseline
+//A kind that a file may not have more of than its baseline
 static bool kind_is_gated(u32 kind)
 {
-	return kind == DK_BOTH_CRASH || kind == DK_CRASH || kind == DK_PATH || kind == DK_BUS || kind == DK_STATE;
+	return kind == DK_BOTH_CRASH || kind == DK_BOTH_NOTIFY || kind == DK_CRASH || kind == DK_PATH || kind == DK_BUS || kind == DK_STATE;
+}
+
+//The first notification an engine carried on from that the policy does not announce for the vector, 0 if there
+//is none
+static const char* unannounced_notification(const EngineResult& e, const char* announced)
+{
+	for (size_t n = 0; n < e.notification_texts.size(); n++)
+	{
+		if (!announced || e.notification_texts[n] != announced)
+			return e.notification_texts[n].c_str();
+	}
+
+	return 0;
 }
 
 struct DiffOptions
@@ -199,7 +216,8 @@ static void print_bus(const EngineResult& e)
 static void print_vector(const std::string& file, const SsFilePolicy& policy, u32 index, const SsTest& test, const EngineResult& i,
 	const EngineResult& d, DiffKind kind, const std::string& what)
 {
-	fprintf(report, "%s %s (%s) %s\n", kind == DK_IDENTICAL ? "IDENTICAL" : "DIFFERENT", file.c_str(), policy.mnemonic, vector_text(index, test).c_str());
+	fprintf(report, "%s %s (%s) %s\n", kind == DK_IDENTICAL ? "IDENTICAL" : kind == DK_BOTH_NOTIFY ? "BOTH-NOTIFY" : "DIFFERENT", file.c_str(),
+		policy.mnemonic, vector_text(index, test).c_str());
 
 	if (kind != DK_IDENTICAL)
 		fprintf(report, "    %s\n", what.c_str());
@@ -323,8 +341,8 @@ static bool load_baseline(const std::string& path, std::map<std::string, DiffBas
 
 		memset(&b, 0, sizeof(b));
 
-		if (sscanf(line, "%255s %u %u %u %u %u %u %u %u %u %u", name, &b.total, &b.run, &b.kind[DK_IDENTICAL], &b.kind[DK_BOTH_CRASH],
-			&b.kind[DK_CRASH], &b.kind[DK_PATH], &b.kind[DK_BUS], &b.kind[DK_STATE], &b.kind[DK_NOTIFY], &b.native) == 11)
+		if (sscanf(line, "%255s %u %u %u %u %u %u %u %u %u %u %u", name, &b.total, &b.run, &b.kind[DK_IDENTICAL], &b.kind[DK_BOTH_CRASH],
+			&b.kind[DK_BOTH_NOTIFY], &b.kind[DK_CRASH], &b.kind[DK_PATH], &b.kind[DK_BUS], &b.kind[DK_STATE], &b.kind[DK_NOTIFY], &b.native) == 12)
 			baseline[name] = b;
 	}
 
@@ -343,18 +361,20 @@ static bool save_baseline(const std::string& path, const char* name, const std::
 	fprintf(f, "# %s baseline: on how many vectors the SH4 interpreter and the dynarec agree, per file, by what the\n", name);
 	fprintf(f, "# others differ, and for how many the dynarec compiles the instruction to native code.\n");
 	fprintf(f, "# The test fails when a file runs fewer vectors than listed here, has fewer identical or native ones, or more\n");
-	fprintf(f, "# of both-crash, crash, path, bus or state.\n");
+	fprintf(f, "# of both-crash, both-notify, crash, path, bus or state.\n");
 	fprintf(f, "# Written by the test's --update-baseline, tests/sh4_dynarec/KNOWN_DIFFERENCES.md has the causes.\n");
 	fprintf(f, "#\n");
-	fprintf(f, "# %-24s %5s %5s %9s %10s %5s %5s %5s %5s %6s %6s\n", "file", "total", "run", diff_kind_name[DK_IDENTICAL], diff_kind_name[DK_BOTH_CRASH],
-		diff_kind_name[DK_CRASH], diff_kind_name[DK_PATH], diff_kind_name[DK_BUS], diff_kind_name[DK_STATE], diff_kind_name[DK_NOTIFY], "native");
+	fprintf(f, "# %-24s %5s %5s %9s %10s %11s %5s %5s %5s %5s %6s %6s\n", "file", "total", "run", diff_kind_name[DK_IDENTICAL],
+		diff_kind_name[DK_BOTH_CRASH], diff_kind_name[DK_BOTH_NOTIFY], diff_kind_name[DK_CRASH], diff_kind_name[DK_PATH], diff_kind_name[DK_BUS],
+		diff_kind_name[DK_STATE], diff_kind_name[DK_NOTIFY], "native");
 
 	for (std::map<std::string, DiffCounts>::const_iterator it = results.begin(); it != results.end(); ++it)
 	{
 		const DiffCounts& c = it->second;
 
-		fprintf(f, "%-26s %5u %5u %9u %10u %5u %5u %5u %5u %6u %6u\n", it->first.c_str(), c.total, c.run, c.kind[DK_IDENTICAL], c.kind[DK_BOTH_CRASH],
-			c.kind[DK_CRASH], c.kind[DK_PATH], c.kind[DK_BUS], c.kind[DK_STATE], c.kind[DK_NOTIFY], c.native);
+		fprintf(f, "%-26s %5u %5u %9u %10u %11u %5u %5u %5u %5u %6u %6u\n", it->first.c_str(), c.total, c.run, c.kind[DK_IDENTICAL],
+			c.kind[DK_BOTH_CRASH], c.kind[DK_BOTH_NOTIFY], c.kind[DK_CRASH], c.kind[DK_PATH], c.kind[DK_BUS], c.kind[DK_STATE], c.kind[DK_NOTIFY],
+			c.native);
 	}
 
 	fclose(f);
@@ -507,8 +527,8 @@ int main(int argc, char** argv)
 	std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
 
 	fprintf(report, "%s: vectors %s\n\n", opt.name.c_str(), opt.vectors_dir.c_str());
-	fprintf(report, "%-26s %-24s %5s %5s %9s %9s %10s %6s  %s\n", "file", "instruction", "total", "run", "identical", "different", "both-crash",
-		"native", "filtered");
+	fprintf(report, "%-26s %-24s %5s %5s %9s %9s %10s %11s %6s  %s\n", "file", "instruction", "total", "run", "identical", "different", "both-crash",
+		"both-notify", "native", "filtered");
 
 	std::map<std::string, DiffCounts> results;
 	DiffCounts sum;
@@ -544,6 +564,8 @@ int main(int argc, char** argv)
 
 		DiffCounts counts;
 		std::vector<std::string> listed[DK_COUNT];	//the first DIFF_LIST_MAX vectors of each kind
+		std::vector<std::string> unannounced;		//the first DIFF_LIST_MAX vectors with a notification nobody announces
+		u32 unannounced_notifications = 0;
 
 		for (size_t ti = 0; ti < tests.size(); ti++)
 		{
@@ -589,6 +611,22 @@ int main(int argc, char** argv)
 					listed[kind].push_back(vector_text((u32)ti, test) + ": " + what);
 			}
 
+			//a notification an engine carries on from has to be one the policy knows by its text
+			const char* announced = ss_policy_notification(*policy, test);
+			const char* raised = unannounced_notification(interpreter, announced);
+			const EngineResult& by = raised ? interpreter : dynarec;
+
+			if (!raised)
+				raised = unannounced_notification(dynarec, announced);
+
+			if (raised)
+			{
+				unannounced_notifications++;
+
+				if (unannounced.size() < DIFF_LIST_MAX)
+					unannounced.push_back(vector_text((u32)ti, test) + diff_format(": the %s notifies \"%s\"", by.name, raised));
+			}
+
 			if (opt.verbose && (kind != DK_IDENTICAL || opt.vector >= 0))
 				print_vector(file, *policy, (u32)ti, test, interpreter, dynarec, kind, what);
 			else if (opt.vector >= 0)
@@ -605,8 +643,9 @@ int main(int argc, char** argv)
 				filtered += diff_format("%s%s=%u", filtered.empty() ? "" : " ", ss_filter_name((SsFilterReason)r), counts.filtered[r]);
 		}
 
-		fprintf(report, "%-26s %-24s %5u %5u %9u %9u %10u %6u  %s\n", file.c_str(), policy->mnemonic, counts.total, counts.run, counts.kind[DK_IDENTICAL],
-			counts.different(), counts.kind[DK_BOTH_CRASH], counts.native, filtered.empty() ? "-" : filtered.c_str());
+		fprintf(report, "%-26s %-24s %5u %5u %9u %9u %10u %11u %6u  %s\n", file.c_str(), policy->mnemonic, counts.total, counts.run,
+			counts.kind[DK_IDENTICAL], counts.different(), counts.kind[DK_BOTH_CRASH], counts.kind[DK_BOTH_NOTIFY], counts.native,
+			filtered.empty() ? "-" : filtered.c_str());
 
 		//the first vector of every kind of difference
 		for (u32 k = DK_HANG; k < DK_COUNT && !opt.verbose && opt.vector < 0; k++)
@@ -624,6 +663,17 @@ int main(int argc, char** argv)
 			notes.push_back(diff_format("FAIL %s: an engine hangs on %u vectors", file.c_str(), counts.kind[DK_HANG]));
 			for (size_t n = 0; n < listed[DK_HANG].size(); n++)
 				notes.push_back("    " + listed[DK_HANG][n]);
+			problems++;
+		}
+
+		if (unannounced_notifications)
+		{
+			notes.push_back(diff_format("FAIL %s (%s): an engine carries on from a notification that the policy does not announce on %u vectors",
+				file.c_str(), policy->mnemonic, unannounced_notifications));
+			for (size_t n = 0; n < unannounced.size(); n++)
+				notes.push_back("    " + unannounced[n]);
+			if (unannounced_notifications > unannounced.size())
+				notes.push_back(diff_format("    and %u more", unannounced_notifications - (u32)unannounced.size()));
 			problems++;
 		}
 
@@ -682,7 +732,7 @@ int main(int argc, char** argv)
 			improvements++;
 		}
 
-		//fewer identical vectors, or more that differ in a way a file may not have more of
+		//fewer identical vectors, or more of a kind a file may not have more of
 		std::string worse;
 
 		if (counts.kind[DK_IDENTICAL] < b.kind[DK_IDENTICAL])
@@ -717,7 +767,7 @@ int main(int argc, char** argv)
 			continue;
 		}
 
-		//what is left: more identical vectors, more or fewer notifications, fewer of another kind
+		//what is left: more identical vectors, more or fewer notifications of one engine, fewer of another kind
 		for (u32 k = DK_IDENTICAL; k < DK_COUNT; k++)
 		{
 			if (k != DK_HANG && counts.kind[k] != b.kind[k])
@@ -760,6 +810,7 @@ int main(int argc, char** argv)
 	}
 
 	fprintf(report, "  both-crash   %6u  %s\n", sum.kind[DK_BOTH_CRASH], diff_kind_description[DK_BOTH_CRASH]);
+	fprintf(report, "  both-notify  %6u  %s\n", sum.kind[DK_BOTH_NOTIFY], diff_kind_description[DK_BOTH_NOTIFY]);
 	if (sum.kind[DK_HANG])
 		fprintf(report, "  hang         %6u  %s\n", sum.kind[DK_HANG], diff_kind_description[DK_HANG]);
 	fprintf(report, "  native       %6u  vectors whose instruction the dynarec compiles to native code, the others it hands to the interpreter\n", sum.native);
