@@ -10,8 +10,8 @@
 #
 # then, with a window as well, the session emu.reset (a reset of the guest while parked and with a pause pending),
 # a guest that returns to the BIOS (sessions emuwin.exit, emuwin.exitpending): the thread ends, the window
-# stays; and the close button in the moment in which the guest resets the machine (session emuwin.closereset,
-# ten runs).
+# stays; the title of the window at two stops of one thread (session emuwin.twice); and the close button in the
+# moment in which the guest resets the machine (session emuwin.closereset, ten runs).
 # It says for each whether the machine did what it has to: one line "PASS <session>: <item>" or
 # "FAIL <session>: <item>". The output of every run is <work dir>/<session>.<run>/log.txt.
 #
@@ -75,6 +75,7 @@ start() {
 	case "$session" in
 	parked)  wait_line 30 'SelfTest: emuwin.parked: ok: parked: "pause"' ;;
 	pending) wait_line 30 'the guest runs from here' ;;
+	twice)   wait_line 30 'the first stop; the guest runs on in a while' ;;
 	closereset) wait_line 30 'the guest is about to reset the machine' ;;
 	*)       wait_line 30 'the guest is about to return to the BIOS' ;;
 	esac || { bad "run $1: the session did not come to its state"; return 1; }
@@ -239,6 +240,33 @@ reset_and_exit() {
 	done
 }
 
+# title_twice: the title says that the debugger paused at the second stop of a thread as at its first
+title_twice() {
+	local paused="nullDC 3.0.0 [paused by debugger]" n
+
+	session=twice
+	if start 1; then
+		[ "$("$xsend" title $win)" = "$paused" ] && pass "the window title at the first stop of a thread" || bad "the window title at the first stop of a thread"
+
+		# the running machine takes the title back
+		wait_line 10 'emuwin: twice: running'
+		n=50
+		while [ "$("$xsend" title $win)" = "$paused" ] && [ $n -gt 0 ]; do sleep 0.1; n=$((n - 1)); done
+		[ $n -gt 0 ] && pass "the running machine writes its frame rate into the title" || bad "the running machine writes its frame rate into the title"
+
+		if wait_line 20 'emuwin: twice: the second stop' && sleep 0.3 && [ "$("$xsend" title $win)" = "$paused" ]; then
+			pass "the window title at the second stop of the same thread"
+		else
+			bad "the window title at the second stop of the same thread (\"$("$xsend" title $win)\")"
+		fi
+
+		"$xsend" close $win
+		the_end "the close button while parked ends the process"
+	else
+		stop_now
+	fi
+}
+
 # close_in_reset: the session closes its window itself, as the window does for its close button, while the guest
 # resets the machine
 close_in_reset() {
@@ -257,6 +285,7 @@ close_in_reset() {
 checklist parked
 checklist pending
 reset_and_exit
+title_twice
 close_in_reset
 
 [ $fail -eq 0 ] && echo "window checklist: every item passed" || echo "window checklist: FAILED"

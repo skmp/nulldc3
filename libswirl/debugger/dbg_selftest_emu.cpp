@@ -66,6 +66,9 @@ namespace dbg { namespace emu { namespace test {
 // dbg_emu.cpp: invoked behind the listener with every state that is published
 extern void (*observer)(const RunState& state);
 
+// dbg_emu.cpp: how often the park loop has put its title on the window
+extern u32 pausedTitles;
+
 // dbg_emu.cpp: the threads of the session start without a start park
 extern bool plainStart;
 
@@ -2891,6 +2894,67 @@ DBG_SELFTEST_GUEST(emu_term, "emu.term")
 }
 
 /*
+	emu.title: the window says that the debugger paused, at every stop
+*/
+namespace {
+
+struct {
+	int phase;
+	u32 stop0, titles;
+	std::atomic<bool> otherFailed { false };
+} ti;
+
+void TitleRound(const emu::RunState& stop)
+{
+	ti.stop0 = stop.stopId;
+	ti.titles = emu::test::pausedTitles;
+
+	Resume();
+
+	OtherStart([] {
+		if (!WaitLifetime(Lifetime::Running) || !PauseAndWait(ti.stop0))
+			ti.otherFailed = true;
+	});
+}
+
+}
+
+DBG_SELFTEST_GUEST(emu_title, "emu.title")
+{
+	switch (ti.phase)
+	{
+	case 0:
+		if (!Ready(stop))
+			return false;
+
+		Goto(EMU_G_spin);
+		ti.phase = 1;
+
+		// this thread has stopped before: the stop it is parked on
+		TitleRound(stop);
+		return false;
+
+	case 1:
+	case 2:
+		OtherJoin();
+
+		Check(!ti.otherFailed && stop.cause == StopCause::Pause && emu::test::pausedTitles == ti.titles + 1,
+			"stop %d of a thread that had stopped before: the park loop put its title on the window (%u times)", ti.phase + 1, emu::test::pausedTitles - ti.titles);
+
+		if (ti.phase == 1)
+		{
+			ti.phase = 2;
+			TitleRound(stop);
+			return false;
+		}
+		break;
+	}
+
+	ti.phase = 0;
+	return true;
+}
+
+/*
 	emuexit.*: the guest returns to the BIOS. A headless run ends there: the process ends with the exit line of
 	the run, reason guest-exit, and not with the summary of this driver.
 */
@@ -3192,6 +3256,44 @@ DBG_SELFTEST_GUEST(emuwin_exit, "emuwin.exit")
 DBG_SELFTEST_GUEST(emuwin_exitpending, "emuwin.exitpending")
 {
 	return WindowExit(stop, true);
+}
+
+// Two stops of one thread with the guest running in between, long enough for the running machine to write its
+// frame rate into the title of the window
+DBG_SELFTEST_GUEST(emuwin_twice, "emuwin.twice")
+{
+	static int phase;
+	static u32 stop0;
+
+	if (phase == 0)
+	{
+		if (!Ready(stop))
+			return false;
+
+		Goto(EMU_G_busy_tmu);
+		phase = 1;
+		stop0 = stop.stopId;
+
+		Check(stop.lifetime == Lifetime::Parked, "the first stop; the guest runs on in a while, and is paused again");
+
+		std::thread([] {
+			Nap(2000);
+
+			emu::Call(emu::CC_EXEC, [] { emu::Resume(); });
+
+			printf("emuwin: twice: running\n");
+			fflush(stdout);
+
+			Nap(6000);
+			PauseAndWait(stop0);
+		}).detach();
+
+		return false;
+	}
+
+	printf("emuwin: twice: the second stop, \"%s\"\n", StopCauseName(stop.cause));
+	fflush(stdout);
+	return false;
 }
 
 // The close button of the window while the guest resets the machine. Another thread does what the window does

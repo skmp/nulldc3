@@ -57,6 +57,10 @@ namespace test {
 // under L while no emulator thread exists.
 void (*observer)(const RunState& state);
 
+// For the selftest, which has no window to look at: how often the park loop has put its title on the window.
+// The emulator thread's own
+u32 pausedTitles;
+
 // For the selftest: while it is set a thread of a session starts as a thread without a session does, with no
 // start park. Set and cleared while no emulator thread exists
 bool plainStart;
@@ -128,7 +132,7 @@ struct {
 	bool inStep;				// the park loop is executing a step
 	bool stopInForce;			// a debugger stop is published and in force
 	bool stepFallback;			// the stop that is decided ends a step the interpreter fallback made
-	bool titled;				// the window title is the park loop's
+	bool titled;				// the park loop of this thread has set the window title
 
 	// A stop that is decided and not published yet: the record of LatchStop(), a start park, a pause request
 	StopCause want;
@@ -448,11 +452,11 @@ void EnterStop()
 
 	RunState state = Publish(Lifetime::Parked, cause, id, notice, true);
 
-	if (!e.titled)
-	{
-		e.titled = true;
-		os_SetWindowText(kPausedTitle);
-	}
+	// At every stop: the machine that ran since the last one, be it for a step, may have written its frame
+	// rate into the title
+	e.titled = true;
+	os_SetWindowText(kPausedTitle);
+	test::pausedTitles++;
 
 	// A guest test stands where a call stands: it reads and writes directly and arms what happens next
 	if (selftest::Active())

@@ -33,7 +33,7 @@ test starts. Headless, nothing else plays the host.
 
 | test | what has to hold |
 |---|---|
-| `debugger.selftest.emu` `.interp` | the session `emu`, the fifteen tests below |
+| `debugger.selftest.emu` `.interp` | the session `emu`, the sixteen tests below |
 | `emu.machine` | before the guest has run: the lifetime is Running, the park context holds the stop latch, the engine is known, run control without a stop is refused, a `CC_EXEC` call for a running thread is answered at once |
 | `emu.pause` | 2000 pauses of a loop, 1000 of a loop with interrupts, 300 of a guest that waits in SLEEP, each asked for by another thread and resumed at once: every stop is a pause with the next stop id, `GetRunState` is the stop, the listener saw Running and Parked in turns on the emulator thread; emulated time at the park is the time at the latch, no scheduler callback ran, nothing executed and no interrupt was accepted in between; an interrupt that the latch held back is accepted by the resume; a pause is latched at the first slice end that has the request; a request first seen inside a SLEEP wait is taken behind the wait. A SLEEP wait that nothing ends (interrupts masked, the slices of the wait made slow): the pause is latched in the wait once it is 250 ms old, with the pc on the SLEEP |
 | `emu.events` | an event breakpoint, with the event raised by a scheduler callback of the test: in a SLEEP wait in the slice that raised the interrupt the wait is for (the wait is cut, the acceptance is owed, the resume accepts it and it returns behind the SLEEP), in a SLEEP wait with nothing pending (the SLEEP is executed again), with the pc written during such a stop, in a loop, together with a pause request (one stop, the event's). Each time the scheduler stopped in the call that raised the event. Two breakpoints on the event report the lower id. With the category inactive, and with the gate of the event closed, nothing stops |
@@ -49,6 +49,7 @@ test starts. Headless, nothing else plays the host.
 | `emu.startstop` | 40 times the host stops the machine while its emulator thread starts, from another thread than the one that starts it, with the threads starting as they do without a session: the thread ends, the callback runs once, and the stopped machine does not count as running |
 | `emu.stopevent` | the host stops the machine in the very slice in which an event breakpoint decides a stop: the host stop wins, the machine does not count as running when the stop callback looks, and the stop of the event is never published |
 | `emu.term` | 48 times the machine is taken apart under its emulator thread and made again: while the guest runs, with a pause asked for, during a service excursion, with a reset by a call and with one by the guest on its way, and while a call resumes the parked thread. The thread is ended first, and finds its machine until it is gone |
+| `emu.title` | the park loop puts its title on the window at every stop, also at the second and third of one thread |
 | `debugger.selftest.emuexit.running` `.pending` `.parked` (and `.interp`) | the guest returns to the BIOS while running, with a pause asked for in the same slice, and the exit hook is called while parked: a headless run ends there, exit code 0, `reason=guest-exit` |
 | `debugger.selftest.emurun.reads` (and `.interp`) | 2ndmix for 600 vblanks with another thread reading guest state through `CC_READ` calls for the whole run: the state hash of the exit line is that of the same run without a session, part for part |
 | `debugger.selftest.emurun.pending` (and `.interp`) | the same with a pause asked for in the very slice that ends the run: the run ends, with that hash |
@@ -61,8 +62,9 @@ test starts. Headless, nothing else plays the host.
 `window_checklist.sh <devcast> <work dir>` does at the window of the emulator what a person does there, once
 with the emulator thread parked and once with a pause asked for all the time (the sessions `emuwin.parked` and
 `emuwin.pending`): the menu key and the buttons of the menu (Save State, Load State, Restart, Resume, Exit), the
-escape key, and the close button of the window. Then it has the window closed in the moment in which the
-guest resets the machine, ten times (`emuwin.closereset`, which does what the window does for its close button
-as soon as it finds the cpu stopped for the reset). It needs a display (`DISPLAY`, default `:0`) and `xsend`, which
+escape key, and the close button of the window. Then it reads the title of the window at two stops of one
+thread, with the guest running in between (`emuwin.twice`), and has the window closed in the moment in which
+the guest resets the machine, ten times (`emuwin.closereset`, which does what the window does for its close
+button as soon as it finds the cpu stopped for the reset). It needs a display (`DISPLAY`, default `:0`) and `xsend`, which
 it builds from `xsend.c` (Xlib). Events are sent to the window of the run; nothing is typed or clicked on the
 desktop. It prints one line per item, `PASS` or `FAIL`, and is not a ctest test: it opens windows.
