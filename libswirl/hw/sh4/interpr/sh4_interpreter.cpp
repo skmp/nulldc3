@@ -77,8 +77,17 @@ static s32 interp_slice = SH4_TIMESLICE;
 
 // The slot of a delayed conditional branch that was not taken runs as an instruction of its own. It belongs to
 // its branch: the debugger check of the pair was made in front of the branch, none is made in front of the slot.
+// dbg_slot_pc is the address of such a slot from the moment its branch ran, and holds for the instruction that
+// runs next only, and only if that is the slot: an interrupt or exception accepted in between returns to the
+// slot as to any instruction, and so does whatever else arrives at its address later.
 #define DBG_NO_SLOT 0xFFFFFFFF
 static u32 dbg_slot_pc = DBG_NO_SLOT;
+
+// bt/s with T clear and bf/s with T set do not branch: their handlers leave the slot to the loop
+static inline bool SlotLeftToLoop(u32 op)
+{
+    return ((op & 0xFF00) == 0x8D00 && sr.T == 0) || ((op & 0xFF00) == 0x8F00 && sr.T != 0);
+}
 
 struct SH4IInterpreter : SuperH4Backend {
     ~SH4IInterpreter() { Term(); }
@@ -89,7 +98,9 @@ struct SH4IInterpreter : SuperH4Backend {
         l += SH4_TIMESLICE;
 
         if (UpdateSystem()) {
-            UpdateINTC();
+            // an interrupt that is accepted here comes in front of a slot that was left to the loop
+            if (UpdateINTC())
+                dbg_slot_pc = DBG_NO_SLOT;
             if (!sh4_int_bCpuRun)
                 return false;
         }
@@ -105,13 +116,14 @@ struct SH4IInterpreter : SuperH4Backend {
         next_pc += 2;
         u32 op = IReadMem16(addr);
 
-        if (addr == dbg_slot_pc)
-            dbg_slot_pc = DBG_NO_SLOT;
-        else if (dbg_sh4_WantsCheck(addr, (OpDesc[op]->type & Delayslot) != 0) && dbg_sh4_Check(addr, 0, 0))
+        const bool is_slot = addr == dbg_slot_pc;
+
+        dbg_slot_pc = DBG_NO_SLOT;
+
+        if (!is_slot && dbg_sh4_WantsCheck(addr, (OpDesc[op]->type & Delayslot) != 0) && dbg_sh4_Check(addr, 0, 0))
             return false;	// the pc is back on the instruction, nothing was charged
 
-        // bt/s with T clear and bf/s with T set are not taken: their handlers leave the slot to the loop
-        const bool slot_follows = ((op & 0xFF00) == 0x8D00 && sr.T == 0) || ((op & 0xFF00) == 0x8F00 && sr.T != 0);
+        const bool slot_follows = SlotLeftToLoop(op);
 
         ExecuteOpcode(op);
 
@@ -161,6 +173,7 @@ struct SH4IInterpreter : SuperH4Backend {
             catch (SH4ThrownException& ex) {
                 Do_Exception(ex.epc, ex.expEvn, ex.callVect);
                 l -= CPU_RATIO * 5;	// an exception requires the instruction pipeline to drain, so approx 5 cycles
+                dbg_slot_pc = DBG_NO_SLOT;
             }
 #endif
         } while (true);
@@ -227,7 +240,9 @@ struct SH4IInterpreter : SuperH4Backend {
     }
 
     // One instruction with the end-of-slice work if the slice ran out. A delayed branch runs together with its
-    // slot, also when it is not taken: a step is the same unit as in a jit.
+    // slot, also when it is not taken: a step is the same unit as in a jit. The step goes on into a slot only
+    // behind the branch that it ran itself, and not when the slice ended between the two and an interrupt was
+    // accepted there: the step then ends at the handler, as the loop gets there.
     bool Step()
     {
         s32& l = interp_slice;
@@ -242,12 +257,13 @@ struct SH4IInterpreter : SuperH4Backend {
 
                 if (l <= 0)
                     SliceEnd(l);
-            } while (next_pc == dbg_slot_pc);
+            } while (dbg_slot_pc != DBG_NO_SLOT);
 #if !defined(NO_MMU)
         }
         catch (SH4ThrownException& ex) {
             Do_Exception(ex.epc, ex.expEvn, ex.callVect);
             l -= CPU_RATIO * 5;
+            dbg_slot_pc = DBG_NO_SLOT;
         }
 #endif
 
