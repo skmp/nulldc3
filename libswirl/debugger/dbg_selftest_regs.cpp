@@ -89,6 +89,26 @@ u64 WidthMask(u32 width)
 	return width >= 64 ? ~(u64)0 : ((u64)1 << width) - 1;
 }
 
+// The settings the flash chip of a Dreamcast puts in place of stored bytes when a guest reads them: region at
+// 0x1A002 and 0x1A0A2, language at 0x1A003 and 0x1A0A3, broadcast at 0x1A004 and 0x1A0A4, each while it names a
+// value. The last row is every setting left at its default: the stored bytes are read.
+struct FlashSettings {
+	u32 region, language, broadcast;
+};
+
+const FlashSettings flash_settings[] = { { 1, 3, 2 }, { 2, 5, 0 }, { 0, 0, 3 }, { 3, 6, 4 } };
+
+FlashSettings SetFlashSettings(const FlashSettings& now)
+{
+	FlashSettings before = { settings.dreamcast.region, settings.dreamcast.language, settings.dreamcast.broadcast };
+
+	settings.dreamcast.region = now.region;
+	settings.dreamcast.language = now.language;
+	settings.dreamcast.broadcast = now.broadcast;
+
+	return before;
+}
+
 // What a device writes into a save state.
 std::vector<u8> DeviceState(MMIODevice* device)
 {
@@ -1074,6 +1094,78 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 
 		stores.Report("boot ROM and flash stores against their devices");
 	}
+
+	// the flash memory byte by byte as a guest read delivers it, which is not the store where the chip puts a
+	// setting in its place
+	{
+		const u8* data = nullptr;
+		u32 size = 0;
+		u8 byte = 0xEE;
+
+		if (Check(area0_DebugNvmem(&data, &size) && area0_DebugNvmemByte(0, &byte), "the flash memory gives its bytes one by one"))
+		{
+			MMIODevice* flash = sh4_cpu->GetA0Handler(A0H_FLASH);
+			Tally bytes, substituted;
+
+			auto compare_at = [&](u32 offset) {
+				byte = 0xEE;
+				bool ok = area0_DebugNvmemByte(offset, &byte);
+				u32 guest = flash->Read(offset, 1);
+
+				bytes.Add(ok && byte == guest, "flash byte %05X: %02X, a guest read delivers %02X", offset, byte, guest);
+			};
+
+			auto compare = [&]() {
+				// the whole memory in steps, and every byte around the settings
+				for (u32 offset = 0; offset < size; offset += 257)
+					compare_at(offset);
+
+				for (u32 offset = 0x1A000; offset < 0x1A100 && offset < size; offset++)
+					compare_at(offset);
+
+				// an offset is taken modulo the size of the store
+				u8 mirrored = 0xEE;
+				bool ok = area0_DebugNvmemByte(size + 0x1A002, &mirrored) && area0_DebugNvmemByte(0x1A002 & (size - 1), &byte);
+
+				bytes.Add(ok && mirrored == byte, "flash byte %05X behind the end of the store: %02X, at its place %02X", 0x1A002, mirrored, byte);
+			};
+
+			// as the run has its settings
+			compare();
+
+#if DC_PLATFORM == DC_PLATFORM_DREAMCAST
+			for (const FlashSettings& now : flash_settings)
+			{
+				FlashSettings before = SetFlashSettings(now);
+
+				compare();
+
+				for (u32 base : { 0x1A000u, 0x1A0A0u })
+				{
+					const u8 want[3] = {
+						(u8)(now.region <= 2 ? '0' + now.region : data[base + 2]),
+						(u8)(now.language <= 5 ? '0' + now.language : data[base + 3]),
+						(u8)(now.broadcast <= 3 ? '0' + now.broadcast : data[base + 4]),
+					};
+
+					for (u32 i = 0; i < 3; i++)
+					{
+						byte = 0xEE;
+						area0_DebugNvmemByte(base + 2 + i, &byte);
+						substituted.Add(byte == want[i], "flash byte %05X with region %u, language %u, broadcast %u: %02X, has to be %02X",
+							base + 2 + i, now.region, now.language, now.broadcast, byte, want[i]);
+					}
+				}
+
+				SetFlashSettings(before);
+			}
+
+			substituted.Report("the six flash bytes that deliver the region, the language and the broadcast, by their settings");
+#endif
+
+			bytes.Report("flash bytes against guest reads");
+		}
+	}
 }
 
 /*
@@ -1233,6 +1325,43 @@ DBG_SELFTEST(regs_mem_read, "regs.mem.read")
 
 		n = mem::Read(Target::Sh4, 0xA0200000, 0x100, buffer, nullptr);
 		Check(n == 0x100 && flash != nullptr && memcmp(buffer, flash, 0x100) == 0, "the flash memory at 0xA0200000");
+
+		// where the chip delivers settings in place of the stored bytes, memory is what the guest reads
+		{
+			MMIODevice* chip = sh4_cpu->GetA0Handler(A0H_FLASH);
+			Tally guest;
+
+			auto compare = [&](u32 addr) {
+				n = mem::Read(Target::Sh4, addr, 0x100, buffer, nullptr);
+
+				guest.Add(n == 0x100, "%08X: %u of 256 bytes readable", addr, n);
+				for (u32 i = 0; i < 0x100; i++)
+					guest.Add(buffer[i] == chip->Read(0x1A000 + i, 1), "%08X: %02X, a guest read delivers %02X", addr + i, buffer[i], chip->Read(0x1A000 + i, 1));
+			};
+
+			compare(0xA021A000);
+
+#if DC_PLATFORM == DC_PLATFORM_DREAMCAST
+			for (const FlashSettings& now : flash_settings)
+			{
+				FlashSettings before = SetFlashSettings(now);
+
+				compare(0xA021A000);
+				compare(0x0221A000);
+
+				if (now.region <= 2 && now.language <= 5 && now.broadcast <= 3)
+				{
+					n = mem::Read(Target::Sh4, 0x8021A0A2, 3, buffer, nullptr);
+					guest.Add(n == 3 && buffer[0] == '0' + now.region && buffer[1] == '0' + now.language && buffer[2] == '0' + now.broadcast,
+						"0x8021A0A2 with region %u, language %u, broadcast %u: %02X %02X %02X", now.region, now.language, now.broadcast, buffer[0], buffer[1], buffer[2]);
+				}
+
+				SetFlashSettings(before);
+			}
+#endif
+
+			guest.Report("the flash memory around its settings against guest reads");
+		}
 
 		memset(bits, 0xEE, sizeof(bits));
 		n = mem::Read(Target::Sh4, 0x0021FFF0, 32, buffer, bits);

@@ -212,15 +212,29 @@ u32 ReadRun(Region region, u32 addr, u32 count, u8* out, u8* bits, u32 first)
 		break;
 
 	case Region::Bios:
-	case Region::Flash:
 	{
 		const u8* data;
 		u32 size;
-		bool found = region == Region::Bios ? area0_DebugRom(&data, &size) : area0_DebugNvmem(&data, &size);
 
-		// both regions start at a multiple of every size a store can have
-		if (found)
+		// the region starts at a multiple of every size a store can have
+		if (area0_DebugRom(&data, &size))
 			readable = CopyMirrored(data, size, addr, count, out);
+		break;
+	}
+
+	case Region::Flash:
+	{
+		u8 first_byte;
+
+		// What a guest read delivers is not the store everywhere: the chip puts settings in place of a few
+		// stored bytes, so every byte is asked for as that read gets it. The region starts at a multiple of
+		// every size a store can have, and the offset is taken modulo that size
+		if (area0_DebugNvmemByte(addr, &first_byte))
+		{
+			for (u32 i = 0; i < count; i++)
+				area0_DebugNvmemByte(addr + i, &out[i]);
+			readable = count;
+		}
 		break;
 	}
 
