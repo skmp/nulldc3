@@ -13,7 +13,6 @@
 #include "hw/aica/dsp.h"
 #include "hw/arm7/SoundCPU.h"
 #include "hw/arm7/arm7_context.h"
-#include "hw/gdrom/gdromv3.h"
 #include "hw/holly/sb.h"
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_interpreter.h"
@@ -408,6 +407,3 @@ bool ReadSbRegisterAt(uint32_t addr, uint32_t* value)
 }
 
 } }
-
-// The device accessors that are free functions give nothing yet. Their place is hw/gdrom/gdromv3.cpp.
-bool gdrom_DebugGetState(GDRomDebugState*) { return false; }
