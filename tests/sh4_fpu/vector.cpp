@@ -26,6 +26,8 @@
 #include "vector_cases.h"
 #include "vector_anchors.h"
 
+#include "hw/sh4/sh4_rom.h"
+
 #include <cstring>
 
 #define FSCA_DUMP "model/fipr/kos_fpu_dump/fsca_rnrz.bin"
@@ -128,20 +130,11 @@ static const char* why_value(const FpuCase& c, const FpuRegs& left, u32 engine)
 		nearest.before.fpscr &= ~FPU_FPSCR_RM;
 		vector_reference(nearest);
 
-		//the two things the table is known for: a -0 where the hardware has +0, and that it is the one table
-		bool only_zeros = true;
+		//what the table is known for: it is the one table
 		bool is_nearest = true;
 
 		for (u32 i = 0; i < 16; i++)
-		{
-			bool minus_zero = left.fr[i] == 0x80000000 && nearest.after.fr[i] == 0;
-
-			only_zeros = only_zeros && (left.fr[i] == c.after.fr[i] || (minus_zero && c.after.fr[i] == 0));
-			is_nearest = is_nearest && (left.fr[i] == nearest.after.fr[i] || minus_zero);
-		}
-
-		if (only_zeros)
-			return "FSCA: the sine of 0x8000 and the cosine of 0x4000 are -0 in the table, +0 on the hardware";
+			is_nearest = is_nearest && left.fr[i] == nearest.after.fr[i];
 
 		if (rz && is_nearest)
 			return "FSCA: the table has the hardware's round to nearest results, FPSCR.RM is not looked at";
@@ -320,6 +313,39 @@ static u32 check_fsca(const std::vector<u8>& dump)
 	return wrong;
 }
 
+//The emulator's FSCA table against the console's sine and cosine in round to nearest: it has to be them for every
+//angle, the zeros with their signs. Returns the number of angles it is not
+static u32 check_fsca_table(const std::vector<u8>& dump)
+{
+	u32 agree = 0;
+	u32 wrong = 0;
+
+	for (u32 angle = 0; angle < FSCA_ANGLES; angle++)
+	{
+		u32 table[2];
+
+		memcpy(table, sin_table[angle].u, sizeof(table));
+
+		u32 sine = fpu_le32(dump, (size_t)angle * 16);
+		u32 cosine = fpu_le32(dump, (size_t)angle * 16 + 4);
+
+		if (table[0] == sine && table[1] == cosine)
+		{
+			agree++;
+		}
+		else if (wrong++ == 0)
+		{
+			fpu_problem("the FSCA table (hw/sh4/sh4_rom.cpp) is not the console's round to nearest result, first angle %04X: console sine %08X "
+				"cosine %08X, table %08X %08X", angle, sine, cosine, table[0], table[1]);
+		}
+	}
+
+	fpu_note("console %-42s %-5s the emulator's table is the console's round to nearest sine and cosine for %u of %u angles", FSCA_DUMP, "FSCA", agree,
+		FSCA_ANGLES);
+
+	return wrong;
+}
+
 int fpu_vector_main(const FpuOptions& opt)
 {
 	const char* name = "sh4.fpu.vector";
@@ -351,6 +377,8 @@ int fpu_vector_main(const FpuOptions& opt)
 
 	if (wrong)
 		fpu_note("THE MODEL IS NOT CALLED THE WAY THE HARDWARE WORKS: the counts say nothing");
+
+	check_fsca_table(dump);
 
 	fpu_suite_why(&why_value);
 

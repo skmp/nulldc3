@@ -14,7 +14,7 @@ A fix takes its entry out of this file and updates the baselines in the same com
 | | cases | traps | value-i | value-d | flags-i | flags-d | agree | native | crash |
 |---|---|---|---|---|---|---|---|---|---|
 | `sh4.fpu.scalar` | 225,036 | 19,633 | 205,051 | 205,051 | 109,153 | 109,153 | 225,036 | 113,946 | 0 |
-| `sh4.fpu.vector` | 1,371,226 | 1,617 | 686,389 | 686,389 | 13,404 | 13,404 | 1,371,226 | 1,370,977 | 0 |
+| `sh4.fpu.vector` | 1,371,226 | 1,617 | 686,402 | 686,402 | 13,404 | 13,404 | 1,371,226 | 1,370,977 | 0 |
 
 ## 1. There is no FPU exception
 
@@ -166,20 +166,17 @@ with DN = 1, +inf, and what gives a NaN: a negative number, -inf and a NaN.
 ## 7. FSCA is a table of the round to nearest results
 
 **Groups:** `FSCA.dn1.rz.angle` 33,084 of 65,536, `FSCA.dn1.rz.upper` 4,110 of 8,192, `FSCA.console.values.rz` 446
-of 1,024, 28 of `FSCA.console.specials.dn1`; and `FSCA.dn1.rn.angle` 2 of 65,536, `FSCA.console.values.rn` 3, 8
-of `FSCA.console.specials.dn1`.
+of 1,024, 28 of `FSCA.console.specials.dn1`.
 
-* `sin_table` (`hw/sh4/sh4_rom.cpp`, from `hw/sh4/fsca-table.h`) is what the hardware computes in round to
-  nearest (console: all 65,536 angles). FSCA does not look at FPSCR.RM, and with round to zero the hardware's
-  sine or cosine is one unit in the last place off the table for 33,084 of the 65,536 angles. Round to zero
-  is what FPSCR is after a reset.
-* The table's second half is the negated first half, which makes the sine of 0x8000, and with it the cosine of
-  0x4000, -0. The hardware has +0 for both.
+`sin_table` (`hw/sh4/sh4_rom.cpp`, from `hw/sh4/fsca-table.h`) is what the hardware computes in round to nearest:
+the test compares the table itself with the console's sine and cosine of all 65,536 angles before it runs
+anything, and fails on an entry that is not the console's, a zero of the other sign too. FSCA does not look at
+FPSCR.RM, and with round to zero the hardware's sine or cosine is one unit in the last place off the table for
+33,084 of the 65,536 angles. Round to zero is what FPSCR is after a reset.
 
     FSCA.dn1.rz.angle   angle #0: FR1 is 3F800000, hardware 3F7FFFFF (cosine)
-    FSCA.dn1.rn.angle   angle #16384: FR1 is 80000000, hardware 00000000
 
-FPUL[31:16] is ignored by both (`FSCA.dn1.rn.upper` passes).
+FPUL[31:16] is ignored by both (`FSCA.dn1.rn.upper` passes). In round to nearest every case is the hardware's.
 
 ## Where the engines differ from each other
 

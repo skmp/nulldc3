@@ -111,6 +111,10 @@ the 15,642 of the text files (value, FPSCR and exception where a record has them
 file with another number of records than it is known to have, fails the test whatever the baseline says, and
 the baseline cannot be written.
 
+The same holds for the emulator's FSCA table (`sin_table`, `hw/sh4/sh4_rom.cpp`): it is compared, entry by entry,
+with the round to nearest half of `fsca_rnrz.bin`, and has to be the console's sine and cosine for all 65,536
+angles.
+
 ## The baselines
 
 `baseline_scalar.txt` and `baseline_vector.txt` have the counts of every group. A test fails when
