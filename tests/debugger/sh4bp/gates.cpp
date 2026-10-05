@@ -1181,6 +1181,17 @@ static void gate_b10()
 		owed = dbg_sh4_TakeRemainder(G_line_mid, &end_pc, &cycles);
 		check(!owed, "%s: a reset or a loaded state during the stop: nothing is owed afterwards", en);
 
+		//a step that a breakpoint stops in front of its instruction: nothing ran, nothing is owed
+		machine_reset(e);
+		bps({ G_line_mid, G_line_end });
+		machine_set_pc(G_line_mid);
+		MachineState before = machine_state();
+		s = machine_step();
+		owed = dbg_sh4_TakeRemainder(G_line_mid, &end_pc, &cycles);
+		bool stopped = is_bp(s, 1, G_line_mid) && R(2) == 0 && machine_state() == before;
+		s = machine_step();
+		check(stopped && !owed && is_step(s, G_line_mid + 2), "%s: a step onto a pc with a breakpoint that the debugger did not stop at is stopped by it: nothing ran, nothing is owed; the next step runs the instruction", en);
+
 		//what is owed is owed once
 		machine_reset(e);
 		machine_set_pc(G_line);
