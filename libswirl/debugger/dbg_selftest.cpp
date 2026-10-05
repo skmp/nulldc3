@@ -27,8 +27,8 @@ Test::Test(const char* name, MachineFn machine, GuestFn guest)
 	registry = this;
 }
 
-// Nothing in this file is initialised or destroyed outside a session: an emulator that runs no selftest
-// executes none of it.
+// Outside a session the driver costs one read of the configuration, at the first Requested(), and the tests
+// that AtStart() and Active() begin with. Nothing in this file is destroyed at process exit.
 static struct {
 	bool started;
 	std::vector<Test*>* guests;	// the selected guest tests, in the order they run; made by AtStart
@@ -40,9 +40,10 @@ static struct {
 	u32 testsFailed;
 } session;
 
+// The string is never destroyed: the emulator thread may ask while the process exits.
 static const std::string& Filter()
 {
-	static const std::string filter = cfgLoadStr("Debugger", "SelfTest", "");
+	static const std::string& filter = *new std::string(cfgLoadStr("Debugger", "SelfTest", ""));
 	return filter;
 }
 
