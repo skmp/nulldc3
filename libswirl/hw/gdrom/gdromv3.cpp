@@ -10,6 +10,7 @@
 */
 
 #include "gdromv3.h"
+#include "debugger/debugger.h"
 
 #include "types.h"
 #include "libswirl.h"
@@ -340,6 +341,8 @@ struct GDRomV3_impl final : MMIODevice {
     }
     void gd_process_ata_cmd()
     {
+        DBG_EVENT(dbg::EV_GDROM_COMMAND, "ATA command %02X", ata_cmd.command);
+
         //Any ATA command clears these bits, unless aborted/error :p
         Error.ABRT = 0;
 
@@ -443,6 +446,9 @@ struct GDRomV3_impl final : MMIODevice {
 
     void gd_process_spi_cmd()
     {
+        DBG_EVENT(dbg::EV_GDROM_COMMAND, "packet command %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+            packet_cmd.data_8[0], packet_cmd.data_8[1], packet_cmd.data_8[2], packet_cmd.data_8[3], packet_cmd.data_8[4], packet_cmd.data_8[5],
+            packet_cmd.data_8[6], packet_cmd.data_8[7], packet_cmd.data_8[8], packet_cmd.data_8[9], packet_cmd.data_8[10], packet_cmd.data_8[11]);
 
         printf_spi("Sense: %02x %02x %02x \n", sns_asc, sns_ascq, sns_key);
 
