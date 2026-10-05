@@ -36,8 +36,10 @@
 	                 tables directly. It does not run the guest.
 	  guest test     drives the guest from debugger stops, in place of a client. The park loop hands it every
 	                 stop; in that call it stands where a call of every class may stand: it reads and writes
-	                 guest state and the tables directly and uses dbg::emu (SetSh4Breakpoints, SetActiveMask,
-	                 Resume, Step, Reset, ...) to arm what happens next.
+	                 guest state and the tables directly and uses dbg::emu (SetSh4Breakpoints,
+	                 SetEventBreakpoints, SetActiveMask, Resume, Step, Reset, ...) to arm what happens next.
+	                 No client is connected, so a test that sets an event breakpoint also opens the gate of
+	                 its event, and closes it again (g_event_on, debugger.h).
 
 	The machine tests run first, then the guest tests one after the other, each kind in the order of the
 	names. A test starts with the machine as the test before it left it.

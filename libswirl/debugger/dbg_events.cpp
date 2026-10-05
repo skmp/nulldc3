@@ -5,20 +5,19 @@
 #include "license/bsd"
 
 
-#include "debugger.h"
-
-#include <cstdio>
-#include <cstdlib>
+#include "dbg_emu.h"
 
 namespace dbg {
 
-// Every gate stays closed: DBG_EVENT never gets past its test.
+// Nothing here opens a gate: DBG_EVENT gets past its test only for an event whose gate a selftest opened.
 std::atomic<u8> g_event_on[EV_ID_COUNT];
 
-void EventSlow(EventId, const char*, ...)
+// The log is a stub and records nothing; the breakpoint half of the contract works. With the stub of dbg::emu
+// no thread is the emulator thread and nothing happens at all.
+void EventSlow(EventId id, const char*, ...)
 {
-	fprintf(stderr, "debugger: dbg::EventSlow reached, but the event log is a stub\n");
-	abort();
+	if (emu::OnEmuThread())
+		emu::OnEvent(id);
 }
 
 }

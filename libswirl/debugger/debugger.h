@@ -280,6 +280,9 @@ u32 Park();
 
 // One gate per event: 1 while a client is connected (net::Server::HasClients) and the event is EVR_LOW or an
 // event breakpoint on it exists, else 0. Written by the debugger core; read by any thread through DBG_EVENT.
+// A selftest session has no client: a guest test that sets an event breakpoint (emu::SetEventBreakpoints)
+// stores 1 in the gate of that event itself, and 0 when it removes the breakpoint. The core rewrites the
+// gates only when a client connects or disconnects or the event breakpoints change through it.
 extern std::atomic<u8> g_event_on[EV_ID_COUNT];
 
 // Raise an event: DBG_EVENT(dbg::EV_GDROM_COMMAND, "command %02X", cmd). The format is required. With the
@@ -290,9 +293,11 @@ extern std::atomic<u8> g_event_on[EV_ID_COUNT];
 // Behind DBG_EVENT; not called directly. printf-style; the message is cut to kEventMessageMax bytes.
 // Appends an entry to the event log under the log's own mutex, which is held for the append only: it
 // never takes L, never waits for (E) and may be called with any emulator lock held.
-// On (E) while the guest executes (Running, or a step) it also tests the event breakpoints: a hit asks for
-// a pause, which the slice hook latches in the UpdateSystem() call that is running or the next one. Events
-// raised on other threads, or on (E) in the park context, never stop.
+// On (E) while the guest executes (Running, or a step) it also tests the event breakpoints (emu::OnEvent):
+// a hit asks for a pause, which the slice hook latches in the UpdateSystem() call that is running or the
+// next one. Events raised on other threads, or on (E) in the park context, never stop.
+// The cycles of the entry (metadata.cycles) are sh4_sched_now64() while a machine exists (the lifetime of
+// emu::GetRunState() is not NoMachine) and 0 otherwise: the SH4 context block goes away with the machine.
 void EventSlow(EventId id, const char* fmt, ...) DBG_PRINTF_LIKE(2, 3);
 
 namespace symbols {
