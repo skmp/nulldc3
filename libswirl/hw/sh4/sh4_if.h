@@ -409,10 +409,61 @@ s32 rcb_poffs(T* ptr)
 #define sh4rcb (*p_sh4rcb)
 #define Sh4cntx (sh4rcb.cntx)
 
+// What a backend does for the debugger: the bits of SuperH4Backend::DebugCaps()
+enum {
+	// Breakpoint checks, Step() and the flow reports of a step-out are implemented: the debugger checks
+	// (debugger/debugger.h) are made by this backend's own code, in front of the instructions the debugger
+	// armed. Without it the debugger runs breakpoints and steps on the interpreter fallback (sh4_dbg.h).
+	SH4DBG_NATIVE = 1,
+
+	// Sh4cntx is complete, pc included, whenever the backend calls UpdateSystem(). Without it the context is
+	// complete only after Loop() returned.
+	SH4DBG_CTX_AT_SLICE = 2,
+};
+
 struct SuperH4Backend {
     virtual bool Init() = 0;
     virtual void Loop() = 0;
     virtual void ClearCache() = 0;
+
+    /*
+        Debugger support. It is called on the emulator thread between two calls of Loop(), when no guest
+        code of this backend is on the host stack. DebugCaps() and SliceCyclesLeft() are also called from
+        inside UpdateSystem() and, while no emulator thread exists, by the thread that holds the debugger's
+        lifetime lock. The defaults are those of a backend that implements none of it.
+
+        The slice counter is the number of cycles left until the next UpdateSystem(). A backend with
+        SH4DBG_NATIVE keeps it when Loop() returns and continues from it when Loop() or Step() is entered again.
+    */
+
+    // SH4DBG_* bits. Constant for the life of the backend.
+    virtual u32  DebugCaps()                              { return 0; }
+
+    // Executes the instruction at pc, a delayed branch together with its slot whether or not it is taken,
+    // through the same decoder, code generator and cost function as Loop(); charges it to the slice counter
+    // as a block of that one instruction and, if the slice ran out, does the end-of-slice work Loop() does
+    // (UpdateSystem, interrupt acceptance). A debugger check on the instruction is still made. Nothing it
+    // compiles enters the block cache, and blocks already cached stay.
+    // The caller has verified that pc is even and that the instruction, and the slot of a delayed branch,
+    // can be read and executed; CpuRunning is set for the duration.
+    // Returns false, having done nothing, when the backend cannot step.
+    virtual bool Step()                                   { return false; }
+
+    // The slice counter of the loop that runs the guest on this backend: SH4 time is
+    // sh4_sched_now64() + SH4_TIMESLICE - SliceCyclesLeft(). 0 when the backend does not expose it.
+    virtual int  SliceCyclesLeft()                        { return 0; }
+
+    // Sets the slice counter to SH4_TIMESLICE. From SuperH4_impl::Reset only.
+    virtual void ResetSlice()                             { }
+
+    // Discards every compiled block that overlaps the 4 KiB page of the guest address, in every mirror of
+    // that page, and nothing else: page protection and the marks of pages that hold data stay as they are.
+    // Called when the debugger arms or disarms the address.
+    virtual void DebugDiscardPage(u32 addr)               { }
+
+    // Step-out: false discards every compiled block that ends with a call or a return, so that they are
+    // compiled again with a flow report; true discards the blocks that have one.
+    virtual void DebugDiscardFlow(bool instrumented_only) { }
 
 	virtual ~SuperH4Backend() {  }
 };
