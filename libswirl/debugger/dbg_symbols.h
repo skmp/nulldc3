@@ -13,9 +13,9 @@
 	image itself and links without the emulator; this header uses <cstdint> names for that reason.
 
 	There is one table for the SH4. Addresses are compared by their low 29 bits, as SH4 code addresses are in
-	builds without MMU. The table has no lock: OnElfLoaded() and Clear() are called on (E), everything else
-	on (E) or on a thread that holds L while no emulator thread exists (inside calls and the listener).
-	Without an ELF there are no symbols.
+	builds without MMU. The table has no lock: OnElfLoaded() is called on (E), everything else on (E) or on a
+	thread that holds L while no emulator thread exists (inside calls and the listener; Clear() when the
+	machine is destroyed). Without an ELF there are no symbols.
 */
 
 namespace dbg { namespace symbols {
@@ -25,11 +25,13 @@ const uint32_t kMaxSymbolReach = 0x10000;
 
 // image / size: an ELF file as read into memory, valid during the call only. Replaces the table with the
 // named, defined symbols of its .symtab (functions, objects and symbols without a type; no section and file
-// symbols). An image that is not a 32-bit little-endian ELF or has no .symtab leaves the table empty.
+// symbols). An image that is not a 32-bit little-endian ELF or has no .symtab leaves the table empty, and so
+// does size 0, with which image may be null (a boot that loads no ELF).
 // Every offset of the image is checked against size: a damaged image cannot make it read outside.
 void OnElfLoaded(const void* image, size_t size);
 
-// Empties the table.
+// Empties the table. On (E), or on a thread that holds L while no emulator thread exists; dbg::emu calls it
+// in OnMachineDestroying().
 void Clear();
 
 // Number of symbols in the table.

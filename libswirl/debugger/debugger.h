@@ -197,9 +197,9 @@ struct LifetimeLock {
 void OnMachineCreated();
 
 // (U), at the start of Dreamcast_impl::Term once no emulator thread exists, L held, lifetime Stopped.
-// Publishes NoMachine before anything of the machine is destroyed. When it returns, no debugger thread is
-// inside a call that touches the machine and none starts one: the debugger answers from its constant
-// tables.
+// Publishes NoMachine before anything of the machine is destroyed, and empties the symbol table. When it
+// returns, no debugger thread is inside a call that touches the machine and none starts one: the debugger
+// answers from its constant tables.
 void OnMachineDestroying();
 
 // (U), in Dreamcast_impl::Resume before the thread is started, L held, lifetime Stopped. Publishes Running.
@@ -305,7 +305,8 @@ namespace symbols {
 
 // (E), from reios when it has loaded an ELF (every boot and reset that loads one): image / size are the
 // file as read, valid only during the call. Replaces the symbol table with the .symtab of the image; an
-// image without one, or one that is not an ELF, empties the table. Does not block.
+// image without one, or one that is not an ELF, empties the table. reios also calls it with (nullptr, 0) on
+// a boot that loads no ELF (a disc, a .bin): that empties the table. Does not block.
 void OnElfLoaded(const void* image, size_t size);
 
 }
