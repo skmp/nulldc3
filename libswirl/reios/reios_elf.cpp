@@ -9,6 +9,7 @@
 #include "deps/libelf/elf.h"
 
 #include "hw/sh4/sh4_mem.h"
+#include "debugger/debugger.h"
 
 bool reios_loadElf(const string& elf) {
 
@@ -45,6 +46,9 @@ bool reios_loadElf(const string& elf) {
 		free(elfFile);
 		return false;
 	}
+
+	// the image as read: its symbol table is the debugger's from here on
+	dbg::symbols::OnElfLoaded(elfFile, size);
 
 	for (i = 0; i < elf_getNumProgramHeaders(elfFile); i++) {
 		/* Load that section */

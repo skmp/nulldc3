@@ -25,6 +25,7 @@
 
 #include "hw/naomi/naomi_cart.h"
 #include "utils/run_control.h"
+#include "debugger/debugger.h"
 
 #include <map>
 
@@ -627,6 +628,9 @@ void reios_boot() {
 		fread(GetMemPtr(0x8C000000, 0), 1, 64 * 1024, f);
 		fclose(f);
 	}
+
+	// The debugger's symbols are those of the program this boot loads: none, until an ELF is loaded below
+	dbg::symbols::OnElfLoaded(nullptr, 0);
 
 	if (settings.reios.ElfFile.size()) {
 		if (!reios_loadElf(settings.reios.ElfFile)) {
