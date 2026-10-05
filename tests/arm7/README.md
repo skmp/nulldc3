@@ -1,10 +1,11 @@
 # ARM7 tests
 
 The sound CPU of the emulator, run on its own: `hw/arm7/arm7.cpp` (the interpreter), `arm7_interpreter.cpp` and
-`SoundCPU.cpp` are compiled as they are, on 2 MB of wave RAM. The reset state, the memory map and the memory
-access functions of the ARM (mirrors, misaligned word loads) are the emulator's. There is no AICA: behind the
-register window is a plain register file that only knows the bit a guest raises to say it is done
-(`arm7_machine.h`).
+`SoundCPU.cpp` are compiled as they are, on 2 MB of wave RAM, with the register block of the AICA
+(`hw/aica/aica_mmio.cpp`) behind the register window. The reset state, the memory map and the memory access
+functions of the ARM (mirrors, misaligned word loads), the interrupt and timer registers and the interrupt
+controller in front of nFIQ are the emulator's. The channels and the DSP are not there, their registers keep
+what is written to them, and a sample passes only when a test says so (`arm7_machine.h`).
 
 | test | what it runs | data |
 |---|---|---|
@@ -106,5 +107,6 @@ number of instructions and the cycles the interpreter counted for them (`Wren7Ru
 `ARM7Backend::Step` returns). A further executable, for example one that holds the interpreter's cycle counts
 against the console's timing kernels, links `nulldc_arm7_interp`, `nulldc_arm7_test` and `nulldc_test_common`
 and counts its cases with `arm7_count()` (`arm7_suite.h`). Jobs that have the SH4 set up or read AICA registers,
-or put it on the bus (`Wren7Job::needs_sh4`), and jobs that depend on the DSP, channels or interrupts need
-more than this machine has.
+or put it on the bus (`Wren7Job::needs_sh4`), and jobs that depend on the DSP or the channels need more than
+this machine has. For jobs that take interrupts the machine has `arm7m_sample()`; `wren7_run_job()` does not
+let samples pass.

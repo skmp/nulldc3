@@ -1,10 +1,11 @@
 /*
 	The sound CPU of the emulator on its own: SoundCPU (hw/arm7/SoundCPU.cpp) with the interpreter backend on
-	2 MB of wave RAM.
+	2 MB of wave RAM, and the register block of the AICA (hw/aica/aica_mmio.cpp) behind the register window.
 
 	The reset state, the memory map and the memory access functions of the ARM (wave RAM mirrors, misaligned
-	words) are the ones of the emulator. There is no AICA behind the register window, only a register file that
-	knows one bit: MCIPD.SCPU, the interrupt to the SH4 that a guest raises to say it is done.
+	words), the interrupt and timer registers and the interrupt controller in front of nFIQ are the ones of the
+	emulator. The channels and the DSP are not there: their registers keep what is written to them. Nothing
+	lets time pass but arm7m_sample().
 */
 #pragma once
 #include "types.h"
@@ -35,7 +36,7 @@ void arm7m_power_on();
 void arm7m_hold_reset();
 void arm7m_release_reset();
 
-//Zeroes the wave RAM and the register file
+//Zeroes the wave RAM and the registers of the AICA
 void arm7m_clear();
 
 //Executes one instruction, with a pending FIQ taken first. Returns the cycles the interpreter counts for it
@@ -46,3 +47,11 @@ u32 arm7m_next_opcode();
 
 //The guest has written MCIPD with the SCPU bit set since the last arm7m_clear()
 bool arm7m_scpu_raised();
+
+//One sample passes, as the emulator steps the AICA behind every sample's worth of ARM code: the timers count and
+//the one sample interval is raised (SCIPD bit 10)
+void arm7m_sample();
+
+//A word access as the ARM makes it
+u32 arm7m_read32(u32 addr);
+void arm7m_write32(u32 addr, u32 data);
