@@ -17,14 +17,15 @@ ctest --test-dir <build dir>            # one test per gate: debugger.sh4bp.b1 .
 The directory also works as a part of the tests project (`add_subdirectory(debugger/sh4bp)` in
 `tests/CMakeLists.txt`). It needs an x86-64 host with the SH4 recompiler; elsewhere the tests are skipped.
 
-Every gate runs on three engines: `jit` (the x64 backend, checks and steps native to it), `interpreter`, and
-`fallback` (the x64 backend with the debugger told to use the interpreter fallback, as the configuration key
-`Debugger:ForceFallback` does).
+The gates run on three engines, each on those it applies to: `jit` (the x64 backend, checks and steps native
+to it), `interpreter`, and `fallback` (the x64 backend with the debugger told to use the interpreter fallback,
+as the configuration key `Debugger:ForceFallback` does).
 
 ## The gates
 
-Ids are those of the design's gate list. *State* is scheduler time, slice counter, pc, a hash of the SH4
-context and a hash of RAM.
+`b1` to `b14` are the ids of the design's gate list; the other gates are named after what they test. *State*
+is scheduler time, slice counter, pc, a hash of the SH4 context and a hash of the first megabyte of RAM, which
+holds the guest programs.
 
 | Gate | What it checks here |
 | --- | --- |
@@ -178,13 +179,13 @@ nothing. `b11_compare.cmake` runs every configuration three times and compares t
 | Compared | Per | Bound | Measured, g++ 13 | clang 18 |
 | --- | --- | --- | --- | --- |
 | compiled code: blocks, their guest instructions, bytes of host code; without the debugger, with it, with it and one armed address that is never reached | | equal | 16 blocks, 332 instructions, 7564 bytes | the same |
-| recompiler, second window, with the debugger against without | slice | 48 host instructions | 17 | 23 |
+| recompiler, second window, with the debugger against without | slice | 48 host instructions | 18 | 23 |
 | interpreter, second window, with the debugger against without | slice | 48 | 6 | 8 |
-| recompiler, first window less second, with the debugger against without | decoded instruction | 24 | 4 | 11 |
+| recompiler, first window less second, with the debugger against without | decoded instruction | 24 | 2 | 15 |
 | recompiler, first window less second, one armed address against none | decoded instruction | 128 | 59 | 48 |
-| recompiler, second window, one armed address against none | | 0.01 % | 1 host instruction of 100.7 million | 1 of 95.3 million |
+| recompiler, second window, one armed address against none | | 0.01 % | within 163 host instructions of 100.7 million | within 31 of 95.3 million |
 
-The counts of two runs of one program differ by some tens of host instructions; those of the program linked
+The counts of two runs of one program differ by up to two hundred host instructions; those of the program linked
 again with its objects in another order by up to 160 in the first window and by as little as two runs in the
 second. The bounds are per slice and per decoded instruction, not shares of a run, so that they say the same
 for a short run and a long one. A slice of this workload is 56 instructions of the interpreter and about 40
@@ -204,12 +205,17 @@ What the numbers are made of:
   workload does in the measurement.
 - **Per compiled block**, with and without the debugger, the mechanism costs against the tree without it: the
   decoder keeps the limits and the cost of what it decodes for the refunds, and the register allocator
-  makes two more compares in its loops over ops and registers. The same program built from that tree
-  without the debugger takes 7600 host instructions less for the 19 blocks this workload compiles (16
-  stay in the cache): 400 per compiled block, of about 100000 that compiling one costs. Its second
-  window, and both windows of the interpreter, are within 0.2 host instructions per slice of this tree's.
-  In the emulator the difference is 170 to 190 host instructions per compiled block, measured with 2ndmix
-  and with the BIOS over 2689 and 6636 blocks, which are shorter than this workload's.
+  makes two more compares in its loops over ops and registers. That is 300 host instructions for a block of
+  this workload, of about 100000 that compiling one costs. The x64 backend has its block compiler on the
+  stack, where the tree without the mechanism allocates one for every block: 1100 host instructions fewer.
+  Together, the same program built from that tree without the debugger takes 15600 host instructions more
+  for the 19 blocks this workload compiles (16 stay in the cache), 820 for each. Its second window, and both
+  windows of the interpreter, are within 0.3 host instructions per slice of this tree's. In the emulator
+  this tree takes 460 to 540 host instructions fewer per compiled block than the tree without the
+  mechanism, with the debugger and without it, measured with 2ndmix over 4000 vblanks and 2684 blocks and
+  with the BIOS over 3000 vblanks and 6604 blocks, which are shorter than this workload's; the blocks, and
+  the host code of every one of them, are the same in both trees, and behind the compiling the two cost
+  the same within 0.0001 %.
 
 `sh4bp_cost <jit|interpreter> [never]` prints the counts of one run.
 
