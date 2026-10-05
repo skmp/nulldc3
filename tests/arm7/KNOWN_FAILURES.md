@@ -10,18 +10,10 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
-| D6 | `arm7.directed` `scilv` | 3 | 0 | 3 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 2 | 2 |
 
-Everything else passes: `arm7.vendor` 45/45, the adc, sbc, rsc, trap and fiq cases of `arm7.directed` (74), the
-r1 and the CPSR of the 45 vendor jobs, the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and
-how all 55 jobs end.
-
-### D6: SCILV0-2 read back what was written
-
-On the console the three registers read as 0 (`fiqdiag` `d3.bin`, `d4.bin`: 0 in all three where the job before
-wrote 0x80 and 0xFF, and its level is in L). Here they read back the stored value (`ReadReg_internal` in
-`hw/aica/aica_mmio.cpp`).
+Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 77/77, the r1 and the CPSR of the 45 vendor jobs,
+the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
 
 ### D7: where a reset finds the ARM
 

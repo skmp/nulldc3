@@ -12,6 +12,8 @@
 #define SCIEB_addr 0x289C
 #define SCIPD_addr (0x289C+4)
 #define SCIRE_addr (0x289C+8)
+#define SCILV0_addr (0x289C+12)
+#define SCILV2_addr (0x289C+20)
 
 #define MCIEB_addr 0x28B4
 #define MCIPD_addr (0x28B4+4)
