@@ -52,7 +52,7 @@ Every test is `system_test.py --case <case>` on one of the two emulators.
 | `guest_exit.jit` `guest_exit.interp` | a program that returns to the BIOS ends the run: its text is on stdout, `reason=guest-exit`, exit code 0, the engine is the one that was asked for | |
 | `exit.vblanks.jit` `exit.vblanks.interp` | `Exit.AfterVblanks=20` ends a program that never ends: `reason=vblanks vblanks=20`, the emulated time of 20 vblanks, a wall time and a speed, a state hash | |
 | `exit.seconds` | `Exit.AfterSeconds=0.25` ends the run at the first vblank from 0.25 emulated seconds on; no hash that was not asked for | |
-| `rtc` | with `Dreamcast.RTC` the guest reads exactly that clock, on both engines; another value is another clock; without the key it is the time of the host | |
+| `rtc` | with `Dreamcast.RTC` the guest reads exactly that clock, on both engines; another value is another clock; `Debug.FixedRtc` alone pins it too, and with both keys naming different seconds the guest reads the one of `Debug.FixedRtc`; without a key it is the time of the host | |
 | `cfg.untouched` | a headless run with `-config` overrides leaves an `emu.cfg` byte for byte as it was, and writes no settings into a new one | |
 | `headless.no_program` | headless with nothing to run: exit code 1 and `reason=error` | |
 | `headless.gl_renderer` | a renderer that needs GL (`refsw` in the default build, `gles` in the other) is refused: exit code 1 and `reason=error` | |

@@ -295,7 +295,8 @@ def case_exit_seconds(h):
 
 
 def case_rtc(h):
-    """Dreamcast.RTC pins the clock the guest reads; another value is another clock."""
+    """Dreamcast.RTC pins the clock the guest reads; another value is another clock. Debug.FixedRtc pins it as well,
+    and with both keys it is the one the guest reads."""
     for engine in ('jit', 'interp'):
         run = h.run('rtc_' + engine, headless(engine=engine), h.guest('guest_rtc'))
         check_clean(run, 'guest-exit')
@@ -305,7 +306,16 @@ def case_rtc(h):
     check_clean(run, 'guest-exit')
     check('rtc=%08X' % (RTC_PIN_REGISTER + 86400) in run.log, 'the guest did not read the other clock', run)
 
-    # without the key the clock is the host's: this century, in any time zone
+    # Debug.FixedRtc is the same pin under a second key: alone, and next to a Dreamcast.RTC of another second,
+    # where it goes first
+    for tag, days, dreamcast_rtc in (('rtc_fixed', 2, None), ('rtc_both', 3, RTC_PIN)):
+        run = h.run(tag, headless('config:Debug.FixedRtc=%d' % (RTC_PIN + days * 86400), rtc=dreamcast_rtc),
+                    h.guest('guest_rtc'))
+        check_clean(run, 'guest-exit')
+        check('rtc=%08X' % (RTC_PIN_REGISTER + days * 86400) in run.log,
+              'the guest did not read the clock of Debug.FixedRtc', run)
+
+    # without a key the clock is the host's: this century, in any time zone
     run = h.run('rtc_host', headless(rtc=None), h.guest('guest_rtc'))
     check_clean(run, 'guest-exit')
     m = re.search(r'rtc=([0-9A-F]{8})', run.log)
