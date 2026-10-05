@@ -50,6 +50,7 @@ arm7.directed            fiq                     12    12
 arm7.directed            scilv                    4     4
 arm7.directed            reset                    4     4
 arm7.directed            power-on                 4     4
+arm7.directed            debug                    1     1
 #
 # Pinned: what a test has to find again, word for word. arm7.vendor: r0-r14 and CPSR at the end marker of
 # every program.

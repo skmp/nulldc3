@@ -256,3 +256,8 @@ void arm7m_write32(u32 addr, u32 data)
 {
 	scpu->ctx.write32(addr, data, &scpu->ctx);
 }
+
+bool arm7m_debug_reg(u32 reg, u32* value)
+{
+	return scpu->DebugGetReg(reg, value);
+}

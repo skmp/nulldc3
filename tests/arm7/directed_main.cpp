@@ -32,7 +32,11 @@
 	power-on: a sound CPU that was created and not reset yet holds what its reset gives it, and a reset of the
 	machine leaves nothing of the interrupt controller (the comments at run_power_on() have why).
 
-	Checks: adc, sbc, rsc, ror, mul-rd-rm, mul-rd-rm-c, trap, fiq, scilv, reset, power-on. The test needs no data.
+	debug: what the sound CPU gives the debugger (SoundCPU::DebugGetReg) against the registers the guest has,
+	around a FIQ (the comment at debug_r8_r12()).
+
+	Checks: adc, sbc, rsc, ror, mul-rd-rm, mul-rd-rm-c, trap, fiq, scilv, reset, power-on, debug. The test needs
+	no data.
 */
 #include "arm7_machine.h"
 #include "arm7_suite.h"
@@ -1417,6 +1421,81 @@ static const Scenario power_on_scenarios[] =
 	{ "reset of the machine with nFIQ pulled", &power_on_nfiq },
 };
 
+/*
+	The debugger's indices 21..25 are R8..R12 of the modes other than FIQ. Outside FIQ mode they are the registers
+	the program computes with; inside a FIQ handler the program has the five of the FIQ bank in their place, and the
+	debugger still shows the interrupted program's under 21..25, and the handler's under 8..12 and under
+	R8_FIQ..R12_FIQ. Reading changes nothing: the interrupted program gets its five back.
+*/
+#define DEBUG_R8 21
+
+static void debug_expect(std::string& text, const char* where, u32 reg, u32 expected)
+{
+	char number[128];
+	u32 value = ~expected;
+
+	if (!arm7m_debug_reg(reg, &value))
+	{
+		snprintf(number, sizeof(number), " the debugger gets no register %u %s;", reg, where);
+		text += number;
+	}
+	else if (value != expected)
+	{
+		snprintf(number, sizeof(number), " register %u reads %08X %s, has to be %08X;", reg, value, where, expected);
+		text += number;
+	}
+}
+
+static void debug_r8_r12(std::string& text)
+{
+	Arm7Context* ctx = arm7m_context();
+
+	fiq_setup(0x80, 0, 0);
+
+	for (u32 i = 0; i < 5; i++)
+		ctx->regs[8 + i].I = 0x11110000 + i;
+
+	for (u32 i = 0; i < 5; i++)
+		debug_expect(text, "in front of the FIQ", DEBUG_R8 + i, 0x11110000 + i);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	//the handler's own five
+	for (u32 i = 0; i < 5; i++)
+		ctx->regs[8 + i].I = 0x22220000 + i;
+
+	for (u32 i = 0; i < 5; i++)
+	{
+		debug_expect(text, "in the handler", DEBUG_R8 + i, 0x11110000 + i);
+		debug_expect(text, "in the handler", 8 + i, 0x22220000 + i);
+		debug_expect(text, "in the handler", R8_FIQ + i, 0x22220000 + i);
+	}
+
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	arm7m_read32(AICA_L);
+	arm7m_write32(AICA_M, 1);
+	fiq_return(text);
+
+	for (u32 i = 0; i < 5; i++)
+	{
+		debug_expect(text, "behind the FIQ", DEBUG_R8 + i, 0x11110000 + i);
+		debug_expect(text, "behind the FIQ", 8 + i, 0x11110000 + i);
+		debug_expect(text, "behind the FIQ", R8_FIQ + i, 0x22220000 + i);
+
+		if (ctx->regs[8 + i].I != 0x11110000 + i)
+			text += " the program does not get its register back;";
+	}
+}
+
+static const Scenario debug_scenarios[] =
+{
+	{ "R8..R12 of the modes other than FIQ, around a FIQ", &debug_r8_r12 },
+};
+
 static void run_scenario(void* arg)
 {
 	ScenarioRun* run = (ScenarioRun*)arg;
@@ -1540,6 +1619,9 @@ int main(int argc, char** argv)
 		run_power_on();
 		run_scenarios("power-on", power_on_scenarios, sizeof(power_on_scenarios) / sizeof(power_on_scenarios[0]));
 	}
+
+	if (arm7_selected("debug"))
+		run_scenarios("debug", debug_scenarios, sizeof(debug_scenarios) / sizeof(debug_scenarios[0]));
 
 	return arm7_suite_end();
 }

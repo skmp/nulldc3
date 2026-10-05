@@ -354,6 +354,13 @@ struct SoundCPU_impl : SoundCPU {
 			return true;
 		}
 
+		//R8..R12 of the modes other than FIQ have no slot of their own: they are the live ones, or swapped out
+		if (reg >= 21 && reg <= 25)
+		{
+			*value = ctx.regs[(ctx.armMode == 0x11 ? R8_FIQ : 8) + (reg - 21)].I;
+			return true;
+		}
+
 		//the banked registers: the index of the live copy for the bank of the mode the core is in
 		u32 live = reg;
 

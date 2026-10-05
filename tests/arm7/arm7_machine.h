@@ -63,3 +63,6 @@ void arm7m_sample();
 //A word access as the ARM makes it
 u32 arm7m_read32(u32 addr);
 void arm7m_write32(u32 addr, u32 data);
+
+//A register as the debugger reads it (SoundCPU::DebugGetReg)
+bool arm7m_debug_reg(u32 reg, u32* value);

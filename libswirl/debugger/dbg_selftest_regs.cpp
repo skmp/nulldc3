@@ -830,6 +830,17 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 
 					tally->Add(value == want, "dc.aica.arm7.%s in mode %02X: %llX, the save state gives %X", reg.name, mode, (unsigned long long)value, want);
 				}
+
+				// R8..R12 of the modes other than FIQ, which no row has: live but in FIQ mode, where the slots of
+				// the FIQ bank hold them
+				for (u32 i = 0; i < 5; i++)
+				{
+					u32 want = raw[(mode == 0x11 ? (u32)R8_FIQ : 8u) + i];
+					u32 value = ~want;
+					bool ok = scpu->DebugGetReg(21 + i, &value);
+
+					tally->Add(ok && value == want, "DebugGetReg(%u) in mode %02X: %X, the save state gives %X", 21 + i, mode, value, want);
+				}
 			};
 
 			Tally live;
@@ -877,7 +888,7 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 		u32 value = 0x55AA;
 		bool none = true;
 
-		for (u32 reg : { 21u, 22u, 25u, (u32)RN_PSR_FLAGS, (u32)R15_ARM_NEXT, (u32)INTR_PEND, (u32)CYCL_CNT, (u32)RN_ARM_REG_COUNT, 1000u, 0xFFFFFFFFu })
+		for (u32 reg : { (u32)RN_PSR_FLAGS, (u32)R15_ARM_NEXT, (u32)INTR_PEND, (u32)CYCL_CNT, (u32)RN_ARM_REG_COUNT, 1000u, 0xFFFFFFFFu })
 			none = none && !scpu->DebugGetReg(reg, &value) && value == 0x55AA;
 
 		Check(none, "DebugGetReg() gives nothing for an index that is no register of the debugger");
