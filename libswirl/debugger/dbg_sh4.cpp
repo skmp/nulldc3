@@ -68,6 +68,9 @@ struct {
 	bool exempt;
 	u32 exempt_key;
 
+	// a step is being made: its block is the one instruction, and a check that stops it owes nothing
+	bool stepping;
+
 	// the rest of the block that the last check interrupted
 	bool rem_valid;
 	u32 rem_pc;
@@ -301,7 +304,7 @@ extern "C" u32 DYNACALL dbg_sh4_Check(u32 pc, u32 refund, u32 block_end)
 
 	Ctx().pc = pc;
 
-	st.rem_valid = block_end != 0;
+	st.rem_valid = block_end != 0 && !st.stepping;
 	st.rem_pc = pc;
 	st.rem_end = block_end;
 	st.rem_cycles = refund;
@@ -449,6 +452,7 @@ void PrepareResume()
 void PrepareStep()
 {
 	st.rem_valid = false;
+	st.stepping = true;
 
 	// a step makes the check of its instruction on every backend
 	ArmExemption(true);
@@ -517,6 +521,7 @@ void OnStop(StopInfo* out)
 
 	st.exempt = false;
 	st.stop_pending = false;
+	st.stepping = false;
 
 	st.stop_key_valid = true;
 	st.stop_key = MaskAddr(Ctx().pc);
