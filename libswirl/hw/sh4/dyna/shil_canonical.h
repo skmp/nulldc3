@@ -849,14 +849,7 @@ shil_opc(fipr)
 shil_canonical
 (
 f32,f1,(float* fn, float* fm),
-	float idp;
-
-	idp=fn[0]*fm[0];
-	idp+=fn[1]*fm[1];
-	idp+=fn[2]*fm[2];
-	idp+=fn[3]*fm[3];
-
-	return fixNaN(idp);
+	return sh4_fipr(fn, fm);
 )
 
 shil_compile
@@ -876,35 +869,7 @@ shil_opc(ftrv)
 shil_canonical
 (
 void,f1,(float* fd,float* fn, float* fm),
-	float v1;
-	float v2;
-	float v3;
-	float v4;
-
-	v1 = fm[0]  * fn[0] +
-		 fm[4]  * fn[1] +
-		 fm[8]  * fn[2] +
-		 fm[12] * fn[3];
-
-	v2 = fm[1]  * fn[0] +
-		 fm[5]  * fn[1] +
-		 fm[9]  * fn[2] +
-		 fm[13] * fn[3];
-
-	v3 = fm[2]  * fn[0] +
-		 fm[6]  * fn[1] +
-		 fm[10] * fn[2] +
-		 fm[14] * fn[3];
-
-	v4 = fm[3]  * fn[0] +
-		 fm[7]  * fn[1] +
-		 fm[11] * fn[2] +
-		 fm[15] * fn[3];
-
-	fd[0] = fixNaN(v1);
-	fd[1] = fixNaN(v2);
-	fd[2] = fixNaN(v3);
-	fd[3] = fixNaN(v4);
+	sh4_ftrv(fd, fn, fm);
 )
 shil_compile
 (

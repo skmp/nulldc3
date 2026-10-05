@@ -11,8 +11,9 @@
 static const char known_oix[] =
 	"devcast: the operand cache as ram hack is keyed on address bit 25 alone, not on CCR.OIX and the cache area";
 static const char known_sum_of_products[] =
-	"devcast rounds (and overflows) every product and partial sum to single precision, the vectors carry the fused "
-	"multiply-add of the host that generated them. Neither is the SH4's sum of products";
+	"devcast rounds (and overflows) every product and every sum to single precision and adds the products in pairs, "
+	"(p0 + p1) + (p2 + p3), in both engines. The vectors carry the fused multiply-add of the host that generated "
+	"them. Neither is the SH4's sum of products";
 static const char known_denormal[] =
 	"devcast: with FPSCR.DN=1 only results are flushed to zero on x86 (MXCSR.FTZ), a denormal operand is not taken "
 	"as zero (MXCSR.DAZ)";

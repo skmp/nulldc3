@@ -662,10 +662,11 @@ public:
 					}
 					else
 					{
-						movhlps(xmm1, rd);
-						addps(rd, xmm1);
+						// (p0 + p1) + (p2 + p3), as haddps adds them
 						movaps(xmm1, rd);
-						shufps(xmm1, xmm1,1);
+						shufps(xmm1, xmm1, 0xb1);		//xmm1={p1,p0,p3,p2}
+						addps(rd, xmm1);
+						movhlps(xmm1, rd);
 						addss(rd, xmm1);
 					}
 					GenFixNaN(rd);

@@ -3,8 +3,8 @@
 Why the counts of `baseline_scalar.txt` and `baseline_vector.txt` are below their totals. Every case that is
 not as on the hardware has one of the reasons below; `sh4_fpu scalar --why` and `sh4_fpu vector --why` print the
 reasons of every group with their counts, this document is written from that output, and no case is
-`NOT EXPLAINED`. The numbers are of an x86-64 host with SSE3. Where two numbers are given they are
-interpreter / dynarec.
+`NOT EXPLAINED`. The interpreter and the dynarec (x64 backend) have the same counts in every group: they leave
+the same registers in every case.
 
 Sources: "console" is a record taken on a Dreamcast (shrike4-rtl, see `README.md`), "manual" the SH7091
 programming manual, section 6 (Floating-Point Unit).
@@ -14,7 +14,7 @@ A fix takes its entry out of this file and updates the baselines in the same com
 | | cases | traps | value-i | value-d | flags-i | flags-d | agree | native | crash |
 |---|---|---|---|---|---|---|---|---|---|
 | `sh4.fpu.scalar` | 225,036 | 19,633 | 200,662 | 200,662 | 109,153 | 109,153 | 225,036 | 113,946 | 0 |
-| `sh4.fpu.vector` | 1,371,226 | 1,617 | 695,850 | 677,220 | 13,254 | 13,254 | 1,115,472 | 1,370,977 | 150 |
+| `sh4.fpu.vector` | 1,371,226 | 1,617 | 677,220 | 677,220 | 13,254 | 13,254 | 1,371,226 | 1,370,977 | 150 |
 
 ## 1. There is no FPU exception
 
@@ -69,8 +69,8 @@ the hardware (FIPR of zeros raises U and I), so their `flags` are 0 but for infi
 
 **Groups:** scalar `<instruction>.dn1.rn.denormal`, 4,389 of their 13,564 records: FCMP/EQ 1,150, FCMP/GT 564,
 FCMP/EQ.D 1,235, FCMP/GT.D 632, FMAC 387, FDIV.D 120, FMUL.D 72, FSUB.D 47, FDIV 44, FADD.D 43, FMUL 32, FSUB 21,
-FADD 20, FSQRT.D 10, FSQRT 4, FSRRA 4, FCNVSD 4. Vector 9,278 / 9,253 cases: `FSRRA.dn1.*.denormal` (all 8,000),
-`FIPR.dn1.*.denormal` (1,035 / 993), `FTRV.dn1.*.denormal` (193 / 210), 50 console records.
+FADD 20, FSQRT.D 10, FSQRT 4, FSRRA 4, FCNVSD 4. Vector 9,253 cases: `FSRRA.dn1.*.denormal` (all 8,000),
+`FIPR.dn1.*.denormal` (993), `FTRV.dn1.*.denormal` (210), 50 console records.
 
 On the hardware (console; manual 6.2.3) a denormal operand is the zero of its sign when DN = 1, for
 arithmetic, compares and conversions. devcast's `SetFloatStatusReg()` (`hw/sh4/sh4_core_regs.cpp`) turns DN
@@ -115,35 +115,37 @@ result's sign, with no cause at all and without the FPU error. The host divides 
 ## 6. FIPR and FTRV are host float arithmetic
 
 **Groups:** every `FIPR.dn1.*`, `FTRV.dn1.*` and `FIPR.console.values.*` group, and 8 records of
-`FIPR.console.specials.dn1`: 466,800 / 485,455 cases with a wrong sum, next to what 3. explains.
+`FIPR.console.specials.dn1`: 485,455 cases with a wrong sum, next to what 3. explains.
 
 The hardware (console) forms the four products in truncating multipliers that keep 28 bits, aligns them to
 the largest by cutting bits off, adds them exactly and rounds once. It recodes one of the two factors (FVn for
 FIPR, the matrix element for FTRV), so a product is not even commutative. devcast multiplies and adds floats:
-
-* interpreter: every product rounded, then `((p0 + p1) + p2) + p3`, every sum rounded,
-* x64 backend: `mulps`, then `(p0 + p1) + (p2 + p3)` (`haddps` twice; for FTRV four `mulps` and
-  `(c0 + c1) + (c2 + c3)` over the columns).
+every product is rounded, and the four of a sum are added in pairs, `(p0 + p1) + (p2 + p3)`, every sum rounded.
+That is `sh4_fipr` and `sh4_ftrv` (`hw/sh4/interpr/sh4_fpu.cpp`) in the interpreter and in the canonical helpers,
+and `mulps` with `haddps` twice (FTRV: four `mulps` and `addps` over the columns) in the x64 backend's code. The
+order is the backend's; it is no nearer to the hardware than another one, and for a transform as games set it up
+further away: adding the products one by one, as the interpreter did, leaves the hardware's result in 24,148
+(round to nearest) and 15,844 (round to zero) of the 48,000 `affine` cases.
 
 | what is wrong with the sum | cases |
 |---|---|
-| one unit in the last place off | 275,064 / 318,401 |
-| more than one unit off | 159,070 / 134,753 |
-| a zero of the other sign. An exact zero is +0 on the hardware, where the host adds -0 and -0 to -0; an underflow keeps the sign of the sum on the hardware, where the host adds flushed zeros of both signs to +0 | 12,509 / 12,510 |
-| a NaN where the hardware has a number: products that overflow to infinities of both signs, inf - inf (`overflow` and `denormal` classes, round to nearest) | 12,129 / 12,170 |
-| another sign, or an overflow on one side only (the `cancel` and `overflow` classes mostly) | 7,235 / 6,824 |
-| the sign of an infinity: several infinite products of one sign add up to an infinity with the sign of the first product on the hardware | 793 / 797 |
+| one unit in the last place off | 318,401 |
+| more than one unit off | 134,753 |
+| a zero of the other sign. An exact zero is +0 on the hardware, where the host adds -0 and -0 to -0; an underflow keeps the sign of the sum on the hardware, where the host adds flushed zeros of both signs to +0 | 12,510 |
+| a NaN where the hardware has a number: products that overflow to infinities of both signs, inf - inf (`overflow` and `denormal` classes, round to nearest) | 12,170 |
+| another sign, or an overflow on one side only (the `cancel` and `overflow` classes mostly) | 6,824 |
+| the sign of an infinity: several infinite products of one sign add up to an infinity with the sign of the first product on the hardware | 797 |
 
-How much is right depends on the operands; `value-i` / `value-d` of the generated classes, round to nearest
-and round to zero:
+How much is right depends on the operands; `value` of the generated classes, round to nearest and round to
+zero:
 
 | class | FIPR rn | FIPR rz | FTRV rn (all 4 results) | FTRV rz |
 |---|---|---|---|---|
-| `normal` (of 64,000) | 39,523 / 40,365 | 13,651 / 13,929 | 9,202 / 9,850 | 340 / 171 |
-| `vec3` (of 24,000), `affine` (of 48,000) | 15,919 / 15,919 | 7,404 / 7,404 | 24,148 / 15,580 | 15,844 / 3,546 |
-| `single` (of 24,000), `diagonal` (of 16,000) | 23,069 / 23,069 | 23,296 / 23,296 | 13,432 / 13,432 | 14,248 / 14,248 |
-| `exact` (of 16,000) | 15,997 / 15,996 | 15,997 / 15,996 | 15,992 / 15,989 | 15,990 / 15,986 |
-| `cancel` (of 16,000) | 1,522 / 1,530 | 1,338 / 1,328 | 21 / 22 | 14 / 13 |
+| `normal` (of 64,000) | 40,365 | 13,929 | 9,850 | 171 |
+| `vec3` (of 24,000), `affine` (of 48,000) | 15,919 | 7,404 | 15,580 | 3,546 |
+| `single` (of 24,000), `diagonal` (of 16,000) | 23,069 | 23,296 | 13,432 | 14,248 |
+| `exact` (of 16,000) | 15,996 | 15,996 | 15,989 | 15,986 |
+| `cancel` (of 16,000) | 1,530 | 1,328 | 22 | 13 |
 
 `single` and `diagonal` are one product per result: there the difference is the hardware's multiplier alone,
 which is not the correctly rounded product in 3.9 % (rn) and 2.9 % (rz) of the FIPR cases. With more than one
@@ -152,7 +154,7 @@ product round to zero is much worse than round to nearest: the hardware cuts onc
     FIPR.dn1.rn.single   single #35, FIPR FV12,FV8, D62EE7A0 * BD496E90: FR11 is 54099F67, hardware 54099F66
     FIPR.dn1.rn.cancel   cancel #0, FV0 3FB7ECB8 3FB7ECBA 0 0, FV4 3DBD6705 BDBD6705 0 0: FR7 is B2800000, hardware B2B80000
     FIPR.dn1.rn.zero     zero #23: every product is -0: FR11 is 80000000, hardware 00000000
-    FIPR.dn1.rz.overflow overflow #0: FR7 is 7F38FF6F, hardware 7F7FFFFF
+    FIPR.dn1.rz.overflow overflow #0: FR7 is 7F38FF70, hardware 7F7FFFFF
 
 ## 7. FIPR with PR = 1 ends the emulator
 
@@ -208,12 +210,7 @@ FPUL[31:16] is ignored by both (`FSCA.dn1.rn.upper` passes).
 
 ## Where the engines differ from each other
 
-`agree` is below the total in these groups only:
-
-* `FIPR.dn1.*`, `FTRV.dn1.*` and `FIPR.console.values.*`, 255,754 cases: the order of the additions (6.). The
-  classes with one or three products per sum agree in every case (`vec3`, `single`, `diagonal`).
-
-The engines agree on every scalar record.
+Nowhere: `agree` is the total in every group of both tests. In the 150 cases of 7. they end in the same `die()`.
 
 ## What the records do not show
 

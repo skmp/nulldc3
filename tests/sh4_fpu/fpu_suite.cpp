@@ -519,7 +519,7 @@ bool fpu_suite_begin(const char* name, const FpuOptions& opt)
 
 #if defined(__GNUC__)
 	//the x64 backend has other code for FIPR on a CPU without SSE3, and calls a helper for FMAC on one without FMA
-	fprintf(fpu_report, "host CPU: FMA %s, SSE3 %s. The dynarec's FIPR depends on SSE3, the baseline is of a host that has it\n",
+	fprintf(fpu_report, "host CPU: FMA %s, SSE3 %s. They pick the dynarec's code for FMAC and FIPR, the results are the same\n",
 		__builtin_cpu_supports("fma") ? "yes" : "NO", __builtin_cpu_supports("sse3") ? "yes" : "NO");
 #endif
 

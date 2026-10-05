@@ -518,14 +518,7 @@ sh4op(i1111_nnmm_1110_1101)
 	int m=(GetN(op)&0x3)<<2;
 	if(fpscr.PR ==0)
 	{
-		float idp;
-		idp=fr[n+0]*fr[m+0];
-		idp+=fr[n+1]*fr[m+1];
-		idp+=fr[n+2]*fr[m+2];
-		idp+=fr[n+3]*fr[m+3];
-
-		CHECK_FPU_32(idp);
-		fr[n+3]=idp;
+		fr[n+3]=sh4_fipr(&fr[n], &fr[m]);
 	}
 	else
 	{
@@ -690,39 +683,7 @@ sh4op(i1111_nn01_1111_1101)
 
 	if (fpscr.PR==0)
 	{
-
-		float v1, v2, v3, v4;
-
-		v1 = xf[0]  * fr[n + 0] +
-			 xf[4]  * fr[n + 1] +
-			 xf[8]  * fr[n + 2] +
-			 xf[12] * fr[n + 3];
-
-		v2 = xf[1]  * fr[n + 0] +
-			 xf[5]  * fr[n + 1] +
-			 xf[9]  * fr[n + 2] +
-			 xf[13] * fr[n + 3];
-
-		v3 = xf[2]  * fr[n + 0] +
-			 xf[6]  * fr[n + 1] +
-			 xf[10] * fr[n + 2] +
-			 xf[14] * fr[n + 3];
-
-		v4 = xf[3]  * fr[n + 0] +
-			 xf[7]  * fr[n + 1] +
-			 xf[11] * fr[n + 2] +
-			 xf[15] * fr[n + 3];
-
-		CHECK_FPU_32(v1);
-		CHECK_FPU_32(v2);
-		CHECK_FPU_32(v3);
-		CHECK_FPU_32(v4);
-
-		fr[n + 0] = v1;
-		fr[n + 1] = v2;
-		fr[n + 2] = v3;
-		fr[n + 3] = v4;
-
+		sh4_ftrv(&fr[n], &fr[n], xf);
 	}
 	else
 	{
@@ -735,4 +696,45 @@ void iNimp(const char*str)
 {
 	printf("Unimplemented sh4 FPU instruction: %s\n", str);
 	//Sh4_int_Stop();
+}
+
+// FIPR and FTRV on the host FPU: single precision products and sums, each of them rounded, the four products of a
+// sum added in pairs, (p0 + p1) + (p2 + p3), which is the order of the x64 backend's code. The interpreter, the
+// canonical helpers and that code give the same bits. It is not the SH4's sum, which is rounded once.
+// A product and a sum contracted into a fused multiply-add would be another result: off, to the end of the file
+#if BUILD_COMPILER == COMPILER_CLANG
+#pragma STDC FP_CONTRACT OFF
+#elif BUILD_COMPILER == COMPILER_GCC
+#pragma GCC optimize("fp-contract=off")
+#elif BUILD_COMPILER == COMPILER_VC
+#pragma fp_contract(off)
+#endif
+
+f32 sh4_fipr(const f32* fn, const f32* fm)
+{
+	f32 p0 = fn[0] * fm[0];
+	f32 p1 = fn[1] * fm[1];
+	f32 p2 = fn[2] * fm[2];
+	f32 p3 = fn[3] * fm[3];
+
+	return fixNaN((p0 + p1) + (p2 + p3));
+}
+
+//XMTRX in fm, column by column
+void sh4_ftrv(f32* fd, const f32* fn, const f32* fm)
+{
+	f32 v[4];
+
+	for (u32 i = 0; i < 4; i++)
+	{
+		f32 p0 = fm[i] * fn[0];
+		f32 p1 = fm[i + 4] * fn[1];
+		f32 p2 = fm[i + 8] * fn[2];
+		f32 p3 = fm[i + 12] * fn[3];
+
+		v[i] = fixNaN((p0 + p1) + (p2 + p3));
+	}
+
+	for (u32 i = 0; i < 4; i++)
+		fd[i] = v[i];
 }

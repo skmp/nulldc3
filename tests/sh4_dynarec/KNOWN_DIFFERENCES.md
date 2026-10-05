@@ -13,8 +13,8 @@ Measured on x86-64 (GCC 13, a CPU with SSE3 and FMA, without AVX-512), x64 backe
 | | vectors |
 |---|---|
 | run | 91,989 |
-| identical | 79,467 |
-| different | 12,144 (crash 0, path 0, bus 0, state 260, notify 11,884) |
+| identical | 79,584 |
+| different | 12,027 (crash 0, path 0, bus 0, state 0, notify 12,027) |
 | both-crash | 378 |
 | both-notify | 0: no vector on which both engines carry on from a notification of the emulator code |
 | native | 76,038: the instruction under test is native code in the dynarec. 35 files have none |
@@ -26,24 +26,13 @@ A vector with more than one difference is counted under the first of crash, path
 
 | file | instruction | kind | vectors | cause |
 |---|---|---|---|---|
-| `1111nn0111111101` | FTRV XMTRX,FVn | state | 196 | order of the sum of products |
-| `1111nnmm11101101` | FIPR FVm,FVn | state | 64 | order of the sum of products |
-| 66 files, every FPU instruction | | notify | 11,884 | SR.FD is only looked at by the interpreter |
-
-**FTRV and FIPR, order of the sum of products.** The interpreter adds the four products one by one,
-`((p0 + p1) + p2) + p3` (`sh4_fpu.cpp`). The x64 backend multiplies with `mulps` and adds in pairs,
-`(p0 + p1) + (p2 + p3)` (`shop_ftrv`: three `addps`, `shop_fipr`: two `haddps`, `jit/backend/x64/rec_x64.cpp`).
-Every product and sum is rounded to single precision, and saturates at the largest finite number when FPSCR.RM is
-round to zero, so the order shows: 233 of the 260 vectors differ by one unit in the last place and nothing else,
-the other 27 by more (opposite signs, or a saturated partial sum against a small or zero result). Neither order is
-the SH4's, see the note on these two files in `tests/common/ss_policy.cpp`.
+| 66 files, every FPU instruction | | notify | 12,027 | SR.FD is only looked at by the interpreter |
 
 **SR.FD.** `ExecuteOpcode` (`sh4_interpreter.cpp`) checks SR.FD in front of every FPU instruction. In the NO_MMU
 build `RaiseFPUDisableException` is a `msgboxf("Full MMU support needed")` and the instruction is executed anyway.
 The dynarec never looks at SR.FD, neither in the code it generates nor when it calls an interpreter handler
 (`shop_ifb` calls the handler, not `ExecuteOpcode`). Results are the same, the notification is the difference:
-11,884 vectors. Another 143 vectors with SR.FD=1 are counted under what differs first in them (state: FTRV 100,
-FIPR 43).
+12,027 vectors.
 
 ### Both-crash
 
@@ -73,19 +62,16 @@ Same vectors, filter and comparison as `sh4.singlestep.interp`.
 | | interpreter | dynarec |
 |---|---|---|
 | run | 73,800 | 73,800 |
-| pass-exact | 73,306 | 73,287 |
+| pass-exact | 73,287 | 73,287 |
 | pass-lenient | 73,465 | 73,465 |
 | failed | 335 (248 crash) | 335 (248 crash) |
 
-The files in which the dynarec passes fewer vectors than the interpreter:
-
-| file | instruction | run | interpreter exact / lenient | dynarec exact / lenient | cause |
-|---|---|---|---|---|---|
-| `1111nn0111111101` | FTRV XMTRX,FVn | 242 | 95 / 211 | 85 / 211 | order of the sum of products, above |
-| `1111nnmm11101101` | FIPR FVm,FVn | 223 | 178 / 215 | 169 / 215 | order of the sum of products, above |
-
-The SR.FD difference does not show here: those vectors are filtered (`fpu-disabled`). Everything else the dynarec
-does not pass, the interpreter does not pass either (`tests/common/ss_policy.cpp`).
+There is no file in which the dynarec passes fewer vectors than the interpreter, or more: what one does not pass,
+the other does not pass either (`tests/common/ss_policy.cpp`). FTRV and FIPR are a sum of four products that both
+engines add in pairs, `(p0 + p1) + (p2 + p3)`, each product and each sum rounded to single precision: the
+interpreter and the canonical helpers in `sh4_fipr` / `sh4_ftrv` (`hw/sh4/interpr/sh4_fpu.cpp`), the x64 backend
+with `mulps` and `haddps` / `addps`. Of their vectors 85 of 242 (FTRV) and 169 of 223 (FIPR) pass exactly. The
+SR.FD difference does not show here: those vectors are filtered (`fpu-disabled`).
 
 ## sh4.directed.*
 

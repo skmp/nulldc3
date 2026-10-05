@@ -130,9 +130,10 @@ with `--strict`, where they do, until the baseline is updated and committed with
 
 and the entry of what was fixed comes out of `KNOWN_FAILURES.md`.
 
-The baselines are of a host with SSE3: the x64 backend generates other code for FIPR on a CPU without it, and
-the dynarec's counts of FIPR are then others. The report's third line says what the host has. On a CPU without
-FMA the backend's FMAC is a call of the helper the interpreter's FMAC is, with the same results.
+The x64 backend picks two pieces of its code by the host CPU: FMAC is `vfmadd231ss` or, without FMA, a call of
+the helper the interpreter's FMAC is, and FIPR adds with `haddps` or, without SSE3, with `shufps` and `addps` in
+the same order. The results are the same, so the baselines are those of any x86-64 host. The report's third line
+says what the host has: a test run covers the code of that host only.
 
 ## Looking at a failure
 

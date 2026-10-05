@@ -28,14 +28,10 @@ static bool native()
 	return dynarec_native(SS_TEST_INSTRUCTION);
 }
 
-//What the dynarec does not pass and the interpreter does. KNOWN_DIFFERENCES.md has the details
-static const char known_sum_order[] =
-	"dynarec: the x64 backend adds the 4 products in pairs, (p0 + p1) + (p2 + p3), the interpreter one by one";
-
+//What the dynarec does not pass and the interpreter does: nothing today. KNOWN_DIFFERENCES.md has what a suite
+//does not pass
 static const SsSuiteKnown known[] =
 {
-	{ "1111nn0111111101_sz0_pr0", false, 0, known_sum_order },
-	{ "1111nnmm11101101_sz0_pr0", false, 0, known_sum_order },
 	{ 0, false, 0, 0 },
 };
 

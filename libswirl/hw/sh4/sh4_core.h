@@ -161,6 +161,10 @@ static INLINE f64 fixNaN64(f64 f)
 	return f;
 }
 
+// FIPR and FTRV as the host computes them, hw/sh4/interpr/sh4_fpu.cpp. fd may be fn
+f32 sh4_fipr(const f32* fn, const f32* fm);
+void sh4_ftrv(f32* fd, const f32* fn, const f32* fm);
+
 // SH7091 FTRC: 2^31 and above, +inf -> 0x7FFFFFFF; -2^31 and below, -inf, every NaN -> 0x80000000 (programming manual 10.46)
 static INLINE u32 ftrc32(f32 f)
 {
