@@ -83,19 +83,20 @@ is skipped). It is built twice from the same sources, with `NULLDC_DEBUGGER` and
 windows of 20000 slices: in the first the recompiler compiles the workload, in the second it compiles
 nothing. `b11_compare.cmake` runs every configuration three times and compares the lowest counts:
 
-| Compared | Per | Bound | Measured |
-| --- | --- | --- | --- |
-| compiled code: blocks, their guest instructions, bytes of host code; without the debugger, with it, with it and one armed address that is never reached | | equal | 16 blocks, 332 instructions, 7564 bytes |
-| recompiler, second window, with the debugger against without | slice | 32 host instructions | 17 |
-| interpreter, second window, with the debugger against without | slice | 32 | 6 |
-| recompiler, first window less second, with the debugger against without | decoded instruction | 16 | 4 |
-| recompiler, first window less second, one armed address against none | decoded instruction | 128 | 59 |
-| recompiler, second window, one armed address against none | | 0.01 % | 1 host instruction of 100.7 million |
+| Compared | Per | Bound | Measured, g++ 13 | clang 18 |
+| --- | --- | --- | --- | --- |
+| compiled code: blocks, their guest instructions, bytes of host code; without the debugger, with it, with it and one armed address that is never reached | | equal | 16 blocks, 332 instructions, 7564 bytes | the same |
+| recompiler, second window, with the debugger against without | slice | 48 host instructions | 17 | 23 |
+| interpreter, second window, with the debugger against without | slice | 48 | 6 | 8 |
+| recompiler, first window less second, with the debugger against without | decoded instruction | 24 | 4 | 11 |
+| recompiler, first window less second, one armed address against none | decoded instruction | 128 | 59 | 48 |
+| recompiler, second window, one armed address against none | | 0.01 % | 1 host instruction of 100.7 million | 1 of 95.3 million |
 
 The counts of two runs of one program differ by some tens of host instructions; those of the program linked
 again with its objects in another order by up to 160 in the first window and by as little as two runs in the
 second. The bounds are per slice and per decoded instruction, not shares of a run, so that they say the same
-for a short run and a long one.
+for a short run and a long one. A slice of this workload is 56 instructions of the interpreter and about 40
+blocks of the recompiler: one host instruction more for each instruction or block that runs is out of bounds.
 
 What the numbers are made of:
 

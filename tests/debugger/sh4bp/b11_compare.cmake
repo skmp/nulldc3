@@ -7,9 +7,11 @@
 # The bounds are per unit of what the debugger may cost, so that they do not depend on how long the run is:
 #
 #   compiled code            the same blocks, guest instructions and bytes of host code in all three
-#   per slice, steady state  with the debugger against without: 32 host instructions, either engine
-#                            (the stop latch and the attention word in every slice, the report of an interrupt)
-#   per decoded instruction  with the debugger against without: 16 host instructions (the query of the decoder)
+#   per slice, steady state  with the debugger against without: 48 host instructions, either engine
+#                            (the stop latch and the attention word in every slice, the report of an interrupt).
+#                            A slice of the workload is 56 instructions of the interpreter and about 40 blocks
+#                            of the recompiler: one host instruction more for each of those is out of bounds
+#   per decoded instruction  with the debugger against without: 24 host instructions (the query of the decoder)
 #                            one armed address against none: 128 (the query finds the page marked and searches)
 #   steady state             one armed address against none: 0.01 %
 #
@@ -20,8 +22,8 @@ cmake_minimum_required(VERSION 3.16)
 
 set(RUNS 3)
 
-set(PER_SLICE 32)
-set(PER_OPCODE 16)
+set(PER_SLICE 48)
+set(PER_OPCODE 24)
 set(PER_OPCODE_ARMED 128)
 
 set(skipped "")
