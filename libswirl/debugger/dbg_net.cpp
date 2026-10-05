@@ -414,9 +414,11 @@ int HexValue(char c) {
 	return (c >= 'a' && c <= 'f') ? c - 'a' + 10 : -1;
 }
 
-// Device names Windows resolves in every directory, with or without an extension.
+// Device names Windows resolves in every directory, with or without an extension. Spaces between the name
+// and the extension do not count there: "nul .txt" is the device too.
 bool IsReservedName(const std::string& segment) {
 	std::string stem = Lower(segment.substr(0, segment.find('.')));
+	stem.erase(stem.find_last_not_of(' ') + 1);
 	static const char* const names[] = { "con", "prn", "aux", "nul", "conin$", "conout$" };
 	for (const char* name : names) {
 		if (stem == name)

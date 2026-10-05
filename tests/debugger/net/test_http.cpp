@@ -398,12 +398,14 @@ static void TestPaths() {
 		"/a\\b", "/a%5cb", "/C:", "/c:/windows/win.ini", "/a:stream", "/a*", "/a%3f", "/a\"b", "/a<b", "/a>b", "/a|b",
 		"/%00", "/a%00.png", "/a%0d%0ab", "/a%7f", "/caf%c3%a9", "/%ff",
 		"/con", "/CON", "/con.txt", "/a/NUL", "/nul.tar.gz", "/prn", "/aux.js", "/com1", "/COM9.txt", "/lpt1", "/conin$", "/CONOUT$",
+		"/nul%20.txt", "/CON%20%20.js", "/a/aux .h", "/com1%20.txt", "/LPT9%20.tar.gz", "/conout$%20.log",
 	};
 	for (const char* target : refused)
 		CHECK_EQ(TargetToPath(target, &path), kPathNotFound);
 
 	// names that only look special
-	for (const char* target : { "/console.js", "/com.js", "/com10", "/lpt", "/a..b", "/a.b.c", "/-", "/~a", "/a%25b", "/nulls", "/a;b", "/a,b", "/a'b", "/(a)", "/a&b=c" })
+	for (const char* target : { "/console.js", "/com.js", "/com10", "/lpt", "/a..b", "/a.b.c", "/-", "/~a", "/a%25b", "/nulls", "/a;b", "/a,b", "/a'b", "/(a)", "/a&b=c",
+			"/nul%20l.txt", "/com1%20a.txt", "/%20con.txt", "/a.nul%20.txt" })
 		CHECK_EQ(TargetToPath(target, &path), kPathOk);
 }
 
