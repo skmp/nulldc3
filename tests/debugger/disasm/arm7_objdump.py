@@ -376,6 +376,24 @@ def twin(op):
     return op, rules
 
 
+def expected_literal(op, cls, pc):
+    """
+    The pc-relative data address of an encoding at pc as (address, size), or None when it has none. Whether there
+    is one depends on the encoding only: ldr / str with pc as base and a pre-indexed immediate offset (1 or 4
+    bytes), add / sub rd, pc, #imm (the address alone, size 0).
+    """
+    if (op >> 16) & 15 != 15:
+        return None
+    if cls == 'ldr-str' and op & (1 << 24) and not op & (1 << 25):
+        offset = op & 0xFFF
+        return (pc + 8 + (offset if op & (1 << 23) else -offset)) & 0xFFFFFFFF, 1 if op & (1 << 22) else 4
+    if cls == 'dp' and op & (1 << 25) and DP[(op >> 21) & 15] in ('add', 'sub'):
+        rot = (op >> 7) & 30
+        value = ((op & 0xFF) >> rot | (op & 0xFF) << (32 - rot)) & 0xFFFFFFFF
+        return (pc + 8 + (value if DP[(op >> 21) & 15] == 'add' else -value)) & 0xFFFFFFFF, 0
+    return None
+
+
 GENERIC_COPROC = ('cdp', 'mrc', 'mcr', 'ldc', 'stc')
 
 
@@ -450,34 +468,30 @@ def main():
             ok = info['flags'] == expected_flags(op, want)
             checked['flag sets'] += 1
         if ok:
-            # addresses: objdump gives them as "0x..." operands (b / bl) or "@ 0x..." comments (pc-relative ldr)
+            # addresses: objdump gives them as "0x..." operands (b / bl) or "@ 0x..." comments (pc-relative ldr / str);
+            # for add / sub rd, pc, #imm it prints none and the recomputed one stands alone
             if cls == 'b-bl':
                 ok = info.get('t') == '%08x' % int(obj_raw.split('\t')[1], 16)
                 checked['branch targets'] += 1
             elif 't' in info:
                 ok = False
-            if 'l' in info:
-                address, size = info['l'].split('/')
-                address = int(address, 16)
+            literal = expected_literal(op, cls, pc)
+            if literal:
+                address, size = literal
+                ok = ok and info.get('l') == '%08x/%d' % literal
+                checked['literal addresses'] += 1
                 want_comment = '0x%08x' % address
                 if cls == 'ldr-str':
                     m = re.search(r'@ 0x([0-9a-f]+)', obj_raw)
-                    ok = ok and m is not None and int(m.group(1), 16) == address and size == ('1' if op & (1 << 22) else '4')
-                    checked['literal addresses'] += 1
+                    ok = ok and m is not None and int(m.group(1), 16) == address
                     offset = address - BASE
-                    if op & (1 << 20) and 0 <= offset and offset + int(size) <= 4 * len(ops):
+                    if op & (1 << 20) and 0 <= offset and offset + size <= 4 * len(ops):
                         image = b''.join(struct.pack('<I', o) for o in ops[offset // 4:offset // 4 + 2])
-                        value = int.from_bytes(image[offset % 4:offset % 4 + int(size)], 'little')
-                        want_comment += ' = 0x%0*x' % (2 * int(size), value)
+                        value = int.from_bytes(image[offset % 4:offset % 4 + size], 'little')
+                        want_comment += ' = 0x%0*x' % (2 * size, value)
                         checked['literal values'] += 1
-                else:
-                    # add / sub rd, pc, #imm: objdump prints no address; recompute it from the encoding
-                    rot = (op >> 7) & 30
-                    value = ((op & 0xFF) >> rot | (op & 0xFF) << (32 - rot)) & 0xFFFFFFFF
-                    ok = ok and size == '0' and address == (pc + 8 + (value if (op >> 21) & 15 == 4 else -value)) & 0xFFFFFFFF
-                    checked['literal addresses'] += 1
                 ok = ok and our_comment == want_comment
-            elif our_comment:
+            elif 'l' in info or our_comment:
                 ok = False
 
         if ok:

@@ -107,8 +107,13 @@ all 16 msr field masks, edge displacements, pc-relative forms, return idioms), 6
 swap space and the PSR-transfer space, 4000 in the undefined space, and 200,000 uniformly random words.
 
 Compared per encoding: valid / invalid, text, the info flags (derived from the rewritten objdump text by the rules
-of `dbg_disasm.h`), `b` / `bl` targets, pc-relative addresses (objdump's `@ 0x...` comment for `ldr`, recomputed from
-the encoding for `add` / `sub rd, pc, #imm`), and the `= value` of pc-relative loads against the image.
+of `dbg_disasm.h`), `b` / `bl` targets, pc-relative addresses, and the `= value` of pc-relative loads against the image.
+
+Whether a pc-relative address is due is decided by the encoding, never by what `dbg_disasm` reports:
+`ldr` / `str` with pc as base and a pre-indexed immediate offset, with or without write-back (size 1 or 4), and
+`add` / `sub rd, pc, #imm`, with or without S (size 0). Address and size are recomputed from the encoding; for
+`ldr` / `str` objdump's `@ 0x...` comment has to give the same address. Every other encoding must come without
+a literal and without a comment.
 
 objdump's unified-syntax output is rewritten into the canonical forms of `dbg_disasm.h`:
 
