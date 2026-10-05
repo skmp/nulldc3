@@ -387,6 +387,9 @@ struct ChannelEx
 		for (u32 i=0;i<0x80;i++)
 			RegWrite(i);
 		disable();
+
+		//the guest reads LP of a channel that was never keyed on
+		loop.looped=0;
 	}
 	void disable()
 	{
@@ -1242,7 +1245,8 @@ struct SGC_impl : SGC {
 		ChannelEx& ch = Chans[channel];
 
 		out->enabled = ch.enabled;
-		out->looped = ch.loop.looped != 0;
+		//the bit the guest reads as LP
+		out->looped = (ch.loop.looped & 1) != 0;
 		out->aegState = (u8)ch.AEG.state;
 		out->fegState = (u8)ch.FEG.state;
 		//the envelope is kept as an attenuation, 0x3FF silent

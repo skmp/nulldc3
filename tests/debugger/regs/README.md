@@ -14,6 +14,14 @@ device tree, their registers, events and panels. The tables link without the emu
 
 `regs_test dump` prints the tree, one line per node and per register.
 
+`aica/` has a second program, `aica_test`, for device state that the tree shows and that can be tested without the
+machine. It compiles the sound generator (`libswirl/hw/aica/sgc_if.cpp`) with the definitions and flags of the
+emulator build and stands in for the little that the unit references from the rest of the emulator.
+
+| test | what it checks |
+| --- | --- |
+| `aica.channels` | The loop flag of a channel. A sound generator is created in memory that was filled with ones: no channel has its flag set, neither for a guest read of the channel status (`LP`, bit 15 of `0x2810`) nor for the debugger (`DebugGetChannel`, `DebugReadCommonReg`). The flag is one byte of the save state; whatever that byte holds, the guest and the debugger see its bit 0, the debugger's reads leave it and the guest's read clears it. |
+
 What needs the machine is not here but in the emulator's selftest (`libswirl/debugger/dbg_selftest_regs.cpp`,
 `devcast -config Debugger:SelfTest=regs <program>`): that every row is a register the emulator has, that every value
 reads without a side effect and equals what the guest would read, and the memory map of `dbg_mem.h`.

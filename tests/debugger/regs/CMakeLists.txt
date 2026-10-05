@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 project(dbg_regs_tests CXX)
 
-# Standalone tests for the device tree tables of libswirl/debugger (dbg_regs_tables.cpp). Nothing here is part
-# of the emulator build, and nothing of the emulator is linked.
+# Standalone tests for the device tree tables of libswirl/debugger (dbg_regs_tables.cpp), and under aica/ for
+# the device state behind them that has a test without the machine. Nothing here is part of the emulator build;
+# the table tests link nothing of the emulator, aica/ compiles the translation units it tests.
 #
 #   cmake -S tests/debugger/regs -B <builddir> -G Ninja && cmake --build <builddir> && ctest --test-dir <builddir>
 #
@@ -56,3 +57,5 @@ else()
     "SKIP: no ${DEVTOOLS_SCHEMA}; set -DDEVTOOLS_DIR=<dreamcast-devtools checkout>")
 endif()
 set_tests_properties(panels PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP: ")
+
+add_subdirectory(aica)
