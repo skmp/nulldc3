@@ -37,6 +37,8 @@
 #include "libswirl.h"
 #include <time.h>
 
+#include "aica_hash.h"
+
 struct AICARTC_impl : MMIODevice
 {
 	int rtc_schid = -1;
@@ -45,6 +47,11 @@ struct AICARTC_impl : MMIODevice
 
 	u32 GetRTC_now()
 	{
+		// config:Dreamcast.RTC pins the clock: every run starts at that second, whatever the time of the host is
+		u32 pinned = aica_hash.pinned_rtc != nullptr ? aica_hash.pinned_rtc() : 0;
+		if (pinned != 0)
+			return (u32)((20 * 365 + 5) * 24 * 60 * 60 + pinned);
+
 		// The Dreamcast Epoch time is 1/1/50 00:00 but without support for time zone or DST.
 		// We compute the TZ/DST current time offset and add it to the result
 		// as if we were in the UTC time zone (as well as the DC Epoch)
@@ -137,6 +144,8 @@ MMIODevice* AICA::CreateRTC() {
 u32 libAICA_GetRTC_now() {
 	return sh4_cpu->GetA0H<AICARTC_impl>(A0H_RTC)->GetRTC_now();
 }
+
+AicaHash aica_hash;
 
 struct AicaDevice final : AICA {
 	u32 VREG;//video reg =P
@@ -707,6 +716,10 @@ struct AicaDevice final : AICA {
 
 		dma_sched_id = sh4_sched_register(this, 0, STATIC_FORWARD(AicaDevice, dma_end_sched));
 
+		//the sound regression harness (aica_hash.h)
+		if (aica_hash.configure != nullptr)
+			aica_hash.configure();
+
 		return true;
 	}
 
@@ -729,6 +742,10 @@ struct AicaDevice final : AICA {
 	void Update(u32 Samples)
 	{
 		sgc->AICA_Sample32();
+
+		//the sound regression harness (aica_hash.h)
+		if (unlikely(aica_hash.ticks_wanted != 0))
+			aica_hash.tick(aica_reg);
 	}
 
 	//Aica reads (both sh4&arm)

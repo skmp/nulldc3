@@ -12,6 +12,7 @@
 #include <math.h>
 #include <algorithm>
 #include "serialize.h"
+#include "aica_hash.h"
 
 using namespace std;
 #undef FAR
@@ -1329,6 +1330,7 @@ struct SGC_impl : SGC {
 			pl = mixl;
 			pr = mixr;
 
+			aica_hash_sample(mixr, mixl);
 			audio_stream->WriteSample(mixr, mixl);
 		}
 	}
@@ -1426,6 +1428,7 @@ struct SGC_impl : SGC {
 		pl = mixl;
 		pr = mixr;
 
+		aica_hash_sample(mixr, mixl);
 		audio_stream->WriteSample(mixr, mixl);
 	}
 
