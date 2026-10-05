@@ -6,7 +6,11 @@ The sample is laid out as a little-endian binary image at BASE. objdump's text i
 canonical forms of dbg_disasm.h (see README.md for the rules); every remaining difference has to fall
 into one of the explained classes below.
 
-Exit status: 0 no unexplained difference, 1 unexplained differences, 77 oracle not available.
+--self-test checks the comparison instead of the disassembler: every info field it counts as checked is made
+wrong or removed in the dump, or added where there is none, and each change has to be reported.
+
+Exit status: 0 no unexplained difference (--self-test: every change reported), 1 otherwise,
+77 oracle not available.
 """
 import argparse
 import os
@@ -516,12 +520,127 @@ def compare(ops, obj, expect, ours):
     return counts, rule_counts, class_counts, per_class, checked, bad
 
 
+def corruptions():
+    """
+    One entry per way an info field compare() counts as checked can be wrong: (name, population, change).
+    change() takes the pc, the text and the info of one encoding and returns text and info with that field wrong,
+    removed or added, or None when the encoding gives it nothing to change. population names the encodings the
+    change has to be reported on, a key of the counts in self_test().
+    """
+    def without(info, key):
+        return {k: v for k, v in info.items() if k != key}
+
+    def flag(position):
+        def change(pc, text, info):
+            flags = info['flags']
+            flipped = SIGNATURE[position] if flags[position] == '-' else '-'
+            return text, dict(info, flags=flags[:position] + flipped + flags[position + 1:])
+        return change
+
+    def wrong_target(pc, text, info):
+        if 't' not in info:
+            return None
+        return text, dict(info, t='%08x' % (int(info['t'], 16) ^ 4))
+
+    def no_target(pc, text, info):
+        if 't' not in info:
+            return None
+        return text, without(info, 't')
+
+    def added_target(pc, text, info):
+        if 't' in info:
+            return None
+        return text, dict(info, t='%08x' % (pc + 8))
+
+    def wrong_literal_address(pc, text, info):
+        if 'l' not in info:
+            return None
+        address, size = info['l'].split('/')
+        return text, dict(info, l='%08x/%s' % (int(address, 16) ^ 4, size))
+
+    def wrong_literal_size(pc, text, info):
+        if 'l' not in info:
+            return None
+        address, size = info['l'].split('/')
+        return text, dict(info, l='%s/%d' % (address, 1 if size == '4' else 4))
+
+    # a disassembler that sees no literal prints no comment either, and one that sees a literal prints its address
+    def no_literal(pc, text, info):
+        if 'l' not in info:
+            return None
+        return text.partition(' @ ')[0], without(info, 'l')
+
+    def added_literal(pc, text, info):
+        if 'l' in info:
+            return None
+        return text + ' @ 0x%08x' % (pc + 8), dict(info, l='%08x/0' % (pc + 8))
+
+    def wrong_value(pc, text, info):
+        head, mark, value = text.partition(' = 0x')
+        if not mark:
+            return None
+        return head + mark + '%0*x' % (len(value), int(value, 16) ^ 1), info
+
+    def no_value(pc, text, info):
+        head, mark, _ = text.partition(' = ')
+        return (head, info) if mark else None
+
+    def added_value(pc, text, info):
+        if 'l' not in info or ' = ' in text:
+            return None
+        return text + ' = 0x00000000', info
+
+    return [('wrong %s flag' % SIGNATURE[position], 'flag sets', flag(position))
+            for position in range(1, len(SIGNATURE))] + [
+        ('wrong branch target', 'branch targets', wrong_target),
+        ('no branch target', 'branch targets', no_target),
+        ('added branch target', 'encodings without a branch target', added_target),
+        ('wrong literal address', 'literal addresses', wrong_literal_address),
+        ('wrong literal size', 'literal addresses', wrong_literal_size),
+        ('no literal', 'literal addresses', no_literal),
+        ('added literal', 'encodings without a literal', added_literal),
+        ('wrong literal value', 'literal values', wrong_value),
+        ('no literal value', 'literal values', no_value),
+        ('added literal value', 'literal addresses without a value', added_value)]
+
+
+def self_test(ops, obj, expect, ours):
+    """
+    Checks compare() itself: with one info field wrong, removed or added on every encoding that allows it, exactly
+    the encodings of that field's population have to come back unexplained. Returns the exit status.
+    """
+    counts, _, _, _, checked, _ = compare(ops, obj, expect, ours)
+    if counts['unexplained']:
+        print('  needs a dump without unexplained differences, this one has %d' % counts['unexplained'])
+        return 1
+
+    # an encoding whose validity and text agree is checked for the fields it has and for not having the others;
+    # one that differs in a documented way is not checked for any
+    accepted = counts['identical'] + counts['normalised']
+    population = dict(checked)
+    population['encodings without a branch target'] = accepted - checked['branch targets']
+    population['encodings without a literal'] = accepted - checked['literal addresses']
+    population['literal addresses without a value'] = checked['literal addresses'] - checked['literal values']
+
+    status = 0
+    for name, key, change in corruptions():
+        corrupted = [change(BASE + 4 * index, text, info) or (text, info) for index, (text, info) in enumerate(ours)]
+        reported = compare(ops, obj, expect, corrupted)[0]['unexplained']
+        verdict = '' if reported == population[key] > 0 else '  NOT ALL REPORTED'
+        print('  %-21s unexplained on %6d of %6d %s%s' % (name, reported, population[key], key, verdict))
+        if verdict:
+            status = 1
+    return status
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--objdump', default='')
     ap.add_argument('--test-bin', required=True)
     ap.add_argument('--workdir', required=True)
     ap.add_argument('--verbose', action='store_true')
+    ap.add_argument('--self-test', action='store_true',
+                    help='test the comparison itself: wrong, missing and added info fields have to be reported')
     args = ap.parse_args()
 
     if not args.objdump or args.objdump.endswith('-NOTFOUND') or not os.path.exists(args.objdump):
@@ -535,6 +654,10 @@ def main():
     obj = run_objdump(args.objdump, args.workdir, [twin(op)[0] for op in ops])
     expect = [expected(op, obj_raw) for op, obj_raw in zip(ops, obj)]
     ours = run_ours(args.test_bin, ops)
+
+    if args.self_test:
+        print('arm7 comparison self-test vs %s -m armv3' % version)
+        return self_test(ops, obj, expect, ours)
 
     counts, rule_counts, class_counts, per_class, checked, bad = compare(ops, obj, expect, ours)
 

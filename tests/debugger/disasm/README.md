@@ -20,6 +20,7 @@ Options: `-DSH_OBJDUMP=<sh-elf-objdump>`, `-DARM_OBJDUMP=<arm-eabi-objdump>`,
 | `sh4_objdump_selftest` | python3, a SuperH GNU objdump | the `sh4_objdump` comparison itself: wrong info fields in the dump must be reported |
 | `sh4_opcode_table` | python3 | every SH-4 opcode against `libswirl/hw/sh4/sh4_opcode_list.cpp` |
 | `arm7_objdump` | python3, an ARM GNU objdump | 249,364 ARM encodings against `objdump -m armv3` |
+| `arm7_objdump_selftest` | python3, an ARM GNU objdump | the `arm7_objdump` comparison itself: wrong, missing and added info fields in the dump must be reported |
 | `dsp_playground` | `tsx` and `src/app/dsp/dspUtils.ts` of dreamcast-devtools | 100,193 DSP steps against the playground's disassembler and assembler |
 
 A test whose tool is missing prints `SKIP: <reason>` and is reported by ctest as skipped. `golden` always runs.
@@ -143,6 +144,23 @@ Result (GNU objdump 2.43):
 
 Checked: 227740 flag sets (every encoding counted as identical or normalised-equal), 28042 branch targets,
 1299 pc-relative addresses, 500 literal values.
+
+`arm7_objdump_selftest` (`arm7_objdump.py --self-test`) holds the comparison to these figures. It takes the dump and
+changes one field on every encoding that allows the change; each of the 16 changed dumps must come back unexplained
+on exactly the encodings the field is checked on:
+
+| change | on | must be reported on |
+|---|---|---|
+| one of the six flags, set <-> clear | every encoding | 227740 |
+| branch target wrong; branch target removed | every `b` / `bl` | 28042 |
+| branch target added | every other encoding | 199698 (227740 - 28042) |
+| pc-relative address wrong; its size wrong; address and `@` comment removed | every encoding that has one | 1299 |
+| pc-relative address and `@` comment added | every other encoding | 226441 (227740 - 1299) |
+| literal value wrong; `= value` removed | every pc-relative load inside the image | 500 |
+| `= value` added | every other pc-relative address | 799 (1299 - 500) |
+
+The 21624 encodings with an explained difference are compared for validity and text only: objdump has no
+statement about the fields of an instruction it does not know.
 
 Per class (decode of the ARM7DI data sheet):
 

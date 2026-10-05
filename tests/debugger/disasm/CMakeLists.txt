@@ -82,6 +82,13 @@ disasm_oracle_test(arm7_objdump "${Python3_Interpreter_FOUND}" "python3 not foun
   "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/arm7_objdump.py"
   --objdump "${ARM_OBJDUMP}" --test-bin $<TARGET_FILE:disasm_test> --workdir "${CMAKE_CURRENT_BINARY_DIR}/oracle")
 
+# The comparison itself, as for SH4: a wrong info field, one that is missing and one that should not be there
+# have to come back as a difference. Own workdir: the image file must not be shared with arm7_objdump under ctest -j.
+disasm_oracle_test(arm7_objdump_selftest "${Python3_Interpreter_FOUND}" "python3 not found"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/arm7_objdump.py" --self-test
+  --objdump "${ARM_OBJDUMP}" --test-bin $<TARGET_FILE:disasm_test>
+  --workdir "${CMAKE_CURRENT_BINARY_DIR}/oracle/selftest")
+
 set(DEVTOOLS_DIR "${DEVCAST_DIR}/../dreamcast-devtools" CACHE PATH "dreamcast-devtools checkout (DSP playground oracle)")
 set(TSX "${DEVTOOLS_DIR}/node_modules/.bin/tsx")
 set(DSP_UTILS "${DEVTOOLS_DIR}/src/app/dsp/dspUtils.ts")
