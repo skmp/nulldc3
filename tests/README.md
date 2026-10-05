@@ -38,13 +38,20 @@ way.
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | hand-written cases: ADC, SBC and RSC at the edges with the carry clear and set, the logical operations with a ROR by a register, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2, the register behind them and M read back, what a reset of the ARM writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
+| `aica.dsp.api` | the AICA DSP core (`libswirl/hw/aica/dsp_core`) on itself: a sample in one go against its 128 steps from every step, state out and in, two cores in turns, its registers, MIXS banks and read latch rules | none |
+| `aica.dsp.diff.random` `aica.dsp.diff.sparse` `aica.dsp.diff.directed` | the AICA DSP core against the DSP of the caique sample model on generated programs, compared behind every step | a caique-rtl checkout |
+| `aica.dsp.case.dsp_basic` `.dsp_mem` `.dsp_mem2` `.dsp_mem3` `.dsp_wslot` `.dsp_unpack` `.dsp_pack` `.dsp_temp` `.dsp_coll` `.sh4_latch` `.mdec_hold` | the DSP programs caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
+| `aica.dsp.wasm` | the WebAssembly build of the AICA DSP core in node against the core compiled for the host | emcc and node, skipped without them |
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it.
+The AICA DSP tests but `aica.dsp.api` need `-DNULLDC_CAIQUE_DIR=<path to caique-rtl>` unless caique-rtl sits next to
+the repository; they compile its sample model and its DSP programs (C) from there and read its console captures.
 
-Every test but `common.selftest` and `sh4.core` is gated on a baseline file, and ctest runs them with `--strict`:
-a count that is worse than its baseline fails, and so does one that is better, until the baseline is updated and
-committed. `common.selftest` and `sh4.core` are lists of checks that all have to hold.
+Every test but `common.selftest`, `sh4.core` and `aica.dsp.wasm` is gated on a baseline file, and ctest runs them
+with `--strict`: a count that is worse than its baseline fails, and so does one that is better, until the baseline
+is updated and committed. `common.selftest`, `sh4.core` and `aica.dsp.wasm` are lists of checks that all have to
+hold.
 
 More about the suites:
 
@@ -53,6 +60,9 @@ More about the suites:
   `sh4_dynarec/KNOWN_DIFFERENCES.md`: what is behind the two dynarec baselines,
 * `arm7/README.md`: the ARM7 tests and the wren7 console suites; `arm7/KNOWN_FAILURES.md`: why checks of the
   ARM7 baseline are below their number of cases, and what else is known to be wrong in the ARM7.
+* `aica_dsp/README.md`: the AICA DSP core's tests, which of the console's captures are compared with the core
+  directly and which through the caique model; `aica_dsp/KNOWN_FAILURES.md`: the three lines of a console report
+  that depend on the console's timing.
 
 ## Layout
 
@@ -68,6 +78,8 @@ More about the suites:
                        FP mode, also across threads, EXPEVT and TRA)
     arm7/              the ARM7 interpreter: vendor programs, directed cases, wren7 console suites (README.md,
                        KNOWN_FAILURES.md)
+    aica_dsp/          the AICA DSP core: its interface, the caique model step for step, caique's console
+                       captures, the WebAssembly build (README.md, KNOWN_FAILURES.md)
     vendor/            the submodules
     files/             fixtures
 
@@ -251,7 +263,7 @@ A suite is a directory with a `CMakeLists.txt` that is added in `tests/CMakeList
   an object library of libswirl translation units, built like the emulator builds them.
 * `nulldc_test_common`: link it after the libswirl library. Stubs are taken from it only for the symbols the
   libswirl objects leave undefined; `msgboxf` and `os_DebugBreak` always come from `test_guard`.
-* `NULLDC_HAVE_SH4_TESTS` / `NULLDC_HAVE_ARM7_TESTS` / `NULLDC_HAVE_WREN7`, the `*_DIR` and `*_MISSING`
+* `NULLDC_HAVE_SH4_TESTS` / `NULLDC_HAVE_ARM7_TESTS` / `NULLDC_HAVE_WREN7` / `NULLDC_HAVE_CAIQUE`, the `*_DIR` and `*_MISSING`
   variables and `nulldc_add_missing_data_test(<name> <reason>)` for data that is not there (skipped, or failed
   with `NULLDC_TESTS_REQUIRE_DATA`); `nulldc_add_skipped_test(<name> <reason>)` for a test the host cannot run.
 
