@@ -115,9 +115,12 @@ inline const char* StopCauseName(StopCause c) {
 // Statements of executionState.notice, one line each.
 enum : u32 {
 	NOTICE_SH4_FALLBACK        = 1,		// the SH4 runs on the interpreter while breakpoints are armed: FPU results
-										// can differ from a run without breakpoints
+										// can differ from a run without breakpoints. Set while the fallback loop is
+										// selected (UseFallbackLoop()) and in the stop of a fallback step
 	NOTICE_SH4_FALLBACK_TIMING = 2,		// with NOTICE_SH4_FALLBACK: that loop does not charge time by the decoder's
-										// blocks, so timing differs as well
+										// blocks, so timing differs as well. Reserved: never set while
+										// sh4_fallback_loop() charges by the decoder's blocks, as hw/sh4/sh4_dbg.h
+										// requires
 	NOTICE_ARM7_FALLBACK       = 4,		// the ARM7 runs on the interpreter fallback: timing differs
 	NOTICE_DSP_FORCED          = 8,		// the per-sample DSP path is forced on by the debugger
 };
@@ -206,6 +209,8 @@ enum CallClass {
 // A call that waits in the queue when the emulator thread exits is taken by that thread, under L, with the
 // outcome of the Stopped column. A call queued for a parked thread that is taken after the thread resumed
 // follows the Running column.
+// CC_READ does not run in NoMachine. A caller that needs only the debugger's tables there (the tick that
+// follows debugger.describe) makes a CC_TABLE call, which the caller runs itself under L.
 //
 // Returns 0 when fn ran; fn has returned.
 // Returns kErrNoGame (-32002), kErrHostStopped (-32001) or kErrNotPaused (-32003) per the table; fn did not
@@ -293,7 +298,8 @@ void SetEventBreakpoints(const u32* ids, const u8* events, u32 n);
 // UseFallbackLoop() change as SetSh4Breakpoints can.
 void SetActiveMask(u32 categories);
 
-// Any thread, never blocks. The state last published, as one consistent copy.
+// Any thread, never blocks. The state last published, as one consistent copy. notice is current even when
+// nothing was published since: dbg::emu updates it when a service excursion switches loops.
 RunState GetRunState();
 
 // Any thread, never blocks. True on the emulator thread, from OnThreadEntered() until OnThreadExiting()
@@ -331,8 +337,9 @@ void OnEvent(EventId id);
 struct Sh4EngineInfo {
 	const char* backend;	// "interpreter", "x64", "arm64", "arm32", "x86", "cpp": constant string
 	u32 caps;				// SuperH4Backend::DebugCaps() of the active backend
-	bool fallback;			// breakpoints and steps use the interpreter fallback on this backend: it has no
-							// SH4DBG_NATIVE, or Debugger:ForceFallback is set. False: they are native
+	bool fallback;			// breakpoints and steps use the interpreter fallback on this backend: it is a JIT
+							// without SH4DBG_NATIVE, or a JIT with Debugger:ForceFallback set (the key has no
+							// effect on the interpreter). False: they are native
 	bool fallbackLoop;		// UseFallbackLoop() as SuperH4_impl::Run() last saw it
 	int sliceCyclesLeft;	// SuperH4Backend::SliceCyclesLeft() of the active backend.
 							// SH4 time is sh4_sched_now64() + SH4_TIMESLICE - sliceCyclesLeft

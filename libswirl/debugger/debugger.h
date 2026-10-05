@@ -149,9 +149,10 @@ namespace emu {
 void SliceHook();
 
 // (E) only: SuperH4_impl::Run() asks it once per entry and runs sh4_fallback_loop() (hw/sh4/sh4_dbg.h)
-// instead of the backend's Loop() when it is true. True while the active backend has no SH4DBG_NATIVE (or
-// Debugger:ForceFallback is set) and an SH4 breakpoint or temporary breakpoint is active or a step-out is
-// pending. The value changes only in the park context. No side effects.
+// instead of the backend's Loop() when it is true. True while the active backend is a JIT without
+// SH4DBG_NATIVE, or a JIT with Debugger:ForceFallback set (the key has no effect on the interpreter), and an
+// SH4 breakpoint or temporary breakpoint is active or a step-out is pending. The value changes only in the
+// park context. No side effects.
 bool UseFallbackLoop();
 
 // Any thread, any lifetime state; returns at once (it waits for nothing but the short mutex of the call
