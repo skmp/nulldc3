@@ -60,20 +60,79 @@ the tests `sh4bp.b1` to `sh4bp.b14` of `devcast -config Debugger:SelfTest=sh4bp 
 They write the guest programs of this directory into main memory and drive them through `dbg::emu`, and add
 what only the emulator has: the boot of the guest through reios, a reset while stopped, an address armed by a
 call from another thread while the guest runs, the write protection of the host mapping. A session tests the
-backend that is configured.
+backend that is configured, in the timing mode that is configured. The tests `sh4bpboot.*` and `sh4bpbase.*`
+of the same file are B3, B6 and B7 on the booted guest ([below](#the-booted-guest)).
 
 ```
-tests/debugger/sh4bp/selftest.sh <devcast> <elf> [work dir]
+tests/debugger/sh4bp/selftest.sh <devcast> <elf> [work dir] [config item ...]
 ```
 
-runs three sessions (JIT, interpreter, JIT with `Debugger:ForceFallback=yes`) and compares what they have to
-agree on: registers and step traces of the JIT and of the fallback with the interpreter's, time and the state
-of the integer workload of the fallback with the JIT's.
+runs three sessions of `sh4bp` (JIT, interpreter, JIT with `Debugger:ForceFallback=yes`) and compares what
+they have to agree on: registers and step traces of the JIT and of the fallback with the interpreter's, time
+and the state of the integer workload of the fallback with the JIT's. Then it makes the gates on the booted
+guest, for those three and for the JIT and the fallback with `config:Dynarec.idleskip=no`. Every session has
+the real-time clock pinned (`config:Debug.FixedRtc`).
 
 The same tests also run here, so that they are known to be right before the emulator's park loop runs them:
-`sh4bp_selftest <jit|interpreter|fallback>` is the selftest file and its driver on the machine of this
-directory, with a park loop in place of `dbg::emu` (`selftest_shim.cpp`) and the boot of the guest reduced to
-a jump to the entry point. The test `debugger.sh4bp.selftest` runs the three sessions and the comparison.
+`sh4bp_selftest <jit|interpreter|fallback> [filter] [idleskip=off]` is the selftest file and its driver on the
+machine of this directory, with a park loop in place of `dbg::emu` (`selftest_shim.cpp`) and the boot of the
+guest reduced to what the boot trap leaves behind. The test `debugger.sh4bp.selftest` runs the three sessions
+of `sh4bp` and the comparison (`selftest_compare.cmake`); the tests `debugger.sh4bp.boot.<configuration>` make
+the gates on the booted guest (`selftest_boot.cmake`), and fail when a session leaves one of their cases out.
+
+### The booted guest
+
+The tests `sh4bp.*` run the guest programs with every interrupt masked. `sh4bpboot.b3`, `sh4bpboot.b6` and
+`sh4bpboot.b7` make the same gates on the guest that the session booted, with its interrupts live: the ELF of
+the command line in the emulator, the boot program of `guest.s` here. *State* is compared at a fixed vblank.
+
+- **A run** is a reset, main memory cleared, and the guest resumed up to its vblank 400. An event breakpoint on
+  `dc.holly.core.vblank` counts the vblanks: the guest stops at every one of them, where the slice of the
+  vblank ends. What a case tests it arms in the stop of vblank 300. A test is a row of runs, one for each of
+  its cases, and prints the state each ended in as `note: cmp boot.<gate>.<case> <state>`.
+- **The baseline** of a run is the run at the same place of a second session. A reset does not put the whole
+  machine back (the scheduler keeps its time, the devices their place in it and some of their registers), so
+  two runs of one session start from different machines and cannot be compared. The tests `sh4bpbase.*` are
+  the twins of `sh4bpboot.*`: the same rows of runs with nothing of the cases in them. A session of each comes
+  to every reset with the same machine, as long as the runs in front of it changed nothing for the guest. Two
+  sessions of baselines have to agree, or two of three; a session of cases that differs from them is run
+  twice more and fails when it differs again. The scripts do that; a session of these tests holds nothing
+  else, because nothing else may have a say in when its resets come.
+- **What a case stops at** is taken from the guest's own path, in a run of its own that every session begins
+  with: 3000 single steps from the stop of vblank 300, sorted by their opcodes (instructions that end no
+  block, two of them in a row, delay slots, SLEEPs) and, on a recompiler, by the blocks cached for them (blocks
+  that the decoder charges as idle, blocks that a size limit ended). A case with breakpoints disarms them
+  behind 20000 stops.
+- **The cases of `b3`**: an armed address that is not reached; every address of the other cases with the
+  category muted; a stop and a resume at every arrival at each kind of address; pauses that another thread
+  asks for as fast as they are taken; calls of another thread that arm and disarm the addresses in service
+  excursions. **`b6`**: a call of another thread arms the instruction that the path holds most often, while
+  the guest runs; it is disarmed in its tenth stop. **`b7`**: a step-out asked for in the stop of every vblank,
+  and again where one ended, so that one is pending for the whole run and the ones that end stop behind a
+  return of the guest.
+- **SLEEPs**: a vblank that finds the guest waiting in a SLEEP cuts the wait short (the event breakpoint
+  freezes time in the call that raised it), and how the loop goes on to the park differs with a breakpoint
+  on the SLEEP: it does not run the rest of its slice out. That is the skew of a stop inside a SLEEP wait, not
+  one of the breakpoint. The run that stops at SLEEPs therefore counts no vblank behind 300: it ends, as its
+  baseline does, at the 200th interrupt that the guest accepts from there on, which a breakpoint on the
+  interrupt vector counts.
+- **Forced fallback**: from the stop of vblank 300 on every run has a breakpoint on the entry point of the
+  guest, where the guest does not come back to, so that the fallback loop runs the rest of it, in the
+  baselines too. `selftest.sh` prints how many of them differ from the JIT's (B12 on the booted guest: the
+  FPU arithmetic of the two differs).
+- A run whose other thread came too late to do anything prints no state. Its session then differs from the
+  baselines and is repeated.
+
+The machine of this directory boots a guest that has all of it. A vblank is every 29th slice end and an
+interrupt request every 2nd; the boot program opens the interrupts behind 24576 instructions with them masked
+(the 20000 steps of `sh4bp.b4` stay in front of that) and then runs a main loop of its own with a block of
+every kind. That loop is busy: it waits for an interrupt in one pass of 32 only. A guest that sleeps through
+most of its time would hide what a stop costs it, because every wait ends at the next interrupt whenever it
+began; this one works through several interrupts between two waits, and a cycle that a stop and its resume
+lose or add moves the next wait. With one rule of the mechanism broken in a scratch copy (the rest of a
+stopped block not run; the refund of a stop not given back; the slice counter of the recompiler's loop, or
+of the interpreter's, started anew at every entry) the tests `debugger.sh4bp.boot.*` of the engines that the
+rule belongs to fail.
 
 ## The cost when nothing is armed
 
@@ -126,7 +185,7 @@ What the numbers are made of:
 
 `guest.s` holds the guest programs; `guest.inc` is that file assembled (the image as bytes, the addresses of
 the `g_*` labels) and is what the tests build from. `gen.sh` makes it and needs an sh-elf binutils; the build
-does not.
+does not. The image starts with its boot program: what the selftest gets when it boots the guest.
 
 ## The call sites of run control
 
