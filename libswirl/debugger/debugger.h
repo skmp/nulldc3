@@ -436,9 +436,11 @@ struct NoFlag {
 	constexpr bool load(std::memory_order = std::memory_order_seq_cst) const { return false; }
 	const NoFlag& operator=(bool) const { return *this; }
 	void store(bool, std::memory_order = std::memory_order_seq_cst) const { }
+	constexpr bool exchange(bool, std::memory_order = std::memory_order_seq_cst) const { return false; }
 };
 
 struct NoWord {
+	constexpr operator u32() const { return 0; }
 	constexpr u32 load(std::memory_order = std::memory_order_seq_cst) const { return 0; }
 };
 
