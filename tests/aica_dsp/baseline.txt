@@ -1,0 +1,13 @@
+# What the AICA DSP core passes of its tests, per test and check.
+# A test fails when one of its checks passes fewer cases than listed here, or has another number of
+# cases. KNOWN_FAILURES.md has the reason for every check that is below its total.
+# Written by --update-baseline of the tests, see README.md.
+#
+# test                       check                               total         pass
+aica.dsp.api                 split                               39015        39015
+aica.dsp.api                 state                                1545         1545
+aica.dsp.api                 instances                              16           16
+aica.dsp.api                 registers                              51           51
+aica.dsp.api                 mixs                                   16           16
+aica.dsp.api                 rules                                  17           17
+aica.dsp.api                 helpers                                65           65
