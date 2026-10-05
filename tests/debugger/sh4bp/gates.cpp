@@ -1657,6 +1657,68 @@ static void gate_slot()
 			"interpreter: a breakpoint on a slot stops the handler's return to it at the slot, nothing of it run; the next pair stops at its branch");
 	}
 
+	//An event breakpoint that fires in a slice that ends between a branch and its slot stops there: a run, and a
+	//step as well, which then ends without the slot
+	{
+		u64 slice = 0;
+
+		pair_start(ENGINE_INTERP, 0);
+
+		for (u32 i = 0; i < 5000 && slice == 0; i++)
+		{
+			const bool on_branch = Sh4cntx.pc == G_pair_bt;
+			const u64 before = counters.slices;
+
+			machine_step();
+
+			//the step crossed a slice end and charged its slot to the new slice
+			if (on_branch && counters.slices != before && machine_backend()->SliceCyclesLeft() == SH4_TIMESLICE - 8)
+				slice = counters.slices;
+		}
+
+		MachineState at[2];
+
+		for (int step = 0; step < 2; step++)
+		{
+			const char* how = step ? "a step" : "a run";
+
+			pair_start(ENGINE_INTERP, 0);
+			knobs.event_slice = slice;
+
+			if (step)
+			{
+				for (u32 i = 0; i < 100000; i++)
+				{
+					s = machine_step();
+
+					if (s.cause != StopCause::Step)
+						break;
+				}
+			}
+			else
+			{
+				s = machine_resume();
+			}
+
+			at[step] = machine_state();
+
+			//the slot has run once in every pass before this one, as the last instruction of a pass has
+			check(slice != 0 && s.debugger && s.cause == StopCause::Event && s.pc == G_pair_bt_slot && R(1) == R(3) && at[step].counter == SH4_TIMESLICE,
+				"interpreter: an event in the slice that ends between a bt/s and its slot ends %s there, the slot not run (pc %08X, slice %llu)", how,
+				s.pc, (unsigned long long)slice);
+
+			const u32 ran = R(1);
+
+			bps({ G_pair_bt_slot });
+			s = machine_resume();
+
+			check(is_bp(s, 1, G_pair_bt) && R(1) == ran + 1, "interpreter: the slot armed in that stop of %s: the slot runs, the next pair stops at its branch (pc %08X)",
+				how, s.pc);
+		}
+
+		check(at[0] == at[1], "interpreter: the step ends in the state the run ends in (%s)", str(at[1]));
+	}
+
 	//Stops and pauses between a branch and its slot leave no trace
 	for (Engine e : all_engines)
 	{

@@ -39,6 +39,8 @@ struct MachineKnobs
 	u32 irq_period;			//request the interrupt at every n-th slice end. 0: never
 	u64 host_stop_slice;	//the host stops the machine at the first slice end of the backend loop that is this one
 							//or a later one, counted from the reset: not inside a SLEEP wait. 0: never
+	u64 event_slice;		//an event breakpoint fires in this slice, counted from the reset: the stop is latched where
+							//that slice ends, also in a SLEEP wait and inside a step. 0: never
 	u32 pause_every;		//a client asks for a pause at every n-th slice end
 	u32 excursion_every;	//a call that needs the park context arrives at every n-th slice end
 	std::function<void()> excursion;	//what that call does

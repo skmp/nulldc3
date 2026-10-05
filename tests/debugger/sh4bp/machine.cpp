@@ -288,8 +288,12 @@ extern "C" int UpdateSystem()
 		sh4_int_bCpuRun = false;
 	}
 
-	//The slice hook. A pause request and a call for the park context are taken at a slice end of the backend
-	//loop, not inside a SLEEP wait, and not while a step executes
+	//The slice hook. A freezing cause is latched in the call that finds it
+	if (knobs.event_slice && counters.slices == knobs.event_slice)
+		dbg::emu::LatchStop(dbg::StopCause::Event, 0);
+
+	//A pause request and a call for the park context are taken at a slice end of the backend loop, not inside a
+	//SLEEP wait, and not while a step executes
 	if ((knobs.pause_every && counters.slices % knobs.pause_every == 0) || ext_pause.exchange(false))
 		pause_wanted = true;
 	if ((knobs.excursion_every && counters.slices % knobs.excursion_every == 0) || ext_call_pending.load())
@@ -384,7 +388,7 @@ static bool park_leave()
 	{
 		dbg::g_intc_deferred = false;
 
-		//only an event or a sound breakpoint cuts a SLEEP wait, and this machine has neither
+		//only an event or a sound breakpoint cuts a SLEEP wait, and no gate makes one fire there
 		if (dbg::g_sleep_cut)
 			fatal("a SLEEP wait was cut");
 
