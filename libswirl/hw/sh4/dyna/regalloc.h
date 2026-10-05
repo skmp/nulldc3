@@ -495,6 +495,11 @@ struct RegAlloc
 					if (op->rs3._imm>=0xF000)
 						fp=true;
 
+					//SLEEP calls UpdateSystem from inside the block: whatever reads the context there
+					//(SH4DBG_CTX_AT_SLICE) finds the fp registers in it as well
+					if (op->rs3._imm==0x001B)
+						fp=true;
+
 				}
 				else if (op->op==shop_dbg_check)
 				{
