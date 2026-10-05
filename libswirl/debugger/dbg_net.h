@@ -47,6 +47,11 @@ struct Options {
 // the query string is ignored. A path that is not found is answered with index.html when its last segment
 // has no extension (a route of the page), and with 404 when it has one.
 //
+// webRoot is a narrow file name as std::filesystem::path takes one: the bytes as they are on POSIX systems; on
+// Windows text that the C++ library converts, from the active code page with the Microsoft library (what
+// fopen takes there). A root that is not valid in that encoding is like one that does not exist: it has no
+// files, every path is 404.
+//
 // Client ids start at 1 and are not reused while the Server object lives. OnOpen is followed by exactly one
 // OnClose, also when the server stops.
 class Server {

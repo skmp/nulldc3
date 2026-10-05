@@ -281,6 +281,23 @@ static void TestWebRoot() {
 	CHECK_EQ(Text(ws), std::string("from the web root server"));
 
 	server.Stop();
+
+	// Bytes that are not UTF-8: a C++ library that converts narrow file names refuses to make a path of
+	// them. Such a root has no files, and the network thread goes on serving.
+	Recorder other;
+	Server unreadable;
+	other.server = &unreadable;
+	options.webRoot = (top / "root").string() + "\xe9\xff";
+	REQUIRE(unreadable.Start(options, &other));
+	port = unreadable.Port();
+	CHECK_EQ(TestClient::Get(port, "/index.html").status, 404);
+	CHECK_EQ(TestClient::Get(port, "/").status, 404);
+	TestClient late;
+	Open(late, other, port);
+	REQUIRE(late.SendFrame(1, "echo:still serving"));
+	CHECK_EQ(Text(late), std::string("still serving"));
+	unreadable.Stop();
+
 	fs::remove_all(top, ec);
 }
 

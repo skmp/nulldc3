@@ -81,6 +81,7 @@ static int SockPoll(struct pollfd* fds, size_t count, int timeoutMs) { return po
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -504,10 +505,17 @@ const char* MimeType(const std::string& path) {
 bool ReadRootFile(const std::string& root, const std::string& path, std::string* body) {
 	namespace fs = std::filesystem;
 	std::error_code ec;
-	fs::path base = fs::canonical(fs::path(root), ec);
-	if (ec)
+	fs::path base, full;
+	// On Windows a path made of a narrow string is converted, and the constructor throws when the root is
+	// not valid in the encoding it is read in. Nothing above this catches on the network thread.
+	try {
+		base = fs::canonical(fs::path(root), ec);
+		if (ec)
+			return false;
+		full = fs::canonical(base / fs::path(path), ec);
+	} catch (const std::exception&) {
 		return false;
-	fs::path full = fs::canonical(base / fs::path(path), ec);
+	}
 	if (ec)
 		return false;
 	if (std::mismatch(base.begin(), base.end(), full.begin(), full.end()).first != base.end())

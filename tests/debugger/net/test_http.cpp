@@ -522,6 +522,11 @@ static void TestWebRoot() {
 	CHECK_EQ(Run(Get("/debugger"), variant).reply.status, 404);		// no page to fall back to
 	variant.webRoot = (root / "index.html").string();
 	CHECK_EQ(Run(Get("/"), variant).reply.status, 404);
+	// a root that is not UTF-8, which a C++ library that converts narrow file names refuses to make a path of
+	variant.webRoot = root.string() + "\xe9\xff";
+	CHECK_EQ(Run(Get("/"), variant).reply.status, 404);
+	CHECK_EQ(Run(Get("/index.html"), variant).reply.status, 404);
+	CHECK_EQ(Run(Get("/debugger"), variant).reply.status, 404);
 
 	// the Host rule comes first here too
 	CHECK_EQ(Run(Get("/", "Host: evil.example\r\n"), options).reply.status, 403);
