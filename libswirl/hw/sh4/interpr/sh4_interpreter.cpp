@@ -108,6 +108,18 @@ struct SH4IInterpreter : SuperH4Backend {
         return true;
     }
 
+    // One instruction of Loop(), out of line. Returns its opcode
+    static NOINLINE u32 RunOne()
+    {
+        u32 addr = next_pc;
+        next_pc += 2;
+        u32 op = IReadMem16(addr);
+
+        ExecuteOpcode(op);
+
+        return op;
+    }
+
     // One instruction of the debug loop, with the debugger check in front of it.
     // false: the check stopped and nothing ran, or the instruction ran and its flow report stopped
     static bool DebugStep(s32& l)
@@ -202,7 +214,8 @@ struct SH4IInterpreter : SuperH4Backend {
 #if !defined(NO_MMU)
             try {
 #endif
-                do
+                // every instruction of the slice but the last
+                while (l > CPU_RATIO)
                 {
                     u32 addr = next_pc;
                     next_pc += 2;
@@ -211,16 +224,31 @@ struct SH4IInterpreter : SuperH4Backend {
                     ExecuteOpcode(op);
 
                     l -= CPU_RATIO;
-                } while (l > 0);
+                }
+
+                // The last one: the loop is only left behind it. It runs apart from the others, so that what it
+                // was is known then and the others keep nothing for that.
+                const u32 addr = next_pc;
+                const u32 op = RunOne();
+
+                l -= CPU_RATIO;
 
                 l += SH4_TIMESLICE;
 
                 // model how the jit works
                 // only check for sh4_int_bCpuRun on interrupts
                 if (UpdateSystem()) {
-                    UpdateINTC();
+                    const bool accepted = UpdateINTC() != 0;
+
                     if (!sh4_int_bCpuRun)
+                    {
+                        // The loop that checks may run next. When the last instruction left its slot to the
+                        // loop and the slot is what runs next, that slot belongs to a pair that is under way.
+                        // (A branch to its own slot that is taken leaves the pc there as well: T tells the two
+                        // apart unless that slot wrote it.)
+                        dbg_slot_pc = !accepted && SlotLeftToLoop(op) && next_pc == addr + 2 ? addr + 2 : DBG_NO_SLOT;
                         break;
+                    }
                 }
 
 #if !defined(NO_MMU)
