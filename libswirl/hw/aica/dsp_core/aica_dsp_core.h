@@ -276,12 +276,20 @@ struct AicaDsp
 	*/
 
 	//The sound generator starts a sweep over its 64 channels. Its sends go to the other MIXS bank from here on,
-	//where the first send to a bus replaces it. On the hardware this is 16 steps before the DSP's step 0. A user
-	//that never calls it gets it from StepOne at step 0: the banks change over once a sample either way
+	//where the first send to a bus replaces it, and the bank that was filled up to here is the one the DSP reads
+	//from its next step 0 on. On the hardware this is 16 steps before the DSP's step 0. Step 0 does it itself when
+	//it was not called since the step 0 before: the banks change over once a sample either way. Which of the two
+	//it was decides in which sample the DSP reads a send: MixsSend has the rule
 	void SweepBegin();
 
 	//A channel's send to its ISEL bus in the running sweep: the 20 bit bus takes the value, or adds it if the
-	//sweep already sent to the bus, without saturation. The DSP reads the bank from its next step 0 on
+	//sweep already sent to the bus, without saturation.
+	//The send is in the bank that the DSP starts to read at the first step 0 behind the next SweepBegin, the one
+	//that is called or the one that step 0 does itself. For a user without time inside the sample that is
+	//  SweepBegin(); sends; RunSample()   the sends are read by the RunSample after this one: a sample of delay,
+	//                                     as on the console and as the sends of an AicaDspSampleInputs
+	//  sends; RunSample()                 the next SweepBegin is the one of this RunSample's step 0: the sends
+	//                                     are read by this RunSample, a sample earlier than on the console
 	void MixsSend(uint32_t bus, int32_t value);
 
 	//The same for a send of the sweep before the running one. On the hardware the sends of the last 8 channels

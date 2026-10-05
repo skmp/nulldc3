@@ -142,6 +142,13 @@ read of the wave RAM between two samples. This is the caique sample model's orde
 bank of the sweep before. The fetches of channels 0 to 6 are those of the next sweep (their slots are steps 114
 to 126), which the model computes ahead, from this sample's registers.
 
+A chip at this tier that has its sends one by one and not as sums calls `SweepBegin()`, then `MixsSend` for each
+send, then `RunSample()`. The DSP reads those sends in the sample after, as it reads the sums of the inputs and
+as the console does. It is the `SweepBegin()` that makes the sample of delay: a send is in the bank that the DSP
+starts to read at the first step 0 behind the next `SweepBegin`, and step 0 does a `SweepBegin` itself when none
+was called since the step 0 before. Sends in front of a `RunSample()` without a `SweepBegin()` are therefore read
+by that `RunSample()`, a sample earlier than on the console.
+
 At a tier with steps or clocks the chip calls `StepOne()` without inputs at each step, and in front of it
 whatever falls into that step: `SweepBegin()` 16 steps before the DSP's step 0, `MixsSend` when a channel's send
 lands (`MixsSendLate` for the last 8 channels, whose sends land behind the next `SweepBegin`), `ChannelFetch` in
