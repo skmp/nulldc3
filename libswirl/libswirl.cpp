@@ -40,6 +40,7 @@
 #include "hw/holly/holly_intc.h"
 #include "hw/aica/aica_mmio.h"
 #include "hw/arm7/SoundCPU.h"
+#include "utils/run_control.h"
 
 #define fault_printf(...)
 
@@ -636,6 +637,8 @@ int reicast_init(int argc, char* argv[])
     }
     else
         LoadSettings(false);
+
+    runctl_configure();
 
 #if BUILD_RETROARCH_CORE == 0
     os_CreateWindow();

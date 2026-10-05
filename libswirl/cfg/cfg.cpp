@@ -208,6 +208,12 @@ void cfgSetVirtual(const wchar * Section, const wchar * Key, const wchar * Strin
 	cfgdb.set(string(Section), string(Key), string(String), true);
 }
 
+// From here on the config file is left as it is: what a cfgSave* sets is there for the run and never written
+void cfgSetReadOnly()
+{
+	save_config = false;
+}
+
 void cfgSetGameId(const char *id)
 {
 	game_id = id;
