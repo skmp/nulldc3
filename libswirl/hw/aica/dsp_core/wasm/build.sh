@@ -32,15 +32,16 @@ mkdir -p "$1"
 out=$(cd "$1" && pwd)
 here=$(cd "$(dirname "$0")" && pwd)
 
+# The emcc of an emsdk is in its upstream/emscripten, and runs from there with nothing else set. emsdk_env.sh is
+# not read: a script that sh reads cannot tell where it is, and it needs to
 if ! command -v emcc >/dev/null 2>&1; then
-	env_script="${EMSDK:-$HOME/emsdk}/emsdk_env.sh"
+	PATH="${EMSDK:-$HOME/emsdk}/upstream/emscripten:$PATH"
+	export PATH
 
-	if [ ! -f "$env_script" ]; then
+	if ! command -v emcc >/dev/null 2>&1; then
 		echo "no emcc on the PATH and no emsdk in ${EMSDK:-$HOME/emsdk}" >&2
 		exit 3
 	fi
-
-	EMSDK_QUIET=1 . "$env_script" >/dev/null 2>&1
 fi
 
 build()
