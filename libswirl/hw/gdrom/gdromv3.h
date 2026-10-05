@@ -299,3 +299,39 @@ extern char szExDT[8][32];
 #define SPI_GET_SCD   0x40 // 
 
 MMIODevice* Create_GDRomDevice(SuperH4Mmr* sh4mmr, SystemBus* sb, ASIC* asic);
+
+// The GD-ROM drive as the debugger shows it (gdrom_DebugGetState). The register block at 0x005F7000 is not
+// readable for a debugger, because reading it acknowledges the interrupt and advances the data buffer.
+struct GDRomDebugState {
+	u32  state;               // gd_states: where the command state machine is
+	u32  discType;            // type of the disc in the drive (DiscType)
+	u8   status;              // GD_STATUS_Read / GD_ALTSTAT_Read: BSY DRDY DF DSC DRQ CORR - CHECK
+	u8   error;               // GD_ERROR_Read: sense key (4), MCR, ABRT, EOMF, ILI
+	u8   interruptReason;     // GD_IREASON_Read
+	u8   features;            // GD_FEATURES_Write
+	u8   sectorCount;         // GD_SECTCNT_Write
+	u8   sectorNumber;        // GD_SECTNUM: disc format (4), drive status (4)
+	u8   driveSelect;         // GD_DRVSEL
+	u8   ataCommand;          // the ATA command last written to GD_COMMAND_Write
+	u16  byteCount;           // GD_BYCTLHI : GD_BYCTLLO
+	u8   packet[12];          // the SPI packet command last received
+	u8   senseKey;            // sense data a REQ_ERROR returns
+	u8   senseAsc;
+	u8   senseAscq;
+	bool cddaPlaying;         // CD audio is playing
+	u32  cddaRepeats;
+	u32  cddaCurrent;         // CD audio position, start and end as FAD
+	u32  cddaStart;
+	u32  cddaEnd;
+	u32  readStartSector;     // sector read in progress: next FAD, sectors left, sector format
+	u32  readRemainingSectors;
+	u32  readSectorType;
+	u32  pioIndex;            // PIO transfer in progress: words transferred, words in all
+	u32  pioSize;
+};
+
+// Fills *out with the state of the drive at this moment, without side effects. Returns false when the
+// machine has no GD-ROM drive (arcade boards) and when no machine exists.
+// Called on the emulator thread outside a register access, or by a thread that holds the debugger's
+// lifetime lock while no emulator thread exists.
+bool gdrom_DebugGetState(GDRomDebugState* out);
