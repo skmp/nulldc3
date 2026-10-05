@@ -124,6 +124,28 @@ static bool host_fp_mode(bool& round_to_zero, bool& flush_to_zero)
 #endif
 }
 
+//The host takes a denormal operand as zero: 2^-128 * 2^30 is 0 then, and 2^-98 when it computes with the denormal
+static bool host_denormal_operand_is_zero()
+{
+	volatile f32 denormal;
+	volatile f32 factor = 1073741824.0f;
+
+	const u32 pattern = 0x00200000;
+	f32 value;
+
+	memcpy(&value, &pattern, sizeof(value));
+	denormal = value;
+
+	volatile f32 product = denormal * factor;
+
+	u32 bits;
+
+	value = product;
+	memcpy(&bits, &value, sizeof(bits));
+
+	return bits == 0;
+}
+
 //// Reset
 
 //A value in every register that no reset leaves, and the host rounding to nearest without flushing
@@ -165,6 +187,7 @@ static void test_reset(SuperH4* cpu, bool manual)
 	{
 		CHECK(round_to_zero);
 		CHECK(flush_to_zero);
+		CHECK(host_denormal_operand_is_zero());
 	}
 
 	//undefined in the manual, 0 in the emulator
@@ -197,7 +220,7 @@ static void test_reset(SuperH4* cpu, bool manual)
 
 //RM = 00 rounds to nearest and 01 to zero. 10 and 11 are reserved: no console was measured with them, they are
 //expected to round as their bit 0 says, which is what the RTL and the soft-float reference of shrike4-rtl do.
-//DN is flush to zero whatever RM is
+//DN is flush to zero whatever RM is, of denormal results and of denormal operands
 static void test_rounding_mode(SuperH4* cpu)
 {
 	bool round_to_zero, flush_to_zero;
@@ -224,6 +247,7 @@ static void test_rounding_mode(SuperH4* cpu)
 			CHECK(host_fp_mode(round_to_zero, flush_to_zero));
 			CHECK(round_to_zero == ((rm & 1) != 0));
 			CHECK(flush_to_zero == (dn != 0));
+			CHECK(host_denormal_operand_is_zero() == (dn != 0));
 		}
 	}
 }

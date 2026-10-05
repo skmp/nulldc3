@@ -62,7 +62,7 @@ Same vectors, filter and comparison as `sh4.singlestep.interp`.
 | | interpreter | dynarec |
 |---|---|---|
 | run | 73,800 | 73,800 |
-| pass-exact | 73,287 | 73,287 |
+| pass-exact | 73,293 | 73,293 |
 | pass-lenient | 73,465 | 73,465 |
 | failed | 335 (248 crash) | 335 (248 crash) |
 

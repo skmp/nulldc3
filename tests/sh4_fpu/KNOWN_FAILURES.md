@@ -13,8 +13,8 @@ A fix takes its entry out of this file and updates the baselines in the same com
 
 | | cases | traps | value-i | value-d | flags-i | flags-d | agree | native | crash |
 |---|---|---|---|---|---|---|---|---|---|
-| `sh4.fpu.scalar` | 225,036 | 19,633 | 200,662 | 200,662 | 109,153 | 109,153 | 225,036 | 113,946 | 0 |
-| `sh4.fpu.vector` | 1,371,226 | 1,617 | 677,320 | 677,320 | 13,404 | 13,404 | 1,371,226 | 1,370,977 | 0 |
+| `sh4.fpu.scalar` | 225,036 | 19,633 | 205,051 | 205,051 | 109,153 | 109,153 | 225,036 | 113,946 | 0 |
+| `sh4.fpu.vector` | 1,371,226 | 1,617 | 686,389 | 686,389 | 13,404 | 13,404 | 1,371,226 | 1,370,977 | 0 |
 
 ## 1. There is no FPU exception
 
@@ -66,43 +66,27 @@ the hardware (FIPR of zeros raises U and I), so their `flags` are 0 but for infi
     FADD.dn0.rn.zero           part 1 FADD #786 [+0 +1.5], FPSCR 0003F07C: FPSCR is 0003F07C, hardware 0000007C
     FIPR.console.specials.dn1  fipr_specials.txt:2, all zeros: FPSCR is 00040000, hardware 0004300C
 
-## 3. DN = 1: a denormal operand is computed with
-
-**Groups:** scalar `<instruction>.dn1.rn.denormal`, 4,389 of their 13,564 records: FCMP/EQ 1,150, FCMP/GT 564,
-FCMP/EQ.D 1,235, FCMP/GT.D 632, FMAC 387, FDIV.D 120, FMUL.D 72, FSUB.D 47, FDIV 44, FADD.D 43, FMUL 32, FSUB 21,
-FADD 20, FSQRT.D 10, FSQRT 4, FSRRA 4, FCNVSD 4. Vector 9,253 cases: `FSRRA.dn1.*.denormal` (all 8,000),
-`FIPR.dn1.*.denormal` (993), `FTRV.dn1.*.denormal` (210), 50 console records.
-
-On the hardware (console; manual 6.2.3) a denormal operand is the zero of its sign when DN = 1, for
-arithmetic, compares and conversions. devcast's `SetFloatStatusReg()` (`hw/sh4/sh4_core_regs.cpp`) turns DN
-into the host's flush-to-zero mode, which is about results; the denormals-are-zero mode is not set (MXCSR
-is 0x9F80 / 0xFF80, bit 6 clear, the tests print it). The host computes with the denormal.
-
-Each of these cases is confirmed by running it again with the denormal operands replaced by zeros: the engine
-then leaves the hardware's result.
-
-    FCMP/GT.dn1.rn.denormal   part 1 FCMP/GT #7876 [+dmin +0]: T is 1, hardware 0
-    FMUL.dn1.rn.denormal      part 1 FMUL #3734 [+dmax +1.5]: FR0 is 00BFFFFE, hardware 00000000
-    FMAC.dn1.rn.denormal      part 1 FMAC #22016 [+dmin +inf +1.5]: FR2 is 7F800000, hardware 7FBFFFFF (0 * inf)
-    FADD.D.dn1.rn.denormal    part 1 FADD.D #28949 [-dmid +0]: DR0 is 80000000 00000000, hardware +0
-    FSRRA.dn1.rn.denormal     denormal #0, FR0 8069C0AE: FR0 is 7FBFFFFF, hardware FF800000 (1 / sqrt(-0))
-
-The records of these groups that pass are the ones in which the denormal makes no difference (a denormal
-added to a normal number, a denormal times zero).
-
-## 4. DN = 1: a result that rounds up to the smallest normal number is flushed
+## 3. DN = 1: a result that rounds up to the smallest normal number is flushed
 
 **Groups:** `FCNVDS.dn1.rn.normal` 260 of 4,105, `FMUL.D.dn1.rn.normal` 5 of 4,137, `FMUL.dn1.rn.normal` 2 of 4,112.
 
 On the hardware (console) a result is rounded once, on the grid of the denormals, and becomes the zero of
 its sign only if it is still below the smallest normal number then. A result just below 2^-126 (2^-1022) that
-rounds up to it stays that number, with I and without U. The host's flush-to-zero mode decides before that
-rounding and returns zero.
+rounds up to it stays that number, with I and without U. The host's flush-to-zero mode (MXCSR.FTZ) asks whether
+the result is below the smallest normal number when it is rounded to 24 (53) bits with no limit on the exponent,
+which is half a unit of the denormal grid earlier: a result from 2^-126 - 2^-150 up to, but not including,
+2^-126 - 2^-151 is zero on the host and 2^-126 on the hardware in round to nearest.
+
+That is all the host's mode gets wrong about results. In the console's 65,303 records with DN = 1 that raise no
+exception, the hardware flushes a result in 28,585 (U and I): the host's zero is the hardware's in every one of
+them. In 1,080 the hardware's result is the smallest normal number with I alone: the host flushes 267 of those.
+No bit of MXCSR moves where the host looks; it takes a look at every result in software, which the fast tier
+does not do.
 
     FMUL.dn1.rn.normal     part 2 FMUL #10594, 15FFFFFF * AA000000: FR0 is 80000000, hardware 80800000
     FCNVDS.dn1.rn.normal   part 2 FCNVDS #69634, DR0 380FFFFF E214AE4B: FPUL is 00000000, hardware 00800000
 
-## 5. DN = 0, double precision FDIV: a denormal with nothing in its high word
+## 4. DN = 0, double precision FDIV: a denormal with nothing in its high word
 
 **Groups:** `FDIV.D.dn0.rn.denormal` 57 of 139, `FDIV.D.dn0.rz.denormal` 18 of 46.
 
@@ -113,10 +97,10 @@ result's sign, with no cause at all and without the FPU error. The host divides 
     FDIV.D.dn0.rn.denormal   part 1 FDIV.D #32082 [+dmin +0]: DR0 is 7FF00000 00000000, hardware +0
     FDIV.D.dn0.rn.denormal   part 1 FDIV.D #32166 [+dmin +dmin]: DR0 is 3FF00000 00000000, hardware +0
 
-## 6. FIPR and FTRV are host float arithmetic
+## 5. FIPR and FTRV are host float arithmetic
 
 **Groups:** every `FIPR.dn1.*`, `FTRV.dn1.*` and `FIPR.console.values.*` group, and 8 records of
-`FIPR.console.specials.dn1`: 485,455 cases with a wrong sum, next to what 3. explains.
+`FIPR.console.specials.dn1`: 485,639 cases with a wrong sum.
 
 The hardware (console) forms the four products in truncating multipliers that keep 28 bits, aligns them to
 the largest by cutting bits off, adds them exactly and rounds once. It recodes one of the two factors (FVn for
@@ -130,11 +114,11 @@ further away: adding the products one by one, as the interpreter did, leaves the
 
 | what is wrong with the sum | cases |
 |---|---|
-| one unit in the last place off | 318,401 |
-| more than one unit off | 134,753 |
-| a zero of the other sign. An exact zero is +0 on the hardware, where the host adds -0 and -0 to -0; an underflow keeps the sign of the sum on the hardware, where the host adds flushed zeros of both signs to +0 | 12,510 |
+| one unit in the last place off | 319,064 |
+| more than one unit off | 134,273 |
+| a zero of the other sign. An exact zero is +0 on the hardware, where the host adds -0 and -0 to -0; an underflow keeps the sign of the sum on the hardware, where the host adds flushed zeros of both signs to +0 | 12,524 |
 | a NaN where the hardware has a number: products that overflow to infinities of both signs, inf - inf (`overflow` and `denormal` classes, round to nearest) | 12,170 |
-| another sign, or an overflow on one side only (the `cancel` and `overflow` classes mostly) | 6,824 |
+| another sign, or an overflow on one side only (the `cancel` and `overflow` classes mostly) | 6,811 |
 | the sign of an infinity: several infinite products of one sign add up to an infinity with the sign of the first product on the hardware | 797 |
 
 How much is right depends on the operands; `value` of the generated classes, round to nearest and round to
@@ -157,7 +141,7 @@ product round to zero is much worse than round to nearest: the hardware cuts onc
     FIPR.dn1.rn.zero     zero #23: every product is -0: FR11 is 80000000, hardware 00000000
     FIPR.dn1.rz.overflow overflow #0: FR7 is 7F38FF70, hardware 7F7FFFFF
 
-## 7. FSRRA is 1 / sqrtf(x)
+## 6. FSRRA is 1 / sqrtf(x)
 
 **Groups:** `FSRRA.dn1.*.normal`, `.one-to-four`, `.simple`, `FSRRA.console.*` and the scalar `FSRRA.*.normal`:
 159,900 vector cases and 10 scalar records.
@@ -176,10 +160,10 @@ roundings: `1 / sqrtf(x)` in the interpreter, `sqrtss` and `divss` in the x64 ba
     FSRRA.dn1.rn.normal   normal #2, FR2 00B45640: FR2 is 5ED7AD28, hardware 5ED7AD29
     FSRRA.dn0.rn.normal   part 1 FSRRA #27832 [+1.5]: FR0 is 3F5105EB, hardware 3F5105EC
 
-The zeros pass (`FSRRA.dn1.*.zero`: an infinity of the zero's sign), as do +inf and what gives a NaN: a negative
-number, -inf and a NaN. A denormal is 3.
+The zeros pass (`FSRRA.dn1.*.zero`: an infinity of the zero's sign), and so do the denormals, which are zeros
+with DN = 1, +inf, and what gives a NaN: a negative number, -inf and a NaN.
 
-## 8. FSCA is a table of the round to nearest results
+## 7. FSCA is a table of the round to nearest results
 
 **Groups:** `FSCA.dn1.rz.angle` 33,084 of 65,536, `FSCA.dn1.rz.upper` 4,110 of 8,192, `FSCA.console.values.rz` 446
 of 1,024, 28 of `FSCA.console.specials.dn1`; and `FSCA.dn1.rn.angle` 2 of 65,536, `FSCA.console.values.rn` 3, 8
@@ -206,11 +190,11 @@ Nowhere: `agree` is the total in every group of both tests.
 * **That FMAC is rounded once.** The hardware rounds a * b + c once (console: 12,288 records with results in and
   next to the denormal range, cancellations among them; manual 6.4), and so do both engines: `fmaf` in the
   interpreter and in the canonical helper, `vfmadd231ss` in the x64 backend's code, or a call of that helper on a
-  CPU without FMA. Both leave the hardware's value in every FMAC record that has no denormal operand and is no
-  trap. But a sum that is rounded to double precision first leaves it in all of them as well: no record is one of
-  the operand sets that tell the two apart. `sh4.directed.*` have such operands (`tests/README.md`).
+  CPU without FMA. Both leave the hardware's value in every FMAC record that is no trap. But a sum that is
+  rounded to double precision first leaves it in all of them as well: no record is one of the operand sets that
+  tell the two apart. `sh4.directed.*` have such operands (`tests/README.md`).
 * **FADD FSUB FMUL FDIV FSQRT of normal numbers** pass in every record, in both rounding modes, with DN = 0
-  results in the denormal range included (but for 4.). The host's IEEE arithmetic is the hardware's there, as far
+  results in the denormal range included (but for 3.). The host's IEEE arithmetic is the hardware's there, as far
   as the records go.
 * **FLOAT**, the scalar instructions with DN = 1 and round to zero, FPSCR.FR = 1: no console record
   (`README.md`).

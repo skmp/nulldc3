@@ -95,8 +95,9 @@ void SetFloatStatusReg()
 			if (FPSCR_RM_ZERO(fpscr))  //if round to 0 , set the flag
 				temp|=(3<<13);
 
-			if (fpscr.DN)     //denormals are considered 0
-				temp|=(1<<15);
+			// SH7091: with DN = 1 a denormal is zero as an operand and as a result (programming manual 6.2.3): DAZ and FTZ
+			if (fpscr.DN)
+				temp|=(1<<15)|(1<<6);
 			asm("ldmxcsr %0" : : "m"(temp));
     #elif HOST_CPU==CPU_ARM
 		static const unsigned int x = 0x04086060;

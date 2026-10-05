@@ -224,7 +224,8 @@ the baseline is committed, and a defect goes into the `known` list of the suite 
 
 * the reset state, after a power-on and after a manual reset: PC, SR, VBR and FPSCR as the hardware manual's table
   of initial register values has them (A0000000, 700000F0, 0, 00040001), the host FP mode of that FPSCR on the thread
-  that did the reset (round to zero, flush to zero), and 0 in every register the manual leaves undefined.
+  that did the reset (round to zero, flush to zero, a denormal operand is zero), and 0 in every register the manual
+  leaves undefined.
 * FPSCR.RM and the host rounding mode, loaded with LDS Rm,FPSCR for RM = 0 to 3 with DN clear and set: 0 rounds
   to nearest and 1 to zero. 2 and 3 are reserved and no console was measured with them: they are expected to round
   as their bit 0 says, like the RTL and the soft-float reference of shrike4-rtl. Both engines compute with the

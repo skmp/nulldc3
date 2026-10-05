@@ -14,9 +14,6 @@ static const char known_sum_of_products[] =
 	"devcast rounds (and overflows) every product and every sum to single precision and adds the products in pairs, "
 	"(p0 + p1) + (p2 + p3), in both engines. The vectors carry the fused multiply-add of the host that generated "
 	"them. Neither is the SH4's sum of products";
-static const char known_denormal[] =
-	"devcast: with FPSCR.DN=1 only results are flushed to zero on x86 (MXCSR.FTZ), a denormal operand is not taken "
-	"as zero (MXCSR.DAZ)";
 
 //One row per vector file: name, instruction, width of the data read and of the data write, flags, known failures
 static const SsFilePolicy policy[] =
@@ -212,7 +209,7 @@ static const SsFilePolicy policy[] =
 	{ "1111nnn011111101_sz0_pr0", "fsca fpul,drn", 0, 0, FPU, 0 },
 	{ "1111nnn0mmm00000_sz0_pr1", "fadd drm,drn", 0, 0, FPRD, 0 },
 	{ "1111nnn0mmm00001_sz0_pr1", "fsub drm,drn", 0, 0, FPRD, 0 },
-	{ "1111nnn0mmm00010_sz0_pr1", "fmul drm,drn", 0, 0, FPRD, known_denormal },
+	{ "1111nnn0mmm00010_sz0_pr1", "fmul drm,drn", 0, 0, FPRD, 0 },
 	{ "1111nnn0mmm00011_sz0_pr1", "fdiv drm,drn", 0, 0, FPRD, 0 },
 	{ "1111nnn0mmm00100_sz0_pr1", "fcmp/eq drm,drn", 0, 0, FPU, 0 },
 	{ "1111nnn0mmm00101_sz0_pr1", "fcmp/gt drm,drn", 0, 0, FPU, 0 },
@@ -240,9 +237,9 @@ static const SsFilePolicy policy[] =
 	{ "1111nnnnmmm10111_sz1_pr0", "fmov xdm,@(r0,rn)", 0, 8, FPU, 0 },
 	{ "1111nnnnmmm11010_sz1_pr0", "fmov xdm,@rn", 0, 8, FPU, 0 },
 	{ "1111nnnnmmm11011_sz1_pr0", "fmov xdm,@-rn", 0, 8, FPU, 0 },
-	{ "1111nnnnmmmm0000_sz0_pr0", "fadd frm,frn", 0, 0, FPR, known_denormal },
-	{ "1111nnnnmmmm0001_sz0_pr0", "fsub frm,frn", 0, 0, FPR, known_denormal },
-	{ "1111nnnnmmmm0010_sz0_pr0", "fmul frm,frn", 0, 0, FPR, known_denormal },
+	{ "1111nnnnmmmm0000_sz0_pr0", "fadd frm,frn", 0, 0, FPR, 0 },
+	{ "1111nnnnmmmm0001_sz0_pr0", "fsub frm,frn", 0, 0, FPR, 0 },
+	{ "1111nnnnmmmm0010_sz0_pr0", "fmul frm,frn", 0, 0, FPR, 0 },
 	{ "1111nnnnmmmm0011_sz0_pr0", "fdiv frm,frn", 0, 0, FPR, 0 },
 	{ "1111nnnnmmmm0100_sz0_pr0", "fcmp/eq frm,frn", 0, 0, FPU, 0 },
 	{ "1111nnnnmmmm0101_sz0_pr0", "fcmp/gt frm,frn", 0, 0, FPU, 0 },
