@@ -48,7 +48,8 @@ struct ngen_features
 {
 	bool OnlyDynamicEnds;     //if set the block endings aren't handled natively and only Dynamic block end type is used
 	bool InterpreterFallback; //if set all the non-branch opcodes are handled with the ifb opcode
-	bool DebugChecks;         //if set the backend implements everything SH4DBG_NATIVE stands for (hw/sh4/sh4_if.h)
+	bool DebugChecks;         //if set the backend implements everything SH4DBG_NATIVE stands for (hw/sh4/sh4_if.h):
+	                          //only then do the blocks it compiles get debugger checks and flow reports (debugger/debugger.h)
 	bool CtxAtSlice;          //if set Sh4cntx is complete, pc included, whenever the generated code calls UpdateSystem (SH4DBG_CTX_AT_SLICE)
 	//A backend whose GetFeatures does not set the last two leaves them clear, because what it fills is the decoder's
 	//state, which has static storage. An ngen_features of any other storage is zeroed in front of GetFeatures.

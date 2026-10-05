@@ -34,10 +34,12 @@ void sh4_host_fp_resync();
 	SH4DBG_NATIVE. It executes through the interpreter and charges time as that backend's decoder does: at
 	each block start it decodes the block at pc, charges its cycles, and interprets up to the block's end
 	before it tests its slice counter, so block boundaries and costs are the backend's. A stop in a block
-	refunds the cost of the instructions that did not run. Its slice counter is its own and survives leaving
-	and entering the loop; the JIT backend's ResetSlice() resets it. Entered with a counter that is not positive
-	and no remainder to run, the loop does the end-of-slice work before its first block, as a backend's Loop()
-	does (sh4_if.h). The backend object and its code cache are not touched.
+	refunds the cost of the instructions that did not run: that decode carries the debugger checks with their
+	refunds (debugger/debugger.h) whether or not the backend sets ngen_features::DebugChecks, and nothing is
+	compiled from it. Its slice counter is its own and survives leaving and entering the loop; the JIT
+	backend's ResetSlice() resets it. Entered with a counter that is not positive and no remainder to run, the
+	loop does the end-of-slice work before its first block, as a backend's Loop() does (sh4_if.h). The backend
+	object and its code cache are not touched.
 */
 #if defined(NULLDC_DEBUGGER) && FEAT_SHREC != DYNAREC_NONE
 
