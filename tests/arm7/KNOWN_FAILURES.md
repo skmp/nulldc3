@@ -11,10 +11,9 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 | | check | cases | pass | fail |
 |---|---|---|---|---|
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 2 | 2 |
-| D7 | `arm7.directed` `power-on` | 1 | 0 | 1 |
 
-Everything else passes: `arm7.vendor` 45/45, the other 125 cases of `arm7.directed`, the r1 and the CPSR of the
-45 vendor jobs, the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
+Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 126/126, the r1 and the CPSR of the 45 vendor jobs,
+the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
 
 ### D7: where a reset finds the ARM
 
@@ -29,17 +28,6 @@ bus cycles of that branch, and the console has two values for it. Of the 116 res
 `wren7-rtl/model/tests/hw` whose r14 is from such a reset, 89 have 0x001FE0CC and 27 have 0x001FE0D0. The
 interpreter executes whole instructions and has one value, the address of the instruction the ARM was at:
 0x001FE0CC. `hello_1` and `hello_1000` pass, `hello_100000` and `hello_1000000` have 0x001FE0D0 on the console.
-
-### D7: the first reset finds a sound CPU that holds anything
-
-`SoundCPU_impl` (`hw/arm7/SoundCPU.cpp`) gives the registers, the mode, the interrupt masks and `enabled` their
-values in `Reset`, and nowhere else. The devices are reset in the order of their slots
-(`SuperH4_impl::Reset`, `hw/sh4/SuperH4_impl.cpp`), the AICA in front of the sound CPU, and the reset of the AICA
-releases ARMRST (`AicaDevice::Reset`, `hw/aica/aica_mmio.cpp`). The first time, that release finds a context
-that holds what its memory held: `ResetException` runs on it, or does not when `enabled` is not 0. The reset of
-the sound CPU comes right behind and writes all of it, so no guest sees what came of it.
-
-`power-on` holds the context of a sound CPU that was created and not reset against the one its reset leaves.
 
 ## Known, and not shown by these tests
 

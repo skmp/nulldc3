@@ -162,6 +162,9 @@ struct SoundCPU_impl : SoundCPU {
 		ctx.write32 = &scpu_WriteMemArm<4, u32>;
 
 		setBackend(ARM7BE_INTERPRETER);
+
+		//The reset of the AICA releases ARMRST before the first Reset() of this device: the reset state from the start
+		SoundCPU_impl::Reset(false);
 	}
 
 	//called when plugin is used by emu (you should do first time init here)
