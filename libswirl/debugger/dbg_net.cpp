@@ -1401,8 +1401,18 @@ Server::~Server() {
 
 bool Server::Start(const Options& options, Handler* handler) {
 	Impl& s = *impl;
-	if (s.thread.joinable() || !handler || options.port < 0 || options.port > 65535)
+	if (s.thread.joinable()) {
+		fprintf(stderr, "dbg::net: cannot start a server that is already started\n");
 		return false;
+	}
+	if (!handler) {
+		fprintf(stderr, "dbg::net: cannot start without a handler\n");
+		return false;
+	}
+	if (options.port < 0 || options.port > 65535) {
+		fprintf(stderr, "dbg::net: cannot start, port %d is not in 0..65535\n", options.port);
+		return false;
+	}
 	if (!SockStartup()) {
 		fprintf(stderr, "dbg::net: socket library startup failed\n");
 		return false;

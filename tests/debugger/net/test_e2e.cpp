@@ -18,6 +18,20 @@
 #include <utility>
 #include <vector>
 
+// What points the descriptor of stderr at a file and back.
+#ifdef _WIN32
+#include <io.h>
+static int FdOf(FILE* file) { return _fileno(file); }
+static int FdCopy(int fd) { return _dup(fd); }
+static void FdAssign(int fd, int from) { _dup2(from, fd); }
+static void FdClose(int fd) { _close(fd); }
+#else
+static int FdOf(FILE* file) { return fileno(file); }
+static int FdCopy(int fd) { return dup(fd); }
+static void FdAssign(int fd, int from) { dup2(from, fd); }
+static void FdClose(int fd) { close(fd); }
+#endif
+
 using namespace dbg::net;
 
 static const char kAccept[] = "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";	// for the key client.h sends
@@ -947,25 +961,52 @@ static void TestStop() {
 	CHECK(b.WaitClosed());
 }
 
+// A Start that has to fail. Returns what it wrote to stderr, which is one line that says why.
+static std::string StartFailure(Server& server, const Options& options, Handler* handler) {
+	namespace fs = std::filesystem;
+	fs::path path = fs::temp_directory_path() / ("dbg_net_test_e2e_stderr_" + std::to_string((unsigned long long)std::chrono::steady_clock::now().time_since_epoch().count()));
+	FILE* file = fopen(path.string().c_str(), "wb");
+	fflush(stderr);
+	int saved = FdCopy(FdOf(stderr));
+	REQUIRE(file && saved >= 0);
+	FdAssign(FdOf(stderr), FdOf(file));
+	bool started = server.Start(options, handler);
+	fflush(stderr);
+	FdAssign(FdOf(stderr), saved);
+	FdClose(saved);
+	fclose(file);
+	CHECK(!started);
+
+	std::ifstream in(path, std::ios::binary);
+	std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	in.close();
+	std::error_code ec;
+	fs::remove(path, ec);
+	text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+	CHECK_EQ(std::count(text.begin(), text.end(), '\n'), 1);
+	CHECK(!text.empty() && text.back() == '\n');
+	return text;
+}
+
 static void TestStartFailures(int usedPort) {
 	Recorder rec;
 	Server server;
 	Options options;
-	options.port = usedPort;
-	printf("(three start failures are reported on stderr next)\n");
-	fflush(stdout);
-	CHECK(!server.Start(options, &rec));		// the port is taken
+	options.port = usedPort;		// taken
+	std::string said = StartFailure(server, options, &rec);
+	CHECK_EQ(said.substr(0, said.find('(')), "dbg::net: bind failed for 127.0.0.1 port " + std::to_string(usedPort) + " ");
 	options.port = 0;
-	options.bind = "192.0.2.1";					// TEST-NET-1: a valid address, never a local one
-	CHECK(!server.Start(options, &rec));
+	options.bind = "192.0.2.1";		// TEST-NET-1: a valid address, never a local one
+	said = StartFailure(server, options, &rec);
+	CHECK_EQ(said.substr(0, said.find('(')), std::string("dbg::net: bind failed for 192.0.2.1 port 0 "));
 	options.bind = "";
-	CHECK(!server.Start(options, &rec));
+	CHECK_EQ(StartFailure(server, options, &rec), std::string("dbg::net: cannot resolve bind address ''\n"));
 	options.bind = "127.0.0.1";
-	CHECK(!server.Start(options, nullptr));
+	CHECK_EQ(StartFailure(server, options, nullptr), std::string("dbg::net: cannot start without a handler\n"));
 	options.port = 70000;
-	CHECK(!server.Start(options, &rec));
+	CHECK_EQ(StartFailure(server, options, &rec), std::string("dbg::net: cannot start, port 70000 is not in 0..65535\n"));
 	options.port = -1;
-	CHECK(!server.Start(options, &rec));
+	CHECK_EQ(StartFailure(server, options, &rec), std::string("dbg::net: cannot start, port -1 is not in 0..65535\n"));
 	CHECK_EQ(server.Port(), 0);
 
 	// the other address family
@@ -997,7 +1038,7 @@ int main() {
 	REQUIRE(server.Start(options, &rec));
 	int port = server.Port();
 	REQUIRE(port > 0);
-	CHECK(!server.Start(options, &rec));	// already running
+	CHECK_EQ(StartFailure(server, options, &rec), std::string("dbg::net: cannot start a server that is already started\n"));
 	CHECK_EQ(server.Port(), port);
 	auto started = std::chrono::steady_clock::now();
 
