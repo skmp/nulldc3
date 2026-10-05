@@ -101,7 +101,7 @@ enum class StopCause : u8 {
 	Breakpoint,		// "breakpoint"    a code breakpoint hit; breakpointId is set
 	Event,			// "event"         an event breakpoint hit; breakpointId is set
 	Reset,			// "reset"         a reset made while a debugger stop was in force
-	Start,			// "start"         the Debugger:StartPaused park
+	Start,			// "start"         the start park: Debugger:StartPaused, or a thread start of a selftest session
 	Capture,		// "capture"       an SGC capture started while paused finished and paused again
 	HostStopped,	// "host-stopped"  lifetime Stopped: the host UI stopped the machine
 	GuestExit,		// "guest-exit"    lifetime Stopped: the guest ended the run
