@@ -21,6 +21,11 @@
 	Both machines run on the time base of caique's own model harness (model/host/io_model.cpp): an access costs
 	2400 ns, a timer read 200 ns, a sample starts every 1 / 44100 s. The preamble that caique's harness runs in
 	front of a case is not run: it measures what a console cannot be told, and here nothing has to be measured.
+
+	The case interface below (advance and the io_* calls) is written after that harness, and logs_aligned is the
+	alignment loop of caique's checker of the dsp_coll logs (caique-rtl model/host/io_model.cpp and
+	model/tools/coll_check.cpp, Copyright 2026 Stefanos Kornilios Mitsis Poiitidis, MIT licence:
+	libswirl/hw/aica/dsp_core/README.md has the notice).
 */
 #include "dsp_lockstep.h"
 #include "dsp_suite.h"

@@ -11,9 +11,11 @@
 #	aica_dsp_wasm_trace   what aica.dsp.wasm replays on aica_dsp_core.wasm: wasm_test.mjs, with node
 #	aica_dsp_bench        samples a second, not a test
 #
-#	The model, the programs and the console's files are caique-rtl's. Nothing of it is in this repository: the
-#	tests are compiled with its sources from the checkout (NULLDC_CAIQUE_DIR) and read its captures from there.
-#	Without a checkout they are skipped. All but aica.dsp.wasm are gated on baseline.txt, see README.md.
+#	The model, the programs and the console's files are caique-rtl's and stay there: the tests are compiled with
+#	its sources from the checkout (NULLDC_CAIQUE_DIR) and read its captures from there. What this directory has
+#	of caique is the harness around them: cases_main.cpp and dsp_lockstep.cpp name the caique files they follow,
+#	with the licence. Without a checkout the tests are skipped. All but aica.dsp.wasm are gated on baseline.txt,
+#	see README.md.
 #
 
 string(REPLACE "-fpermissive" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")

@@ -545,7 +545,9 @@ static int32_t saturate24(int64_t value)
 
 /*
 	What the step the model is about to execute computes, from the model's state in front of it: the part of the
-	view that no register has behind the step. By the rules of the core's header, on the model's registers.
+	view that no register has behind the step. By the rules of the core's header, on the model's registers: the
+	step of the model's dsp_step (caique-rtl model/sample-model/aica_model.cpp, Copyright 2026 Stefanos Kornilios
+	Mitsis Poiitidis, MIT licence: libswirl/hw/aica/dsp_core/README.md has the notice).
 */
 void DspLockstep::ViewDue(int step)
 {
