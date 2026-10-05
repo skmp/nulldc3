@@ -105,6 +105,7 @@ const size_t kMaxStaticFile = 64u << 20;	// files from Options::webRoot are read
 const size_t kMaxHttpConnections = 32;		// connections that are not WebSocket clients
 const int kStallMs = 10000;					// an HTTP connection that makes no progress is closed
 const int kLingerMs = 2000;					// wait for the peer's FIN after sending ours
+const int kHangUpRetryMs = 15;				// see Conn::pollAfter
 const int kAcceptRetryMs = 100;				// after accept failed for lack of descriptors
 const int kIdlePollMs = 250;				// what a lost wake-up may cost, see Server::Impl::Wake
 
@@ -893,6 +894,10 @@ struct Conn {
 	size_t sent = 0;
 	bool finSent = false;
 	bool eof = false;			// kClosing: the peer has closed its side
+	// Set at eof: the socket stays out of the poll set until then. WSAPoll reports the hang-up of a peer that
+	// has sent its FIN on every call, whatever events ask for, so it cannot wait for such a socket to take
+	// output again; polled on every pass, the connection would keep the loop spinning.
+	Clock::time_point pollAfter;
 	bool dead = false;
 	Clock::time_point deadline;	// kHttp and kClosing
 
@@ -1194,7 +1199,8 @@ struct Server::Impl {
 	// POLLOUT is asked for while anything is queued, so that pass follows at once. The queue is taken over
 	// whole, one lock per batch instead of one per chunk: a thread that sends without a pause holds the
 	// mutex most of the time, and while the loop waits for it nobody is served.
-	void Flush(Conn& c) {
+	// Returns the number of bytes the socket took.
+	size_t Flush(Conn& c) {
 		size_t budget = kFlushBytes;
 		while (budget != 0) {
 			if (c.sending.empty()) {
@@ -1203,7 +1209,7 @@ struct Server::Impl {
 					c.out.swap(c.queue);
 				}
 				if (c.out.empty())
-					return;
+					break;
 				c.sending = std::move(c.out.front());
 				c.out.pop_front();
 			}
@@ -1212,7 +1218,7 @@ struct Server::Impl {
 			if (n <= 0) {
 				if (n == 0 || !SockWouldBlock(SockError()))
 					Drop(c);
-				return;
+				break;
 			}
 			c.sent += (size_t)n;
 			budget -= (size_t)n;
@@ -1224,6 +1230,7 @@ struct Server::Impl {
 			if (c.state == Conn::kClosing)
 				c.deadline = Clock::now() + std::chrono::milliseconds(kStallMs);
 		}
+		return kFlushBytes - budget;
 	}
 
 	// Output, close progress and timeouts of one connection.
@@ -1234,8 +1241,7 @@ struct Server::Impl {
 			Drop(c);
 			return;
 		}
-		if (c.queued != 0)
-			Flush(c);
+		size_t written = c.queued != 0 ? Flush(c) : 0;
 		if (c.dead || c.state == Conn::kWs)
 			return;
 
@@ -1253,6 +1259,11 @@ struct Server::Impl {
 		}
 		if (now >= c.deadline)
 			c.dead = true;
+		// Here a connection at eof has output left. While the socket takes some it is polled for POLLOUT like
+		// any other. After a pass that wrote nothing it stays out of the poll set for a while; the loop wakes
+		// up when that time is over, and this is where the socket is tried again.
+		if (c.eof)
+			c.pollAfter = written != 0 ? Clock::time_point() : now + std::chrono::milliseconds(kHangUpRetryMs);
 	}
 
 	bool CanAccept() const {
@@ -1281,6 +1292,8 @@ struct Server::Impl {
 	void Run() {
 		loopThread = std::this_thread::get_id();
 		std::vector<struct pollfd> fds;
+		std::vector<size_t> slots;		// the entry in fds of each connection, kNoSlot: not polled in this pass
+		const size_t kNoSlot = (size_t)-1;
 		while (!stop) {
 			Clock::time_point now = Clock::now();
 			Clock::time_point wakeAt = Clock::time_point::max();
@@ -1297,14 +1310,21 @@ struct Server::Impl {
 			entry.fd = wakeFd;
 			entry.events = POLLIN;
 			fds.push_back(entry);
+			slots.clear();
 			for (const auto& c : conns) {
+				if (c->state != Conn::kWs)
+					wakeAt = std::min(wakeAt, c->deadline);
+				if (now < c->pollAfter) {
+					wakeAt = std::min(wakeAt, c->pollAfter);
+					slots.push_back(kNoSlot);
+					continue;
+				}
 				entry.fd = c->fd;
 				entry.events = c->eof ? 0 : POLLIN;
 				if (c->queued != 0)
 					entry.events |= POLLOUT;
+				slots.push_back(fds.size());
 				fds.push_back(entry);
-				if (c->state != Conn::kWs)
-					wakeAt = std::min(wakeAt, c->deadline);
 			}
 			if (accepting) {
 				entry.fd = listenFd;
@@ -1335,7 +1355,7 @@ struct Server::Impl {
 			wakePending = false;
 			// Connections accepted during this pass sit behind `count` and wait for the next poll.
 			for (size_t i = 0; i < count; i++) {
-				if (fds[i + 1].revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL))
+				if (slots[i] != kNoSlot && (fds[slots[i]].revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)))
 					Receive(*conns[i]);
 			}
 			if (accepting && fds.back().revents)

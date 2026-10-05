@@ -85,11 +85,16 @@ public:
 	}
 	~TestClient() { Close(); }
 
-	bool Connect(int port) {
+	// receiveBuffer, when not 0, is the size of the socket's receive buffer: a small one is all the server
+	// can fill while this side does not read.
+	bool Connect(int port, int receiveBuffer = 0) {
 		Close();
 		fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 		if (fd == kClientNoSocket)
 			return false;
+		// before the connection is made, the window is negotiated then
+		if (receiveBuffer != 0)
+			setsockopt(fd, SOL_SOCKET, SO_RCVBUF, (const char*)&receiveBuffer, sizeof(receiveBuffer));
 		struct sockaddr_in addr;
 		memset(&addr, 0, sizeof(addr));
 		addr.sin_family = AF_INET;

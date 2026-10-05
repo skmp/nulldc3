@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -22,12 +23,18 @@ using namespace dbg::net;
 static const char kAccept[] = "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";	// for the key client.h sends
 static const size_t kMaxMessage = 256 * 1024;
 static const size_t kBigFile = 3 * 1024 * 1024 + 17;
+static const size_t kHugeFile = 16 * 1024 * 1024 + 5;	// several times what the sockets of a connection hold
 
 static std::string Pattern(size_t n) {
 	std::string s(n, '\0');
 	for (size_t i = 0; i < n; i++)
 		s[i] = (char)(i * 7 + i / 255 + 3);
 	return s;
+}
+
+static const std::string& Huge() {
+	static const std::string huge = Pattern(kHugeFile);
+	return huge;
 }
 
 static bool Provider(const std::string& path, bool acceptGzip, StaticFile* file) {
@@ -37,6 +44,8 @@ static bool Provider(const std::string& path, bool acceptGzip, StaticFile* file)
 		file->gzip = acceptGzip;
 	} else if (path == "assets/big.bin") {
 		file->body = Pattern(kBigFile);
+	} else if (path == "assets/huge.bin") {
+		file->body = Huge();
 	} else {
 		return false;
 	}
@@ -163,6 +172,57 @@ static bool ExpectClose(TestClient& ws, int code) {
 	return ws.WaitClosed();
 }
 
+// CPU time the process has used so far, all threads.
+static long long ProcessCpuMs() {
+#ifdef _WIN32
+	FILETIME created, exited, kernel, user;
+	if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user))
+		return 0;
+	ULARGE_INTEGER k, u;
+	k.LowPart = kernel.dwLowDateTime;
+	k.HighPart = kernel.dwHighDateTime;
+	u.LowPart = user.dwLowDateTime;
+	u.HighPart = user.dwHighDateTime;
+	return (long long)((k.QuadPart + u.QuadPart) / 10000);
+#else
+	struct timespec ts;
+	if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts) != 0)
+		return 0;
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
+}
+
+static const char kHugeRequest[] = "GET /assets/huge.bin HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+// The peer asks for more than the sockets hold, closes its sending side and does not read: the server has
+// the peer's FIN and output that the socket does not take. Where poll reports that FIN on every call,
+// whatever it is asked for (WSAPoll), waiting for the socket must not become a busy loop.
+static void ParkHalfClosed(TestClient& parked, int port) {
+	REQUIRE(parked.Connect(port, 4096));
+	REQUIRE(parked.Send(kHugeRequest));
+	parked.ShutdownSend();
+	std::this_thread::sleep_for(std::chrono::milliseconds(300));	// the socket is full, the FIN is read
+	long long before = ProcessCpuMs();
+	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+	long long used = ProcessCpuMs() - before;
+	printf("half-closed peer that does not read: %lld ms of CPU in 1500 ms\n", used);
+	CHECK(used < 300);
+}
+
+// Called when the peer of ParkHalfClosed has not read for longer than the 10 s a closing connection has to
+// make progress in: the server has given it up. What the sockets held still arrives, then the stream ends.
+static void CheckGivenUp(TestClient& parked) {
+	bool timedOut = false;
+	std::string all = parked.ReadToEnd(10000, &timedOut);
+	CHECK(!timedOut);
+	size_t body = all.find("\r\n\r\n");
+	REQUIRE(body != std::string::npos);
+	size_t got = all.size() - body - 4;
+	printf("half-closed peer that does not read: given up with %zu of %zu bytes delivered\n", got, kHugeFile);
+	CHECK(got < kHugeFile);
+	CHECK(all.compare(body + 4, got, Huge(), 0, got) == 0);
+}
+
 static void TestHttp(int port) {
 	HttpResult r = TestClient::Get(port, "/");
 	CHECK_EQ(r.status, 200);
@@ -238,6 +298,21 @@ static void TestHttp(int port) {
 	size_t body = all.find("\r\n\r\n");
 	REQUIRE(body != std::string::npos);
 	CHECK(all.substr(body + 4) == Pattern(kBigFile));
+
+	// and one that starts to read late: the server, stuck with output behind the peer's FIN, has to notice
+	// that the socket takes it again
+	REQUIRE(client.Connect(port, 4096));
+	REQUIRE(client.Send(kHugeRequest));
+	client.ShutdownSend();
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	auto start = std::chrono::steady_clock::now();
+	all = client.ReadToEnd(60000, &timedOut);
+	CHECK(!timedOut);
+	body = all.find("\r\n\r\n");
+	REQUIRE(body != std::string::npos);
+	CHECK(all.compare(body + 4, std::string::npos, Huge()) == 0);
+	printf("half-closed peer that reads late: %zu bytes in %lld ms\n", all.size() - body - 4,
+		(long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
 }
 
 static void TestWebRoot() {
@@ -931,6 +1006,10 @@ int main() {
 	REQUIRE(idle.Connect(port));
 	REQUIRE(idle.Send("GET / HTTP/1.1\r\nHost: loc"));
 
+	TestClient parked;
+	auto parkedAt = std::chrono::steady_clock::now();
+	ParkHalfClosed(parked, port);
+
 	TestHttp(port);
 	TestWebRoot();
 	TestWebSocket(server, rec, port);
@@ -944,6 +1023,11 @@ int main() {
 	// the idle connection is closed after 10 s without a request
 	auto idleFor = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
 	CHECK(idle.WaitClosed((int)std::max<long long>(12000 - idleFor, 2000)));
+
+	auto parkedFor = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - parkedAt).count();
+	if (parkedFor < 11500)
+		std::this_thread::sleep_for(std::chrono::milliseconds(11500 - parkedFor));
+	CheckGivenUp(parked);
 
 	CHECK(rec.oneThread);
 	CHECK(rec.thread != std::this_thread::get_id());
