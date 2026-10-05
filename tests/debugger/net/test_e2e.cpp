@@ -690,6 +690,79 @@ static void TestWakeUps() {
 	CHECK_EQ(rec.Closed(), (size_t)1);
 }
 
+// One thread feeds a client as fast as that client reads. The network thread still has to look after
+// everybody else: a frame from another client reaches the handler, a plain request is answered, and Stop
+// returns while the stream is running.
+static void TestBusyClient() {
+	Recorder rec;
+	Server server;
+	rec.server = &server;
+	Options options;
+	options.port = 0;
+	REQUIRE(server.Start(options, &rec));
+	int port = server.Port();
+	TestClient fed, other;
+	uint32_t fedId = Open(fed, rec, port);
+	Open(other, rec, port);
+
+	std::atomic<bool> quit{false};
+	std::atomic<long long> received{0};
+	std::thread reader([&] {
+		bool closed = false;
+		while (!quit && !closed) {
+			if (fed.Fill(50, &closed))
+				received += (long long)fed.buffer.size();
+			fed.buffer.clear();
+		}
+	});
+	// The producer holds back the way the interface offers, so the client stays far below its bound.
+	std::thread producer([&] {
+		std::string text(200, 'p');
+		while (!quit) {
+			if (server.QueuedBytes(fedId) > (4u << 20))
+				std::this_thread::sleep_for(std::chrono::microseconds(100));
+			else
+				server.SendText(fedId, text);
+		}
+	});
+	for (int i = 0; i < 1000 && received < (4 << 20); i++)
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	CHECK(received >= (4 << 20));
+
+	long long slowestEcho = 0, slowestPage = 0;
+	for (int i = 0; i < 4; i++) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		auto start = std::chrono::steady_clock::now();
+		REQUIRE(other.SendFrame(1, "echo:probe"));
+		CHECK_EQ(Text(other, 2000), std::string("probe"));
+		slowestEcho = std::max<long long>(slowestEcho, std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+		start = std::chrono::steady_clock::now();
+		CHECK_EQ(TestClient::Request(port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", 2000).status, 200);
+		slowestPage = std::max<long long>(slowestPage, std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+	}
+	printf("next to a client that is streamed to: echo within %lld ms, page within %lld ms\n", slowestEcho, slowestPage);
+	CHECK(slowestEcho < 500);
+	CHECK(slowestPage < 500);
+
+	// Stop does not wait for the stream to end. Should it, the watchdog ends the stream and the test goes on.
+	std::atomic<bool> stopped{false};
+	std::thread watchdog([&] {
+		for (int i = 0; i < 300 && !stopped; i++)
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		quit = true;
+	});
+	auto start = std::chrono::steady_clock::now();
+	server.Stop();
+	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+	stopped = true;
+	watchdog.join();
+	producer.join();
+	reader.join();
+	printf("Stop during the stream: %lld ms, %lld MiB streamed\n", (long long)elapsed, received.load() >> 20);
+	CHECK(elapsed < 1000);
+	CHECK_EQ(rec.Closed(), (size_t)2);
+}
+
 static void TestStop() {
 	Recorder rec;
 	Options options;
@@ -843,5 +916,6 @@ int main() {
 
 	TestStop();
 	TestWakeUps();
+	TestBusyClient();
 	return Finish("test_e2e");
 }

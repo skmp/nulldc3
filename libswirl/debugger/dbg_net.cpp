@@ -99,6 +99,7 @@ const size_t kMaxRequestHead = 8192;		// request line + headers + the empty line
 const size_t kMaxHeaders = 64;
 const size_t kMaxQueuedBytes = 16u << 20;	// per WebSocket client
 const size_t kMergeBytes = 16u << 10;		// queued output is merged into chunks of up to this size
+const size_t kFlushBytes = 1u << 20;		// most that is written to one connection per pass of the loop
 const size_t kMaxStaticFile = 64u << 20;	// files from Options::webRoot are read whole
 const size_t kMaxHttpConnections = 32;		// connections that are not WebSocket clients
 const int kStallMs = 10000;					// an HTTP connection that makes no progress is closed
@@ -862,7 +863,8 @@ struct Conn {
 	uint32_t id = 0;			// WebSocket client id, 0 before the upgrade
 	std::string in;
 	WsDecoder decoder;
-	std::string sending;		// chunk being written
+	std::deque<std::string> out;	// chunks taken from queue, in order
+	std::string sending;		// chunk being written, empty between chunks
 	size_t sent = 0;
 	bool finSent = false;
 	bool eof = false;			// kClosing: the peer has closed its side
@@ -871,8 +873,10 @@ struct Conn {
 
 	// guarded by Server::Impl::mutex
 	std::deque<std::string> queue;
-	size_t queued = 0;			// bytes in queue plus the unsent rest of sending
-	bool overflow = false;
+
+	// Changed with the mutex held, except that the network thread lowers queued as it writes; read anywhere.
+	std::atomic<size_t> queued{0};		// bytes in queue and out plus the unsent rest of sending
+	std::atomic<bool> overflow{false};
 };
 
 // Server::Impl::mutex held. Queues a chunk of whole messages for a connection.
@@ -921,7 +925,7 @@ struct Server::Impl {
 	std::atomic<bool> hasClients{false};
 	std::atomic<int> port{0};
 
-	mutable std::mutex mutex;						// guards clients, nextId and the queue fields of every Conn
+	mutable std::mutex mutex;						// guards clients, nextId and the queue of every Conn
 	std::unordered_map<uint32_t, Conn*> clients;	// modified by the network thread only
 	uint32_t nextId = 1;
 
@@ -1159,19 +1163,25 @@ struct Server::Impl {
 		}
 	}
 
+	// Writes at most kFlushBytes and leaves the rest to the next pass: a client that is fed as fast as it
+	// reads must not keep the loop from the other connections, from its own input and from the stop flag.
+	// POLLOUT is asked for while anything is queued, so that pass follows at once. The queue is taken over
+	// whole, one lock per batch instead of one per chunk: a thread that sends without a pause holds the
+	// mutex most of the time, and while the loop waits for it nobody is served.
 	void Flush(Conn& c) {
-		for (;;) {
-			if (c.sent == c.sending.size()) {
-				std::lock_guard<std::mutex> lock(mutex);
-				c.sent = 0;
-				if (c.queue.empty()) {
-					std::string().swap(c.sending);
-					return;
+		size_t budget = kFlushBytes;
+		while (budget != 0) {
+			if (c.sending.empty()) {
+				if (c.out.empty()) {
+					std::lock_guard<std::mutex> lock(mutex);
+					c.out.swap(c.queue);
 				}
-				c.sending = std::move(c.queue.front());
-				c.queue.pop_front();
+				if (c.out.empty())
+					return;
+				c.sending = std::move(c.out.front());
+				c.out.pop_front();
 			}
-			size_t want = std::min(c.sending.size() - c.sent, (size_t)1 << 20);
+			size_t want = std::min(c.sending.size() - c.sent, budget);
 			int n = (int)send(c.fd, c.sending.data() + c.sent, (int)want, kSendFlags);
 			if (n <= 0) {
 				if (n == 0 || !SockWouldBlock(SockError()))
@@ -1179,9 +1189,11 @@ struct Server::Impl {
 				return;
 			}
 			c.sent += (size_t)n;
-			{
-				std::lock_guard<std::mutex> lock(mutex);
-				c.queued -= (size_t)n;
+			budget -= (size_t)n;
+			c.queued -= (size_t)n;
+			if (c.sent == c.sending.size()) {
+				c.sent = 0;
+				std::string().swap(c.sending);
 			}
 			if (c.state == Conn::kClosing)
 				c.deadline = Clock::now() + std::chrono::milliseconds(kStallMs);
@@ -1192,23 +1204,17 @@ struct Server::Impl {
 	void Service(Conn& c) {
 		if (c.dead)
 			return;
-		bool overflow, pending;
-		{
-			std::lock_guard<std::mutex> lock(mutex);
-			overflow = c.overflow;
-			pending = c.queued != 0;
-		}
-		if (overflow) {
+		if (c.overflow) {
 			Drop(c);
 			return;
 		}
-		if (pending)
+		if (c.queued != 0)
 			Flush(c);
 		if (c.dead || c.state == Conn::kWs)
 			return;
 
 		Clock::time_point now = Clock::now();
-		if (c.state == Conn::kClosing && QueuedBytes(c) == 0) {
+		if (c.state == Conn::kClosing && c.queued == 0) {
 			if (c.eof) {
 				c.dead = true;
 				return;
@@ -1221,11 +1227,6 @@ struct Server::Impl {
 		}
 		if (now >= c.deadline)
 			c.dead = true;
-	}
-
-	size_t QueuedBytes(const Conn& c) const {
-		std::lock_guard<std::mutex> lock(mutex);
-		return c.queued;
 	}
 
 	bool CanAccept() const {
@@ -1270,17 +1271,14 @@ struct Server::Impl {
 			entry.fd = wakeFd;
 			entry.events = POLLIN;
 			fds.push_back(entry);
-			{
-				std::lock_guard<std::mutex> lock(mutex);
-				for (const auto& c : conns) {
-					entry.fd = c->fd;
-					entry.events = c->eof ? 0 : POLLIN;
-					if (c->queued != 0)
-						entry.events |= POLLOUT;
-					fds.push_back(entry);
-					if (c->state != Conn::kWs)
-						wakeAt = std::min(wakeAt, c->deadline);
-				}
+			for (const auto& c : conns) {
+				entry.fd = c->fd;
+				entry.events = c->eof ? 0 : POLLIN;
+				if (c->queued != 0)
+					entry.events |= POLLOUT;
+				fds.push_back(entry);
+				if (c->state != Conn::kWs)
+					wakeAt = std::min(wakeAt, c->deadline);
 			}
 			if (accepting) {
 				entry.fd = listenFd;
@@ -1435,7 +1433,7 @@ size_t Server::QueuedBytes(uint32_t client) const {
 	const Impl& s = *impl;
 	std::lock_guard<std::mutex> lock(s.mutex);
 	auto it = s.clients.find(client);
-	return it == s.clients.end() ? 0 : it->second->queued;
+	return it == s.clients.end() ? 0 : it->second->queued.load();
 }
 
 } }
