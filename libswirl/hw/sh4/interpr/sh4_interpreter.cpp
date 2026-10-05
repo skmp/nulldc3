@@ -270,7 +270,8 @@ struct SH4IInterpreter : SuperH4Backend {
     // One instruction with the end-of-slice work if the slice ran out. A delayed branch runs together with its
     // slot, also when it is not taken: a step is the same unit as in a jit. The step goes on into a slot only
     // behind the branch that it ran itself, and not when the slice ended between the two and an interrupt was
-    // accepted there: the step then ends at the handler, as the loop gets there.
+    // accepted there, or the cpu was stopped there (a stop latched by the slice hook): the step then ends where
+    // the loop is at that point, at the handler or in front of the slot.
     bool Step()
     {
         s32& l = interp_slice;
@@ -283,8 +284,8 @@ struct SH4IInterpreter : SuperH4Backend {
                 if (!DebugStep(l))
                     return true;
 
-                if (l <= 0)
-                    SliceEnd(l);
+                if (l <= 0 && !SliceEnd(l))
+                    break;
             } while (dbg_slot_pc != DBG_NO_SLOT);
 #if !defined(NO_MMU)
         }
