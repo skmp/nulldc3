@@ -25,6 +25,10 @@ Options: `-DSH_OBJDUMP=<sh-elf-objdump>`, `-DARM_OBJDUMP=<arm-eabi-objdump>`,
 
 A test whose tool is missing prints `SKIP: <reason>` and is reported by ctest as skipped. `golden` always runs.
 
+The tests project (`tests/CMakeLists.txt`, `tests/README.md`) adds this directory as well. There the tests are
+named `debugger.disasm.<name>`, the dreamcast-devtools checkout is given with `-DNULLDC_DEVTOOLS_DIR=`, and
+`-DNULLDC_TESTS_REQUIRE_DATA=ON` makes a test whose tool is missing fail instead; that option works here too.
+
 `disasm_test` is also the dump tool the scripts drive (`sh4 MODE BASE`, `arm BASE`, `dsp`), and
 `disasm_test rows` prints table rows for new golden cases (see the comment at the top of `disasm_test.cpp`).
 Rows are reviewed by hand before they go into a `golden_*.inc`.
