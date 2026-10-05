@@ -206,7 +206,7 @@ const char* RuntimeBlockInfo::hash(bool full, bool relocable)
 	return block_hash;
 }
 
-void RuntimeBlockInfo::Setup(u32 rpc,fpscr_t rfpu_cfg)
+void RuntimeBlockInfo::Setup(u32 rpc,fpscr_t rfpu_cfg,const DecodeLimits* limits)
 {
 	staging_runs=addr=lookups=runs=host_code_size=0;
 	guest_cycles=guest_opcodes=host_opcodes=0;
@@ -221,7 +221,7 @@ void RuntimeBlockInfo::Setup(u32 rpc,fpscr_t rfpu_cfg)
 	
 	oplist.clear();
 
-	dec_DecodeBlock(this,SH4_TIMESLICE/2);
+	dec_DecodeBlock(this,SH4_TIMESLICE/2,limits);
 	AnalyseBlock(this);
 }
 

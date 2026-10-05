@@ -24,7 +24,7 @@ struct RuntimeBlockInfo_Core
 
 struct RuntimeBlockInfo: RuntimeBlockInfo_Core
 {
-	void Setup(u32 pc,fpscr_t fpu_cfg);
+	void Setup(u32 pc,fpscr_t fpu_cfg,const DecodeLimits* limits=0);
 	const char* hash(bool full=true, bool reloc=false);
 
 	u32 host_code_size;	//in bytes
@@ -55,6 +55,7 @@ struct RuntimeBlockInfo: RuntimeBlockInfo_Core
 
 	BlockEndType BlockType;
 	bool has_jcond;
+	u8 dbg_flow; //DbgSh4Flow: the block ends with a call or a return and its epilogue reports it to the debugger (step-out)
 
 	vector<shil_opcode> oplist;
 
