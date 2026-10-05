@@ -107,10 +107,11 @@ struct Arm7Context
 	//Set to true when aica interrupt is pending
 	bool aica_interr = false;
 	u32 aica_reg_L = 0;
-	//Set to true when the out of the intc is 1
+	//Set to true when the out of the intc is 1: from the latch of a request until L is read
 	bool e68k_out = false;
 	u32 e68k_reg_L;
-	u32 e68k_reg_M = 0; //constant ?
+	//1 while a request is in service, from its latch until bit 0 of M is written: no other request is latched
+	u32 e68k_reg_M = 0;
 	bool enabled;
 
 	u8 (DYNACALL*read8)(u32 addr, Arm7Context* ctx);

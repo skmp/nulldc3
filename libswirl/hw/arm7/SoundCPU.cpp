@@ -32,12 +32,17 @@
 	pin on arm7
 */
 
+/*
+	The handshake, as on the console (wren7-rtl model/tests/hw/fiqdiag, model/NOTES.md "Interrupts"):
+	a request is latched with its level and pulls nFIQ, reading L releases nFIQ, writing bit 0 of M ends the
+	service and lets the next request in
+*/
 static void update_e68k(Arm7Context* ctx)
 {
-	if (!ctx->e68k_out && ctx->aica_interr)
+	if (!ctx->e68k_reg_M && ctx->aica_interr)
 	{
 		//Set the pending signal
-		//Is L register held here too ?
+		ctx->e68k_reg_M = 1;
 		ctx->e68k_out = true;
 		ctx->e68k_reg_L = ctx->aica_reg_L;
 
@@ -45,9 +50,18 @@ static void update_e68k(Arm7Context* ctx)
 	}
 }
 
+static void e68k_AcknowledgeInterrupt(Arm7Context* ctx)
+{
+	if (ctx->e68k_out)
+	{
+		ctx->e68k_out = false;
+		ctx->backend->UpdateInterrupts();
+	}
+}
+
 static void e68k_AcceptInterrupt(Arm7Context* ctx)
 {
-	ctx->e68k_out = false;
+	ctx->e68k_reg_M = 0;
 	update_e68k(ctx);
 	
 }
@@ -58,9 +72,12 @@ static T arm_ReadReg(Arm7Context* ctx, u32 addr)
 {
 	addr &= 0x7FFF;
 	if (addr == REG_L)
+	{
+		e68k_AcknowledgeInterrupt(ctx);
 		return ctx->e68k_reg_L;
+	}
 	else if (addr == REG_M)
-		return ctx->e68k_reg_M;	//shouldn't really happen
+		return 0;	//shouldn't really happen
 	else
 		return ctx->aica->ReadReg(addr, sz);
 }
@@ -258,7 +275,8 @@ struct SoundCPU_impl : SoundCPU {
 
 	void InterruptChange(u32 bits, u32 L)
 	{
-		ctx.aica_interr = bits != 0;
+		//a request of level 0 does not interrupt (console: fiqdiag)
+		ctx.aica_interr = bits != 0 && L != 0;
 		if (ctx.aica_interr)
 			ctx.aica_reg_L = L;
 		update_e68k(&ctx);

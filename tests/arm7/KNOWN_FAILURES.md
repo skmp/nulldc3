@@ -10,30 +10,12 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
-| D5 | `arm7.directed` `fiq` | 7 | 3 | 4 |
 | D6 | `arm7.directed` `scilv` | 3 | 0 | 3 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 2 | 2 |
 
-Everything else passes: `arm7.vendor` 45/45, the adc, sbc, rsc and trap cases of `arm7.directed` (67), the r1
-and the CPSR of the 45 vendor jobs, the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how
-all 55 jobs end.
-
-### D5: the interrupt controller in front of nFIQ
-
-On the console a request (SCIEB & SCIPD) is latched with its level from SCILV0-2 and pulls nFIQ; level 0 is no
-interrupt. Reading L (0x2D00) is the acknowledge and releases nFIQ. Writing bit 0 of M (0x2D04) ends the service
-and lets the next request in. Neither does the other's work.
-
-Here any enabled pending bit raises FIQ whatever its level (`update_arm_interrupts` in `hw/aica/aica_mmio.cpp`,
-`SoundCPU_impl::InterruptChange` in `hw/arm7/SoundCPU.cpp`), reading L does nothing, and the M write both
-releases FIQ and lets the next request in (`arm_ReadReg`, `arm_WriteReg`, `update_e68k` in `SoundCPU.cpp`).
-
-* Console: `wren7-rtl/model/tests/hw/fiqdiag/hw` and `model/NOTES.md` "Interrupts"; `directed_main.cpp` has the
-  capture behind each rule.
-* `fiq` cases that fail: a request of level 0 interrupts; with L read and M not written the handler is
-  entered again and again where the console never interrupts again; with M written and L not read (once and
-  4 times) FIQ is released where the console enters the handler again at once.
-* A handler that reads L and then writes M, as sound drivers do, sees no difference: the 3 cases that pass.
+Everything else passes: `arm7.vendor` 45/45, the adc, sbc, rsc, trap and fiq cases of `arm7.directed` (74), the
+r1 and the CPSR of the 45 vendor jobs, the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and
+how all 55 jobs end.
 
 ### D6: SCILV0-2 read back what was written
 
@@ -62,6 +44,7 @@ random instructions pass.
 
 | | what | console / data sheet | here |
 |---|---|---|---|
+| D5 | interrupt controller: more than one request pending, and L behind a request of level 0 | not measured with more than one request. L read 0 at the start of the job behind one whose requests had level 0, and 7 before that job (`fiqdiag` `d4.bin`, `d5.bin`) | the lowest pending bit gives the level, and nothing interrupts when that level is 0, as wren7's model has it (`update_arm_interrupts` in `hw/aica/aica_mmio.cpp`, `SoundCPU_impl::InterruptChange`); L keeps the level of the last request that interrupted |
 | D7 | registers when the machine is switched on | not known: a console job starts with what the programs before it left | cleared, with VisualBoyAdvance's GBA stack pointers (R13 = 0x03007F00, R13_irq = 0x03007FA0, R13_svc = 0x03007FE0) and CPSR = 0x53 (`SoundCPU_impl::Reset` in `hw/arm7/SoundCPU.cpp`); the first reset puts that CPSR into SPSR_svc |
 | D8 | `STR` of R15 | the instruction's address + 12 (data sheet; console for STM) | + 8 in every word STR handler of `arm-new.h`; STM stores + 12 |
 | D9 | `STR Rd, [Rn, #x]!` with Rd == Rn | stores the old base (data sheet) | stores the new one: the pre-indexed handlers write the base back before the store (`arm-new.h`, `CASE_16(0x520)` and the like) |
