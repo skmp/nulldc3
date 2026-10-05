@@ -1,5 +1,12 @@
 /*
 	The known-answer programs of the AICA DSP core: dsp_known.h has what they are and where they run.
+
+	How the programs get at the datapath, with nothing but the CPU's registers:
+
+	  a number into ACC    a row with nothing but TRA leaves TEMP[TRA + MDEC_CT] in ACC: its Y is FRC_REG, which is 0,
+	                       and its B is TEMP. The CPU writes TEMP
+	  ACC - TEMP           a row with BSEL and YSEL 1 on a COEF of -4096: X * Y / 4096 is -TEMP exactly
+	  ACC out              the row behind it shifts it: TWT puts SHIFTED into TEMP, which the CPU reads
 */
 #include "dsp_known.h"
 #include "hw/aica/dsp_core/wasm/aica_dsp_capi.h"
@@ -133,12 +140,126 @@ static void put(int step, const AicaDspInst& inst)
 		m->RegWrite((uint32_t)(0x3400 + 16 * step + 4 * k), w[k]);
 }
 
-//MEMS as the CPU has it: 24 bit in two registers
+//TEMP and MEMS as the CPU has them: 24 bit in two registers
+static void temp_write(int index, int32_t value)
+{
+	m->RegWrite((uint32_t)(0x4000 + 8 * index), (uint32_t)value & 0xFF);
+	m->RegWrite((uint32_t)(0x4004 + 8 * index), ((uint32_t)value >> 8) & 0xFFFF);
+}
+
+static uint32_t temp_read(int index)
+{
+	const uint32_t low = m->RegRead((uint32_t)(0x4000 + 8 * index));
+
+	return low | (m->RegRead((uint32_t)(0x4004 + 8 * index)) << 8);
+}
+
 static uint32_t mems_read(int index)
 {
 	const uint32_t low = m->RegRead((uint32_t)(0x4400 + 8 * index));
 
 	return low | (m->RegRead((uint32_t)(0x4404 + 8 * index)) << 8);
+}
+
+
+/*
+	The shifter. ACC is t[0] - t[1] - t[2] - t[3] - t[4] in 26 bit, and SHIFTED is
+
+	  SHIFT 0   ACC, saturated to 24 bit: 0x7FFFFF above, -0x800000 below
+	  SHIFT 1   twice ACC, saturated the same way
+	  SHIFT 2   twice ACC, its low 24 bit
+	  SHIFT 3   ACC, its low 24 bit
+*/
+static const struct
+{
+	int32_t t[5];
+	int32_t acc;
+	int32_t shifted[4];
+}
+shifts[] =
+{
+	//inside 24 bit, twice the value too
+	{ { 0x123456, 0, 0, 0, 0 }, 0x123456, { 0x123456, 0x2468AC, 0x2468AC, 0x123456 } },
+	{ { -0x123456, 0, 0, 0, 0 }, -0x123456, { -0x123456, -0x2468AC, -0x2468AC, -0x123456 } },
+	{ { 1, 0, 0, 0, 0 }, 1, { 1, 2, 2, 1 } },
+	{ { -1, 0, 0, 0, 0 }, -1, { -1, -2, -2, -1 } },
+	{ { 0x3FFFFF, 0, 0, 0, 0 }, 0x3FFFFF, { 0x3FFFFF, 0x7FFFFE, 0x7FFFFE, 0x3FFFFF } },
+	{ { -0x400000, 0, 0, 0, 0 }, -0x400000, { -0x400000, -0x800000, -0x800000, -0x400000 } },
+
+	//twice the value is beyond 24 bit: SHIFT 1 saturates, SHIFT 2 cuts
+	{ { 0x400000, 0, 0, 0, 0 }, 0x400000, { 0x400000, 0x7FFFFF, -0x800000, 0x400000 } },
+	{ { -0x400001, 0, 0, 0, 0 }, -0x400001, { -0x400001, -0x800000, 0x7FFFFE, -0x400001 } },
+	{ { 0x7FFFFF, 0, 0, 0, 0 }, 0x7FFFFF, { 0x7FFFFF, 0x7FFFFF, -2, 0x7FFFFF } },
+	{ { -0x800000, 0, 0, 0, 0 }, -0x800000, { -0x800000, -0x800000, 0, -0x800000 } },
+
+	//the value is beyond 24 bit: SHIFT 0 saturates, SHIFT 3 cuts
+	{ { 0x7FFFFF, -1, 0, 0, 0 }, 0x800000, { 0x7FFFFF, 0x7FFFFF, 0, -0x800000 } },
+	{ { -0x800000, 1, 0, 0, 0 }, -0x800001, { -0x800000, -0x800000, -2, 0x7FFFFF } },
+	{ { 0x7FFFFF, -0x100001, 0, 0, 0 }, 0x900000, { 0x7FFFFF, 0x7FFFFF, 0x200000, -0x700000 } },
+	{ { -0x800000, 0x100000, 0, 0, 0 }, -0x900000, { -0x800000, -0x800000, -0x200000, 0x700000 } },
+
+	//the ends of 26 bit
+	{ { 0x7FFFFF, -0x800000, -0x800000, -0x800000, 0 }, 0x1FFFFFF, { 0x7FFFFF, 0x7FFFFF, -2, -1 } },
+	{ { -0x800000, 0x7FFFFF, 0x7FFFFF, 0x7FFFFF, 3 }, -0x2000000, { -0x800000, -0x800000, 0, 0 } },
+
+	//and beyond them: ACC wraps
+	{ { 0x7FFFFF, -0x800000, -0x800000, -0x800000, -0x800000 }, -0x1800001, { -0x800000, -0x800000, -2, 0x7FFFFF } },
+	{ { -0x800000, 0x7FFFFF, 0x7FFFFF, 0x7FFFFF, 0x7FFFFF }, 0x1800004, { 0x7FFFFF, 0x7FFFFF, 8, -0x7FFFFC } },
+};
+
+static void known_shifter()
+{
+	m->Group("shifter");
+	create(0x10000);
+
+	//The last rows of the sample, so that ACC is still the sum behind it. Row 119: ACC = TEMP[0]. Rows 120 to 123:
+	//ACC = ACC - TEMP[1 to 4]. Rows 124 to 127 keep ACC and put SHIFTED of mode 0 to 3 into TEMP[8 to 11] and into
+	//EFREG[0 to 3]
+	for (int k = 1; k <= 4; k++)
+	{
+		AicaDspInst inst = nop();
+
+		inst.TRA = (uint8_t)k;
+		inst.YSEL = 1;
+		inst.BSEL = 1;
+		put(119 + k, inst);
+		m->RegWrite((uint32_t)(0x3000 + 4 * (119 + k)), 0x8000);
+	}
+
+	for (int mode = 0; mode < 4; mode++)
+	{
+		AicaDspInst inst = nop();
+
+		inst.BSEL = 1;
+		inst.SHIFT = (uint8_t)mode;
+		inst.TWT = 1;
+		inst.TWA = (uint8_t)(8 + mode);
+		inst.EWT = 1;
+		inst.EWA = (uint8_t)mode;
+		put(124 + mode, inst);
+	}
+
+	for (const auto& s : shifts)
+	{
+		for (int k = 0; k < 5; k++)
+			temp_write(k, s.t[k]);
+
+		m->Set(AICA_DSP_REG_MDEC_CT, 0);
+		sample();
+
+		check(m->Get(AICA_DSP_REG_ACC) == (uint32_t)s.acc, "%x - %x - %x - %x - %x is ACC %x", (uint32_t)s.t[0],
+			(uint32_t)s.t[1], (uint32_t)s.t[2], (uint32_t)s.t[3], (uint32_t)s.t[4], (uint32_t)s.acc);
+
+		for (int mode = 0; mode < 4; mode++)
+		{
+			const uint32_t shifted = cut((uint32_t)s.shifted[mode], 24);
+
+			check(temp_read(8 + mode) == shifted, "SHIFT %d of ACC %x is %06x", mode, (uint32_t)s.acc, shifted);
+			check(m->RegRead((uint32_t)(0x4580 + 4 * mode)) == shifted >> 8, "EWT of it is %04x", shifted >> 8);
+		}
+	}
+
+	check(m->Get(AICA_DSP_REG_MDEC_CT) == 0xFFFF, "MDEC_CT counts down through 0");
 }
 
 
@@ -490,6 +611,8 @@ void dsp_known_answers(KnownMachine& machine)
 	for (int way = 0; way < 2; way++)
 	{
 		single = way == 0;
+
+		known_shifter();
 
 		known_rules();
 		known_mixs();
