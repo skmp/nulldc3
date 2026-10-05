@@ -100,7 +100,9 @@ than FIQ. In front of a FIQ and behind it those are the registers the program co
 which has the five of the FIQ bank in their place, they are still the interrupted program's, and reading them
 changes nothing. L is for the debugger what the ARM reads, at level 1, at level 7 and behind a request of level
 0, and the debugger's read is not the acknowledge the ARM's is: a handler that leaves the L read to the debugger
-is entered again. The in-service flag is 1 from the latch of a request to the write of M.
+is entered again. L is the level that was latched with the request in service: while a request of another level
+waits behind it, the debugger and the ARM read the level of the one in service, and the level of the other once
+the write of M has let it in. The in-service flag is 1 from the latch of a request to the write of M.
 
 ## The wren7 console suites
 

@@ -33,7 +33,8 @@
 	machine leaves nothing of the interrupt controller (the comments at run_power_on() have why).
 
 	debug: what the sound CPU gives the debugger (SoundCPU::DebugGetReg, DebugGetInterrupt) against the registers
-	the guest has and against its reads of L, around a FIQ (the comments at debug_r8_r12() and debug_interrupt()).
+	the guest has and against its reads of L, around a FIQ (the comments at debug_r8_r12(), debug_interrupt() and
+	debug_interrupt_two_levels()).
 
 	Checks: adc, sbc, rsc, ror, mul-rd-rm, mul-rd-rm-c, trap, fiq, scilv, reset, power-on, debug. The test needs
 	no data.
@@ -592,6 +593,7 @@ static void run_traps()
 	"mov r0, r0" for the entry and "subs pc, lr, #4" for the return.
 */
 #define AICA_SCIEB 0x80289C
+#define AICA_SCIPD 0x8028A0
 #define AICA_SCIRE 0x8028A4
 #define AICA_SCILV0 0x8028A8
 #define AICA_MCIEB 0x8028B4
@@ -599,6 +601,8 @@ static void run_traps()
 #define AICA_M 0x802D04
 
 #define SAMPLE_INTERVAL 0x400
+//the request that a write of 1 to bit 5 of SCIPD raises
+#define SCPU_REQUEST 0x20
 
 #define MODE_FIQ 0x11
 
@@ -1604,12 +1608,59 @@ static void debug_interrupt_0(std::string& text)
 		text += " the ARM does not read 0 from L behind a request of level 0;";
 }
 
+/*
+	Two requests of two levels, one in service and one that waits behind it. L is latched when a request is let in:
+	while the first is in service the debugger reads its level, as the ARM does, and not the level that the waiting
+	request drives; the write of M lets the second in, and both read its level. The sample interval has level 1
+	(bit 7 of SCILV0, for the requests from bit 7 up) and the request of SCIPD bit 5 has level 6 (bit 5 of SCILV1
+	and of SCILV2). No capture is behind the two levels: they are what the ARM reads on the emulator.
+*/
+static void debug_interrupt_two_levels(std::string& text)
+{
+	char number[96];
+
+	fiq_setup(0x80, 0x20, 0x20);
+	arm7m_write32(AICA_SCIEB, SAMPLE_INTERVAL | SCPU_REQUEST);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request of level 1 does not interrupt;";
+		return;
+	}
+
+	debug_expect_interrupt(text, "with level 1 in service", 1, 1);
+	arm7m_write32(AICA_SCIPD, SCPU_REQUEST);
+	debug_expect_interrupt(text, "with level 1 in service and level 6 waiting", 1, 1);
+
+	u32 l = arm7m_read32(AICA_L);
+
+	if (l != 1)
+	{
+		snprintf(number, sizeof(number), " the ARM reads %X from L with level 6 waiting, has to be 1;", l);
+		text += number;
+	}
+
+	debug_expect_interrupt(text, "behind the L read of the ARM, with level 6 waiting", 1, 1);
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	arm7m_write32(AICA_M, 1);
+	debug_expect_interrupt(text, "behind the M write, with level 6 let in", 6, 1);
+
+	l = arm7m_read32(AICA_L);
+
+	if (l != 6)
+	{
+		snprintf(number, sizeof(number), " the ARM reads %X from L behind the M write, has to be 6;", l);
+		text += number;
+	}
+}
+
 static const Scenario debug_scenarios[] =
 {
 	{ "R8..R12 of the modes other than FIQ, around a FIQ", &debug_r8_r12 },
 	{ "L and the in-service flag, level 1: the debugger's read is no acknowledge", &debug_interrupt_1 },
 	{ "L and the in-service flag, level 7: the debugger's read is no acknowledge", &debug_interrupt_7 },
 	{ "L and the in-service flag behind a request of level 0", &debug_interrupt_0 },
+	{ "L of the request in service, level 1, with a request of level 6 waiting", &debug_interrupt_two_levels },
 };
 
 static void run_scenario(void* arg)
