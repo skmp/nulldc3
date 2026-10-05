@@ -40,6 +40,8 @@ void sh4_host_fp_resync();
 	backend's ResetSlice() resets it. Entered with a counter that is not positive and no remainder to run, the
 	loop does the end-of-slice work before its first block, as a backend's Loop() does (sh4_if.h). The backend
 	object and its code cache are not touched.
+	The definitions (hw/sh4/dyna/driver.cpp) are compiled under the same condition as these declarations:
+	defined(NULLDC_DEBUGGER) && FEAT_SHREC != DYNAREC_NONE.
 */
 #if defined(NULLDC_DEBUGGER) && FEAT_SHREC != DYNAREC_NONE
 
