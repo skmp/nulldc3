@@ -148,6 +148,14 @@ void SetFloatStatusReg()
 	}
 }
 
+//old_rm / old_dn say what some thread was last set to, not the calling one
+void sh4_host_fp_resync()
+{
+	old_rm=0xFF;
+	old_dn=0xFF;
+	SetFloatStatusReg();
+}
+
 //called when fpscr is changed and we must check for reg banks etc..
 void UpdateFPSCR()
 {

@@ -227,6 +227,10 @@ struct fpscr_t
 //as the RTL (v1_fpu: rz = fpscr[0]) and the soft-float reference (sh4_fpdn.h) of shrike4-rtl do
 #define FPSCR_RM_ZERO(fpscr_v) (((fpscr_v).RM & 1) != 0)
 
+//Puts the host FP control register of the calling thread into the mode of FPSCR. That register belongs to a thread:
+//a thread that runs the CPU calls this first, FPSCR may have been written on another one (reset, load state)
+void sh4_host_fp_resync();
+
 
 typedef void RunFP();
 typedef void StopFP();

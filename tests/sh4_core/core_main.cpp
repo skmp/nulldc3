@@ -9,6 +9,10 @@
 
 	FPSCR.RM and the host rounding mode. The interpreter and the code of the recompilers compute with the host
 	FPU in the mode UpdateFPSCR sets, so that mode is what decides how both round.
+
+	The host FP mode and threads. The mode belongs to a thread, and the emulator resets, loads states and runs
+	the CPU on more than one: the thread that starts to run the CPU has to end up in the mode of FPSCR, whichever
+	thread wrote FPSCR last.
 */
 #include "sh4_env.h"
 
@@ -19,6 +23,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <future>
+#include <thread>
 
 #if HOST_CPU == CPU_X64 || HOST_CPU == CPU_X86
 #include <xmmintrin.h>
@@ -26,6 +32,11 @@
 
 //hw/sh4/sh4_core.h declares these, along with macros for r, sr, pr, ... that are better kept out of here
 void UpdateFPSCR();
+void sh4_host_fp_resync();
+
+//hw/sh4/sh4_core_regs.cpp: the FPSCR.RM and DN the host FP mode was last set for. A save state carries them
+extern u32 old_rm;
+extern u32 old_dn;
 
 extern SuperH4* sh4_cpu;
 
@@ -213,6 +224,120 @@ static void test_rounding_mode(SuperH4* cpu)
 	}
 }
 
+//// Threads
+
+#define FPSCR_NEAREST 0x00000000	//RM = 00, DN = 0
+#define FPSCR_ZERO_FLUSH 0x00040001	//RM = 01, DN = 1: the reset value
+
+struct HostMode
+{
+	bool round_to_zero;
+	bool flush_to_zero;
+};
+
+static HostMode host_mode()
+{
+	HostMode mode;
+
+	host_fp_mode(mode.round_to_zero, mode.flush_to_zero);
+
+	return mode;
+}
+
+//lds r3,fpscr
+static void load_fpscr(u32 value)
+{
+	Sh4cntx.r[3] = value;
+	ExecuteOpcode(0x436A);
+}
+
+//What the emulator thread does before it runs the CPU (dc_run), and the mode it is in then
+static HostMode start_running()
+{
+	sh4_host_fp_resync();
+
+	return host_mode();
+}
+
+template<typename F>
+static HostMode on_new_thread(F fn)
+{
+	HostMode mode;
+	std::thread thread([&mode, &fn] { mode = fn(); });
+
+	thread.join();
+
+	return mode;
+}
+
+static void test_host_fp_threads(SuperH4* cpu)
+{
+	bool round_to_zero, flush_to_zero;
+
+	if (!host_fp_mode(round_to_zero, flush_to_zero))
+		return;
+
+	HostMode mode;
+
+	//A reset on one thread, the CPU on another one that did not get its FP mode from the first: here a thread that
+	//is there before the reset, in the emulator the emulator thread on a host whose new threads start in the default
+	//mode
+	cpu->Reset(false);
+	load_fpscr(FPSCR_NEAREST);
+
+	{
+		std::promise<void> reset_done;
+		std::future<void> wait = reset_done.get_future();
+		std::thread emulator([&mode, &wait] { wait.wait(); mode = start_running(); });
+
+		cpu->Reset(false);
+
+		reset_done.set_value();
+		emulator.join();
+	}
+
+	CHECK_REG("FPSCR", Sh4cntx.fpscr.full, FPSCR_ZERO_FLUSH);
+	CHECK(mode.round_to_zero);
+	CHECK(mode.flush_to_zero);
+
+	//The emulator thread stops (the menu) and a new one is started by a thread that is not in the guest's mode: the
+	//thread that reset is in the mode of the reset, the guest has loaded FPSCR since
+	cpu->Reset(false);
+
+	on_new_thread([] { start_running(); load_fpscr(FPSCR_NEAREST); return host_mode(); });
+
+	mode = on_new_thread(start_running);
+
+	CHECK_REG("FPSCR", Sh4cntx.fpscr.full, FPSCR_NEAREST);
+	CHECK(!mode.round_to_zero);
+	CHECK(!mode.flush_to_zero);
+
+	//A state is loaded while the CPU is stopped: FPSCR and what the host mode was last set for come out of the file,
+	//no thread's mode changes
+	cpu->Reset(false);
+
+	Sh4cntx.fpscr.full = FPSCR_NEAREST;
+	Sh4cntx.old_fpscr.full = FPSCR_NEAREST;
+	old_rm = 0;
+	old_dn = 0;
+
+	mode = on_new_thread(start_running);
+
+	CHECK(!mode.round_to_zero);
+	CHECK(!mode.flush_to_zero);
+
+	//and from there on the thread follows the FPSCR the guest loads
+	mode = on_new_thread([] { start_running(); load_fpscr(FPSCR_ZERO_FLUSH); return host_mode(); });
+
+	CHECK(mode.round_to_zero);
+	CHECK(mode.flush_to_zero);
+
+	mode = on_new_thread([] { start_running(); load_fpscr(FPSCR_ZERO_FLUSH); load_fpscr(FPSCR_NEAREST); return host_mode(); });
+
+	CHECK(!mode.round_to_zero);
+	CHECK(!mode.flush_to_zero);
+}
+
 int main()
 {
 	sh4_env_init();
@@ -222,6 +347,7 @@ int main()
 	test_reset(cpu, false);
 	test_reset(cpu, true);
 	test_rounding_mode(cpu);
+	test_host_fp_threads(cpu);
 
 	bool round_to_zero, flush_to_zero;
 
