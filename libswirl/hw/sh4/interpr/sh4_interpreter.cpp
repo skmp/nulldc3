@@ -120,7 +120,9 @@ struct SH4IInterpreter : SuperH4Backend {
 
         dbg_slot_pc = DBG_NO_SLOT;
 
-        if (!is_slot && dbg_sh4_WantsCheck(addr, (OpDesc[op]->type & Delayslot) != 0) && dbg_sh4_Check(addr, 0, 0))
+        if (is_slot)
+            dbg_sh4_SlotRuns();
+        else if (dbg_sh4_WantsCheck(addr, (OpDesc[op]->type & Delayslot) != 0) && dbg_sh4_Check(addr, 0, 0))
             return false;	// the pc is back on the instruction, nothing was charged
 
         const bool slot_follows = SlotLeftToLoop(op);

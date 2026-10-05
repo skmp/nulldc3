@@ -569,6 +569,9 @@ static bool fallback_RunBlock(u32 max_opcodes, u32 end_pc, s32 cycles)
 	// the checks are in the order of their instructions
 	size_t check = 0;
 
+	// the instruction that runs next is the slot of a bt/s or bf/s that was not taken
+	bool slot_left = false;
+
 	for (;;)
 	{
 		u32 addr = next_pc;
@@ -578,7 +581,11 @@ static bool fallback_RunBlock(u32 max_opcodes, u32 end_pc, s32 cycles)
 
 		// The decoder makes no check for a delay slot: the slot of a delayed branch that is not taken runs
 		// here as an instruction of its own, without one
-		if (check < rbi->oplist.size() && rbi->oplist[check].rs1._imm == addr)
+		if (slot_left)
+		{
+			dbg_sh4_SlotRuns();
+		}
+		else if (check < rbi->oplist.size() && rbi->oplist[check].rs1._imm == addr)
 		{
 			u32 refund = rbi->oplist[check].rs2._imm;
 			check++;
@@ -595,8 +602,11 @@ static bool fallback_RunBlock(u32 max_opcodes, u32 end_pc, s32 cycles)
 		// A delayed branch that is taken is a control transfer wherever it goes, to its own slot as well: the
 		// address is then arrived at as a branch target, at the start of a block. bt/s and bf/s that are not
 		// taken leave their slot to this loop.
-		const bool taken_delayed = (OpDesc[op]->type & Delayslot) != 0
-			&& !(((op & 0xFF00) == 0x8D00 && sr.T == 0) || ((op & 0xFF00) == 0x8F00 && sr.T != 0));
+		const bool has_slot = (OpDesc[op]->type & Delayslot) != 0;
+
+		slot_left = has_slot && (((op & 0xFF00) == 0x8D00 && sr.T == 0) || ((op & 0xFF00) == 0x8F00 && sr.T != 0));
+
+		const bool taken_delayed = has_slot && !slot_left;
 
 		next_pc = addr + 2;
 

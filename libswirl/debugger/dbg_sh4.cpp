@@ -312,7 +312,12 @@ extern "C" u32 DYNACALL dbg_sh4_Check(u32 pc, u32 refund, u32 block_end)
 	return Stop(cause, id);
 }
 
-void dbg_sh4_SlotRuns() { }
+void dbg_sh4_SlotRuns()
+{
+	// The exemption is for the instruction that runs first behind a resume. A slot that runs without a check
+	// call is that instruction when the stop was between it and its branch
+	st.exempt = false;
+}
 
 /*
 	sp is R15 behind the call or return and its slot.

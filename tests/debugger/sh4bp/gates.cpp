@@ -2211,6 +2211,206 @@ static void gate_slot()
 
 
 /*
+	A stop between a bt/s that was not taken and its slot, with the slot's address armed during the stop, and the
+	same address arrived at as a branch target afterwards. The resume exemption is for the instruction that runs
+	first: the slot runs without a check call, and the arrival behind it stops.
+
+	The program, a pass of 16 instructions of the interpreter:
+
+	   1  top:  add #1, r9
+	   2        mov #0, r3
+	   3        clrt
+	   4  B:    bt/s end        not taken
+	   5  S:    add #1, r1      its slot
+	   6        add #1, r2
+	   7        tst r3, r3
+	   8        add #1, r3
+	   9        bt S            taken in the first round of a pass
+	  10  S:    add #1, r1      arrived at as a branch target
+	  11        add #1, r2
+	  12        tst r3, r3
+	  13        add #1, r3
+	  14        bt S            not taken in the second
+	  15        dt r8
+	  16        bf top
+
+	A breakpoint on S is checked in front of 4 (the pair stops at its branch) and of 10; one on the instruction
+	behind S in front of 6 and 11. A resume from a stop in front of place q runs q, and the stops that follow
+	are the checked places behind q, in the order of the program.
+*/
+#define MID_NOPS   16									//room for the instructions in front of the program
+#define MID_TOP    (G_buffer + 2 * MID_NOPS)
+#define MID_B      (MID_TOP + 6)
+#define MID_S      (MID_TOP + 8)
+#define MID_END    (MID_TOP + 22)
+
+//Writes the program with a run of instructions in front of it, and points the pc at the first of them: nops
+//single instructions, hops blocks of their own (a bra to the next instruction and its slot)
+static void mid_start(Engine e, u32 nops, u32 hops)
+{
+	machine_reset(e);
+
+	static const u16 code[] = {
+		0x7901,		//add #1, r9
+		0xE300,		//mov #0, r3
+		0x0008,		//clrt
+		0x8D06,		//bt/s MID_END
+		0x7101,		//add #1, r1
+		0x7201,		//add #1, r2
+		0x2338,		//tst r3, r3
+		0x7301,		//add #1, r3
+		0x89FA,		//bt MID_S
+		0x4810,		//dt r8
+		0x8BF4,		//bf MID_TOP
+		0x0009,		//nop: MID_END
+		0xAFFE,		//bra to itself
+		0x0009,
+	};
+
+	for (u32 i = 0; i < sizeof(code) / sizeof(code[0]); i++)
+		machine_write16(MID_TOP + i * 2, code[i]);
+
+	u32 pc = MID_TOP;
+
+	for (u32 i = 0; i < hops; i++)
+	{
+		pc -= 4;
+		machine_write16(pc, 0xA000);		//bra pc + 4
+		machine_write16(pc + 2, 0x0009);
+	}
+
+	for (u32 i = 0; i < nops; i++)
+	{
+		pc -= 2;
+		machine_write16(pc, 0x0009);
+	}
+
+	R(8) = 1000;
+
+	machine_set_pc(pc);
+}
+
+//The place of the instruction at the pc in its pass, 1 to 16; 0: not in the program
+static u32 mid_place()
+{
+	const u32 pc = Sh4cntx.pc;
+
+	if (pc < MID_TOP || pc >= MID_END)
+		return 0;
+
+	const u32 i = (pc - MID_TOP) / 2;	//0 to 10
+
+	if (i < 4)
+		return i + 1;
+	if (i < 9)
+		return i + 1 + (i == 8 ? R(3) == 2 : R(3) != 0) * 5;	//the two rounds of 5 to 9: r3 counts them from place 8 on
+
+	return i + 6;
+}
+
+static void gate_midpair()
+{
+	const u32 never = G_line;
+
+	struct Variant { const char* what; bool behind; };
+	const Variant variants[] = { { "the slot's address", false }, { "the slot's address and the instruction behind it", true } };
+
+	bool between_seen = false;
+
+	for (Engine e : all_engines)
+	{
+		const char* en = engine_name(e);
+		const u32 runs = e == ENGINE_INTERP ? 16 : 4;
+
+		u32 places = 0;
+
+		for (u32 run = 0; run < runs; run++)
+		{
+			for (const Variant& v : variants)
+			{
+				//the first slice end is a pause: for the interpreter at each place of the pass in turn
+				mid_start(e, e == ENGINE_INTERP ? run : 0, e == ENGINE_INTERP ? 0 : run);
+
+				if (e == ENGINE_FALLBACK)
+					bps({ never });
+
+				knobs.pause_every = 1;
+				MachineStop s = machine_resume();
+				knobs.pause_every = 0;
+
+				u32 q = mid_place();
+
+				if (!check(s.debugger && s.cause == StopCause::Pause && q != 0 && (e != ENGINE_FALLBACK || machine_used_fallback()),
+					"%s: the pause at the first slice end is in the program (%08X)", en, s.pc))
+					continue;
+
+				places |= 1u << q;
+
+				const u32 paused = q;
+				const bool between = q == 5;
+
+				between_seen = between_seen || between;
+
+				//the slot's address is armed in the stop
+				if (v.behind)
+					bps({ MID_S, MID_S + 2, never });
+				else
+					bps({ MID_S, never });
+
+				//what the registers count in front of place q: passes begun, and runs of the slot's address
+				u32 pass = R(9);
+				u32 s_runs = R(1);
+
+				bool ok = true;
+				char seen[160] = "";
+
+				for (u32 i = 0; i < 6 && ok; i++)
+				{
+					//place q runs, up to the next checked place
+					for (;;)
+					{
+						if (q == 1)
+							pass++;
+						if (q == 5 || q == 10)
+							s_runs++;
+
+						q = q == 16 ? 1 : q + 1;
+
+						if (q == 4 || q == 10 || (v.behind && (q == 6 || q == 11)))
+							break;
+					}
+
+					const u32 want_pc = q == 4 ? MID_B : (q == 10 ? MID_S : MID_S + 2);
+					const u32 want_id = q == 6 || q == 11 ? 2 : 1;
+
+					s = machine_resume();
+
+					snprintf(seen + strlen(seen), sizeof(seen) - strlen(seen), " %08X", s.pc);
+
+					ok = is_bp(s, want_id, want_pc) && mid_place() == q && R(9) == pass && R(1) == s_runs;
+
+					if (!ok)
+						note("%s, paused in front of place %u, %s armed: stop %u is at %08X (id %u, place %u, pass %u, %u runs of the slot's address), the rules have %08X (id %u, place %u, pass %u, %u runs)",
+							en, paused, v.what, i + 1, s.pc, s.id, mid_place(), R(9), R(1), want_pc, want_id, q, pass, s_runs);
+				}
+
+				check(ok, "%s: paused in front of place %u%s, %s armed in the stop: the six stops that follow are the checked places behind the first instruction that runs (%s)",
+					en, paused, between ? ", between the bt/s and its slot" : "", v.what, seen);
+			}
+		}
+
+		u32 count = 0;
+		for (u32 q = 1; q <= 16; q++)
+			count += (places >> q) & 1;
+
+		check(e == ENGINE_INTERP ? count == 16 : count >= 2, "%s: the pauses were in front of %u places of the pass", en, count);
+	}
+
+	check(between_seen, "the interpreter was paused between the bt/s and its slot");
+}
+
+
+/*
 	An event breakpoint on the machine's vblank. The stop is where the slice of the event ends; a SLEEP wait is
 	cut short by it, and an interrupt that is accepted on the way out of the stop returns behind the SLEEP.
 */
@@ -2540,6 +2740,7 @@ const Gate gates[] = {
 	{ "b13", "B13 interpreter: n steps equal a run of n instructions", gate_b13 },
 	{ "b14", "B14 jit: n steps equal a run to the n-th instruction", gate_b14 },
 	{ "slot", "the interpreter between a conditional branch that is not taken and its slot: steps, arming, stops", gate_slot },
+	{ "midpair", "a slot armed in a stop between its branch and it: the slot runs, the arrival at its address behind it stops", gate_midpair },
 	{ "arm", "page discards on arming, blocks over two pages, category mask, breakpoints added in a stop", gate_arm },
 	{ "event", "an event breakpoint on the vblank of the machine: at a slice end, in a SLEEP wait, with an interrupt request", gate_event },
 };
