@@ -615,6 +615,49 @@ static void test_mixs()
 	check(dsp_reads() == 0x300, "a late send adds to the sweep before the running one");
 	check(dsp_reads() == 0x7000, "and the running sweep is the next sample's");
 
+	//The sample in which the DSP reads a send that is made for sample 0, the samples behind it sending 0. A send is
+	//in the bank the DSP starts to read at the first step 0 behind the next SweepBegin: with the sample's inputs
+	//and behind a called SweepBegin that is a sample on, without one it is the step 0 that follows the send
+	auto read_in = [&](int form)
+	{
+		int at = -1, times = 0;
+
+		dsp.Reset();
+		put(dsp, 0, inst);
+
+		for (int n = 0; n < 4; n++)
+		{
+			AicaDspSampleInputs in;
+
+			memset(&in, 0, sizeof(in));
+			in.mixs_sent = 1 << 3;
+			in.mixs[3] = n == 0 ? 0x100 : 0;
+
+			if (form == 0)
+				dsp.RunSample(&in);
+			else
+			{
+				if (form == 1)
+					dsp.SweepBegin();
+
+				dsp.MixsSend(3, in.mixs[3]);
+				dsp.RunSample();
+			}
+
+			if (dsp.Y_REG == 0x1000)
+			{
+				at = n;
+				times++;
+			}
+		}
+
+		return times == 1 ? at : -1;
+	};
+
+	check(read_in(0) == 1, "a send of a sample's inputs is read in the sample after, and in no other");
+	check(read_in(1) == 1, "so is a send between SweepBegin and RunSample");
+	check(read_in(2) == 0, "a send in front of a RunSample without SweepBegin is read by that RunSample");
+
 	//the CPU has the bank the DSP reads
 	dsp.Reset();
 	put(dsp, 0, inst);
