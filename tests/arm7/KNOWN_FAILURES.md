@@ -10,10 +10,22 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
+| D5 | `arm7.directed` `fiq` | 8 | 7 | 1 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 2 | 2 |
 
-Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 126/126, the r1 and the CPSR of the 45 vendor jobs,
-the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
+Everything else passes: `arm7.vendor` 45/45, the other 126 cases of `arm7.directed`, the r1 and the CPSR of the
+45 vendor jobs, the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
+
+### D5: L behind a request of level 0
+
+`k_blkphase.s` stores L as it finds it (`wren7-rtl/model/tests/hw/fiqdiag/hw`, the word at 0x78 of `d*.bin`).
+`d4.bin` has 7, the level of the job before it. The job of `d4.bin` is one with 0 in SCILV0-2: the one sample
+interval is enabled and pending and it takes no interrupt in 2048 adds (r7 = 2048, r0 = 0x100). `d5.bin`, the job
+behind it, has 0.
+
+Here a request of level 0 is dropped in front of the controller (`SoundCPU_impl::InterruptChange` in
+`hw/arm7/SoundCPU.cpp`), and L keeps the level of the last request that interrupted: 7 behind that job. The case
+`L behind level 7 and behind level 0` of `fiq` is the three jobs.
 
 ### D7: where a reset finds the ARM
 
@@ -37,7 +49,7 @@ the data sheet and on wren7's model only, and is not changed until a console cap
 
 | | what | console / data sheet | here | |
 |---|---|---|---|---|
-| D5 | interrupt controller: more than one request pending, and L behind a request of level 0 | not measured with more than one request. L read 0 at the start of the job behind one whose requests had level 0, and 7 before that job (`fiqdiag` `d4.bin`, `d5.bin`) | the lowest pending bit gives the level, and nothing interrupts when that level is 0, as wren7's model has it (`update_arm_interrupts` in `hw/aica/aica_mmio.cpp`, `SoundCPU_impl::InterruptChange`); L keeps the level of the last request that interrupted | not measured |
+| D5 | interrupt controller: more than one request pending | not measured | the lowest pending bit gives the level, and nothing interrupts when that level is 0, as wren7's model has it (`update_arm_interrupts` in `hw/aica/aica_mmio.cpp`, `SoundCPU_impl::InterruptChange`) | not measured |
 | D5 | the request in service when ARMRST is held: the handler has read L and not written M yet | not measured: every FIQ kernel of wren7-rtl writes M before it enables FIQs. A job finds SCIEB and L as the job before left them (`fiqdiag` `d1.bin` to `d5.bin`, the second region), so ARMRST does not reset the registers of the controller; nothing shows the request in service | kept: `SoundCPU_impl::SetResetState` resets the ARM and leaves the controller (`e68k_out`, `e68k_reg_M`) alone. The program that is started next gets no FIQ until it writes bit 0 of M. One that writes M in its handler only, as the ARM crt0 of KallistiOS does, gets none at all | not measured. The console jobs that decide it: `k_blkphase.s` with P5 = 4 (`a5`: L read, no M write), then a kernel that enables the one sample interval and FIQs without reading L or writing M and counts its interrupts. None: the service is kept. One per sample: the reset ends it, and `SetResetState` has to |
 | D7 | registers when the machine is switched on | not known: a console job starts with what the programs before it left | cleared, with VisualBoyAdvance's GBA stack pointers (R13 = 0x03007F00, R13_irq = 0x03007FA0, R13_svc = 0x03007FE0) and CPSR = 0x53 (`SoundCPU_impl::Reset` in `hw/arm7/SoundCPU.cpp`); the first reset puts that CPSR into SPSR_svc | not measured |
 | D8 | `STR` of R15 | the instruction's address + 12 (data sheet; console for STM) | + 8 in every word STR handler of `arm-new.h`; STM stores + 12 | pending console confirmation |

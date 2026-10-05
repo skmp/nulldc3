@@ -57,9 +57,10 @@ iteration (`model/tests/hw/timing/SUMMARY.txt`).
 None gets an interrupt either. The checks `fiq` and `scilv` drive the interrupt controller in front of nFIQ
 through the registers a guest has for it, with the one sample interval as the request: a request of level 0
 does not interrupt, level 1 and 7 do and L reads the level; reading L releases nFIQ and nothing else does;
-writing bit 0 of M lets the next request in and nothing else does; SCILV0-2 read back as 0. What has to happen
-is what a Dreamcast did in wren7-rtl's `fiqdiag` jobs (`model/tests/hw/fiqdiag/hw`, `model/NOTES.md`
-"Interrupts"); the comment in `directed_main.cpp` names the capture behind each rule.
+writing bit 0 of M lets the next request in and nothing else does; L reads 0 behind a job whose requests had
+level 0; SCILV0-2 read back as 0. What has to happen is what a Dreamcast did in wren7-rtl's `fiqdiag` jobs
+(`model/tests/hw/fiqdiag/hw`, `model/NOTES.md` "Interrupts"); the comment in `directed_main.cpp` names the
+capture behind each rule.
 
 The jobs that run here are reset in SVC mode, with the flags their kernel leaves. The check `reset` holds and
 releases ARMRST in FIQ, SVC, IRQ and user mode with other flags: R14_svc and SPSR_svc take the PC and the CPSR,

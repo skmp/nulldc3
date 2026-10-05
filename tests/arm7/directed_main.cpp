@@ -523,6 +523,8 @@ static void run_traps()
 	  - SCILV0-2 read back as 0. k_blkphase.s stores the registers as it finds them at 0x1FF100, the second
 	    region of d*.bin: d3.bin and d4.bin have 0 in all three, and an L of 1 and 7, the level the job before
 	    them set up with SCILV0 = 0x80 and with 0xFF in all three
+	  - L does not keep the level of the last request that interrupted. d4.bin finds 7 in it, runs with a level
+	    of 0 and takes no interrupt, and d5.bin, the job behind it, finds 0
 
 	The job file of d1 to d5 is not kept, model/NOTES.md has what they ran with. The scenarios do what the
 	kernel does, with the bus accesses of its prologue and of its handler made by the test: the vector has a
@@ -561,7 +563,27 @@ static bool in_fiq()
 }
 
 //The prologue of k_blkphase.s: the levels, nothing pending, nothing in service, only the one sample interval
-//enabled, and FIQs on. The ARM is left in front of a sled of "add r7, r7, #1"
+//enabled, and FIQs on. The ARM is left in front of a sled of "add r7, r7, #1". Returns L as the prologue finds it
+static u32 fiq_prologue(u32 scilv0, u32 scilv1, u32 scilv2)
+{
+	u32 l = arm7m_read32(AICA_L);
+
+	arm7m_write32(AICA_SCILV0, scilv0);
+	arm7m_write32(AICA_SCILV0 + 4, scilv1);
+	arm7m_write32(AICA_SCILV0 + 8, scilv2);
+	arm7m_write32(AICA_SCIRE, 0x7FF);
+	arm7m_write32(AICA_M, 1);
+	arm7m_write32(AICA_SCIEB, SAMPLE_INTERVAL);
+
+	arm7m_context()->regs[R15_ARM_NEXT].I = FIQ_MAIN;
+
+	for (u32 i = 0; i < 3; i++)
+		arm7m_step();
+
+	return l;
+}
+
+//The machine is switched on with the program in wave RAM, and the program runs its prologue
 static void fiq_setup(u32 scilv0, u32 scilv1, u32 scilv2)
 {
 	static const u32 vector[] =
@@ -589,18 +611,7 @@ static void fiq_setup(u32 scilv0, u32 scilv1, u32 scilv2)
 
 	arm7m_release_reset();
 
-	arm7m_read32(AICA_L);
-	arm7m_write32(AICA_SCILV0, scilv0);
-	arm7m_write32(AICA_SCILV0 + 4, scilv1);
-	arm7m_write32(AICA_SCILV0 + 8, scilv2);
-	arm7m_write32(AICA_SCIRE, 0x7FF);
-	arm7m_write32(AICA_M, 1);
-	arm7m_write32(AICA_SCIEB, SAMPLE_INTERVAL);
-
-	arm7m_context()->regs[R15_ARM_NEXT].I = FIQ_MAIN;
-
-	for (u32 i = 0; i < 3; i++)
-		arm7m_step();
+	fiq_prologue(scilv0, scilv1, scilv2);
 }
 
 //A sample passes and the ARM gets to its next instruction. True: that was the entry of the FIQ, the ARM is behind
@@ -775,6 +786,65 @@ static void fiq_serviced(std::string& text)
 	}
 }
 
+//d3, d4, d5: a job with level 7, a job with level 0, and L as that one and the job behind it find it. A job of
+//k_blkphase.s ends in its handler in front of the L read, and the next one starts with the release of ARMRST
+static void fiq_level_0_l(std::string& text)
+{
+	char number[96];
+
+	fiq_setup(0xFF, 0xFF, 0xFF);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request of level 7 does not interrupt;";
+		return;
+	}
+
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	arm7m_read32(AICA_L);
+	arm7m_write32(AICA_M, 1);
+	fiq_return(text);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the second request of level 7 does not interrupt;";
+		return;
+	}
+
+	arm7m_hold_reset();
+	arm7m_release_reset();
+
+	u32 l = fiq_prologue(0, 0, 0);
+
+	if (l != 7)
+	{
+		snprintf(number, sizeof(number), " the job behind the one with level 7 finds %X in L, has to be 7;", l);
+		text += number;
+	}
+
+	for (u32 i = 0; i < 4; i++)
+	{
+		if (sample_interrupts(text))
+		{
+			text += " a request of level 0 interrupts;";
+			return;
+		}
+
+		arm7m_step();
+	}
+
+	arm7m_hold_reset();
+	arm7m_release_reset();
+
+	l = arm7m_read32(AICA_L);
+
+	if (l != 0)
+	{
+		snprintf(number, sizeof(number), " the job behind the one with level 0 finds %X in L, has to be 0;", l);
+		text += number;
+	}
+}
+
 static const Scenario fiq_scenarios[] =
 {
 	{ "level 0", &fiq_level_0 },
@@ -784,6 +854,7 @@ static const Scenario fiq_scenarios[] =
 	{ "L not read, M written", &fiq_no_acknowledge_1 },
 	{ "L not read, M written 4 times", &fiq_no_acknowledge_4 },
 	{ "L read, M written", &fiq_serviced },
+	{ "L behind level 7 and behind level 0", &fiq_level_0_l },
 };
 
 static void scilv_reads_0(std::string& text, u32 index)
