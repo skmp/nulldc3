@@ -99,7 +99,8 @@ bool cResetEvent::Wait(unsigned msec)//Wait for signal , then reset
 void cResetEvent::Wait()//Wait for signal , then reset
 {
 	pthread_mutex_lock( &mutx );
-	if (!state)
+	// pthread_cond_wait may return without a signal: only a Set() ends the wait
+	while (!state)
 	{
 		pthread_cond_wait( &cond, &mutx );
 	}
