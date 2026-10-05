@@ -206,13 +206,16 @@ static void TestUpgrade() {
 	CHECK(r.reply.upgrade);
 	CHECK(HasLine(r.reply, "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
 
-	// the query is ignored, the path is exact
+	// the query is ignored, the path is exact: any other target is a request for a static file
 	CHECK_EQ(Status(Upgrade("", "/ws?token=1")), 101);
 	CHECK_EQ(Status(Upgrade("", "/ws/")), 404);
-	CHECK_EQ(Status(Upgrade("", "/WS")), 404);
-	CHECK_EQ(Status(Upgrade("", "/%77s")), 404);
-	CHECK_EQ(Status(Upgrade("", "/ws2")), 404);
-	CHECK_EQ(Status(Upgrade("", "/")), 200);
+	CHECK_EQ(Status(Upgrade("", "/ws.txt")), 404);
+	for (const char* target : { "/WS", "/%77s", "/ws2", "/" }) {
+		r = Run(Upgrade("", target));
+		CHECK_EQ(r.reply.status, 200);
+		CHECK(!r.reply.upgrade);
+		CHECK_EQ(r.reply.body, std::string("plain:index.html"));
+	}
 
 	const char* base = "GET /ws HTTP/1.1\r\nHost: localhost\r\n";
 	const char* key = "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
@@ -300,17 +303,39 @@ static void TestProviderFiles() {
 	CHECK(HasLine(r.reply, "Content-Type: image/png"));
 	CHECK(HasLine(r.reply, "Cache-Control: no-cache"));
 
-	// not found is not found: no fallback to the page, also for paths without an extension
-	for (const char* target : { "/missing", "/missing.js", "/assets/missing-1234.js", "/assets", "/assets/", "/index.html/", "/workspace/panel", "/Index.html", "/favicon.ico" }) {
+	// A name without an extension that is no file is a route of the page: it gets the page, as fresh as "/".
+	for (const char* target : { "/missing", "/debugger", "/tool/sh4-sim", "/some/deep/route", "/assets", "/assets/missing", "/a.b/route", "/missing?file=x.js" }) {
+		r = Run(Get(target, "Host: localhost\r\nAccept-Encoding: gzip\r\n"));
+		CHECK_EQ(r.reply.status, 200);
+		CHECK_EQ(r.reply.body, std::string("gzip:index.html"));
+		CHECK(HasLine(r.reply, "Content-Type: text/html; charset=utf-8"));
+		CHECK(HasLine(r.reply, "Content-Encoding: gzip"));
+		CHECK(HasLine(r.reply, "Vary: Accept-Encoding"));
+		CHECK(HasLine(r.reply, "Cache-Control: no-cache"));
+		CHECK(HasLine(r.reply, "X-Content-Type-Options: nosniff"));
+	}
+	CHECK_EQ(Run(Get("/debugger")).reply.body, std::string("plain:index.html"));
+
+	// A name with an extension that is no file is 404, never the page; so is all that the path rules refuse.
+	for (const char* target : { "/missing.js", "/assets/missing-1234.js", "/Index.html", "/favicon.ico", "/route.v2", "/some/deep/route.map",
+			"/assets/", "/index.html/", "/workspace/", "/../missing", "/.missing", "/missing.", "/con" }) {
 		r = Run(Get(target));
 		CHECK_EQ(r.reply.status, 404);
 		CHECK(HasLine(r.reply, "X-Content-Type-Options: nosniff"));
 		CHECK(HasLine(r.reply, "Content-Type: text/plain; charset=utf-8"));
 	}
 
+	CHECK(HasExtension("index.html"));
+	CHECK(HasExtension("assets/app-1234.js"));
+	CHECK(HasExtension("a/b.tar.gz"));
+	CHECK(!HasExtension("debugger"));
+	CHECK(!HasExtension("tool/sh4-sim"));
+	CHECK(!HasExtension("a.b/route"));
+
 	// without a provider everything is 404
 	SetStaticProvider(nullptr);
 	CHECK_EQ(Status(Get("/")), 404);
+	CHECK_EQ(Status(Get("/debugger")), 404);
 	SetStaticProvider(&TestProvider);
 }
 
@@ -432,7 +457,7 @@ static void TestWebRoot() {
 
 	const char* missing[] = {
 		"/logo.png",						// only the provider has it
-		"/sub", "/sub/", "/assets", "/missing.txt",
+		"/sub/", "/missing.txt",
 		"/../secret.txt", "/..%2fsecret.txt", "/%2e%2e/secret.txt", "/%2e%2e%2fsecret.txt", "/assets/../../secret.txt",
 		"/assets/..%2f..%2fsecret.txt", "/..\\secret.txt", "/..%5csecret.txt", "/assets/../index.html",
 		"/../outside/secret.txt", "/./index.html", "//index.html", "/.hidden", "/index.html.", "/index.html%20",
@@ -442,8 +467,18 @@ static void TestWebRoot() {
 		CHECK_EQ(Run(Get(target), options).reply.status, 404);
 	// an absolute path in the target is still looked up below the root
 	CHECK_EQ(Run(Get("/" + (top / "secret.txt").generic_string()), options).reply.status, 404);
-	CHECK_EQ(Run(Get("/etc/passwd"), options).reply.status, 404);
+	CHECK_EQ(Run(Get("/etc/passwd.txt"), options).reply.status, 404);
 	CHECK_EQ(Run(Get("//etc/passwd"), options).reply.status, 404);
+
+	// A name without an extension that is no file gets the page of the root: routes, and directories too.
+	for (const char* target : { "/debugger", "/tool/sh4-sim", "/sub", "/assets", "/assets/deep/er", "/assets/missing", "/etc/passwd" }) {
+		r = Run(Get(target), options);
+		CHECK_EQ(r.reply.status, 200);
+		CHECK_EQ(r.reply.body, std::string("<html>root page</html>"));
+		CHECK(HasLine(r.reply, "Content-Type: text/html; charset=utf-8"));
+		CHECK(HasLine(r.reply, "Cache-Control: no-cache"));
+		CHECK(r.reply.head.find("Content-Encoding") == std::string::npos);
+	}
 
 	// symbolic links: fine inside the root, refused when they lead out of it
 	std::error_code ec;
@@ -455,6 +490,7 @@ static void TestWebRoot() {
 		fs::create_symlink("../secret.txt", root / "relative-out.txt", ec);
 		fs::create_symlink(root / "nowhere", root / "dangling.txt", ec);
 		fs::create_directory_symlink(top, root / "assets" / "up", ec);
+		fs::create_symlink(top / "secret.txt", root / "link-out", ec);
 		CHECK_EQ(Run(Get("/link-in.html"), options).reply.body, std::string("<html>root page</html>"));
 		CHECK_EQ(Run(Get("/dir-in/app-abcd.js"), options).reply.body, std::string("console.log(1)"));
 		CHECK_EQ(Run(Get("/link-out.txt"), options).reply.status, 404);
@@ -462,6 +498,9 @@ static void TestWebRoot() {
 		CHECK_EQ(Run(Get("/relative-out.txt"), options).reply.status, 404);
 		CHECK_EQ(Run(Get("/dangling.txt"), options).reply.status, 404);
 		CHECK_EQ(Run(Get("/assets/up/secret.txt"), options).reply.status, 404);
+		// without an extension the answer is the page, not what the link leads to
+		CHECK_EQ(Run(Get("/link-out"), options).reply.body, std::string("<html>root page</html>"));
+		CHECK_EQ(Run(Get("/dir-out"), options).reply.body, std::string("<html>root page</html>"));
 		CHECK_EQ(Run(Get("/assets/up/root/index.html"), options).reply.body, std::string("<html>root page</html>"));
 
 		// the root itself may be reached through a link
@@ -480,6 +519,7 @@ static void TestWebRoot() {
 	CHECK_EQ(Run(Get("/"), variant).reply.status, 200);
 	variant.webRoot = (top / "nowhere").string();
 	CHECK_EQ(Run(Get("/"), variant).reply.status, 404);
+	CHECK_EQ(Run(Get("/debugger"), variant).reply.status, 404);		// no page to fall back to
 	variant.webRoot = (root / "index.html").string();
 	CHECK_EQ(Run(Get("/"), variant).reply.status, 404);
 

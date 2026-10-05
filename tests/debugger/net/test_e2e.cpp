@@ -185,6 +185,12 @@ static void TestHttp(int port) {
 	CHECK_EQ(r.Header("Content-Type"), std::string("application/octet-stream"));
 
 	CHECK_EQ(TestClient::Get(port, "/missing.js").status, 404);
+	// a route of the page: no such file, no extension
+	r = TestClient::Get(port, "/debugger");
+	CHECK_EQ(r.status, 200);
+	CHECK_EQ(r.body, std::string("<plain page>"));
+	CHECK_EQ(r.Header("Content-Type"), std::string("text/html; charset=utf-8"));
+	CHECK_EQ(r.Header("Cache-Control"), std::string("no-cache"));
 	CHECK_EQ(TestClient::Get(port, "/../etc/passwd").status, 404);
 	CHECK_EQ(TestClient::Request(port, "GET / HTTP/1.1\r\nHost: evil.example\r\n\r\n").status, 403);
 	CHECK_EQ(TestClient::Request(port, "GET / HTTP/1.1\r\nHost: localhost.evil.example:" + std::to_string(port) + "\r\n\r\n").status, 403);
@@ -261,11 +267,12 @@ static void TestWebRoot() {
 	CHECK(r.body == Pattern(kBigFile));
 	CHECK_EQ(r.Header("Content-Type"), std::string("application/wasm"));
 	CHECK_EQ(r.Header("Cache-Control"), std::string("max-age=31536000, immutable"));
-	for (const char* target : { "/../secret.txt", "/%2e%2e/secret.txt", "/..%2fsecret.txt", "/link.txt", "/assets/../../secret.txt", "/assets/big.bin", "/nothing" }) {
+	for (const char* target : { "/../secret.txt", "/%2e%2e/secret.txt", "/..%2fsecret.txt", "/link.txt", "/assets/../../secret.txt", "/assets/big.bin", "/nothing.txt" }) {
 		r = TestClient::Get(port, target);
 		CHECK_EQ(r.status, 404);
 		CHECK(r.body.find("secret") == std::string::npos);
 	}
+	CHECK_EQ(TestClient::Get(port, "/nothing").body, std::string("<disk page>"));
 
 	// the WebSocket lives next to the files
 	TestClient ws;

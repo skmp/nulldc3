@@ -527,6 +527,20 @@ bool ReadRootFile(const std::string& root, const std::string& path, std::string*
 	return (std::uintmax_t)file.gcount() == size;
 }
 
+// The file for a plain path: from the web root when there is one, from the provider otherwise.
+bool LoadStatic(const Options& options, const std::string& path, bool acceptGzip, StaticFile* file) {
+	if (!options.webRoot.empty())
+		return ReadRootFile(options.webRoot, path, &file->body);
+	StaticProvider provider = gStaticProvider.load();
+	return provider && provider(path, acceptGzip, file);
+}
+
+// Does the last segment of a plain path have an extension?
+bool HasExtension(const std::string& path) {
+	size_t slash = path.rfind('/');
+	return path.find('.', slash == std::string::npos ? 0 : slash + 1) != std::string::npos;
+}
+
 const char* StatusText(int status) {
 	switch (status) {
 	case 101: return "Switching Protocols";
@@ -648,14 +662,17 @@ void Respond(const HttpRequest& req, const Options& options, const std::vector<s
 	}
 
 	StaticFile file;
+	bool acceptGzip = AcceptsGzip(req.GetList("accept-encoding"));
+	if (!LoadStatic(options, path, acceptGzip, &file)) {
+		// A name without an extension that is no file is a route of the page and gets the page. A name
+		// with one stays 404: the URL of an asset that is gone must not be answered with HTML and 200.
+		file = StaticFile();
+		if (HasExtension(path) || !LoadStatic(options, "index.html", acceptGzip, &file))
+			return SetError(reply, 404);
+		path = "index.html";
+	}
 	std::string headers;
-	if (!options.webRoot.empty()) {
-		if (!ReadRootFile(options.webRoot, path, &file.body))
-			return SetError(reply, 404);
-	} else {
-		StaticProvider provider = gStaticProvider.load();
-		if (!provider || !provider(path, AcceptsGzip(req.GetList("accept-encoding")), &file))
-			return SetError(reply, 404);
+	if (options.webRoot.empty()) {
 		headers += "Vary: Accept-Encoding\r\n";
 		if (file.gzip)
 			headers += "Content-Encoding: gzip\r\n";

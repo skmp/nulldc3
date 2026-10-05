@@ -54,6 +54,7 @@ static void TestBuiltin(int port) {
 	// only the page exists
 	CHECK_EQ(TestClient::Get(port, "/assets/index.js").status, 404);
 	CHECK_EQ(TestClient::Get(port, "/bundle-info.json").status, 404);
+	CHECK(TestClient::Get(port, "/workspace").body == page);
 }
 
 static void TestBundle(int port, const std::string& dir) {
@@ -136,12 +137,14 @@ static void TestBundle(int port, const std::string& dir) {
 	CHECK_EQ(r.Header("Cache-Control"), std::string("no-cache"));
 	CHECK_EQ(TestClient::Get(port, "/?ws=ws://127.0.0.1:1/ws").body, index);
 
-	// a stale asset name is a 404, not the page
+	// a stale asset name is a 404, not the page; a route of the page is the page
 	CHECK(webui::Find("assets/index-stale000.js") == nullptr);
 	CHECK(webui::Find("") == nullptr);
 	CHECK(webui::Find("/index.html") == nullptr);
 	CHECK_EQ(TestClient::Get(port, "/assets/index-stale000.js").status, 404);
-	CHECK_EQ(TestClient::Get(port, "/workspace").status, 404);
+	r = TestClient::Get(port, "/workspace");
+	CHECK(r.body == index);
+	CHECK_EQ(r.Header("Cache-Control"), std::string("no-cache"));
 }
 
 int main(int argc, char** argv) {

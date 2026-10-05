@@ -114,7 +114,9 @@ async function run(port) {
   response = await httpGet(port, '/', { Host: 'evil.example' });
   check(response.status === 403, 'a foreign Host is refused');
   response = await httpGet(port, '/no/such/file.js');
-  check(response.status === 404, 'unknown paths are 404');
+  check(response.status === 404, 'an unknown file is 404');
+  response = await httpGet(port, '/no/such/route');
+  check(response.status === 200 && /^text\/html/.test(response.headers['content-type']), 'an unknown path without an extension is the page');
 
   // no Origin header: a tool, not a browser
   const socket = await connect(port);

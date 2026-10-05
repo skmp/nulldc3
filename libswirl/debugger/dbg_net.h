@@ -43,6 +43,10 @@ struct Options {
 // of those hosts. Everything else is answered 403, which is what stops a web page that rebinds its own
 // name to this address.
 //
+// Every GET other than /ws is a static file, from Options::webRoot or else from the static provider below;
+// the query string is ignored. A path that is not found is answered with index.html when its last segment
+// has no extension (a route of the page), and with 404 when it has one.
+//
 // Client ids start at 1 and are not reused while the Server object lives. OnOpen is followed by exactly one
 // OnClose, also when the server stops.
 class Server {
