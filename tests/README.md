@@ -33,6 +33,7 @@ way.
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
 | `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses, RTE with a delay slot that reads what it restores, loads of FPSCR, TRAPA, FTRC at the edges of its range and of NaNs, FMAC on operands that show how often it rounds) | none |
+| `sh4.directed.dynarec.canonical` | `sh4.directed.dynarec` on a dynarec that calls the canonical helpers of the shil opcodes (`CANONICAL_TEST`, `sh4_dynarec/README.md`), against the same baseline | none |
 | `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them, the host rounding mode of every FPSCR.RM, the host FP mode of a thread that runs the CPU, the exception registers of TRAPA | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | ADC, SBC and RSC at the edges with the carry clear and set, hand-written results | none |
@@ -269,6 +270,7 @@ repository if it is there. Without it they are skipped, or fail with `-DNULLDC_T
 |---|---|---|
 | `sh4.fpu.scalar` | FADD FSUB FMUL FDIV FMAC FSQRT FTRC FCMP FABS FNEG FSRRA FCNVDS FCNVSD, single and double precision, through the SH4 interpreter and through the dynarec, against the 225,036 records a Dreamcast answered | a shrike4-rtl checkout |
 | `sh4.fpu.vector` | FIPR FTRV FSCA FSRRA through both, against shrike4-rtl's bit-exact model on 1,355,584 generated cases and against 15,642 console records, which the model has to answer as the console did | a shrike4-rtl checkout |
+| `sh4.fpu.scalar.canonical` `sh4.fpu.vector.canonical` | the two on a dynarec that calls the canonical helpers of the shil opcodes (`CANONICAL_TEST`), against the same baselines; FSCA is left out of the second | a shrike4-rtl checkout |
 
 Both count, per group of instruction, FPSCR setting and kind of operand, the cases in which each engine leaves
 the hardware's values (bit for bit), the hardware's FPSCR, and in which the two engines agree, and are gated

@@ -52,8 +52,9 @@ Both engines end in the same `die()` / `verify()` / unaligned access. They agree
   `native` column of the baselines has, per file, for how many vectors it is not so; `README.md` lists the 35 files
   that are at 0.
 * The x64 backend picks code by host CPU feature. With FMA, as measured, FMAC is `vfmadd231ss`; without it the
-  backend calls the canonical helper, which is the `fmaf` the interpreter computes FMAC with. That path is not what
-  ctest runs on a CPU with FMA. The AVX-512 path of `shop_frswap` was not run either.
+  backend calls the canonical helper, which is the `fmaf` the interpreter computes FMAC with. That branch is not
+  what ctest runs on a CPU with FMA; the helper it calls is run by the `.canonical` tests (`README.md`). The
+  AVX-512 path of `shop_frswap` was not run either.
 
 ## sh4.singlestep.dynarec
 

@@ -38,7 +38,8 @@
 	the counts into the file. KNOWN_FAILURES.md has the reason for every count that is below its total.
 
 	A run of a part of the groups (--group) or one that writes the baseline is not compared with the baseline
-	and does not end in PASS.
+	and does not end in PASS. --except leaves groups out of a run that is compared: the report says how many, and
+	a pattern that leaves out nothing fails.
 
 	--why counts, per group and over all of them, why the cases that are not as on the hardware are not. The suite
 	itself tells a crash, an FPU exception that is not raised and an FPSCR that is not written. For a wrong value
@@ -94,7 +95,9 @@ struct FpuOptions
 {
 	std::string data_dir;		//the shrike4-rtl checkout
 	std::string baseline;
+	std::string name;			//what the report calls the test, empty: its own name
 	std::string select;			//only the groups that match, no baseline check
+	std::string except;			//not the groups that match. The others are compared with the baseline
 	bool update_baseline;
 	bool strict;				//counts above the baseline fail
 	bool require_data;			//test data that is not there is an error, not a reason to skip
@@ -118,7 +121,8 @@ bool fpu_suite_begin(const char* name, const FpuOptions& opt);
 //The index of the group <name>. Groups are reported and written in the order they are first asked for
 u32 fpu_group(const std::string& name);
 
-//The group is run: there is no selection, or it matches. A selection without * or ? matches anywhere in the name
+//The group is run: there is no selection, or it matches, and no exception matches. A pattern without * or ? matches
+//anywhere in the name
 bool fpu_group_selected(u32 group);
 
 //Describes a case for the report: where it comes from and its operands

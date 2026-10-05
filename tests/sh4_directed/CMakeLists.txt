@@ -5,6 +5,8 @@
 #	sh4.directed.interp    the SH4 suites on them: the executables of sh4_singlestep and sh4_dynarec with
 #	sh4.directed.dynarec   --vectors, each with a baseline of its own here
 #	sh4.directed.differential
+#	sh4.directed.dynarec.canonical    a dynarec that calls the canonical helpers (CANONICAL_TEST), against the
+#	                                  baseline of sh4.directed.dynarec
 #
 #	The vectors are made here, the tests need no submodule.
 #
@@ -37,8 +39,12 @@ if(TARGET sh4_singlestep_dynarec)
   add_test(NAME sh4.directed.differential
     COMMAND sh4_differential --strict --name sh4.directed.differential --vectors "${nulldc_sh4_directed_dir}"
             --baseline "${CMAKE_CURRENT_SOURCE_DIR}/baseline_differential.txt")
-  set_tests_properties(sh4.directed.dynarec sh4.directed.differential PROPERTIES TIMEOUT 60)
+  add_test(NAME sh4.directed.dynarec.canonical
+    COMMAND sh4_singlestep_dynarec_canonical --strict --name sh4.directed.dynarec.canonical
+            --vectors "${nulldc_sh4_directed_dir}" --baseline "${CMAKE_CURRENT_SOURCE_DIR}/baseline_dynarec.txt")
+  set_tests_properties(sh4.directed.dynarec sh4.directed.differential sh4.directed.dynarec.canonical PROPERTIES TIMEOUT 60)
 else()
   nulldc_add_skipped_test(sh4.directed.dynarec "${nulldc_sh4_dynarec_missing}")
   nulldc_add_skipped_test(sh4.directed.differential "${nulldc_sh4_dynarec_missing}")
+  nulldc_add_skipped_test(sh4.directed.dynarec.canonical "${nulldc_sh4_dynarec_missing}")
 endif()

@@ -191,9 +191,25 @@ FPSCR.RM, and with round to zero the hardware's sine or cosine is one unit in th
 
 FPUL[31:16] is ignored by both (`FSCA.dn1.rn.upper` passes). In round to nearest every case is the hardware's.
 
+## 8. The x64 backend cannot call the canonical helper of FSCA
+
+**Groups:** the 11 `FSCA.*` groups, in `sh4.fpu.vector.canonical` only, which does not run them (`--except FSCA`):
+run there, 9 of them fail with `value-d` and `agree` at 0 (the other two are PR = 1, the interpreter's handler).
+`sh4.fpu.vector` has all 11, on the backend's own code.
+
+The helper (`fsca_table`, `hw/sh4/dyna/shil_canonical.h`) stores sine and cosine through a pointer to the register
+pair. The x64 backend keeps the two registers of a pair in host registers (`EXPLODE_SPANS`) and writes those back
+behind the call, over what the helper stored: FRn and FRn+1 are left with whatever the host registers held, 0 in
+the test. Nothing reaches that call in the emulator, the backend has code of its own for FSCA and the helper is
+called only in a `CANONICAL_TEST` build. The helper itself is what a build without a JIT runs, and reads the
+table every other FSCA reads.
+
+    FSCA.dn1.rn.angle   angle #1 FSCA FPUL,DR2: FR2 is 00000000, hardware 38C91000; FR3 is 00000000, hardware 3F800000
+
 ## Where the engines differ from each other
 
-Nowhere: `agree` is the total in every group of both tests.
+Nowhere: `agree` is the total in every group of both tests, and in every group the `.canonical` tests run:
+the canonical helpers leave what the x64 backend's code leaves.
 
 ## What the records do not show
 

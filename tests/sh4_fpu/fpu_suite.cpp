@@ -77,6 +77,7 @@ struct Group
 {
 	std::string name;
 	bool selected;
+	bool excepted;				//left out by --except
 	Counts counts;
 	std::string first[FACETS];	//the first case that is not as on the hardware, or in which the engines differ
 	Reasons why[WHYS];			//--why: the reasons of the cases that are not as on the hardware
@@ -95,6 +96,7 @@ struct Outcome
 FILE* fpu_report;
 
 static std::string test_name;
+static std::string baseline_name;	//the test's own name: the baseline is its
 static FpuOptions options;
 static std::vector<Group> groups;
 static std::map<std::string, u32> group_index;
@@ -366,7 +368,7 @@ static bool save_baseline(const std::string& path)
 	if (!f)
 		return false;
 
-	fprintf(f, "# %s baseline: what devcast's SH4 interpreter and dynarec leave of the hardware's results, per group.\n", test_name.c_str());
+	fprintf(f, "# %s baseline: what devcast's SH4 interpreter and dynarec leave of the hardware's results, per group.\n", baseline_name.c_str());
 	fprintf(f, "#   total     cases, of which\n");
 	fprintf(f, "#   trap      the hardware raises the FPU exception and writes no result\n");
 	fprintf(f, "#   value-i   the interpreter leaves the hardware's FR, XF, FPUL and T        value-d   the dynarec does\n");
@@ -420,6 +422,10 @@ bool fpu_suite_options(int argc, char** argv, int first, const char* usage_head,
 			opt.data_dir = argv[++i];
 		else if (arg == "--group" && has_value)
 			opt.select = argv[++i];
+		else if (arg == "--except" && has_value)
+			opt.except = argv[++i];
+		else if (arg == "--name" && has_value)
+			opt.name = argv[++i];
 		else if (arg == "--baseline" && has_value)
 			opt.baseline = argv[++i];
 		else if (arg == "--update-baseline")
@@ -440,7 +446,7 @@ bool fpu_suite_options(int argc, char** argv, int first, const char* usage_head,
 			ok = false;
 	}
 
-	if (ok && opt.update_baseline && !opt.select.empty())
+	if (ok && opt.update_baseline && (!opt.select.empty() || !opt.except.empty()))
 	{
 		fprintf(stderr, "--update-baseline needs a run of every group\n\n");
 		ok = false;
@@ -453,6 +459,8 @@ bool fpu_suite_options(int argc, char** argv, int first, const char* usage_head,
 			"  --shrike4 <dir>      the shrike4-rtl checkout with the console's records, default %s\n"
 			"  --group <pattern>    only the groups that have <pattern> in their name, or match it if it has * or ?,\n"
 			"                       no baseline check\n"
+			"  --except <pattern>   not the groups that match <pattern>. The others are compared with the baseline\n"
+			"  --name <name>        what the report calls the test, for another build of the dynarec\n"
 			"  --baseline <file>    baseline file, default %s\n"
 			"  --update-baseline    write the counts of this run into the baseline file\n"
 			"  --strict             counts above the baseline fail as well: the baseline has to be the one of this\n"
@@ -473,7 +481,8 @@ bool fpu_suite_options(int argc, char** argv, int first, const char* usage_head,
 
 bool fpu_suite_begin(const char* name, const FpuOptions& opt)
 {
-	test_name = name;
+	test_name = opt.name.empty() ? name : opt.name;
+	baseline_name = name;
 	options = opt;
 
 	if (!load_baseline(opt.baseline) && !opt.update_baseline && opt.select.empty())
@@ -541,6 +550,15 @@ static bool glob(const char* pattern, const char* text)
 	return *text != 0 && (*pattern == '?' || *pattern == *text) && glob(pattern + 1, text + 1);
 }
 
+//A pattern without * or ? matches anywhere in the name
+static bool matches(const std::string& pattern, const std::string& name)
+{
+	if (pattern.find_first_of("*?") == std::string::npos)
+		return name.find(pattern) != std::string::npos;
+
+	return glob(pattern.c_str(), name.c_str());
+}
+
 u32 fpu_group(const std::string& name)
 {
 	std::map<std::string, u32>::const_iterator it = group_index.find(name);
@@ -553,12 +571,8 @@ u32 fpu_group(const std::string& name)
 	g.name = name;
 	memset(&g.counts, 0, sizeof(g.counts));
 
-	if (options.select.empty())
-		g.selected = true;
-	else if (options.select.find_first_of("*?") == std::string::npos)
-		g.selected = name.find(options.select) != std::string::npos;
-	else
-		g.selected = glob(options.select.c_str(), name.c_str());
+	g.excepted = !options.except.empty() && matches(options.except, name);
+	g.selected = !g.excepted && (options.select.empty() || matches(options.select, name));
 
 	groups.push_back(g);
 	group_index[name] = (u32)groups.size() - 1;
@@ -974,11 +988,14 @@ int fpu_suite_end()
 		"native", "crash");
 
 	u32 run = 0;
+	u32 excepted = 0;
 
 	for (size_t n = 0; n < groups.size(); n++)
 	{
 		const Group& g = groups[n];
 		const Counts& c = g.counts;
+
+		excepted += g.excepted;
 
 		if (!g.selected)
 			continue;
@@ -1067,7 +1084,11 @@ int fpu_suite_end()
 
 	if (run == 0 && problems.empty())
 	{
-		fprintf(fpu_report, "\nno group matches %s\n", options.select.c_str());
+		if (options.select.empty())
+			fprintf(fpu_report, "\n--except %s leaves no group\n", options.except.c_str());
+		else
+			fprintf(fpu_report, "\nno group matches %s\n", options.select.c_str());
+
 		return FPU_EXIT_ERROR;
 	}
 
@@ -1082,6 +1103,15 @@ int fpu_suite_end()
 
 	fprintf(fpu_report, "\n");
 	print_counts(strf("%u groups, %.2f s", run, seconds).c_str(), sum);
+
+	if (!options.except.empty())
+	{
+		fprintf(fpu_report, "\n%u groups are not run: --except %s\n", excepted, options.except.c_str());
+
+		//an exception that is not needed any more must not stay
+		if (!excepted)
+			fpu_problem("--except %s matches no group", options.except.c_str());
+	}
 
 	if (options.why)
 	{
@@ -1164,6 +1194,9 @@ int fpu_suite_end()
 
 int fpu_suite_skip(const char* name, const FpuOptions& opt, const std::string& reason)
 {
+	if (!opt.name.empty())
+		name = opt.name.c_str();
+
 	if (opt.require_data)
 	{
 		fprintf(stderr, "MISSING: %s: %s\n", name, reason.c_str());

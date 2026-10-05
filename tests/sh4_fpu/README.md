@@ -12,6 +12,9 @@ They are the fast tier's FPU baseline: devcast computes with the host's FPU, and
 the hardware's behaviour that gives, per kind of instruction, setting and operand. `KNOWN_FAILURES.md` has the
 reason for everything that is below 100 %.
 
+`sh4.fpu.scalar.canonical` and `sh4.fpu.vector.canonical` are the two tests on another build of the dynarec, see
+"The canonical helpers" below.
+
 ## The data
 
 Nothing of the hardware's results is in this repository. The tests read them from a shrike4-rtl checkout, and
@@ -139,6 +142,27 @@ the helper the interpreter's FMAC is, and FIPR adds with `haddps` or, without SS
 the same order. The results are the same, so the baselines are those of any x86-64 host. The report's third line
 says what the host has: a test run covers the code of that host only.
 
+## The canonical helpers
+
+The shil opcodes that compute have a canonical helper, a C function in `hw/sh4/dyna/shil_canonical.h`. A backend
+calls it for an opcode it has no code of its own for: the x64 backend for FMAC on a CPU without FMA, and a build
+without a JIT (`TARGET_NO_JIT`, the `cpp` backend) for all of them. On an x86-64 host with FMA the two tests above
+do not reach the helpers of FADD to FDIV, FSQRT, FMAC, FSRRA, FTRC, FIPR and FTRV: the backend has code for each.
+
+`sh4_fpu_canonical` is `sh4_fpu` linked with the x64 backend built with `CANONICAL_TEST`: it compiles the calls of
+the interpreter, the jumps, the moves and the memory accesses itself and calls the helper for every other opcode,
+the FPU instructions among them.
+`sh4.fpu.scalar.canonical` and `sh4.fpu.vector.canonical` run it against the same two baselines, with `--strict`:
+the helpers have to leave what the backend's own code leaves, in every group. A fix that moves a baseline has to
+move the helper as well, there is no second baseline to update.
+
+    <build dir>/sh4_fpu/sh4_fpu_canonical scalar --name sh4.fpu.scalar.canonical
+    <build dir>/sh4_fpu/sh4_fpu_canonical vector --name sh4.fpu.vector.canonical --except FSCA
+
+`--except FSCA` leaves the 11 FSCA groups out: the x64 backend cannot call that helper (`KNOWN_FAILURES.md`, 8.).
+The report says how many groups an exception leaves out, and an exception that matches no group fails the run.
+`--name` is what the report calls the test.
+
 ## Looking at a failure
 
     sh4_fpu scalar --group FMUL.dn1 --first        # a part of a group's name, * and ? work
@@ -158,7 +182,8 @@ says what the host has: a test run covers the code of that host only.
   is none today, and a new one is a new kind of failure. `KNOWN_FAILURES.md` is written from this output.
 * `--emu-output` shows what the emulator code prints.
 
-A run with `--group` or `--update-baseline` is not compared with the baseline and does not end in `PASS`.
+A run with `--group` or `--update-baseline` is not compared with the baseline and does not end in `PASS`. A run
+with `--except` is compared, in the groups it has; the baseline cannot be written from it.
 
 ## What the tests do not have
 

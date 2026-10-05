@@ -2,6 +2,8 @@
 #
 #	sh4.fpu.scalar    the console's records of the scalar FPU instructions, through the interpreter and the dynarec
 #	sh4.fpu.vector    FIPR, FTRV, FSCA and FSRRA against shrike4-rtl's bit-exact model, through both as well
+#	sh4.fpu.scalar.canonical    the two on a dynarec that calls the canonical helpers (CANONICAL_TEST), against
+#	sh4.fpu.vector.canonical    the same baselines
 #
 #	The console's records and the model are shrike4-rtl's. Nothing of it is in this repository: its headers are
 #	compiled in from the checkout (NULLDC_SHRIKE4_DIR) and its data is read from there. Without a checkout the
@@ -44,7 +46,7 @@ if(NOT NULLDC_HAVE_SHRIKE4)
   message(STATUS "The tests that compare the SH4 FPU with the console's results do not run.")
 endif()
 
-foreach(test scalar vector)
+foreach(test scalar vector scalar.canonical vector.canonical)
   if(NOT TARGET nulldc_sh4_dynarec)
     nulldc_add_skipped_test(sh4.fpu.${test} "${nulldc_sh4_dynarec_missing}")
   elseif(NOT NULLDC_HAVE_SHRIKE4)
@@ -66,30 +68,41 @@ else()
 endif()
 
 # The dynarec is entered the way sh4.singlestep.dynarec and sh4.differential enter it
-add_executable(sh4_fpu
-  main.cpp
-  fpu_suite.cpp   fpu_suite.h
-  scalar.cpp
-  vector.cpp
-  vector_cases.cpp    vector_cases.h
-  vector_anchors.cpp  vector_anchors.h
-  "${nulldc_tests_path}/sh4_dynarec/dynarec_runner.cpp"
-  "${nulldc_tests_path}/sh4_dynarec/dynarec_runner.h"
-)
-target_link_libraries(sh4_fpu PRIVATE nulldc_sh4_dynarec nulldc_test_common)
-target_include_directories(sh4_fpu PRIVATE
-  "${nulldc_tests_path}/sh4_dynarec"
-  "${NULLDC_SHRIKE4_DIR}/tools/hw/fpdn"
-  "${NULLDC_SHRIKE4_DIR}/model"
-  "${NULLDC_SHRIKE4_DIR}/model/fipr/hw_specials"
-)
-target_compile_definitions(sh4_fpu PRIVATE
-  NULLDC_SHRIKE4_DIR="${NULLDC_SHRIKE4_DIR}"
-  NULLDC_BASELINE_SCALAR="${CMAKE_CURRENT_SOURCE_DIR}/baseline_scalar.txt"
-  NULLDC_BASELINE_VECTOR="${CMAKE_CURRENT_SOURCE_DIR}/baseline_vector.txt"
-)
+foreach(variant "" _canonical)
+  add_executable(sh4_fpu${variant}
+    main.cpp
+    fpu_suite.cpp   fpu_suite.h
+    scalar.cpp
+    vector.cpp
+    vector_cases.cpp    vector_cases.h
+    vector_anchors.cpp  vector_anchors.h
+    "${nulldc_tests_path}/sh4_dynarec/dynarec_runner.cpp"
+    "${nulldc_tests_path}/sh4_dynarec/dynarec_runner.h"
+  )
+  target_link_libraries(sh4_fpu${variant} PRIVATE nulldc_sh4_dynarec${variant} nulldc_test_common)
+  target_include_directories(sh4_fpu${variant} PRIVATE
+    "${nulldc_tests_path}/sh4_dynarec"
+    "${NULLDC_SHRIKE4_DIR}/tools/hw/fpdn"
+    "${NULLDC_SHRIKE4_DIR}/model"
+    "${NULLDC_SHRIKE4_DIR}/model/fipr/hw_specials"
+  )
+  target_compile_definitions(sh4_fpu${variant} PRIVATE
+    NULLDC_SHRIKE4_DIR="${NULLDC_SHRIKE4_DIR}"
+    NULLDC_BASELINE_SCALAR="${CMAKE_CURRENT_SOURCE_DIR}/baseline_scalar.txt"
+    NULLDC_BASELINE_VECTOR="${CMAKE_CURRENT_SOURCE_DIR}/baseline_vector.txt"
+  )
+endforeach()
+
+# The x64 backend cannot call the canonical helper of FSCA: the helper stores the two results through a pointer,
+# the backend keeps the pair in host registers and writes those back. Its FSCA groups are left out
+set(nulldc_sh4_fpu_canonical_scalar "")
+set(nulldc_sh4_fpu_canonical_vector --except FSCA)
 
 foreach(test scalar vector)
   add_test(NAME sh4.fpu.${test} COMMAND sh4_fpu ${test} --strict ${nulldc_sh4_fpu_require_data})
-  set_tests_properties(sh4.fpu.${test} PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE ${nulldc_sh4_fpu_skip_code})
+  add_test(NAME sh4.fpu.${test}.canonical
+    COMMAND sh4_fpu_canonical ${test} --strict --name sh4.fpu.${test}.canonical ${nulldc_sh4_fpu_canonical_${test}}
+            ${nulldc_sh4_fpu_require_data})
+  set_tests_properties(sh4.fpu.${test} sh4.fpu.${test}.canonical
+    PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE ${nulldc_sh4_fpu_skip_code})
 endforeach()
