@@ -33,7 +33,7 @@ way.
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
 | `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses) | none |
-| `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them | none |
+| `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them, the host rounding mode of every FPSCR.RM | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | ADC, SBC and RSC at the edges with the carry clear and set, hand-written results | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
@@ -63,7 +63,8 @@ More about the suites:
     sh4_dynarec/       the vectors through the dynarec, and the interpreter against the dynarec (README.md,
                        KNOWN_DIFFERENCES.md)
     sh4_directed/      hand-written vectors for all of the above
-    sh4_core/          the SH4 on SuperH4_impl: what is not one instruction on a vector state (reset)
+    sh4_core/          the SH4 on SuperH4_impl: what is not one instruction on a vector state (reset, the host
+                       FP mode)
     arm7/              the ARM7 interpreter: vendor programs, directed cases, wren7 console suites (README.md,
                        KNOWN_FAILURES.md)
     vendor/            the submodules
@@ -95,6 +96,7 @@ an SH4 does not do are filtered, each with a reason:
 | `privileged` | privileged instruction with SR.MD=0 (executed by the vectors, illegal instruction on an SH4) |
 | `trapa-nop` | TRAPA, recorded as a nop |
 | `host-nan` | the instruction produces a NaN, or converts one with FTRC: the expected value is the host's |
+| `fpscr-bits` | the vector expects unimplemented FPSCR bits stored: LDS / LDS.L to FPSCR of a value with bits 22-31 set. An SH4 has the low 22 bits, the others read 0 |
 
 Nothing else is skipped. The report has one line per file: total / run / pass-exact / pass-lenient / failed /
 filtered by reason, and a line for its notified vectors if it has any, then the totals and, for every file with
@@ -103,9 +105,9 @@ vectors that are not an exact pass, what its policy says about them.
 The FPU results in the vectors are host arithmetic. They are an oracle for the `fast` timing tier only, not for
 an exact FPU.
 
-Things the vectors do that devcast currently does as well, and that pass for that reason: FPSCR is loaded with
-its reserved bits (LDS / LDS.L to FPSCR), the delay slot of RTE runs on the register bank of the old SR, SR.RB is
-forced to 0 when SR.MD=0, SLEEP is executed again until an interrupt arrives.
+Things the vectors do that devcast currently does as well, and that pass for that reason: the delay slot of RTE
+runs on the register bank of the old SR, SR.RB is forced to 0 when SR.MD=0, SLEEP is executed again until an
+interrupt arrives.
 
 ### The baseline
 
@@ -168,6 +170,12 @@ vectors)
 The interpreter does not pass the last three: it writes PR behind the delay slot. The dynarec passes them, and
 the differential has the difference; `sh4_dynarec/KNOWN_DIFFERENCES.md` has more on it.
 
+All but one of the single-step vectors of LDS Rm,FPSCR and LDS.L @Rm+,FPSCR that can be run load a value with
+bits that FPSCR does not have, and expect them stored (`fpscr-bits`). The file has the loads instead (13 vectors):
+FFFFFFFF leaves 003FFFFF, which is what a console reads back, values with only the missing bits leave 0, a
+value without them is stored as it is, and the reserved RM = 2 and 3 are stored. A load that changes FR leaves
+FR0-FR15 and XF0-XF15 swapped.
+
 What an instruction leaves is written down from its definition in the SH-4 software manual, nothing of it comes
 from an emulator.
 
@@ -192,6 +200,10 @@ the baseline is committed, and a defect goes into the `known` list of the suite 
 * the reset state, after a power-on and after a manual reset: PC, SR, VBR and FPSCR as the hardware manual's table
   of initial register values has them (A0000000, 700000F0, 0, 00040001), the host FP mode of that FPSCR on the thread
   that did the reset (round to zero, flush to zero), and 0 in every register the manual leaves undefined.
+* FPSCR.RM and the host rounding mode, loaded with LDS Rm,FPSCR for RM = 0 to 3 with DN clear and set: 0 rounds
+  to nearest and 1 to zero. 2 and 3 are reserved and no console was measured with them: they are expected to round
+  as their bit 0 says, like the RTL and the soft-float reference of shrike4-rtl. Both engines compute with the
+  host FPU in that mode.
 
 A check that does not hold is printed with its line, and the test fails.
 

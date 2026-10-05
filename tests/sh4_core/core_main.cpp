@@ -6,10 +6,14 @@
 	"Initial register values": PC, SR, VBR and FPSCR, for a power-on and a manual reset alike), and so has the
 	host FP mode that goes with that FPSCR. Everything else is undefined in the manual; the emulator clears it,
 	and that is checked as what the tree documents.
+
+	FPSCR.RM and the host rounding mode. The interpreter and the code of the recompilers compute with the host
+	FPU in the mode UpdateFPSCR sets, so that mode is what decides how both round.
 */
 #include "sh4_env.h"
 
 #include "hw/sh4/sh4_if.h"
+#include "hw/sh4/sh4_interpreter.h"
 #include "hw/sh4/sh4_mmio.h"
 #include "hw/sh4/sh4_mmr.h"
 
@@ -174,6 +178,41 @@ static void test_reset(SuperH4* cpu, bool manual)
 	CHECK_REG("FPUL", ctx.fpul, 0);
 }
 
+//// FPSCR.RM
+
+//RM = 00 rounds to nearest and 01 to zero. 10 and 11 are reserved: no console was measured with them, they are
+//expected to round as their bit 0 says, which is what the RTL and the soft-float reference of shrike4-rtl do.
+//DN is flush to zero whatever RM is
+static void test_rounding_mode(SuperH4* cpu)
+{
+	bool round_to_zero, flush_to_zero;
+
+	if (!host_fp_mode(round_to_zero, flush_to_zero))
+		return;
+
+	cpu->Reset(false);
+
+	Sh4Context& ctx = Sh4cntx;
+
+	for (u32 dn = 0; dn < 2; dn++)
+	{
+		for (u32 rm = 0; rm < 4; rm++)
+		{
+			u32 value = (dn << 18) | rm;
+
+			//lds r3,fpscr, with the bits FPSCR does not have set as well
+			ctx.r[3] = 0xFFC00000 | value;
+			ExecuteOpcode(0x436A);
+
+			CHECK_REG("FPSCR", ctx.fpscr.full, value);
+
+			CHECK(host_fp_mode(round_to_zero, flush_to_zero));
+			CHECK(round_to_zero == ((rm & 1) != 0));
+			CHECK(flush_to_zero == (dn != 0));
+		}
+	}
+}
+
 int main()
 {
 	sh4_env_init();
@@ -182,6 +221,7 @@ int main()
 
 	test_reset(cpu, false);
 	test_reset(cpu, true);
+	test_rounding_mode(cpu);
 
 	bool round_to_zero, flush_to_zero;
 

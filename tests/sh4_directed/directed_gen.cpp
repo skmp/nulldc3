@@ -3,7 +3,8 @@
 	0xFFFFFFFF, 0x7FFFFFFF, 0x80000000) with T clear and set, and the delayed branches with a delay slot that
 	changes what the branch uses: T, the register it jumps through, PR. The single-step vectors are random and
 	have none of these: no ADDC whose sum is 0xFFFFFFFF with T set, for one, and add r1,r1 in every delay slot,
-	which leaves T and PR as they are.
+	which leaves T and PR as they are. And the loads of FPSCR, which the single-step vectors expect to store bits
+	that the register does not have.
 
 	sh4_directed_gen <dir> writes vector files in the format of the single-step vectors and under their file
 	names (ss_format.h), so the suites run them as they run those and the policy table applies as it is. A vector
@@ -29,6 +30,8 @@
 
 #define PC_BASE 0x8C010000
 #define PR_BASE 0x8C0F6000
+
+#define FPSCR_BASE 0x00040001
 
 #define OP_NOP 0x0009
 #define OP_CLRT 0x0008
@@ -462,6 +465,44 @@ static const Jump jumps[] =
 	{ "0000mmmm00000011_sz0_pr0", 0x0303, OP_STS_PR_R5, JUMP_OFFSET, JUMP_RETURN + JUMP_OFFSET, JUMP_OFFSET, JUMP_RETURN, JUMP_RETURN },
 };
 
+//// LDS Rm,FPSCR and LDS.L @Rm+,FPSCR: FPSCR has 22 bits (FR SZ PR DN, cause, enable, flag, RM), the 10 above them
+//// read 0 and are not written. A console reads 003FFFFF back after it loaded FFFFFFFF (shrike4-rtl,
+//// tools/hw/exceptions-intc/results_run1.txt, "A masks"). FR selects the FP bank: loading another FR than the
+//// one going in swaps FR0-FR15 and XF0-XF15. The instruction is at PC_BASE + 2 and loads from r3, or from the
+//// longword r3 points at
+
+struct FpscrLoad
+{
+	const char* file;
+	u16 opcode;
+	u32 value;			//what is loaded
+	u32 fpscr_after;
+};
+
+#define OP_LDS_R3_FPSCR 0x436A
+#define OP_LDSL_R3_FPSCR 0x4366
+
+#define FPSCR_FR 0x00200000
+#define FPSCR_ADDR 0x8C0F7000	//r3 of lds.l
+
+static const FpscrLoad fpscr_loads[] =
+{
+	//file                        opcode            loaded      FPSCR after
+	{ "0100mmmm01101010_sz0_pr0", OP_LDS_R3_FPSCR,  0xFFFFFFFF, 0x003FFFFF },
+	{ "0100mmmm01101010_sz0_pr0", OP_LDS_R3_FPSCR,  0xFFC00000, 0x00000000 },		//only bits that are not there
+	{ "0100mmmm01101010_sz0_pr0", OP_LDS_R3_FPSCR,  0x00400000, 0x00000000 },		//the lowest of them
+	{ "0100mmmm01101010_sz0_pr0", OP_LDS_R3_FPSCR,  0x80040001, 0x00040001 },
+	{ "0100mmmm01101010_sz0_pr0", OP_LDS_R3_FPSCR,  0x00140001, 0x00140001 },		//nothing to drop
+	{ "0100mmmm01101010_sz0_pr0", OP_LDS_R3_FPSCR,  0x003FFFFF, 0x003FFFFF },
+	{ "0100mmmm01101010_sz0_pr0", OP_LDS_R3_FPSCR,  0xFFC40002, 0x00040002 },		//RM = 10 and 11, reserved, are stored
+	{ "0100mmmm01101010_sz0_pr0", OP_LDS_R3_FPSCR,  0xFFC40003, 0x00040003 },
+	{ "0100mmmm01100110_sz0_pr0", OP_LDSL_R3_FPSCR, 0xFFFFFFFF, 0x003FFFFF },
+	{ "0100mmmm01100110_sz0_pr0", OP_LDSL_R3_FPSCR, 0xFFC00000, 0x00000000 },
+	{ "0100mmmm01100110_sz0_pr0", OP_LDSL_R3_FPSCR, 0x80040001, 0x00040001 },
+	{ "0100mmmm01100110_sz0_pr0", OP_LDSL_R3_FPSCR, 0x7FC40002, 0x00040002 },
+	{ "0100mmmm01100110_sz0_pr0", OP_LDSL_R3_FPSCR, 0x00440003, 0x00040003 },
+};
+
 //Every register has a value that no other one has, so an instruction that touches the wrong one shows
 static void base_state(SsState& s)
 {
@@ -486,7 +527,7 @@ static void base_state(SsState& s)
 	s.MACL = 0x11112222;
 	s.MACH = 0x33334444;
 	s.PR = PR_BASE;
-	s.FPSCR = 0x00040001;
+	s.FPSCR = FPSCR_BASE;
 	s.FPUL = 0x55556666;
 }
 
@@ -588,6 +629,44 @@ static void make_jump_vector(const Jump& j, SsTest& t)
 	end_vector(t, j.next);
 }
 
+static void make_fpscr_vector(const FpscrLoad& l, SsTest& t)
+{
+	begin_vector(t);
+
+	bool from_memory = l.opcode == OP_LDSL_R3_FPSCR;
+
+	t.initial.s.R[3] = from_memory ? FPSCR_ADDR : l.value;
+
+	t.final_.s = t.initial.s;
+
+	t.final_.s.FPSCR = l.fpscr_after;
+
+	if (from_memory)
+		t.final_.s.R[3] = FPSCR_ADDR + 4;
+
+	if ((l.fpscr_after ^ FPSCR_BASE) & FPSCR_FR)
+	{
+		for (u32 i = 0; i < 16; i++)
+		{
+			t.final_.s.FP0[i] = t.initial.s.FP1[i];
+			t.final_.s.FP1[i] = t.initial.s.FP0[i];
+		}
+	}
+
+	t.opcodes.op[SS_TEST_INSTRUCTION] = l.opcode;
+
+	end_vector(t, PC_BASE + 6);
+
+	if (from_memory)
+	{
+		SsCycle& c = t.cycles.c[SS_TEST_INSTRUCTION];
+
+		c.actions |= SS_ACTION_READ;
+		c.read_addr = FPSCR_ADDR;
+		c.read_val = l.value;
+	}
+}
+
 int main(int argc, char** argv)
 {
 	if (argc != 2)
@@ -627,6 +706,15 @@ int main(int argc, char** argv)
 
 		make_jump_vector(jumps[j], t);
 		files[jumps[j].file].push_back(t);
+		vectors++;
+	}
+
+	for (size_t l = 0; l < sizeof(fpscr_loads) / sizeof(fpscr_loads[0]); l++)
+	{
+		SsTest t;
+
+		make_fpscr_vector(fpscr_loads[l], t);
+		files[fpscr_loads[l].file].push_back(t);
 		vectors++;
 	}
 

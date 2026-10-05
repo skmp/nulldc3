@@ -32,17 +32,12 @@ static bool native()
 static const char known_rte[] =
 	"dynarec: RTE loads SR from SSR in front of its delay slot, which then runs on the register bank of the new SR. "
 	"The vectors (and the interpreter) run it on the bank of the old SR";
-static const char known_fpscr_rm[] =
-	"dynarec: the decoder ends in verify(fpu_cfg.RM < 2) when the next block starts with FPSCR.RM = 2 or 3, which this "
-	"instruction can load";
 static const char known_sum_order[] =
 	"dynarec: the x64 backend adds the 4 products in pairs, (p0 + p1) + (p2 + p3), the interpreter one by one";
 
 static const SsSuiteKnown known[] =
 {
 	{ "0000000000101011_sz0_pr0", false, 0, known_rte },
-	{ "0100mmmm01100110_sz0_pr0", true, 0, known_fpscr_rm },
-	{ "0100mmmm01101010_sz0_pr0", true, 0, known_fpscr_rm },
 	{ "1111nn0111111101_sz0_pr0", false, 0, known_sum_order },
 	{ "1111nnmm11101101_sz0_pr0", false, 0, known_sum_order },
 	{ 0, false, 0, 0 },

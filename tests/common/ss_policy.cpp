@@ -281,6 +281,9 @@ const SsFilePolicy* ss_policy_find(const std::string& file)
 	return 0;
 }
 
+//The bits FPSCR has: FR SZ PR DN, cause, enable, flag, RM. The other 10 read 0 and are not written
+#define SS_FPSCR_BITS 0x003FFFFF
+
 static bool is_nan32(u32 v)
 {
 	return (v & 0x7F800000) == 0x7F800000 && (v & 0x007FFFFF) != 0;
@@ -369,6 +372,9 @@ SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, 
 	if (APPLIES(SSF_HOST_NAN) && (policy.flags & SSP_FTRC) && ftrc_of_nan(policy, test))
 		return SSF_HOST_NAN;
 
+	if (APPLIES(SSF_FPSCR_BITS) && (test.final_.s.FPSCR & ~SS_FPSCR_BITS) != 0)
+		return SSF_FPSCR_BITS;
+
 #undef APPLIES
 
 	return SSF_NONE;
@@ -395,6 +401,7 @@ const char* ss_filter_name(SsFilterReason reason)
 	case SSF_PRIVILEGED:   return "privileged";
 	case SSF_TRAPA_NOP:    return "trapa-nop";
 	case SSF_HOST_NAN:     return "host-nan";
+	case SSF_FPSCR_BITS:   return "fpscr-bits";
 	default:               return "?";
 	}
 }
@@ -418,6 +425,9 @@ const char* ss_filter_description(SsFilterReason reason)
 	case SSF_HOST_NAN:
 		return "the instruction produces a NaN (or converts one with FTRC). The expected value is the default NaN of the "
 		       "ARM64 host that generated the vectors (FTRC of a NaN: 0), not the SH4's";
+	case SSF_FPSCR_BITS:
+		return "the vector expects unimplemented FPSCR bits stored (LDS / LDS.L to FPSCR of a value with bits 22-31 set). "
+		       "An SH4 has the low 22 bits only, the others read 0";
 	default:
 		return "";
 	}

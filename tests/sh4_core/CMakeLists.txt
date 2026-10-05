@@ -1,6 +1,7 @@
 ## The SH4 as the emulator sets it up ##
 #
-#	sh4.core    SuperH4_impl, the CPU object of the emulator, on the interpreter: the state a reset leaves
+#	sh4.core    SuperH4_impl, the CPU object of the emulator, on the interpreter: the state a reset leaves, the
+#	            host rounding mode of every FPSCR.RM
 #
 #	Needs no vectors.
 #

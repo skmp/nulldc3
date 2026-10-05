@@ -2130,6 +2130,7 @@ sh4op(i0100_nnnn_0110_0110)
 	u32 n = GetN(op);
 
 	ReadMemU32(fpscr.full,r[n]);
+	fpscr.full &= FPSCR_MASK;
 
 	UpdateFPSCR();
 	r[n] += 4;
@@ -2155,7 +2156,7 @@ sh4op(i0100_nnnn_0000_0111)
 sh4op(i0100_nnnn_0110_1010)
 {
 	u32 n = GetN(op);
-	fpscr.full = r[n];
+	fpscr.full = r[n] & FPSCR_MASK;
 	UpdateFPSCR();
 }
 

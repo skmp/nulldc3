@@ -19,6 +19,7 @@ enum SsFilterReason
 	SSF_PRIVILEGED,		//privileged instruction with SR.MD=0
 	SSF_TRAPA_NOP,		//TRAPA, recorded as a nop
 	SSF_HOST_NAN,		//the expected FPU result is the generator host's NaN
+	SSF_FPSCR_BITS,		//the expected FPSCR has bits that an SH4 does not implement
 
 	SSF_COUNT
 };

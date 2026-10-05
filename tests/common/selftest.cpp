@@ -557,6 +557,22 @@ static void test_policy()
 	CHECK(ss_policy_filter(*ftrc, t) == SSF_HOST_NAN);
 	t.initial.s.FP0[5] = 0x4F000000;
 	CHECK(ss_policy_filter(*ftrc, t) == SSF_NONE);
+
+	//FPSCR bits that an SH4 does not have
+	const SsFilePolicy* lds_fpscr = ss_policy_find("0100mmmm01101010_sz0_pr0");
+
+	CHECK(lds_fpscr != 0);
+	if (lds_fpscr)
+	{
+		t.final_.s.FPSCR = 0x003FFFFF;
+		CHECK(ss_policy_filter(*lds_fpscr, t) == SSF_NONE);
+		t.final_.s.FPSCR = 0x00400000;
+		CHECK(ss_policy_filter(*lds_fpscr, t) == SSF_FPSCR_BITS);
+		CHECK(ss_policy_filter(*lds_fpscr, t, 1 << SSF_FPSCR_BITS) == SSF_NONE);
+		t.final_.s.FPSCR = 0x80040001;
+		CHECK(ss_policy_filter(*lds_fpscr, t) == SSF_FPSCR_BITS);
+		t.final_.s.FPSCR = 0;
+	}
 }
 
 //// ss_state
