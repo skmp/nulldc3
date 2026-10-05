@@ -1796,7 +1796,7 @@ struct {
 	u32 stop0;
 	std::atomic<bool> otherFailed { false };
 	std::atomic<int> rvCall { 99 }, rvReset { 99 };
-	std::atomic<u32> stopAfterCall { 0 };
+	std::atomic<u32> stopAfterCall { 0 }, marker { 0 };
 } rs;
 
 bool ResetStop(const emu::RunState& stop, const char* what)
@@ -1890,8 +1890,16 @@ DBG_SELFTEST_GUEST(emu_reset, "emu.reset")
 
 			rs.rvCall = emu::Call(emu::CC_WRITE, [] { rs.rvReset = emu::Reset(); });
 
-			// the reset and the boot behind it
-			Nap(30);
+			// the reset: main memory is new behind it. A pause that is asked for before the machine has reset
+			// would be a pause that the reset finds pending
+			Clock::time_point t0 = Clock::now();
+
+			do
+			{
+				Nap(2);
+				emu::Call(emu::CC_READ, [] { rs.marker = ReadMem32(kMarkerAddr); });
+			} while (rs.marker == kMarker && MsSince(t0) < 20000);
+
 			rs.stopAfterCall = emu::GetRunState().stopId;
 
 			if (!PauseAndWait(rs.stop0))
@@ -1903,7 +1911,7 @@ DBG_SELFTEST_GUEST(emu_reset, "emu.reset")
 		OtherJoin();
 
 		Check(!rs.otherFailed && rs.rvCall == 0 && rs.rvReset == 0, "a reset by a call for the running thread is taken (rv %d, %d)", rs.rvCall.load(), rs.rvReset.load());
-		Check(ReadMem32(kMarkerAddr) != kMarker, "the machine was reset and booted again: main memory is new");
+		Check(rs.marker != kMarker && ReadMem32(kMarkerAddr) != kMarker, "the machine was reset: main memory is new");
 		Check(rs.stopAfterCall == rs.stop0 && stop.cause == StopCause::Pause && stop.stopId == rs.stop0 + 1, "and ran on: nothing was published until the pause");
 
 		{

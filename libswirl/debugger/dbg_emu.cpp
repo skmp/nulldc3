@@ -37,6 +37,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <thread>
 
 namespace dbg {
 
@@ -83,7 +84,7 @@ struct CallObj {
 	std::condition_variable done;
 };
 
-std::recursive_timed_mutex lifetime_lock;		// L
+std::recursive_mutex lifetime_lock;				// L
 
 std::mutex queue_lock;							// Q
 std::condition_variable park_cv;				// the park loop waits on it, with Q
@@ -215,41 +216,52 @@ u32 CurrentNotice()
 	return engine.fallbackLoop ? (u32)NOTICE_SH4_FALLBACK : 0;
 }
 
-// Publishes a state and invokes the listener with it. stop: the state is a new stop
+// Q held. The published state changes, all of it at once. stop: the state is a new stop
+RunState SetState(Lifetime lifetime, StopCause cause, u32 breakpointId, u32 notice, bool stop)
+{
+	shared.state.lifetime = lifetime;
+	shared.state.cause = cause;
+	shared.state.breakpointId = breakpointId;
+	shared.state.notice = notice;
+	if (stop)
+		shared.state.stopId++;
+
+	// A pause that was asked for while the thread was on its way into this stop is this stop: from here on
+	// a request finds the thread parked and does nothing
+	if (lifetime == Lifetime::Parked)
+	{
+		shared.pauseRequested = false;
+		g_attn.fetch_and(~(u32)ATTN_PAUSE);
+	}
+
+	return shared.state;
+}
+
+// The listener hears of a state that was published. No lock of this file is held
+void Announce(const RunState& state)
+{
+	{
+		std::lock_guard<std::mutex> l(listener_lock);
+
+		if (listener)
+			listener(state);
+	}
+
+	if (test::observer)
+		test::observer(state);
+}
+
+// Publishes a state and invokes the listener with it
 RunState Publish(Lifetime lifetime, StopCause cause, u32 breakpointId, u32 notice, bool stop)
 {
 	RunState copy;
 
 	{
 		std::lock_guard<std::mutex> q(queue_lock);
-
-		shared.state.lifetime = lifetime;
-		shared.state.cause = cause;
-		shared.state.breakpointId = breakpointId;
-		shared.state.notice = notice;
-		if (stop)
-			shared.state.stopId++;
-
-		// A pause that was asked for while the thread was on its way into this stop is this stop: from here on
-		// a request finds the thread parked and does nothing
-		if (lifetime == Lifetime::Parked)
-		{
-			shared.pauseRequested = false;
-			g_attn.fetch_and(~(u32)ATTN_PAUSE);
-		}
-
-		copy = shared.state;
+		copy = SetState(lifetime, cause, breakpointId, notice, stop);
 	}
 
-	{
-		std::lock_guard<std::mutex> l(listener_lock);
-
-		if (listener)
-			listener(copy);
-	}
-
-	if (test::observer)
-		test::observer(copy);
+	Announce(copy);
 
 	return copy;
 }
@@ -661,11 +673,17 @@ int Call(CallClass cls, std::function<void()> fn)
 			}
 		}
 
-		// No emulator thread: the caller runs it, under L
-		std::unique_lock<std::recursive_timed_mutex> l(lifetime_lock, std::defer_lock);
+		// No emulator thread: the caller runs it, under L. The wait for L has the limit of every call: L is
+		// tried until it is free
+		std::unique_lock<std::recursive_mutex> l(lifetime_lock, std::defer_lock);
 
-		if (!l.try_lock_until(deadline))
-			return kErrBusy;
+		while (!l.try_lock())
+		{
+			if (Clock::now() >= deadline)
+				return kErrBusy;
+
+			std::this_thread::sleep_for(std::chrono::microseconds(200));
+		}
 
 		Lifetime lifetime;
 
@@ -1056,7 +1074,7 @@ void OnThreadEntered()
 
 void OnThreadExiting(bool guestExit)
 {
-	std::lock_guard<std::recursive_timed_mutex> l(lifetime_lock);
+	std::lock_guard<std::recursive_mutex> l(lifetime_lock);
 
 	// The park context is left for good: what the latch held back is made, as at the slice end of a machine
 	// that no debugger stopped; what belonged to a stop goes
@@ -1070,6 +1088,8 @@ void OnThreadExiting(bool guestExit)
 
 	// The queue: what only looks runs, what would change the guest is answered. The state becomes Stopped
 	// with the queue empty, under Q: from then on a caller runs its call itself, and waits for L to do so
+	RunState stopped;
+
 	for (;;)
 	{
 		std::shared_ptr<CallObj> call;
@@ -1103,7 +1123,12 @@ void OnThreadExiting(bool guestExit)
 				shared.kicked = false;
 				g_attn.store(0);
 
-				shared.state.lifetime = Lifetime::Stopped;
+				// whoever sees the new state sees a machine that does not count as running
+				g_parked = false;
+				g_intc_deferred = false;
+				g_sleep_cut = false;
+
+				stopped = SetState(Lifetime::Stopped, guestExit ? StopCause::GuestExit : StopCause::HostStopped, 0, 0, true);
 				break;
 			}
 		}
@@ -1111,11 +1136,7 @@ void OnThreadExiting(bool guestExit)
 		RunCall(call);
 	}
 
-	g_parked = false;
-	g_intc_deferred = false;
-	g_sleep_cut = false;
-
-	Publish(Lifetime::Stopped, guestExit ? StopCause::GuestExit : StopCause::HostStopped, 0, 0, true);
+	Announce(stopped);
 
 	if (e.titled)
 		os_SetWindowText(kTitle);
