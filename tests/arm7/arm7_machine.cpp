@@ -116,6 +116,28 @@ static AICA* aica;
 static SoundCPU_impl* scpu;
 static u8* ram;
 
+//What the reset of the sound CPU gives a value. Bytes: a context that was only created may hold anything
+struct CpuState
+{
+	u8 regs[sizeof(arm7_reg) * RN_ARM_REG_COUNT];
+	u8 mode[sizeof(int)];
+	u8 irq_enable[sizeof(bool)];
+	u8 fiq_enable[sizeof(bool)];
+	u8 enabled[sizeof(bool)];
+};
+
+static CpuState state_created;
+static CpuState state_reset;
+
+static void cpu_state(const Arm7Context& ctx, CpuState& state)
+{
+	memcpy(state.regs, ctx.regs, sizeof(state.regs));
+	memcpy(state.mode, &ctx.armMode, sizeof(state.mode));
+	memcpy(state.irq_enable, &ctx.armIrqEnable, sizeof(state.irq_enable));
+	memcpy(state.fiq_enable, &ctx.armFiqEnable, sizeof(state.fiq_enable));
+	memcpy(state.enabled, &ctx.enabled, sizeof(state.enabled));
+}
+
 void arm7m_init()
 {
 	static NoSh4 sh4;
@@ -132,6 +154,7 @@ void arm7m_init()
 
 	aica = AICA::Create(0, &sb, &asic, &dsp, &aica_ctx, ram, ARM7M_RAM_SIZE);
 	scpu = static_cast<SoundCPU_impl*>(SoundCPU::Create(aica, ram, ARM7M_RAM_SIZE));
+	cpu_state(scpu->ctx, state_created);
 
 	sh4.SetA0Handler(A0H_AICA, aica);
 	sh4.SetA0Handler(A0H_SCPU, scpu);
@@ -142,6 +165,12 @@ void arm7m_init()
 	scpu->Init();
 	aica->Reset(false);
 	scpu->Reset(false);
+	cpu_state(scpu->ctx, state_reset);
+}
+
+bool arm7m_created_reset()
+{
+	return memcmp(&state_created, &state_reset, sizeof(CpuState)) == 0;
 }
 
 void arm7m_power_on()

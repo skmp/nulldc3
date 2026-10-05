@@ -16,6 +16,10 @@
 //Call once
 void arm7m_init();
 
+//The sound CPU that arm7m_init() created held, before anything had reset it, the registers, the mode and the
+//interrupt masks its reset gives it, and was held in reset
+bool arm7m_created_reset();
+
 //The wave RAM, ARM7M_RAM_SIZE bytes
 u8* arm7m_ram();
 

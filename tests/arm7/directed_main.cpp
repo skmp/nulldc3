@@ -25,7 +25,10 @@
 	reset: what the release of ARMRST writes and what it leaves, out of four modes (the comment at reset_case() has
 	the source).
 
-	Checks: adc, sbc, rsc, ror, mul-rd-rm, trap, fiq, scilv, reset. The test needs no data.
+	power-on: a sound CPU that was created and not reset yet holds what its reset gives it (the comment at
+	run_power_on() has why).
+
+	Checks: adc, sbc, rsc, ror, mul-rd-rm, trap, fiq, scilv, reset, power-on. The test needs no data.
 */
 #include "arm7_machine.h"
 #include "arm7_suite.h"
@@ -930,6 +933,22 @@ static const Scenario reset_scenarios[] =
 	{ "out of user mode, N and V set", &reset_usr },
 };
 
+/*
+	The emulator resets the AICA in front of the sound CPU, and the reset of the AICA releases ARMRST: the reset
+	of the ARM runs on what the sound CPU was created with. That has to be what its own reset gives it, the
+	registers, the mode and the interrupt masks, with the ARM held in reset.
+*/
+static void run_power_on()
+{
+	bool pass = arm7m_created_reset();
+
+	arm7_count("power-on", pass);
+
+	if (!pass)
+		fprintf(arm7_report, "power-on: the sound CPU that was created and not reset yet does not hold the registers, the mode and the "
+			"interrupt masks of its reset, or is not held in reset\n");
+}
+
 static void run_scenario(void* arg)
 {
 	ScenarioRun* run = (ScenarioRun*)arg;
@@ -1044,6 +1063,9 @@ int main(int argc, char** argv)
 
 	if (arm7_selected("reset"))
 		run_scenarios("reset", reset_scenarios, sizeof(reset_scenarios) / sizeof(reset_scenarios[0]));
+
+	if (arm7_selected("power-on"))
+		run_power_on();
 
 	return arm7_suite_end();
 }
