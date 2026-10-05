@@ -33,6 +33,7 @@ way.
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
 | `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses) | none |
+| `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | ADC, SBC and RSC at the edges with the carry clear and set, hand-written results | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
@@ -40,9 +41,9 @@ way.
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it.
 
-Every test but `common.selftest` is gated on a baseline file, and ctest runs them with `--strict`: a count
-that is worse than its baseline fails, and so does one that is better, until the baseline is updated and
-committed.
+Every test but `common.selftest` and `sh4.core` is gated on a baseline file, and ctest runs them with `--strict`:
+a count that is worse than its baseline fails, and so does one that is better, until the baseline is updated and
+committed. `common.selftest` and `sh4.core` are lists of checks that all have to hold.
 
 More about the suites:
 
@@ -62,6 +63,7 @@ More about the suites:
     sh4_dynarec/       the vectors through the dynarec, and the interpreter against the dynarec (README.md,
                        KNOWN_DIFFERENCES.md)
     sh4_directed/      hand-written vectors for all of the above
+    sh4_core/          the SH4 on SuperH4_impl: what is not one instruction on a vector state (reset)
     arm7/              the ARM7 interpreter: vendor programs, directed cases, wren7 console suites (README.md,
                        KNOWN_FAILURES.md)
     vendor/            the submodules
@@ -181,6 +183,17 @@ A new case is a row in a table of `directed_gen.cpp`, then a build and `--update
 hand-written vector that is not an exact pass is a wrong row or a defect of the emulator: find out which before
 the baseline is committed, and a defect goes into the `known` list of the suite that has it (`sh4_singlestep/main.cpp`,
 `sh4_dynarec/singlestep.cpp`, `sh4_dynarec/differential.cpp`) and into `sh4_dynarec/KNOWN_DIFFERENCES.md`.
+
+## The SH4 core checks
+
+`sh4.core` (`sh4_core/core_main.cpp`) has what is not one instruction on a vector state. It runs on `SuperH4_impl`
+(`hw/sh4/SuperH4_impl.cpp`, the CPU object of the emulator) with empty devices and module registers around it:
+
+* the reset state, after a power-on and after a manual reset: PC, SR, VBR and FPSCR as the hardware manual's table
+  of initial register values has them (A0000000, 700000F0, 0, 00040001), the host FP mode of that FPSCR on the thread
+  that did the reset (round to zero, flush to zero), and 0 in every register the manual leaves undefined.
+
+A check that does not hold is printed with its line, and the test fails.
 
 ## Adding a suite
 

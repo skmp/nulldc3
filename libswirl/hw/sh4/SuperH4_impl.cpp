@@ -132,7 +132,8 @@ void SuperH4_impl::Reset(bool Manual)
         old_sr.status = sr.status;
         UpdateSR();
 
-        fpscr.full = 0x0004001;
+        // SH7091 hardware manual, table 2.1: FPSCR is H'00040001 after a reset (DN = 1, RM = 01)
+        fpscr.full = 0x00040001;
         old_fpscr = fpscr;
         UpdateFPSCR();
 

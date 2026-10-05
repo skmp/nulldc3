@@ -18,6 +18,7 @@ add_library(nulldc_test_common STATIC
   test_guard.cpp      test_guard.h
   sh4_env.cpp         sh4_env.h
   sh4_stubs.cpp
+  sh4_stubs_nocpu.cpp
   sh4_stubs_norec.cpp
   sh4_stubs_rec.cpp
   ss_format.cpp       ss_format.h
