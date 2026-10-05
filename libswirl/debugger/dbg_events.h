@@ -27,7 +27,9 @@
 // - wire name: "event" of a breakpoint, metadata.event of a log entry
 // - subsystem: one of sh4, holly, ta, core, aica, dsp, arm7, gdrom, maple, system, debugger
 // - severity:  one of trace, info, warn, error
-// - node:      path of the device-tree node that lists the event
+// - node:      path of the device-tree node whose Node::events may list the event (dbg_regs.h).
+//              debugger.describe lists what Node::events holds, which is only the events this build raises;
+//              the register-table test (tests/debugger/regs) checks every id listed there against this field
 // The comment of a row names the place that raises the event and the package that owns that place.
 // Ids are the row numbers. They never leave the process: the wire carries the names.
 #define DBG_EVENT_LIST(X) \

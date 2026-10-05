@@ -54,7 +54,9 @@ struct Node {
 	uint32_t registerCount;
 	const char* const* actions;		// actionCount panel ids: "sh4-disassembly"
 	uint32_t actionCount;
-	const uint8_t* events;			// eventCount ids (dbg::EventId): the events this node lists
+	const uint8_t* events;			// eventCount ids (dbg::EventId, dbg_events.h): the events debugger.describe lists
+									// for this node. Only events this build raises, each with this node's path as
+									// its EventInfo::node
 	uint32_t eventCount;
 	uint8_t flags;
 };
