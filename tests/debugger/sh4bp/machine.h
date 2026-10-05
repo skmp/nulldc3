@@ -117,6 +117,16 @@ MachineStop machine_step_out(int* error = nullptr, const char** why = nullptr);
 //Did the last machine_resume() or step use the interpreter fallback?
 bool machine_used_fallback();
 
+//What other threads ask of a running guest, as a client does. Both are taken at a slice end of the backend loop.
+//machine_request_pause: dbg::emu::RequestPause, the machine stops with StopCause::Pause.
+//machine_call: dbg::emu::Call with a call that needs the park context; it runs in a service excursion (or
+//at once, on the calling thread's behalf, when the machine is parked) and the function returns behind it.
+void machine_request_pause();
+void machine_call(std::function<void()> fn);
+
+//The SH4 backend that runs the guest
+SuperH4Backend* machine_backend();
+
 //Guest memory, any mirror of RAM
 u8* machine_ram(u32 addr);
 u16 machine_read16(u32 addr);

@@ -12,9 +12,12 @@
 #include "hw/mem/_vmem.h"
 #include "debugger/dbg_mem.h"
 
+#include <atomic>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -48,6 +51,13 @@ static u64 host_stop_made;		//the knobs.host_stop_slice that the last host stop 
 static bool pause_wanted;
 static bool excursion_wanted;
 static bool in_step;
+
+//what other threads asked for
+static std::atomic<bool> ext_pause(false);
+static std::atomic<bool> ext_call_pending(false);
+static std::mutex ext_mutex;
+static std::condition_variable ext_done;
+static std::function<void()> ext_call;
 
 //what LatchStop was told since the park context was entered last
 static bool latch_has_cause;
@@ -276,9 +286,9 @@ extern "C" int UpdateSystem()
 
 	//The slice hook. A pause request and a call for the park context are taken at a slice end of the backend
 	//loop, not inside a SLEEP wait, and not while a step executes
-	if (knobs.pause_every && counters.slices % knobs.pause_every == 0)
+	if ((knobs.pause_every && counters.slices % knobs.pause_every == 0) || ext_pause.exchange(false))
 		pause_wanted = true;
-	if (knobs.excursion_every && counters.slices % knobs.excursion_every == 0)
+	if ((knobs.excursion_every && counters.slices % knobs.excursion_every == 0) || ext_call_pending.load())
 		excursion_wanted = true;
 
 	if ((pause_wanted || excursion_wanted) && !dbg::g_in_sleep && !in_step && !host_stopped)
@@ -422,9 +432,53 @@ static MachineStop park_enter(bool step)
 	return stop;
 }
 
+//The call of another thread, if one waits
+static void run_ext_call()
+{
+	std::function<void()> fn;
+
+	{
+		std::lock_guard<std::mutex> lock(ext_mutex);
+		fn.swap(ext_call);
+	}
+
+	if (fn)
+	{
+		fn();
+
+		std::lock_guard<std::mutex> lock(ext_mutex);
+		ext_call_pending = false;
+		ext_done.notify_all();
+	}
+}
+
+void machine_request_pause()
+{
+	ext_pause = true;
+}
+
+void machine_call(std::function<void()> fn)
+{
+	std::unique_lock<std::mutex> lock(ext_mutex);
+
+	ext_call = fn;
+	ext_call_pending = true;
+
+	//the machine takes it at its next slice end, or when it is entered next
+	ext_done.wait(lock, [] { return !ext_call_pending.load(); });
+}
+
+SuperH4Backend* machine_backend()
+{
+	return backend;
+}
+
 //SuperH4_impl::Run(), called again after every service excursion, until a stop
 static MachineStop run()
 {
+	//a call that arrived while the machine was parked
+	run_ext_call();
+
 	for (;;)
 	{
 		used_fallback = engine == ENGINE_FALLBACK && dbg::sh4::FallbackWanted();
@@ -464,6 +518,8 @@ static MachineStop run()
 
 		if (knobs.excursion)
 			knobs.excursion();
+
+		run_ext_call();
 
 		park_leave();
 

@@ -66,6 +66,11 @@ runs three sessions (JIT, interpreter, JIT with `Debugger:ForceFallback=yes`) an
 agree on: registers and step traces of the JIT and of the fallback with the interpreter's, time and the state
 of the integer workload of the fallback with the JIT's.
 
+The same tests also run here, so that they are known to be right before the emulator's park loop runs them:
+`sh4bp_selftest <jit|interpreter|fallback>` is the selftest file and its driver on the machine of this
+directory, with a park loop in place of `dbg::emu` (`selftest_shim.cpp`) and the boot of the guest reduced to
+a jump to the entry point. The test `debugger.sh4bp.selftest` runs the three sessions and the comparison.
+
 ## The guest
 
 `guest.s` holds the guest programs; `guest.inc` is that file assembled (the image as bytes, the addresses of

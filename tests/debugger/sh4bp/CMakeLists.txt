@@ -36,7 +36,7 @@ set(sh4bp_gates b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b12 b13 b14 arm)
 
 # The tests run the blocks of the x64 backend through its main loop
 if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})))
-  foreach(gate ${sh4bp_gates})
+  foreach(gate ${sh4bp_gates} selftest)
     add_test(NAME debugger.sh4bp.${gate}
       COMMAND ${CMAKE_COMMAND} -E echo "SKIPPED: the sh4bp gates need an x86-64 build with the SH4 recompiler")
     set_tests_properties(debugger.sh4bp.${gate} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
@@ -231,3 +231,24 @@ foreach(gate ${sh4bp_gates})
   add_test(NAME debugger.sh4bp.${gate} COMMAND sh4bp_test ${gate})
   set_tests_properties(debugger.sh4bp.${gate} PROPERTIES TIMEOUT 300)
 endforeach()
+
+
+## The selftest of the emulator, on this machine ##
+#
+#	libswirl/debugger/dbg_selftest_sh4bp.cpp runs in the emulator, on its park loop. Here the same tests run on
+#	the stand-in for run control: a session per engine, and the comparison of what the sessions print for one
+#	another.
+#
+
+add_executable(sh4bp_selftest
+  selftest_shim.cpp
+  machine.cpp   machine.h
+  stubs.cpp
+  "${nulldc_core_path}/debugger/dbg_selftest.cpp"
+  "${nulldc_core_path}/debugger/dbg_selftest_sh4bp.cpp"
+)
+target_link_libraries(sh4bp_selftest PRIVATE nulldc_sh4bp)
+
+add_test(NAME debugger.sh4bp.selftest
+  COMMAND ${CMAKE_COMMAND} -DSELFTEST=$<TARGET_FILE:sh4bp_selftest> -P "${CMAKE_CURRENT_SOURCE_DIR}/selftest_compare.cmake")
+set_tests_properties(debugger.sh4bp.selftest PROPERTIES TIMEOUT 600)
