@@ -64,6 +64,14 @@ static bool latch_has_cause;
 static dbg::StopCause latch_cause;
 static u32 latch_id;
 
+//the enabled event breakpoints, and the one that an event raised in the running slice hit
+static u32 event_bp_ids[16];
+static u8 event_bp_events[16];
+static u32 event_bp_count;
+static u32 active_mask = ~0u;
+static bool event_hit;
+static u32 event_hit_id;
+
 static bool used_fallback;
 
 //the slice counter of machine_reference_step(), and whether it is the one that tells the time
@@ -288,9 +296,19 @@ extern "C" int UpdateSystem()
 		sh4_int_bCpuRun = false;
 	}
 
+	//part of the tick: the video timing raises its event from a scheduler callback
+	if (knobs.vblank_period && counters.slices % knobs.vblank_period == 0)
+		DBG_EVENT(dbg::EV_CORE_VBLANK, "vblank %llu", (unsigned long long)(counters.slices / knobs.vblank_period));
+
 	//The slice hook. A freezing cause is latched in the call that finds it
 	if (knobs.event_slice && counters.slices == knobs.event_slice)
 		dbg::emu::LatchStop(dbg::StopCause::Event, 0);
+
+	if (event_hit)
+	{
+		event_hit = false;
+		dbg::emu::LatchStop(dbg::StopCause::Event, event_hit_id);
+	}
 
 	//A pause request and a call for the park context are taken at a slice end of the backend loop, not inside a
 	//SLEEP wait, and not while a step executes
@@ -334,7 +352,32 @@ bool g_in_sleep;
 bool g_sleep_cut;
 std::atomic<bool> g_parked(false);
 
+std::atomic<u8> g_event_on[EV_ID_COUNT];
+
+//there is no event log here: an event is its breakpoints
+void EventSlow(EventId id, const char* fmt, ...)
+{
+	emu::OnEvent(id);
+}
+
 namespace emu {
+
+//An event breakpoint is a freezing cause: the slice hook latches it in the UpdateSystem() call that raised
+//the event. In the park context an event stops nothing
+void OnEvent(EventId id)
+{
+	if (g_stop_latched || (active_mask & CategoryBit(Category::Events)) == 0)
+		return;
+
+	for (u32 i = 0; i < event_bp_count; i++)
+	{
+		if (event_bp_events[i] == id && (!event_hit || event_bp_ids[i] < event_hit_id))
+		{
+			event_hit = true;
+			event_hit_id = event_bp_ids[i];
+		}
+	}
+}
 
 static int rank(StopCause cause)
 {
@@ -388,12 +431,19 @@ static bool park_leave()
 	{
 		dbg::g_intc_deferred = false;
 
-		//only an event or a sound breakpoint cuts a SLEEP wait, and no gate makes one fire there
+		//The latch of an event breakpoint cut a SLEEP wait short and left the pc on the SLEEP: the acceptance
+		//is made with the pc behind it, where an interrupt accepted in the wait returns to, and the pc goes
+		//back on the SLEEP when nothing is accepted
 		if (dbg::g_sleep_cut)
-			fatal("a SLEEP wait was cut");
+			next_pc += 2;
 
 		accepted = UpdateINTC() != 0;
+
+		if (dbg::g_sleep_cut && !accepted)
+			next_pc -= 2;
 	}
+
+	dbg::g_sleep_cut = false;
 
 	sh4_host_fp_resync();
 
@@ -727,6 +777,26 @@ void machine_breakpoints(const u32* ids, const u32* addrs, u32 n)
 	dbg::sh4::SetBreakpoints(ids, addrs, n);
 }
 
+void machine_event_breakpoints(const u32* ids, const u8* events, u32 n)
+{
+	if (n > sizeof(event_bp_ids) / sizeof(event_bp_ids[0]))
+		fatal("more event breakpoints than the machine keeps");
+
+	for (u32 i = 0; i < n; i++)
+	{
+		event_bp_ids[i] = ids[i];
+		event_bp_events[i] = events[i];
+	}
+
+	event_bp_count = n;
+}
+
+void machine_active_mask(u32 categories)
+{
+	active_mask = categories;
+	dbg::sh4::SetActiveMask(categories);
+}
+
 
 /*
 	Setup
@@ -843,6 +913,9 @@ void machine_reset(Engine e)
 	used_fallback = false;
 	ref_slice = SH4_TIMESLICE;
 	ref_used = false;
+	event_bp_count = 0;
+	event_hit = false;
+	active_mask = ~0u;
 
 	dbg::g_stop_latched = true;
 	dbg::g_intc_deferred = false;

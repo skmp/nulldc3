@@ -8,6 +8,7 @@
 	  time          UpdateSystem() counts slices; the scheduler time is 448 cycles per slice
 	  interrupts    the real interrupt controller of the SH4; the machine requests IRL9 at every n-th slice end,
 	                a guest write to 0xA0600000 takes the request back
+	  events        one debugger event, dc.holly.core.vblank, raised at every n-th slice end
 	  memory        16 MiB of RAM at 0x0C000000 with its mirrors, behind memory handlers. A page that the block
 	                manager locks stays locked until a guest write hits it: the write then goes the way a
 	                write fault goes in the emulator (bm_LockedWrite)
@@ -41,6 +42,10 @@ struct MachineKnobs
 							//or a later one, counted from the reset: not inside a SLEEP wait. 0: never
 	u64 event_slice;		//an event breakpoint fires in this slice, counted from the reset: the stop is latched where
 							//that slice ends, also in a SLEEP wait and inside a step. 0: never
+	u32 vblank_period;		//the event dc.holly.core.vblank is raised in every n-th slice, from the scheduler tick as the
+							//video timing of the emulator raises it. It stops where an event breakpoint on it does
+							//(machine_event_breakpoints): where that slice ends, also in a SLEEP wait and inside a step.
+							//0: never
 	u32 pause_every;		//a client asks for a pause at every n-th slice end
 	u32 excursion_every;	//a call that needs the park context arrives at every n-th slice end
 	std::function<void()> excursion;	//what that call does
@@ -92,7 +97,7 @@ void machine_init();
 
 //The machine as after a reset, with the guest image loaded, on this engine: reset state of the SH4 (pc
 //0xA0000000) but SR = MD only, vbr = G_vbr and r15 = the stack; slice counters full; code cache empty; no
-//breakpoint, everything active; knobs and counters cleared. The machine is parked
+//breakpoint of either kind, everything active; knobs and counters cleared. The machine is parked
 void machine_reset(Engine engine);
 
 Engine machine_engine();
@@ -110,6 +115,14 @@ u64 machine_time();
 
 //The enabled listed SHcode breakpoints: ids[i] at addrs[i]. In the park context
 void machine_breakpoints(const u32* ids, const u32* addrs, u32 n);
+
+//The enabled event breakpoints: ids[i] on the event events[i], as dbg::emu::SetEventBreakpoints takes them. An event
+//that is raised while the guest runs stops with StopCause::Event and the lowest id on it, if the active mask has
+//the category of the events. The gate of an event (dbg::g_event_on) is the caller's to open. In the park context
+void machine_event_breakpoints(const u32* ids, const u8* events, u32 n);
+
+//The categories whose breakpoints can stop (dbg::emu::SetActiveMask): the SH4's part goes to dbg::sh4
+void machine_active_mask(u32 categories);
 
 //control.runUntil: leaves the park context and runs until the next stop
 MachineStop machine_resume();

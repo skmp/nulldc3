@@ -1756,6 +1756,115 @@ static void gate_slot()
 
 
 /*
+	An event breakpoint on the machine's vblank. The stop is where the slice of the event ends; a SLEEP wait is
+	cut short by it, and an interrupt that is accepted on the way out of the stop returns behind the SLEEP.
+*/
+static void event_breakpoint(bool on)
+{
+	const u32 id = 9;
+	const u8 event = (u8)dbg::EV_CORE_VBLANK;
+
+	machine_event_breakpoints(&id, &event, on ? 1 : 0);
+	dbg::g_event_on[dbg::EV_CORE_VBLANK] = on ? 1 : 0;
+}
+
+static void gate_event()
+{
+	for (Engine e : all_engines)
+	{
+		const char* en = engine_name(e);
+
+		//The fallback loop runs while a breakpoint is active: every run has one that is never reached
+		const bool fb = e == ENGINE_FALLBACK;
+
+		//in running code: at the slice end, and the resume goes on as a run does
+		const WorkSetup w = { e, 600, true, false };
+
+		work_start(w);
+		if (fb)
+			bps({ G_line });
+		MachineState base = work_run();
+
+		work_start(w);
+		if (fb)
+			bps({ G_line });
+		knobs.vblank_period = 11;
+		event_breakpoint(true);
+
+		u64 stops;
+		MachineState s = work_run(&stops);
+
+		check(s == base && stops == 600 / 11, "%s: an event breakpoint on the vblank stops at every vblank, %llu times, and leaves the state of a run (%s)", en,
+			(unsigned long long)stops, str(s));
+
+		work_start(w);
+		knobs.vblank_period = 11;
+		event_breakpoint(true);
+		MachineStop stop = machine_resume();
+
+		check(stop.debugger && stop.cause == StopCause::Event && stop.id == 9 && counters.slices == 11, "%s: the stop has the cause event and the id of the breakpoint, in the slice of the vblank (%llu)",
+			en, (unsigned long long)counters.slices);
+
+		//the gate of the event closed, the category of the events muted: no stop
+		work_start(w);
+		if (fb)
+			bps({ G_line });
+		knobs.vblank_period = 11;
+		event_breakpoint(true);
+		dbg::g_event_on[dbg::EV_CORE_VBLANK] = 0;
+		s = work_run(&stops);
+		check(s == base && stops == 0, "%s: with the gate of the event closed nothing stops", en);
+
+		work_start(w);
+		if (fb)
+			bps({ G_line });
+		knobs.vblank_period = 11;
+		event_breakpoint(true);
+		machine_active_mask(~dbg::CategoryBit(dbg::Category::Events));
+		s = work_run(&stops);
+		check(s == base && stops == 0, "%s: with the category of the events muted nothing stops", en);
+
+		//in a SLEEP wait, no interrupt pending: the pc is on the SLEEP, which a resume executes again
+		machine_reset(e);
+		machine_set_sr(SR_MD);
+		machine_set_pc(G_sleep);
+		knobs.vblank_period = 3;
+		knobs.irq_period = 7;
+		event_breakpoint(true);
+
+		stop = machine_resume();
+		check(stop.debugger && stop.cause == StopCause::Event && stop.pc == G_sleep && counters.slices == 3 && counters.irqs == 0,
+			"%s: a vblank in a SLEEP wait stops in its slice, the pc on the SLEEP (slice %llu, pc %08X)", en, (unsigned long long)counters.slices, stop.pc);
+
+		event_breakpoint(false);
+		stop = machine_step();
+		check(is_step(stop, G_irq) && Sh4cntx.spc == G_sleep_after && counters.slices == 7, "%s: the SLEEP is executed again and waits for its interrupt (slice %llu)", en,
+			(unsigned long long)counters.slices);
+
+		//in a SLEEP wait, the interrupt request in the same slice: the acceptance that the stop deferred is made
+		//with the pc behind the SLEEP
+		machine_reset(e);
+		machine_set_sr(SR_MD);
+		machine_set_pc(G_sleep);
+		knobs.vblank_period = 3;
+		knobs.irq_period = 3;
+		event_breakpoint(true);
+
+		stop = machine_resume();
+		check(stop.debugger && stop.cause == StopCause::Event && stop.pc == G_sleep && counters.slices == 3 && counters.irqs == 1,
+			"%s: a vblank and an interrupt request in one slice of a SLEEP wait: the stop comes first, the pc on the SLEEP", en);
+
+		event_breakpoint(false);
+		stop = machine_step();
+		check(is_step(stop, G_irq) && Sh4cntx.spc == G_sleep_after && counters.slices == 3,
+			"%s: leaving the stop accepts the interrupt, which returns behind the SLEEP (spc %08X); a step is complete there", en, Sh4cntx.spc);
+	}
+
+	event_breakpoint(false);
+}
+
+
+/*
 	Arming: what is discarded, and what is not
 */
 static void gate_arm()
@@ -1975,6 +2084,7 @@ const Gate gates[] = {
 	{ "b14", "B14 jit: n steps equal a run to the n-th instruction", gate_b14 },
 	{ "slot", "the interpreter between a conditional branch that is not taken and its slot: steps, arming, stops", gate_slot },
 	{ "arm", "page discards on arming, blocks over two pages, category mask, breakpoints added in a stop", gate_arm },
+	{ "event", "an event breakpoint on the vblank of the machine: at a slice end, in a SLEEP wait, with an interrupt request", gate_event },
 };
 
 const u32 gate_count = sizeof(gates) / sizeof(gates[0]);

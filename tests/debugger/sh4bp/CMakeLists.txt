@@ -32,7 +32,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   include("${nulldc_tests_path}/common/libswirl.cmake")
 endif()
 
-set(sh4bp_gates b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b12 b13 b14 slot arm)
+set(sh4bp_gates b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b12 b13 b14 slot arm event)
 
 # The tests run the blocks of the x64 backend through its main loop
 if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})))
