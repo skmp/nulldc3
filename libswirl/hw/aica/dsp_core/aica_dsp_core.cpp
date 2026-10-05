@@ -619,7 +619,7 @@ namespace
 		uint32_t adrs;
 		uint32_t latch, copy, stored;
 		const AicaDspPlan::Row* settled;	//from this row on NOFL of the step two before is the plan's
-		uint32_t nofl_before;	//for the two rows in front of it: NOFL of the two steps in front of the loop
+		uint32_t nofl_before;	//for the rows in front of it that NOFL is the state's: bit 0 for the row next to it, bit 1 for the one before
 		uint32_t add_ct[2];		//by TABLE: what the address takes of MDEC_CT ...
 		uint32_t wrap[2];		//... and where it wraps
 		uint32_t ring_base, ram_even;
@@ -881,8 +881,20 @@ void AicaDsp::RunSample(const AicaDspSampleInputs* in)
 	c.latch = latch;
 	c.copy = latch_copy;
 	c.stored = memval;
-	c.settled = &plan.row[s] + 2;
-	c.nofl_before = nofl_pipe;
+
+	//The first two rows of the loop have the step two before them in front of the loop, and the state has its NOFL.
+	//From step 127 there is one such row, and the rows end behind it
+	if (s < AICA_DSP_STEPS - 1)
+	{
+		c.settled = plan.row + s + 2;
+		c.nofl_before = nofl_pipe;
+	}
+	else
+	{
+		c.settled = plan.row + AICA_DSP_STEPS;
+		c.nofl_before = nofl_pipe >> 1;
+	}
+
 	c.add_ct[0] = MDEC_CT;
 	c.add_ct[1] = 0;
 	c.wrap[0] = ring_mask;
@@ -891,9 +903,9 @@ void AicaDsp::RunSample(const AicaDspSampleInputs* in)
 	c.ram_even = ram_mask & ~1u;
 
 	const uint32_t first = s;
-	const AicaDspPlan::Row* const end = &plan.row[stop];
+	const AicaDspPlan::Row* const end = plan.row + stop;
 
-	for (const AicaDspPlan::Row* r = &plan.row[s]; r != end; r++)
+	for (const AicaDspPlan::Row* r = plan.row + s; r != end; r++)
 	{
 		switch (r->kind & (K_COUNT - 1))
 		{
