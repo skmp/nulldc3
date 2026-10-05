@@ -22,8 +22,9 @@
 
 	fiq, scilv: the interrupt controller of the AICA in front of nFIQ, driven through its registers as a guest
 	drives it, and what SCILV0-2 read back (the comment at fiq_setup() has the source). Two cases of fiq have an
-	ARMRST in the middle of a handler, with no capture behind them (the comment at fiq_armrst_in_service()), and
-	one of scilv has the register behind SCILV2, which reads back (the comment at scilv_mcieb_reads_back()).
+	ARMRST in the middle of a handler, with no capture behind them (the comment at fiq_armrst_in_service()), two
+	are about what M reads and which of its bits end a service (the comments at fiq_m_reads_0() and fiq_m_bit_0()),
+	and one of scilv has the register behind SCILV2, which reads back (the comment at scilv_mcieb_reads_back()).
 
 	reset: what the release of ARMRST writes and what it leaves, out of four modes (the comment at reset_case() has
 	the source).
@@ -1030,6 +1031,90 @@ static void fiq_armrst_nfiq(std::string& text)
 		text += " the handler is entered again though it has read L;";
 }
 
+static void m_reads_0(std::string& text, const char* where)
+{
+	char number[96];
+	u32 m = arm7m_read32(AICA_M);
+
+	if (m != 0)
+	{
+		snprintf(number, sizeof(number), " M reads %X %s, has to be 0;", m, where);
+		text += number;
+	}
+}
+
+/*
+	M reads 0.
+
+	Behind the handler's write of M that is the console's: the handler of wren7-rtl's k_fiqcost_ldrm.s reads L,
+	writes SCIRE and M and then reads M four times into r3, and the job ldrm_c4_n256 ends with 0 in r3
+	(model/tests/hw/fiqcost/hw/ldrm_c4_n256.bin, the word at 0x14). The same kernel without the four reads leaves the
+	1 of its L read there (ldrm_c0_n256.bin).
+
+	With the request in service, in front of the write of M, it is base behaviour and not measured: no kernel
+	reads M there. The emulator read a word that nothing wrote, 0, before the service had a state of its own.
+*/
+static void fiq_m_reads_0(std::string& text)
+{
+	fiq_setup(0x80, 0, 0);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	m_reads_0(text, "with nFIQ pulled");
+
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	arm7m_read32(AICA_L);
+	m_reads_0(text, "between the L read and the M write");
+
+	arm7m_write32(AICA_M, 1);
+	m_reads_0(text, "behind the M write");
+}
+
+/*
+	Only bit 0 of M ends a service: a write with every other bit set and bit 0 clear does nothing, and one with
+	bit 0 and every other bit set ends it as a write of 1 does.
+
+	Base behaviour, not measured: every kernel of the console writes 1 to M. The emulator has looked at bit 0 only
+	all along, and wren7's model does.
+*/
+static void fiq_m_bit_0(std::string& text)
+{
+	fiq_setup(0x80, 0, 0);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	arm7m_read32(AICA_L);
+	arm7m_write32(AICA_M, 0xFFFFFFFE);
+	fiq_return(text);
+
+	for (u32 i = 0; i < 4; i++)
+	{
+		arm7m_step();
+
+		if (in_fiq() || sample_interrupts(text))
+		{
+			text += " a write of M with bit 0 clear ends the service;";
+			return;
+		}
+	}
+
+	//the request of these samples is pending: it is let in with the service ended
+	arm7m_write32(AICA_M, 0xFFFFFFFF);
+	arm7m_step();
+
+	if (!in_fiq())
+		text += " a write of M with bit 0 and every other bit set does not end the service;";
+}
+
 static const Scenario fiq_scenarios[] =
 {
 	{ "level 0", &fiq_level_0 },
@@ -1042,6 +1127,8 @@ static const Scenario fiq_scenarios[] =
 	{ "L behind level 7 and behind level 0", &fiq_level_0_l },
 	{ "ARMRST between the L read and the M write", &fiq_armrst_in_service },
 	{ "ARMRST in front of the L read", &fiq_armrst_nfiq },
+	{ "M reads 0", &fiq_m_reads_0 },
+	{ "only bit 0 of M ends a service", &fiq_m_bit_0 },
 };
 
 static void scilv_reads_0(std::string& text, u32 index)

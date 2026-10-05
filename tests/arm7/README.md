@@ -10,7 +10,7 @@ what is written to them, and a sample passes only when a test says so (`arm7_mac
 | test | what it runs | data |
 |---|---|---|
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast, from reset to their end marker: no error bit in r1 (`r1 & 0x3FFFFFFF == 0`) and the pinned r0-r14 and CPSR at the end | `tests/vendor/arm7di-tests-dreamcast` (submodule) |
-| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), the logical operations with a ROR by a register amount of 0, of 32 and around them, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2 read back, what a reset writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
+| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), the logical operations with a ROR by a register amount of 0, of 32 and around them, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2, the register behind them and M read back, what a reset writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
 | `arm7.wren7.vendor` | the same programs as console jobs: r1 and CPSR against the console's | wren7-rtl |
 | `arm7.wren7.qemu_diff` | 4 x 1000 random instructions (data processing, MUL/MLA, LDR/STR, LDM/STM, SWP): registers, flags and memory of every case against the console's | wren7-rtl |
 | `arm7.wren7.mulsem` | 1024 multiplier inputs: MUL(S)/MLA(S) results and flags, and the Rd == Rm forms, against the console's | wren7-rtl |
@@ -71,7 +71,12 @@ A fourth case of `scilv` is about where the registers that read 0 end: MCIEB, th
 back what was written to it. No capture reads MCIEB, the case holds what the emulator did before SCILV0-2 read
 as 0.
 
-Two cases of `fiq` have no capture behind them. They hold and release ARMRST in the middle of a handler, between
+Two cases of `fiq` are about M itself. It reads 0: behind the handler's write of M that is the console's (the
+job `ldrm_c4_n256` of `fiqcost` reads it there), with the request still in service it is what the emulator did
+before and not measured. And only bit 0 of a write ends a service, which is not measured either: every kernel of
+the console writes 1.
+
+Two more cases of `fiq` have no capture behind them. They hold and release ARMRST in the middle of a handler, between
 its read of L and its write of M, and in front of the read of L: the program behind the first, which writes M in
 its handler only as the ARM crt0 of KallistiOS does, has to get an interrupt with every sample, and the one
 behind the second is interrupted as soon as it turns FIQs on. `KNOWN_FAILURES.md` (D5) has why.
