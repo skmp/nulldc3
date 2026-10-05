@@ -2198,6 +2198,16 @@ static void gate_dense()
 		s = doubles(16 * 1024 + 2048, budget + 40, &bytes_armed);
 
 		check(s == base, "the same with %u of its instructions armed and muted (%s)", budget + 40, str(s));
+
+		//Room for the code of the block's first instructions and for a compile to begin behind it, not for the
+		//code of the rest, which is compiled outside the block cache
+		const u32 first_part = bytes / n * (budget + 8);
+
+		s = doubles(16 * 1024 + 2048 + first_part, budget + 40, &bytes_armed);
+
+		check(s == base && first_part < 14 * 1024 && bytes - first_part > 18 * 1024 + 2048,
+			"and with %u bytes left, which the rest of the block does not fit into when it is compiled (%u bytes of the block's %u are behind its first %u instructions) (%s)",
+			16 * 1024 + 2048 + first_part, bytes - first_part, bytes, budget + 8, str(s));
 	}
 
 	//A code cache that has no room for the code of a block when it is empty: the block is made of fewer
