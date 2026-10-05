@@ -26,10 +26,10 @@ struct DspOptions
 {
 	std::string data_dir;		//the caique-rtl checkout, for the tests that read its console captures
 	std::string baseline;
-	bool update_baseline;
-	bool strict;				//passes above the baseline fail
-	bool require_data;			//test data that is not there is an error, not a reason to skip
-	bool verbose;
+	bool update_baseline = false;
+	bool strict = false;		//passes above the baseline fail
+	bool require_data = false;	//test data that is not there is an error, not a reason to skip
+	bool verbose = false;
 };
 
 //Reads the command line from argv[first] on, opt comes in with the defaults. False: bad command line, the usage
