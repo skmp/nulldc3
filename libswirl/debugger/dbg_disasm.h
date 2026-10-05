@@ -80,7 +80,8 @@ namespace dbg
 		uint32_t target;
 		uint32_t literal_addr;
 		uint32_t literal_size;	// bytes transferred at literal_addr: 1 or 4 for ldr / str with pc as base
-								// and an immediate offset; 0 for add / sub rd, pc, #imm (address only)
+								// and a pre-indexed immediate offset (with or without write-back);
+								// 0 for add / sub rd, pc, #imm (address only)
 		uint32_t length;		// always 4
 	};
 
