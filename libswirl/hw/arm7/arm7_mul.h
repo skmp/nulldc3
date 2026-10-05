@@ -46,3 +46,26 @@ static inline bool arm_MulCarry(u32 rm, u32 rs, bool c)
 
 	return shift ? ((rm >> (32 - shift)) & 1) != 0 : c;
 }
+
+//MUL / MLA with Rd == Rm (console: mulsem). Rd is written before the first step, with 0 or with Rn for MLA, and
+//after every step, and every step reads Rm again. c: C going in, and coming out of the last step
+static inline u32 arm_MulRdRm(u32 rd, u32 rs, bool& c)
+{
+	u32 steps = arm_MulSteps(rs);
+
+	for (u32 k = 0; k < steps; k++)
+	{
+		int digit = arm_MulDigit(rs, k);
+		u32 shift = arm_MulShift(digit, k);
+
+		if (k == steps - 1 && shift)
+			c = ((rd >> (32 - shift)) & 1) != 0;
+
+		if (digit > 0)
+			rd += rd << shift;
+		else if (digit < 0)
+			rd -= rd << shift;
+	}
+
+	return rd;
+}

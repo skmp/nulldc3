@@ -10,23 +10,11 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
-| D4 | `arm7.wren7.mulsem` `muls-rd-rm` | 1024 | 69 | 955 |
-| D4 | `arm7.wren7.mulsem` `mla-rd-rm` | 1024 | 23 | 1001 |
 | D7 | `arm7.wren7.vendor` `cpsr` | 45 | 4 | 41 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 0 | 4 |
 
 Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 63/63, the r1 of the 45 vendor jobs, the 4000
-qemu_diff cases, the MULS and MLAS results and flags, and how all 55 jobs end.
-
-### D4: MUL and MLA with Rd == Rm give the product
-
-The multiplier reads Rm again in every step, and Rd is written in every step. With Rd == Rm, MUL gives 0 and
-MLA gives what the 2 bit Booth datapath makes of an operand that changes under it. The interpreter multiplies.
-
-* Code: `case 0x009`, `0x019`, `0x029`, `0x039` in `arm-new.h` (`:1424`, `:1443`, `:2068`, `:2087`).
-* `muls-rd-rm`: the console's answer is 0 in all 1024 records; the 69 that pass are the ones whose product
-  is 0. `mla-rd-rm`: 23 pass.
-* The data sheet calls MUL with Rd == Rm "zero" and MLA "meaningless"; compilers do not emit either.
+qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
 
 ### D7: the reset state
 

@@ -1427,7 +1427,11 @@ if(cond_res) {
       int dest = (opcode >> 16) & 0x0F;
       int mult = (opcode & 0x0F);
       u32 rs = reg[(opcode >> 8) & 0x0F].I;
-      reg[dest].I = reg[mult].I * rs;
+      if(dest == mult) {
+        bool c = C_FLAG;
+        reg[dest].I = arm_MulRdRm(0, rs, c);
+      } else
+        reg[dest].I = reg[mult].I * rs;
       if(((s32)rs)<0)
         rs = ~rs;
       if((rs & 0xFFFFFF00) == 0)
@@ -1447,10 +1451,16 @@ if(cond_res) {
       int mult = (opcode & 0x0F);
       u32 rs = reg[(opcode >> 8) & 0x0F].I;
       u32 rm = reg[mult].I;
-      reg[dest].I = rm * rs;
+      bool c = C_FLAG;
+      if(dest == mult)
+        reg[dest].I = arm_MulRdRm(0, rs, c);
+      else {
+        reg[dest].I = rm * rs;
+        c = arm_MulCarry(rm, rs, c);
+      }
       N_FLAG = (reg[dest].I & 0x80000000) ? true : false;
       Z_FLAG = (reg[dest].I) ? false : true;
-      C_FLAG = arm_MulCarry(rm, rs, C_FLAG);
+      C_FLAG = c;
       if(((s32)rs)<0)
         rs = ~rs;
       if((rs & 0xFFFFFF00) == 0)
@@ -2071,7 +2081,11 @@ if(cond_res) {
       int dest = (opcode >> 16) & 0x0F;
       int mult = (opcode & 0x0F);
       u32 rs = reg[(opcode >> 8) & 0x0F].I;
-      reg[dest].I = reg[mult].I * rs + reg[(opcode>>12)&0x0f].I;
+      if(dest == mult) {
+        bool c = C_FLAG;
+        reg[dest].I = arm_MulRdRm(reg[(opcode>>12)&0x0f].I, rs, c);
+      } else
+        reg[dest].I = reg[mult].I * rs + reg[(opcode>>12)&0x0f].I;
       if(((s32)rs)<0)
         rs = ~rs;
       if((rs & 0xFFFFFF00) == 0)
@@ -2091,10 +2105,16 @@ if(cond_res) {
       int mult = (opcode & 0x0F);
       u32 rs = reg[(opcode >> 8) & 0x0F].I;
       u32 rm = reg[mult].I;
-      reg[dest].I = rm * rs + reg[(opcode>>12)&0x0f].I;
+      bool c = C_FLAG;
+      if(dest == mult)
+        reg[dest].I = arm_MulRdRm(reg[(opcode>>12)&0x0f].I, rs, c);
+      else {
+        reg[dest].I = rm * rs + reg[(opcode>>12)&0x0f].I;
+        c = arm_MulCarry(rm, rs, c);
+      }
       N_FLAG = (reg[dest].I & 0x80000000) ? true : false;
       Z_FLAG = (reg[dest].I) ? false : true;
-      C_FLAG = arm_MulCarry(rm, rs, C_FLAG);
+      C_FLAG = c;
       if(((s32)rs)<0)
         rs = ~rs;
       if((rs & 0xFFFFFF00) == 0)
