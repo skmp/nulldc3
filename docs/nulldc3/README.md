@@ -4,6 +4,8 @@
 - `devtools-integration-design.md` — track 1: the debugger server inside the emulator and protocol v3 of the web UI
   (implementation contract; three reviews and their dispositions are in its appendix).
 - `sh4-breakpoints-spec.md` — the SH4 breakpoint / single-step mechanism in the active backend, with the prototype's results.
+- `automated-runs.md` — headless mode, the `-config` keys that end a run, the exit line and its state hash, the pinned
+  RTC, what a fatal fault does. Reference for `tests/system` and `tests/perf`.
 
 These are snapshots of working documents; paths of the form `agents/nulldc3/...` point into the working area outside this
 repository (reader reports, reviews, scratch).
