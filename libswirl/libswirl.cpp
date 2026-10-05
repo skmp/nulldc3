@@ -1155,8 +1155,9 @@ struct Dreamcast_impl : VirtualDreamcast {
         stop_reasons |= GUEST_RESET;
 
         // The machine goes on counting as running while its cpu is stopped for the reset: a host that takes
-        // it for stopped ends its user interface under this thread. Not when it has been asked to stop
-        if (!(stop_reasons & (HOST_STOP | GUEST_EXIT)))
+        // it for stopped ends its user interface under this thread. Not when it has been asked to stop, and
+        // not behind the end of the thread, which makes no reset any more
+        if (thread_live && !(stop_reasons & (HOST_STOP | GUEST_EXIT)))
             cpu->resetting = true;
 
         callback_lock.Unlock();

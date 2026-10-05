@@ -2002,6 +2002,10 @@ struct {
 	std::atomic<bool> otherFailed { false };
 	std::atomic<u32> samples { 0 }, stopped { 0 };
 	std::atomic<int> rvCall { 99 };
+
+	// a reset asked for behind the end of the thread
+	std::atomic<bool> inCallback { false }, lateOnEmu { false }, lateRunning { true };
+	std::atomic<int> rvLate { 99 };
 } rr;
 
 // The other thread looks at the machine as a host does, as often as it can, while the reset happens; then it
@@ -2082,6 +2086,48 @@ DBG_SELFTEST_GUEST(emu_resetruns, "emu.resetruns")
 	case 2:
 		ResetWatchEnd(stop, "a reset by a call");
 		Check(rr.rvCall == 0, "the call of the reset returned 0 (%d)", rr.rvCall.load());
+
+		rr.phase = 3;
+
+		// The host stops the machine, and the thread takes a call on its way out, behind its stop callback,
+		// that asks for a reset: no thread is left to make it
+		OtherStart([] {
+			rr.inCallback = false;
+
+			virtualDreamcast->Stop([] {
+				rr.inCallback = true;
+				Nap(30);
+			});
+
+			while (!rr.inCallback)
+				std::this_thread::yield();
+
+			rr.rvLate = emu::Call(emu::CC_TABLE, [] {
+				rr.lateOnEmu = emu::OnEmuThread();
+				virtualDreamcast->RequestReset();
+			});
+
+			if (!WaitLifetime(Lifetime::Stopped))
+			{
+				rr.otherFailed = true;
+				return;
+			}
+
+			rr.lateRunning = sh4_cpu->IsRunning();
+
+			// put right, for the next thread to start
+			if (rr.lateRunning)
+				sh4_cpu->Stop();
+
+			virtualDreamcast->Resume();
+		});
+		return false;
+
+	case 3:
+		OtherJoin();
+
+		Check(!rr.otherFailed && rr.rvLate == 0 && rr.lateOnEmu && stop.cause == StopCause::Start, "a reset was asked for by a call that the leaving thread took (rv %d)", rr.rvLate.load());
+		Check(!rr.lateRunning, "the stopped machine does not count as running for it");
 		break;
 	}
 
