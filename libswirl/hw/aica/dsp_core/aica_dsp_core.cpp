@@ -186,7 +186,7 @@ uint32_t AicaDsp::RegRead(uint32_t off) const
 	off &= 0x7FFC;
 
 	if (off >= 0x3000 && off < 0x3200)
-		return COEF[(off - 0x3000) >> 2];
+		return COEF[(off - 0x3000) >> 2] & 0xFFF8u;
 
 	if (off >= 0x3200 && off < 0x3300)
 		return MADRS[(off - 0x3200) >> 2];
@@ -210,7 +210,7 @@ uint32_t AicaDsp::RegRead(uint32_t off) const
 
 	if (off >= 0x4500 && off < 0x4580)
 	{
-		const int32_t v = MIXS[mixs_dsp][(off - 0x4500) >> 3];
+		const int32_t v = MIXS[mixs_dsp & 1][(off - 0x4500) >> 3];
 
 		return (off & 4) ? (v >> 4) & 0xFFFF : v & 0xF;
 	}
@@ -253,7 +253,7 @@ void AicaDsp::RegWrite(uint32_t off, uint32_t value)
 	}
 	else if (off >= 0x4500 && off < 0x4580)
 	{
-		int32_t& b = MIXS[mixs_dsp][(off - 0x4500) >> 3];
+		int32_t& b = MIXS[mixs_dsp & 1][(off - 0x4500) >> 3];
 
 		if (off & 4)
 			b = dsp_sext((int32_t)((v << 4) | ((uint32_t)b & 0xF)), 20);
@@ -267,7 +267,7 @@ void AicaDsp::RegWrite(uint32_t off, uint32_t value)
 
 void AicaDsp::SweepBegin()
 {
-	mixs_fill ^= 1;
+	mixs_fill = (uint8_t)((mixs_fill & 1) ^ 1);
 	mixs_sent[mixs_fill] = 0;
 	mixs_swept = 1;
 }
@@ -285,12 +285,12 @@ static inline void mixs_send(AicaDsp& d, uint32_t bank, uint32_t bus, int32_t va
 
 void AicaDsp::MixsSend(uint32_t bus, int32_t value)
 {
-	mixs_send(*this, mixs_fill, bus, value);
+	mixs_send(*this, mixs_fill & 1u, bus, value);
 }
 
 void AicaDsp::MixsSendLate(uint32_t bus, int32_t value)
 {
-	mixs_send(*this, mixs_fill ^ 1u, bus, value);
+	mixs_send(*this, (mixs_fill & 1u) ^ 1u, bus, value);
 }
 
 void AicaDsp::ChannelFetch(uint16_t word)
@@ -331,11 +331,11 @@ static inline void sample_begin(AicaDsp& d, const AicaDspSampleInputs* in)
 
 		d.mixs_sent[d.mixs_fill] = in->mixs_sent;
 	}
-	else if (!d.mixs_swept)
+	else if (!(d.mixs_swept & 1))
 		d.SweepBegin();
 
 	d.mixs_swept = 0;
-	d.mixs_dsp = d.mixs_fill ^ 1;
+	d.mixs_dsp = (uint8_t)((d.mixs_fill & 1) ^ 1);
 }
 
 //What step 127 does behind itself
@@ -390,7 +390,7 @@ static inline int32_t dsp_shifter(int32_t acc, uint32_t shift)
 
 void AicaDsp::StepOne(const AicaDspSampleInputs* in, AicaDspStepView* view)
 {
-	const uint32_t s = step;
+	const uint32_t s = step & 127;
 
 	if (s == 0)
 		sample_begin(*this, in);
@@ -403,7 +403,7 @@ void AicaDsp::StepOne(const AicaDspSampleInputs* in, AicaDspStepView* view)
 			ChannelFetch(in->fetch_word[channel]);
 	}
 
-	const bool taken = slot_taken != 0;
+	const bool taken = (slot_taken & 1) != 0;
 
 	slot_taken = 0;
 
@@ -420,7 +420,7 @@ void AicaDsp::StepOne(const AicaDspSampleInputs* in, AicaDspStepView* view)
 	if (i.IRA <= 0x1F)
 		inputs = MEMS[i.IRA];
 	else if (i.IRA <= 0x2F)
-		inputs = (int32_t)((uint32_t)MIXS[mixs_dsp][i.IRA - 0x20] << 4);
+		inputs = (int32_t)((uint32_t)MIXS[mixs_dsp & 1][i.IRA - 0x20] << 4);
 	else if (i.IRA <= 0x31)
 		inputs = EXTS[i.IRA - 0x30] * 256;
 	else
@@ -433,10 +433,12 @@ void AicaDsp::StepOne(const AicaDspSampleInputs* in, AicaDspStepView* view)
 	if (i.IWT)
 		MEMS[i.IWA] = stored_raw ? dsp_sext((int32_t)((uint32_t)memval << 8), 24) : dsp_unpack(memval);
 
-	const int32_t shifted = dsp_shifter(ACC, i.SHIFT);
+	//ACC and TEMP as the numbers their 26 and 24 bit are: the sums below then stay inside 32 bit
+	const int32_t acc = dsp_sext(ACC, 26);
+	const int32_t shifted = dsp_shifter(acc, i.SHIFT);
 	const uint32_t ct = MDEC_CT;
-	const int32_t temp = TEMP[(i.TRA + ct) & 0x7F];
-	int32_t b = i.ZERO ? 0 : i.BSEL ? ACC : temp;
+	const int32_t temp = dsp_sext(TEMP[(i.TRA + ct) & 0x7F], 24);
+	int32_t b = i.ZERO ? 0 : i.BSEL ? acc : temp;
 
 	if (i.NEGB)
 		b = -b;
@@ -510,9 +512,9 @@ void AicaDsp::StepOne(const AicaDspSampleInputs* in, AicaDspStepView* view)
 		view->Y = y;
 		view->B = b;
 		view->ACC = ACC;
-		view->FRC_REG = FRC_REG;
-		view->Y_REG = Y_REG;
-		view->ADRS_REG = ADRS_REG;
+		view->FRC_REG = FRC_REG & 0x1FFF;
+		view->Y_REG = dsp_sext(Y_REG, 24);
+		view->ADRS_REG = ADRS_REG & 0xFFF;
 		view->memval = memval;
 		view->memval_nofl = stored_nofl;
 		view->latch = latch;
@@ -521,7 +523,7 @@ void AicaDsp::StepOne(const AicaDspSampleInputs* in, AicaDspStepView* view)
 		view->mem_addr = (int32_t)mem_addr;
 		view->mem_data = (int32_t)mem_data;
 		view->slot_taken = taken ? 1 : 0;
-		view->mixs_bank = mixs_dsp;
+		view->mixs_bank = mixs_dsp & 1;
 	}
 
 	if (s == AICA_DSP_STEPS - 1)
@@ -546,6 +548,9 @@ void AicaDsp::StepOne(const AicaDspSampleInputs* in, AicaDspStepView* view)
 
 	and TEMP and MEMS go back into the state behind the last step. Nothing else of the state is in it: nothing
 	writes the DSP's bank of MIXS, EXTS or COEF while a sample runs in one go.
+
+	Every entry is the number that the bits of its field are (the header has which bits a field has), whatever
+	else the field holds: no sum of a step can then leave 32 bit.
 */
 
 enum
@@ -805,17 +810,17 @@ static inline bool plan_current(const AicaDsp& d)
 void AicaDsp::RunSample(const AicaDspSampleInputs* in)
 {
 	//Without wave RAM, and with a channel that took the slot of the next step by a call: the way StepOne has it
-	if (!ram || slot_taken)
+	if (!ram || (slot_taken & 1))
 	{
 		do
 			StepOne(in);
-		while (step != 0 && (!ram || slot_taken));
+		while (step != 0 && (!ram || (slot_taken & 1)));
 
 		if (step == 0)
 			return;
 	}
 
-	uint32_t s = step;
+	uint32_t s = step & 127;
 
 	if (s == 0)
 		sample_begin(*this, in);
@@ -832,6 +837,10 @@ void AicaDsp::RunSample(const AicaDspSampleInputs* in)
 	const uint32_t turn = MDEC_CT & 0x7F;
 	int32_t file[F_SIZE];
 
+	//TEMP is cut to its 24 bit where it is, in a loop of a fixed length: all of it comes back from the file anyway
+	for (int32_t& v : TEMP)
+		v = dsp_sext(v, 24);
+
 	for (uint32_t i = 0; i < 128 - turn; i++)
 		file[F_TEMP + i] = TEMP[turn + i];
 
@@ -842,7 +851,7 @@ void AicaDsp::RunSample(const AicaDspSampleInputs* in)
 		file[F_MEMS + i] = dsp_sext(MEMS[i], 24);
 
 	for (uint32_t i = 0; i < 16; i++)
-		file[F_MIXS + i] = dsp_sext((int32_t)((uint32_t)MIXS[mixs_dsp][i] << 4), 24);
+		file[F_MIXS + i] = dsp_sext((int32_t)((uint32_t)MIXS[mixs_dsp & 1][i] << 4), 24);
 
 	file[F_EXTS] = EXTS[0] * 256;
 	file[F_EXTS + 1] = EXTS[1] * 256;
@@ -867,7 +876,7 @@ void AicaDsp::RunSample(const AicaDspSampleInputs* in)
 	c.file = file;
 	c.fetch_word = in ? in->fetch_word : nullptr;
 	c.fetch = s < AICA_DSP_STEPS - 1 ? by_step >> ((s + 1) >> 1) : 0;
-	c.acc = ACC;
+	c.acc = dsp_sext(ACC, 26);
 	c.adrs = ADRS_REG;
 	c.latch = latch;
 	c.copy = latch_copy;

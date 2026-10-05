@@ -121,7 +121,8 @@ on a console, `model/NOTES.md` there has the measurements and `model/tests/<case
 | `StateSize()`, `SaveState(blob)`, `LoadState(blob, size)` | a versioned little endian blob, without the wave RAM |
 | `AicaDspStepView` | what a step computed, for a debugger |
 
-The registers and the datapath are fields of `AicaDsp`. A debugger reads and writes them there.
+The registers and the datapath are fields of `AicaDsp`. A debugger reads and writes them there. The header says
+which bits each field has: the core computes with those, whatever a field is made to hold.
 
 `StepOne` and `RunSample` are two pieces of code for the same steps: `StepOne` executes a step as the header
 describes it, `RunSample` executes the program from a plan that it makes of MPRO once (and again when MPRO is
@@ -215,13 +216,14 @@ What the user of the playground sees change with the swap:
 `RunSample` with the sweep's 16 sends, `tests/aica_dsp/aica_dsp_bench`: one thread of a Ryzen 9 3900X, g++ 13 -O2.
 The machine was busy on all of its 24 threads while this was measured (load average 26 to 55), so each row has
 the slowest and the fastest of eight runs of a million samples, and next to them what does not depend on the
-load: the instructions a sample takes (valgrind).
+load: the instructions a sample takes (callgrind: what a run of 12,000 samples takes more than one of 2,000,
+for each of the 10,000).
 
 | Program | Samples a second | Times 44100 Hz | Instructions a sample |
 |---|---|---|---|
-| a reverb's shape, 96 steps: multiplies, float reads from the ring, IWT, some writes | 0.88 to 1.19 million | 20 to 27 | 6400 |
-| the same over all 128 steps | 0.28 to 0.95 million | 6 to 22 | 7900 |
-| no program | 3.9 to 4.6 million | 88 to 104 | 1700 |
+| a reverb's shape, 96 steps: multiplies, float reads from the ring, IWT, some writes | 0.88 to 1.19 million | 20 to 27 | 6350 |
+| the same over all 128 steps | 0.28 to 0.95 million | 6 to 22 | 7850 |
+| no program | 3.9 to 4.6 million | 88 to 104 | 1750 |
 
 clang 18 -O2 ran the first row at 1.14 to 1.29 million. A sample of single steps, 128 `StepOne`, costs about
 six times a `RunSample`: 0.13 to 0.21 million samples a second on a 96 step program, 3 to 5 times 44100 Hz.

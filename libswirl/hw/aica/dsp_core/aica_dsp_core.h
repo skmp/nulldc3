@@ -201,6 +201,29 @@ struct AicaDspPlan
 struct AicaDsp
 {
 	/*
+		What a field holds: the bits its register has on the hardware, a signed one sign extended.
+
+		  TEMP, MEMS, Y_REG   24 bit, signed          COEF         bits 15:3, bits 2:0 are 0
+		  MIXS                20 bit, signed          FRC_REG      13 bit
+		  ACC                 26 bit, signed          ADRS_REG     12 bit
+		  step                0 to 127                nofl_pipe    2 bit
+		  slot_taken, mixs_dsp, mixs_fill, mixs_swept   0 or 1
+
+		The others have all the bits of their type. A core that is used through its calls holds nothing else: Reset,
+		RegWrite, the sends, the steps and LoadState keep every field inside its bits.
+
+		A user that writes a field itself (a debugger, a host with the arrays of wasm/) can store anything. The core
+		computes with the bits listed here and ignores what else a field holds: what the CPU reads, what the sends,
+		a step and a sample do and the view of a step are those of the state with every field cut to its bits, and
+		no value in a field makes a call undefined. What does not count stays in a field until the core writes the
+		field (a step writes what its row writes, RunSample all of TEMP and MEMS), and SaveState saves it as it is:
+		LoadState is what cuts every field.
+
+		Two things are not fields in this sense: the wave RAM, which has to be the pointer and the size Init was
+		given, and the plan, which is the core's own.
+	*/
+
+	/*
 		Registers, as the CPU has them from 0x3000 on. A debugger reads and writes them here, the CPU through
 		RegRead and RegWrite.
 	*/
