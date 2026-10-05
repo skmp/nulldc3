@@ -689,9 +689,10 @@ void iNimp(const char*str)
 	//Sh4_int_Stop();
 }
 
-// FIPR and FTRV on the host FPU: single precision products and sums, each of them rounded, the four products of a
-// sum added in pairs, (p0 + p1) + (p2 + p3), which is the order of the x64 backend's code. The interpreter, the
-// canonical helpers and that code give the same bits. It is not the SH4's sum, which is rounded once.
+// FIPR and FTRV on the host FPU: single precision products and sums, each of them rounded. FIPR adds its four
+// products in pairs, (p0 + p1) + (p2 + p3), FTRV one by one, ((p0 + p1) + p2) + p3, as the x64 backend's code does.
+// The interpreter, the canonical helpers and that code give the same bits. It is not the SH4's sum, which is
+// rounded once; of the two orders these are the ones that leave the SH4's result more often (tests/sh4_fpu).
 // A product and a sum contracted into a fused multiply-add would be another result: off, to the end of the file
 #if BUILD_COMPILER == COMPILER_CLANG
 #pragma STDC FP_CONTRACT OFF
@@ -723,7 +724,7 @@ void sh4_ftrv(f32* fd, const f32* fn, const f32* fm)
 		f32 p2 = fm[i + 8] * fn[2];
 		f32 p3 = fm[i + 12] * fn[3];
 
-		v[i] = fixNaN((p0 + p1) + (p2 + p3));
+		v[i] = fixNaN(((p0 + p1) + p2) + p3);
 	}
 
 	for (u32 i = 0; i < 4; i++)

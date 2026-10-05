@@ -11,9 +11,9 @@
 static const char known_oix[] =
 	"devcast: the operand cache as ram hack is keyed on address bit 25 alone, not on CCR.OIX and the cache area";
 static const char known_sum_of_products[] =
-	"devcast rounds (and overflows) every product and every sum to single precision and adds the products in pairs, "
-	"(p0 + p1) + (p2 + p3), in both engines. The vectors carry the fused multiply-add of the host that generated "
-	"them. Neither is the SH4's sum of products";
+	"devcast rounds (and overflows) every product and every sum to single precision and adds the products in one "
+	"order in both engines, FIPR in pairs, (p0 + p1) + (p2 + p3), FTRV one by one, ((p0 + p1) + p2) + p3. The vectors "
+	"carry the fused multiply-add of the host that generated them. Neither is the SH4's sum of products";
 
 //One row per vector file: name, instruction, width of the data read and of the data write, flags, known failures
 static const SsFilePolicy policy[] =

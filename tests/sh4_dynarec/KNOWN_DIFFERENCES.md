@@ -62,16 +62,17 @@ Same vectors, filter and comparison as `sh4.singlestep.interp`.
 | | interpreter | dynarec |
 |---|---|---|
 | run | 73,800 | 73,800 |
-| pass-exact | 73,293 | 73,293 |
+| pass-exact | 73,303 | 73,303 |
 | pass-lenient | 73,465 | 73,465 |
 | failed | 335 (248 crash) | 335 (248 crash) |
 
 There is no file in which the dynarec passes fewer vectors than the interpreter, or more: what one does not pass,
 the other does not pass either (`tests/common/ss_policy.cpp`). FTRV and FIPR are a sum of four products that both
-engines add in pairs, `(p0 + p1) + (p2 + p3)`, each product and each sum rounded to single precision: the
-interpreter and the canonical helpers in `sh4_fipr` / `sh4_ftrv` (`hw/sh4/interpr/sh4_fpu.cpp`), the x64 backend
-with `mulps` and `haddps` / `addps`. Of their vectors 85 of 242 (FTRV) and 169 of 223 (FIPR) pass exactly. The
-SR.FD difference does not show here: those vectors are filtered (`fpu-disabled`).
+engines add in one order, FIPR in pairs, `(p0 + p1) + (p2 + p3)`, FTRV one by one, `((p0 + p1) + p2) + p3`, each
+product and each sum rounded to single precision: the interpreter and the canonical helpers in `sh4_fipr` /
+`sh4_ftrv` (`hw/sh4/interpr/sh4_fpu.cpp`), the x64 backend with `mulps` and `haddps` / `addps`. Of their vectors 95
+of 242 (FTRV) and 169 of 223 (FIPR) pass exactly. The SR.FD difference does not show here: those vectors are
+filtered (`fpu-disabled`).
 
 ## sh4.directed.*
 

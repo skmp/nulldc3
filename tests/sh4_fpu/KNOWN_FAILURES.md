@@ -14,7 +14,7 @@ A fix takes its entry out of this file and updates the baselines in the same com
 | | cases | traps | value-i | value-d | flags-i | flags-d | agree | native | crash |
 |---|---|---|---|---|---|---|---|---|---|
 | `sh4.fpu.scalar` | 225,036 | 19,633 | 205,051 | 205,051 | 109,153 | 109,153 | 225,036 | 113,946 | 0 |
-| `sh4.fpu.vector` | 1,371,226 | 1,617 | 686,402 | 686,402 | 13,404 | 13,404 | 1,371,226 | 1,370,977 | 0 |
+| `sh4.fpu.vector` | 1,371,226 | 1,617 | 706,768 | 706,768 | 13,404 | 13,404 | 1,371,226 | 1,370,977 | 0 |
 
 ## 1. There is no FPU exception
 
@@ -100,37 +100,50 @@ result's sign, with no cause at all and without the FPU error. The host divides 
 ## 5. FIPR and FTRV are host float arithmetic
 
 **Groups:** every `FIPR.dn1.*`, `FTRV.dn1.*` and `FIPR.console.values.*` group, and 8 records of
-`FIPR.console.specials.dn1`: 485,639 cases with a wrong sum.
+`FIPR.console.specials.dn1`: 465,273 cases with a wrong sum.
 
 The hardware (console) forms the four products in truncating multipliers that keep 28 bits, aligns them to
 the largest by cutting bits off, adds them exactly and rounds once. It recodes one of the two factors (FVn for
 FIPR, the matrix element for FTRV), so a product is not even commutative. devcast multiplies and adds floats:
-every product is rounded, and the four of a sum are added in pairs, `(p0 + p1) + (p2 + p3)`, every sum rounded.
-That is `sh4_fipr` and `sh4_ftrv` (`hw/sh4/interpr/sh4_fpu.cpp`) in the interpreter and in the canonical helpers,
-and `mulps` with `haddps` twice (FTRV: four `mulps` and `addps` over the columns) in the x64 backend's code. The
-order is the backend's; it is no nearer to the hardware than another one, and for a transform as games set it up
-further away: adding the products one by one, as the interpreter did, leaves the hardware's result in 24,148
-(round to nearest) and 15,844 (round to zero) of the 48,000 `affine` cases.
+every product is rounded and every sum is. FIPR adds its four products in pairs, `(p0 + p1) + (p2 + p3)`, FTRV
+one by one, `((p0 + p1) + p2) + p3`. That is `sh4_fipr` and `sh4_ftrv` (`hw/sh4/interpr/sh4_fpu.cpp`) in the
+interpreter and in the canonical helpers, and `mulps` with `haddps` twice (FTRV: four `mulps` and three `addps`
+over the columns) in the x64 backend's code.
+
+Neither order is the hardware's sum. Each instruction has the one of the two that leaves the hardware's result in
+more of these cases:
+
+| | in pairs | one by one |
+|---|---|---|
+| FIPR (of 427,700) | **242,649** | 240,950 |
+| FTRV (of 416,391) | 114,572 | **134,938** |
+
+For FTRV nearly all of that is the transform as games set it up (`affine`: three products and a translation that
+is added last): 24,148 against 15,580 of 48,000 in round to nearest, 15,844 against 3,546 in round to zero. The
+order that is better over all is not better in every group. One by one FTRV loses 738 cases in 7 groups
+(`FTRV.dn1.rn.normal` 648, `FTRV.dn1.rz.overflow` 46, `rn.nan` 19, `rn.inf` 14, `rn.wide` 5, `rn.zero` 5,
+`rn.cancel` 1) and gains 21,104 in 14. In pairs FIPR loses 121 cases in 11 groups, 13 console records among them
+(`FIPR.console.values.rn` 3,933 for 3,944, `.rz` 2,564 for 2,566), and gains 1,820 in 9.
 
 | what is wrong with the sum | cases |
 |---|---|
-| one unit in the last place off | 319,064 |
-| more than one unit off | 134,273 |
-| a zero of the other sign. An exact zero is +0 on the hardware, where the host adds -0 and -0 to -0; an underflow keeps the sign of the sum on the hardware, where the host adds flushed zeros of both signs to +0 | 12,524 |
-| a NaN where the hardware has a number: products that overflow to infinities of both signs, inf - inf (`overflow` and `denormal` classes, round to nearest) | 12,170 |
-| another sign, or an overflow on one side only (the `cancel` and `overflow` classes mostly) | 6,811 |
-| the sign of an infinity: several infinite products of one sign add up to an infinity with the sign of the first product on the hardware | 797 |
+| one unit in the last place off | 283,301 |
+| more than one unit off | 149,489 |
+| a zero of the other sign. An exact zero is +0 on the hardware, where the host adds -0 and -0 to -0; an underflow keeps the sign of the sum on the hardware, where the host adds flushed zeros of both signs to +0 | 12,521 |
+| a NaN where the hardware has a number: products that overflow to infinities of both signs, inf - inf (`overflow` and `denormal` classes, round to nearest) | 12,152 |
+| another sign, or an overflow on one side only (the `cancel` and `overflow` classes mostly) | 7,017 |
+| the sign of an infinity: several infinite products of one sign add up to an infinity with the sign of the first product on the hardware | 793 |
 
 How much is right depends on the operands; `value` of the generated classes, round to nearest and round to
 zero:
 
 | class | FIPR rn | FIPR rz | FTRV rn (all 4 results) | FTRV rz |
 |---|---|---|---|---|
-| `normal` (of 64,000) | 40,365 | 13,929 | 9,850 | 171 |
-| `vec3` (of 24,000), `affine` (of 48,000) | 15,919 | 7,404 | 15,580 | 3,546 |
+| `normal` (of 64,000) | 40,365 | 13,929 | 9,202 | 340 |
+| `vec3` (of 24,000), `affine` (of 48,000) | 15,919 | 7,404 | 24,148 | 15,844 |
 | `single` (of 24,000), `diagonal` (of 16,000) | 23,069 | 23,296 | 13,432 | 14,248 |
-| `exact` (of 16,000) | 15,996 | 15,996 | 15,989 | 15,986 |
-| `cancel` (of 16,000) | 1,530 | 1,328 | 22 | 13 |
+| `exact` (of 16,000) | 15,996 | 15,996 | 15,992 | 15,990 |
+| `cancel` (of 16,000) | 1,530 | 1,328 | 21 | 14 |
 
 `single` and `diagonal` are one product per result: there the difference is the hardware's multiplier alone,
 which is not the correctly rounded product in 3.9 % (rn) and 2.9 % (rz) of the FIPR cases. With more than one

@@ -708,9 +708,9 @@ public:
 					mulps(xmm2, xword[rax + 32]);  //v2*=vm2
 					mulps(xmm3, xword[rax + 48]);  //v3*=vm3
 
-					addps(xmm0, xmm1);	 //sum it all up
-					addps(xmm2, xmm3);
+					addps(xmm0, xmm1);	 //sum it all up, one by one as sh4_ftrv does
 					addps(xmm0, xmm2);
+					addps(xmm0, xmm3);
 
 					// SH7091: a NaN result is 0x7FBFFFFF, in each of the four
 					{
