@@ -5,8 +5,14 @@
 #include "build.h"
 #include "types.h"
 
+#include <atomic>
+
 u8* emu_vram;
 extern u32 FrameCount;
+
+// Set by the input code of every build, consumed by the renderers of the TA_LLE build
+std::atomic<bool> refsw2_do_dump(false);
+
 #if FEAT_TA == TA_LLE
 #include "imgui/imgui.h"
 #include "hw/pvr/Renderer_if.h"
@@ -22,8 +28,6 @@ extern u32 FrameCount;
 extern FILE* rendlog;
 extern const char* dump_textures;
 extern std::set<u64> texture_dumps;
-
-std::atomic<bool> refsw2_do_dump(false);
 
 void RenderCORE();
 
