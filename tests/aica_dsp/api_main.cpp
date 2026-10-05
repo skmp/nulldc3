@@ -823,6 +823,7 @@ static void test_rules()
 		put(m.dsp, 1, nop());
 		m.dsp.RunSample();
 		check(m.dsp.EFREG[2] == (int16_t)-0x0123, "step 0 shifts the ACC of step 127");
+		check(m.dsp.RegRead(0x4580 + 4 * 2) == 0xFEDD, "a negative output is 16 bit to the CPU: nothing reads above bit 15");
 
 		m.dsp.RegWrite(0x2804, 0x8000);
 		ct = m.dsp.MDEC_CT;
