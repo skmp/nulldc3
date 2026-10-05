@@ -17,7 +17,8 @@
 	ror: the logical operations with a ROR by a register as operand 2, with an amount of 0, of 32 and around them
 	(the table has the source).
 
-	mul-rd-rm: MUL and MLA, with and without S, with Rd == Rm (the table has the source).
+	mul-rd-rm: MUL and MLA, with and without S, with Rd == Rm (the table has the source). mul-rd-rm-c: C behind
+	their S forms, which no console capture has (the table has what it is made of).
 
 	fiq, scilv: the interrupt controller of the AICA in front of nFIQ, driven through its registers as a guest
 	drives it, and what SCILV0-2 read back (the comment at fiq_setup() has the source). Two cases of fiq have an
@@ -29,7 +30,7 @@
 	power-on: a sound CPU that was created and not reset yet holds what its reset gives it, and a reset of the
 	machine leaves nothing of the interrupt controller (the comments at run_power_on() have why).
 
-	Checks: adc, sbc, rsc, ror, mul-rd-rm, trap, fiq, scilv, reset, power-on. The test needs no data.
+	Checks: adc, sbc, rsc, ror, mul-rd-rm, mul-rd-rm-c, trap, fiq, scilv, reset, power-on. The test needs no data.
 */
 #include "arm7_machine.h"
 #include "arm7_suite.h"
@@ -331,7 +332,8 @@ static void run_ror()
 
 	The probe has MUL only with S and MLA only without. They are one multiplier: MUL has to leave the 0 of MULS,
 	MLAS the word of MLA, and the S forms N and Z of what they leave. V stays (the probe's MULS and MLAS with
-	Rd != Rm). No capture has C behind the S forms with Rd == Rm, it is not compared.
+	Rd != Rm). No capture has C behind the S forms with Rd == Rm, and these rows do not compare it; the check
+	mul-rd-rm-c below is about it.
 
 	Rd = Rm = r2, Rs = r1, Rn = r0.
 */
@@ -386,15 +388,67 @@ static const MulCase mul_rd_rm[] =
 	{ MLAS_RD_RM, 0x20000000, 0x7FFFFFFF, 0x91E47F62, FN | FV,           0x00000000, FZ | FV,      NZV_FLAGS },
 };
 
-static void run_mul_rd_rm()
+static void run_mul_cases(const char* check, const MulCase* cases, u32 count)
 {
-	for (u32 i = 0; i < sizeof(mul_rd_rm) / sizeof(mul_rd_rm[0]); i++)
+	for (u32 i = 0; i < count; i++)
 	{
-		const MulCase& c = mul_rd_rm[i];
+		const MulCase& c = cases[i];
 		Insn in = { c.opcode, { c.rn, c.rs, c.rm, 0x33333333 }, c.flags, c.rd_after, c.flags_after, c.flags_mask };
 
-		run_insn("mul-rd-rm", i, in);
+		run_insn(check, i, in);
 	}
+}
+
+static void run_mul_rd_rm()
+{
+	run_mul_cases("mul-rd-rm", mul_rd_rm, sizeof(mul_rd_rm) / sizeof(mul_rd_rm[0]));
+}
+
+/*
+	C behind MULS and MLAS with Rd == Rm. This is NOT measured on a console: the probe has "mla r0, r0, r5, r6"
+	without S, and behind "muls r9, r9, r5" it stores the registers and goes on with a SUBS, the CPSR of that
+	instruction is never read (model/hw/arm/k_mulsem.s). The rows pin what the emulator does, so that a change of
+	it shows.
+
+	It is two things the console has, put together. C behind MULS and MLAS with Rd != Rm is the bit the barrel
+	shifter drops in the last step of the multiplier: the step shifts its operand left by 2k, or by 2k + 1 for a
+	Booth digit of 2 or -2, and a shift by 0 passes the old C on (all 2048 flag words of the probe). And with
+	Rd == Rm the operand of every step is Rd as the steps before left it (all 1024 MLA words of the probe). So C is
+	bit 32 - shift of Rd as the last step finds it.
+
+	MULS: Rd is 0 in every step, C is clear behind every multiply whose last step shifts, whatever Rm is. MLAS:
+	Rd going into the last step, from the steps written out apart from the emulator's code (Rd = Rn, then
+	Rd +- Rd << shift per step; the same steps give the console's MLA word in all 1024 records):
+
+	  record 37   Rs 00000001   1 step, LSL #0                                    C stays
+	  record 101  Rs 00000002   2 steps, the last LSL #2,   Rd 55555556, bit 30   C set
+	  record 0    Rs 050C368D   14 steps, the last LSL #26, Rd AAAACDFE, bit 6    C set (bit 6 of Rm is clear)
+	  record 19   Rs 0000005D   4 steps, the last LSL #6,   Rd FFFF55D8, bit 26   C set
+	  record 4    Rs 7FFFFFFF   16 steps, the last LSL #31, Rd 00000000, bit 1    C clear
+
+	Rd behind the instruction is the console's word in every row.
+*/
+static const MulCase mul_rd_rm_c[] =
+{
+	//             Rm          Rs          Rn          in                  Rd after    after         compared
+	//MULS. Records 37, twice, 101 (bit 30 of Rm is set) and 2
+	{ MULS_RD_RM, 0x4D5D160D, 0x00000001, 0x11111111, FC,                0x00000000, FZ | FC,      ALL_FLAGS },
+	{ MULS_RD_RM, 0x4D5D160D, 0x00000001, 0x11111111, FN,                0x00000000, FZ,           ALL_FLAGS },
+	{ MULS_RD_RM, 0xFCA904E7, 0x00000002, 0x11111111, FC,                0x00000000, FZ,           ALL_FLAGS },
+	{ MULS_RD_RM, 0x5079FC5D, 0xDABF5585, 0x11111111, FN | FC | FV,      0x00000000, FZ | FV,      ALL_FLAGS },
+
+	//MLAS. Records 37, twice, 101, 0, 19 and 4
+	{ MLAS_RD_RM, 0x4D5D160D, 0x00000001, 0x00000084, FC,                0x00000108, FC,           ALL_FLAGS },
+	{ MLAS_RD_RM, 0x4D5D160D, 0x00000001, 0x00000084, FN | FZ,           0x00000108, 0,            ALL_FLAGS },
+	{ MLAS_RD_RM, 0xFCA904E7, 0x00000002, 0xAAAAAAAA, 0,                 0xAAAAAAAE, FN | FC,      ALL_FLAGS },
+	{ MLAS_RD_RM, 0x00004000, 0x050C368D, 0x1DCE4E7B, FV,                0xA2AACDFE, FN | FC | FV, ALL_FLAGS },
+	{ MLAS_RD_RM, 0xB64CFDF7, 0x0000005D, 0x000000DC, FZ,                0xFFD4CBD8, FN | FC,      ALL_FLAGS },
+	{ MLAS_RD_RM, 0x20000000, 0x7FFFFFFF, 0x91E47F62, FN | FC,           0x00000000, FZ,           ALL_FLAGS },
+};
+
+static void run_mul_rd_rm_c()
+{
+	run_mul_cases("mul-rd-rm-c", mul_rd_rm_c, sizeof(mul_rd_rm_c) / sizeof(mul_rd_rm_c[0]));
 }
 
 /*
@@ -1349,6 +1403,9 @@ int main(int argc, char** argv)
 
 	if (arm7_selected("mul-rd-rm"))
 		run_mul_rd_rm();
+
+	if (arm7_selected("mul-rd-rm-c"))
+		run_mul_rd_rm_c();
 
 	if (arm7_selected("trap"))
 		run_traps();

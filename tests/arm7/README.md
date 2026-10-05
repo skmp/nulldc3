@@ -10,7 +10,7 @@ what is written to them, and a sample passes only when a test says so (`arm7_mac
 | test | what it runs | data |
 |---|---|---|
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast, from reset to their end marker: no error bit in r1 (`r1 & 0x3FFFFFFF == 0`) and the pinned r0-r14 and CPSR at the end | `tests/vendor/arm7di-tests-dreamcast` (submodule) |
-| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), the logical operations with a ROR by a register amount of 0, of 32 and around them, MUL and MLA with Rd == Rm, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2 read back, what a reset writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
+| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), the logical operations with a ROR by a register amount of 0, of 32 and around them, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2 read back, what a reset writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
 | `arm7.wren7.vendor` | the same programs as console jobs: r1 and CPSR against the console's | wren7-rtl |
 | `arm7.wren7.qemu_diff` | 4 x 1000 random instructions (data processing, MUL/MLA, LDR/STR, LDM/STM, SWP): registers, flags and memory of every case against the console's | wren7-rtl |
 | `arm7.wren7.mulsem` | 1024 multiplier inputs: MUL(S)/MLA(S) results and flags, and the Rd == Rm forms, against the console's | wren7-rtl |
@@ -47,6 +47,11 @@ what the console left in those three.
 The multiplier probe of the console (`arm7.wren7.mulsem`) has Rd == Rm for MULS and for MLA. The check
 `mul-rd-rm` has the four forms: MUL and MULS leave 0, MLA and MLAS the word the console has for MLA with those
 operands (the rows are records of the probe), the S forms with N and Z of what they leave.
+
+The probe never reads the flags behind an S form with Rd == Rm, so no capture has their C. The check
+`mul-rd-rm-c` pins what the interpreter leaves in it, and is not measured: the bit the barrel shifter drops in
+the last step of the multiplier, as the console has it for Rd != Rm, of Rd as that step finds it, which is the
+operand of every step when Rd == Rm (`KNOWN_FAILURES.md`, D4).
 
 None of the 55 console jobs that run here returns from an exception. The check `trap` has SWI and the
 undefined instruction trap with `movs pc, lr` in their vector, one trap and 8 in a row: R14 of the mode the
