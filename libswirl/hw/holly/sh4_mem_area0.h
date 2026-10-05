@@ -14,8 +14,11 @@ void map_area0(SuperH4* sh4, u32 base);
 
 // Debugger access to the two memories at the start of area 0: the boot ROM at 0x00000000 and the flash
 // memory (battery-backed RAM on arcade boards) at 0x00200000. *data / *size is the backing store, size a
-// power of two: the byte at guest address a of the region is data[(a - region start) & (size - 1)].
+// power of two: the byte stored for guest address a of the region is data[(a - region start) & (size - 1)].
 // Reading it has no side effect. Returns false when the store does not exist.
+// The stored byte is what a guest read delivers, except for six bytes of the flash memory of a Dreamcast: a
+// read of the offsets 0x1A002-0x1A004 and 0x1A0A2-0x1A0A4 delivers the configured region, language and
+// broadcast (settings.dreamcast) in place of the stored byte, each unless its setting is left at the default.
 // Called on the emulator thread, or by a thread that holds the debugger's lifetime lock while no emulator
 // thread exists; the pointer is not kept beyond that.
 bool area0_DebugRom(const u8** data, u32* size);
