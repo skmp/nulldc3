@@ -376,7 +376,7 @@ struct RegAlloc
 		verify(opid>=0 && opid<block->oplist.size());
 		shil_opcode* op=&block->oplist[opid];
 
-		return op->op == shop_sync_fpscr || op->op == shop_sync_sr || op->op == shop_ifb;
+		return op->op == shop_sync_fpscr || op->op == shop_sync_sr || op->op == shop_ifb || op->op == shop_dbg_check;
 	}
 
 	bool IsRegWallOp(RuntimeBlockInfo* block, int opid, bool is_fpr)
@@ -495,6 +495,12 @@ struct RegAlloc
 					if (op->rs3._imm>=0xF000)
 						fp=true;
 
+				}
+				else if (op->op==shop_dbg_check)
+				{
+					//the debugger reads, and while stopped may write, any register
+					all=true;
+					fp=true;
 				}
 				else if(op->op==shop_sync_sr)
 				{

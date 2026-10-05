@@ -843,7 +843,7 @@ void srt_waw(RuntimeBlockInfo* blk)
 			if ((op->rs1.is_reg() && op->rs1._reg==reg_sr_T)
 				|| (op->rs2.is_reg() && op->rs2._reg==reg_sr_T)
 				|| (op->rs3.is_reg() && op->rs3._reg==reg_sr_T)
-				|| op->op==shop_ifb)
+				|| op->op==shop_ifb || op->op==shop_dbg_check)
 			{
 				found=false;
 			}
