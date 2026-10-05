@@ -83,6 +83,8 @@ More about the suites:
                        KNOWN_FAILURES.md)
     cfg/               the config store: -config overrides and what a save writes
     system/            the emulator binary, headless, on guest programs (README.md)
+    perf/              not a test: perf.py measures the speed of the emulator on a guest program (README.md),
+                       BASELINE.md has the figures of one machine
     vendor/            the submodules
     files/             fixtures
 
