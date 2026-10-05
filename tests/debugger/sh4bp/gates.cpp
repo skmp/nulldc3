@@ -1555,6 +1555,41 @@ static void gate_arm()
 			"%s: a breakpoint added during a stop, further on in the stopped block, stops the resume there; time and state at the end are a run's", en);
 	}
 
+	//breakpoints on neighbours: on two instructions in a row, and on a delayed branch and its slot
+	for (Engine e : all_engines)
+	{
+		const char* en = engine_name(e);
+
+		machine_reset(e);
+		machine_set_pc(G_line);
+		bps({ G_line_mid + 2, G_line_mid, G_line_end });
+
+		s = machine_resume();
+		bool first = is_bp(s, 2, G_line_mid);
+		s = machine_resume();
+		bool second = is_bp(s, 1, G_line_mid + 2);
+		s = machine_resume();
+
+		check(first && second && is_bp(s, 3, G_line_end), "%s: breakpoints on two instructions in a row stop at each, once", en);
+
+		machine_reset(e);
+		machine_set_pc(G_line);
+		bps({ G_line_slot, G_line_br, G_line_end });
+
+		s = machine_resume();
+		first = is_bp(s, 2, G_line_br) && R(3) == 5;
+		s = machine_resume();
+
+		check(first && is_bp(s, 3, G_line_end) && R(3) == 8, "%s: breakpoints on a delayed branch and on its slot stop once, at the branch, with the branch's id", en);
+
+		//the same with the branch's own breakpoint muted away: the slot's still stops there
+		machine_reset(e);
+		machine_set_pc(G_line);
+		bps({ G_line_slot, G_line_end });
+		s = machine_resume();
+		check(is_bp(s, 1, G_line_br), "%s: the breakpoint on the slot alone stops at the branch", en);
+	}
+
 	//the queries of the decoders
 	machine_reset(ENGINE_JIT);
 	machine_set_pc(G_line);
