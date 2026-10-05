@@ -20,7 +20,8 @@
 	mul-rd-rm: MUL and MLA, with and without S, with Rd == Rm (the table has the source).
 
 	fiq, scilv: the interrupt controller of the AICA in front of nFIQ, driven through its registers as a guest
-	drives it, and what SCILV0-2 read back (the comment at fiq_setup() has the source).
+	drives it, and what SCILV0-2 read back (the comment at fiq_setup() has the source). Two cases of fiq have an
+	ARMRST in the middle of a handler, with no capture behind them (the comment at fiq_armrst_in_service()).
 
 	reset: what the release of ARMRST writes and what it leaves, out of four modes (the comment at reset_case() has
 	the source).
@@ -856,6 +857,123 @@ static void fiq_level_0_l(std::string& text)
 	}
 }
 
+/*
+	ARMRST with a request in service. Nothing of the console is in these two: every FIQ kernel of wren7-rtl reads L
+	and writes M in its prologue, before it turns FIQs on, and so no job shows what the reset left of the service
+	of the job before (KNOWN_FAILURES.md, D5).
+
+	The release of ARMRST ends the service, as a write of bit 0 of M does. That is chosen, because software depends
+	on it: a program that ARMRST starts has to get its interrupts whatever the program in front of it was in the
+	middle of. The ARM crt0 of KallistiOS writes M in its FIQ handler only; with the service kept it never gets
+	there when the reset comes between the L read and the M write of the program in front of it, and the sound
+	program of the BIOS is at that point in about 2 of 100 resets.
+
+	nFIQ is not released by it: that is what the emulator did before the handshake was the console's, and what
+	the captures say of everything but a read of L (a2.bin, a4.bin). It is not measured over ARMRST either.
+*/
+//ARMRST between a handler's read of L and its write of M. The program behind it sets its level and its enable,
+//turns FIQs on and writes M in its handler only
+static void fiq_armrst_in_service(std::string& text)
+{
+	char number[64];
+
+	fiq_setup(0xFF, 0xFF, 0xFF);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	arm7m_read32(AICA_L);
+
+	arm7m_hold_reset();
+	arm7m_release_reset();
+
+	arm7m_write32(AICA_SCILV0, 0x80);
+	arm7m_write32(AICA_SCILV0 + 4, 0);
+	arm7m_write32(AICA_SCILV0 + 8, 0);
+	arm7m_write32(AICA_SCIEB, SAMPLE_INTERVAL);
+	fiq_on();
+
+	for (u32 sample = 0; sample < 3; sample++)
+	{
+		if (!sample_interrupts(text))
+		{
+			snprintf(number, sizeof(number), " sample %u does not interrupt the program behind ARMRST;", sample);
+			text += number;
+			return;
+		}
+
+		arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+
+		u32 l = arm7m_read32(AICA_L);
+
+		if (l != 1)
+		{
+			snprintf(number, sizeof(number), " L reads %X in its handler, has to be 1;", l);
+			text += number;
+		}
+
+		arm7m_write32(AICA_M, 1);
+		fiq_return(text);
+
+		//until the next sample
+		arm7m_step();
+
+		if (in_fiq())
+		{
+			text += " the handler is entered again without a new request;";
+			return;
+		}
+	}
+}
+
+//ARMRST in front of the handler's read of L, with the request cleared: nFIQ is still pulled. The program behind it
+//turns FIQs on and is interrupted without a sample, L has the level of the request that pulled it (as d4.bin finds
+//the 7 of the job before), and its handler ends that interrupt
+static void fiq_armrst_nfiq(std::string& text)
+{
+	char number[64];
+
+	fiq_setup(0xFF, 0xFF, 0xFF);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+
+	arm7m_hold_reset();
+	arm7m_release_reset();
+	fiq_on();
+	arm7m_step();
+
+	if (!in_fiq())
+	{
+		text += " nFIQ is released by ARMRST: the program behind it is not interrupted;";
+		return;
+	}
+
+	u32 l = arm7m_read32(AICA_L);
+
+	if (l != 7)
+	{
+		snprintf(number, sizeof(number), " L reads %X behind ARMRST, has to be 7;", l);
+		text += number;
+	}
+
+	arm7m_write32(AICA_M, 1);
+	fiq_return(text);
+	arm7m_step();
+
+	if (in_fiq())
+		text += " the handler is entered again though it has read L;";
+}
+
 static const Scenario fiq_scenarios[] =
 {
 	{ "level 0", &fiq_level_0 },
@@ -866,6 +984,8 @@ static const Scenario fiq_scenarios[] =
 	{ "L not read, M written 4 times", &fiq_no_acknowledge_4 },
 	{ "L read, M written", &fiq_serviced },
 	{ "L behind level 7 and behind level 0", &fiq_level_0_l },
+	{ "ARMRST between the L read and the M write", &fiq_armrst_in_service },
+	{ "ARMRST in front of the L read", &fiq_armrst_nfiq },
 };
 
 static void scilv_reads_0(std::string& text, u32 index)

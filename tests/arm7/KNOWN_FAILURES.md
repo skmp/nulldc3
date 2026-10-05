@@ -10,10 +10,38 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
+| D5 | `arm7.directed` `fiq` | 10 | 9 | 1 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 2 | 2 |
 
-Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 130/130, the r1 and the CPSR of the 45 vendor jobs,
-the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
+Everything else passes: `arm7.vendor` 45/45, the other 131 cases of `arm7.directed`, the r1 and the CPSR of the
+45 vendor jobs, the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
+
+### D5: ARMRST keeps the service of a request
+
+`SoundCPU_impl::SetResetState` (`hw/arm7/SoundCPU.cpp`) resets the ARM when ARMRST is released and leaves the
+interrupt controller in front of nFIQ alone. A request whose handler has read L and has not written M yet stays
+in service (`e68k_reg_M`), and the program that is started gets no FIQ until it writes bit 0 of M. One that
+writes M in its handler only gets none at all.
+
+That is the case of `fiq` that fails, "ARMRST between the L read and the M write", and it is what a disc of a
+KallistiOS program does when it is booted through the BIOS: the SH4 holds ARMRST while the sound program of the
+BIOS is between its L read and its M write, the ARM crt0 of KallistiOS writes M in its FIQ handler only, and its
+sound driver never gets an interrupt. The disc has no sound. With the sound program of the BIOS running (no disc,
+the first 14 emulated seconds) a request is in service with nFIQ released at 405 of the 19292 times the SH4 has
+run and the ARM gets its turn (2.1 %; counted at the entry of `SoundCPU_impl::Update`: `enabled`, `e68k_reg_M`
+set, `e68k_out` clear).
+
+No console capture has an ARMRST with a request in service: every FIQ kernel of wren7-rtl reads L and writes M in
+its prologue, before it turns FIQs on. A job finds SCIEB and L as the job before left them (`fiqdiag` `d1.bin` to
+`d5.bin`, the second region), so ARMRST does not reset the registers of the controller; nothing shows the service.
+The case says what the reset has to do because software depends on it: a program that ARMRST starts has to get
+its interrupts whatever the program in front of it was in the middle of. A console that kept the service would
+lose its sound behind about 2 of 100 resets, which is not observed. The emulator gave the program its interrupts
+as long as it had one state for nFIQ and the service.
+
+The other case with an ARMRST, "ARMRST in front of the L read", passes: nFIQ stays pulled over ARMRST, the next
+program is interrupted as soon as it turns FIQs on and finds the level of that request in L. That is not measured
+either; it is what the emulator did before, and what the captures say of everything but a read of L.
 
 ### D7: where a reset finds the ARM
 
@@ -39,7 +67,6 @@ the data sheet and on wren7's model only, and is not changed until a console cap
 |---|---|---|---|---|
 | D5 | interrupt controller: more than one request pending | not measured | the lowest pending bit gives the level, and nothing interrupts when that level is 0, as wren7's model has it (`update_arm_interrupts` in `hw/aica/aica_mmio.cpp`, `update_e68k` in `hw/arm7/SoundCPU.cpp`) | not measured |
 | D5 | what puts the 0 into L behind a job with level 0 | not measured: between the 7 that `d4.bin` finds and the 0 that `d5.bin` finds, the job reads L, writes SCILV0-2, SCIRE, M and SCIEB and has requests of level 0 pending (`fiqdiag`) | the request: with nothing in service a request of level 0 leaves its level in L, and does nothing else (`update_e68k`) | not measured |
-| D5 | the request in service when ARMRST is held: the handler has read L and not written M yet | not measured: every FIQ kernel of wren7-rtl writes M before it enables FIQs. A job finds SCIEB and L as the job before left them (`fiqdiag` `d1.bin` to `d5.bin`, the second region), so ARMRST does not reset the registers of the controller; nothing shows the request in service | kept: `SoundCPU_impl::SetResetState` resets the ARM and leaves the controller (`e68k_out`, `e68k_reg_M`) alone. The program that is started next gets no FIQ until it writes bit 0 of M. One that writes M in its handler only, as the ARM crt0 of KallistiOS does, gets none at all. How often an ARMRST finds that state: with the sound program of the BIOS running (no disc, the first 14 emulated seconds) a request is in service with nFIQ released at 405 of the 19292 times the SH4 has run and the ARM gets its turn (2.1 %; counted at the entry of `SoundCPU_impl::Update`: `enabled`, `e68k_reg_M` set, `e68k_out` clear). The sound program of the BIOS writes M before it turns FIQs on and gets its interrupts either way | not measured. The console jobs that decide it: `k_blkphase.s` with P5 = 4 (`a5`: L read, no M write), then a kernel that enables the one sample interval and FIQs without reading L or writing M and counts its interrupts. None: the service is kept. One per sample: the reset ends it, and `SetResetState` has to |
 | D7 | registers and interrupt controller when the machine is switched on | not known: a console job starts with what the programs before it left | cleared, with VisualBoyAdvance's GBA stack pointers (R13 = 0x03007F00, R13_irq = 0x03007FA0, R13_svc = 0x03007FE0) and CPSR = 0x53 (`SoundCPU_impl::Reset` in `hw/arm7/SoundCPU.cpp`); the first reset puts that CPSR into SPSR_svc. The controller holds nothing and L is 0 | not measured |
 | D8 | `STR` of R15 | the instruction's address + 12 (data sheet; console for STM) | + 8 in every word STR handler of `arm-new.h`; STM stores + 12 | pending console confirmation |
 | D9 | `STR Rd, [Rn, #x]!` with Rd == Rn | stores the old base (data sheet) | stores the new one: the pre-indexed handlers write the base back before the store (`arm-new.h`, `CASE_16(0x520)` and the like) | pending console confirmation |
