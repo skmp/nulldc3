@@ -10,30 +10,10 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
-| D5 | `arm7.directed` `power-on` | 4 | 1 | 3 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 2 | 2 |
 
-Everything else passes: `arm7.vendor` 45/45, the other 127 cases of `arm7.directed`, the r1 and the CPSR of the
-45 vendor jobs, the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
-
-### D5: the reset of the machine leaves the interrupt controller as it was
-
-A guest resets the machine with SB_SFRES (`hw/holly/sb.cpp`), and the emulator resets its devices where they
-are (`SuperH4_impl::Reset`, `hw/sh4/SuperH4_impl.cpp`). `AicaDevice::Reset` clears the registers of the AICA, the
-requests among them. `SoundCPU_impl::Reset` (`hw/arm7/SoundCPU.cpp`) resets the ARM and nothing of the controller
-in front of nFIQ: the request and its level as the AICA last gave them (`aica_interr`, `aica_reg_L`), nFIQ
-(`e68k_out`), the service (`e68k_reg_M`) and L (`e68k_reg_L`) stay.
-
-The three `power-on` cases that fail reset the machine in the middle of a FIQ handler:
-
-* with a request latched: all five are still there behind the reset,
-* between the handler's read of L and its write of M: the service is still open, and the program that is
-  started next gets no FIQ until it writes bit 0 of M. One that writes M in its handler only, as the ARM crt0 of
-  KallistiOS does, gets none at all,
-* in front of the read of L: nFIQ is still pulled, and the next program is interrupted as soon as it turns FIQs
-  on, with nothing enabled and nothing pending.
-
-No console capture is behind these: a reset of the machine has to leave a controller that holds nothing.
+Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 130/130, the r1 and the CPSR of the 45 vendor jobs,
+the 4000 qemu_diff cases, the 6144 words of the multiplier probe, and how all 55 jobs end.
 
 ### D7: where a reset finds the ARM
 
@@ -60,7 +40,7 @@ the data sheet and on wren7's model only, and is not changed until a console cap
 | D5 | interrupt controller: more than one request pending | not measured | the lowest pending bit gives the level, and nothing interrupts when that level is 0, as wren7's model has it (`update_arm_interrupts` in `hw/aica/aica_mmio.cpp`, `update_e68k` in `hw/arm7/SoundCPU.cpp`) | not measured |
 | D5 | what puts the 0 into L behind a job with level 0 | not measured: between the 7 that `d4.bin` finds and the 0 that `d5.bin` finds, the job reads L, writes SCILV0-2, SCIRE, M and SCIEB and has requests of level 0 pending (`fiqdiag`) | the request: with nothing in service a request of level 0 leaves its level in L, and does nothing else (`update_e68k`) | not measured |
 | D5 | the request in service when ARMRST is held: the handler has read L and not written M yet | not measured: every FIQ kernel of wren7-rtl writes M before it enables FIQs. A job finds SCIEB and L as the job before left them (`fiqdiag` `d1.bin` to `d5.bin`, the second region), so ARMRST does not reset the registers of the controller; nothing shows the request in service | kept: `SoundCPU_impl::SetResetState` resets the ARM and leaves the controller (`e68k_out`, `e68k_reg_M`) alone. The program that is started next gets no FIQ until it writes bit 0 of M. One that writes M in its handler only, as the ARM crt0 of KallistiOS does, gets none at all | not measured. The console jobs that decide it: `k_blkphase.s` with P5 = 4 (`a5`: L read, no M write), then a kernel that enables the one sample interval and FIQs without reading L or writing M and counts its interrupts. None: the service is kept. One per sample: the reset ends it, and `SetResetState` has to |
-| D7 | registers when the machine is switched on | not known: a console job starts with what the programs before it left | cleared, with VisualBoyAdvance's GBA stack pointers (R13 = 0x03007F00, R13_irq = 0x03007FA0, R13_svc = 0x03007FE0) and CPSR = 0x53 (`SoundCPU_impl::Reset` in `hw/arm7/SoundCPU.cpp`); the first reset puts that CPSR into SPSR_svc | not measured |
+| D7 | registers and interrupt controller when the machine is switched on | not known: a console job starts with what the programs before it left | cleared, with VisualBoyAdvance's GBA stack pointers (R13 = 0x03007F00, R13_irq = 0x03007FA0, R13_svc = 0x03007FE0) and CPSR = 0x53 (`SoundCPU_impl::Reset` in `hw/arm7/SoundCPU.cpp`); the first reset puts that CPSR into SPSR_svc. The controller holds nothing and L is 0 | not measured |
 | D8 | `STR` of R15 | the instruction's address + 12 (data sheet; console for STM) | + 8 in every word STR handler of `arm-new.h`; STM stores + 12 | pending console confirmation |
 | D9 | `STR Rd, [Rn, #x]!` with Rd == Rn | stores the old base (data sheet) | stores the new one: the pre-indexed handlers write the base back before the store (`arm-new.h`, `CASE_16(0x520)` and the like) | pending console confirmation |
 | D10 | TSTP, TEQP, CMPP, CMNP (Rd = R15 with S) | SPSR to CPSR, the PC is not written (data sheet) | take the Rd = R15 path and reload the PC, which skips an instruction | pending console confirmation |

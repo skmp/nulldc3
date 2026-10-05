@@ -207,6 +207,13 @@ struct SoundCPU_impl : SoundCPU {
 		// disable FIQ
 		ctx.regs[16].I |= 0x40;
 
+		//The AICA's requests go with its registers: nothing is pending, pulls nFIQ or is in service, L is 0
+		ctx.aica_interr = false;
+		ctx.aica_reg_L = 0;
+		ctx.e68k_out = false;
+		ctx.e68k_reg_L = 0;
+		ctx.e68k_reg_M = 0;
+
 		ARM7Backend::CPUUpdateCPSR(&ctx);
 
 		ctx.regs[R15_ARM_NEXT].I = ctx.regs[15].I;
