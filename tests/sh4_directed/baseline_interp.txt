@@ -1,25 +1,26 @@
 # sh4.directed.interp baseline: what devcast passes of the single-step vectors, per file.
-# The test fails when a file runs or passes fewer vectors than listed here.
+# The test fails when a file runs or passes fewer vectors than listed here, or has more during which the
+# emulator code raises a notification (msgboxf) and carries on.
 # Written by the test's --update-baseline, see tests/README.md.
 #
-# file                     total   run exact lenient
-0010nnnnmmmm1100_sz0_pr0       7     7     7       7
-0011nnnnmmmm0000_sz0_pr0       6     6     6       6
-0011nnnnmmmm0010_sz0_pr0       7     7     7       7
-0011nnnnmmmm0011_sz0_pr0       9     9     9       9
-0011nnnnmmmm0100_sz0_pr0      16    16    16      16
-0011nnnnmmmm0110_sz0_pr0       7     7     7       7
-0011nnnnmmmm0111_sz0_pr0       8     8     8       8
-0011nnnnmmmm1010_sz0_pr0      20    20    20      20
-0011nnnnmmmm1011_sz0_pr0      12    12    12      12
-0011nnnnmmmm1110_sz0_pr0      21    21    21      21
-0011nnnnmmmm1111_sz0_pr0      12    12    12      12
-0100nnnn00010000_sz0_pr0       6     6     6       6
-0100nnnn00010001_sz0_pr0       5     5     5       5
-0100nnnn00010101_sz0_pr0       5     5     5       5
-0100nnnn00100100_sz0_pr0       8     8     8       8
-0100nnnn00100101_sz0_pr0      10    10    10      10
-0110nnnnmmmm1010_sz0_pr0      10    10    10      10
-10001000iiiiiiii_sz0_pr0       7     7     7       7
-10001101dddddddd_sz0_pr0       6     6     6       6
-10001111dddddddd_sz0_pr0       6     6     6       6
+# file                     total   run exact lenient notified
+0010nnnnmmmm1100_sz0_pr0       7     7     7       7        0
+0011nnnnmmmm0000_sz0_pr0       6     6     6       6        0
+0011nnnnmmmm0010_sz0_pr0       7     7     7       7        0
+0011nnnnmmmm0011_sz0_pr0       9     9     9       9        0
+0011nnnnmmmm0100_sz0_pr0      16    16    16      16        0
+0011nnnnmmmm0110_sz0_pr0       7     7     7       7        0
+0011nnnnmmmm0111_sz0_pr0       8     8     8       8        0
+0011nnnnmmmm1010_sz0_pr0      20    20    20      20        0
+0011nnnnmmmm1011_sz0_pr0      12    12    12      12        0
+0011nnnnmmmm1110_sz0_pr0      21    21    21      21        0
+0011nnnnmmmm1111_sz0_pr0      12    12    12      12        0
+0100nnnn00010000_sz0_pr0       6     6     6       6        0
+0100nnnn00010001_sz0_pr0       5     5     5       5        0
+0100nnnn00010101_sz0_pr0       5     5     5       5        0
+0100nnnn00100100_sz0_pr0       8     8     8       8        0
+0100nnnn00100101_sz0_pr0      10    10    10      10        0
+0110nnnnmmmm1010_sz0_pr0      10    10    10      10        0
+10001000iiiiiiii_sz0_pr0       7     7     7       7        0
+10001101dddddddd_sz0_pr0       6     6     6       6        0
+10001111dddddddd_sz0_pr0       6     6     6       6        0

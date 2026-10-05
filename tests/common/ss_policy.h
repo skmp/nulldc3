@@ -54,5 +54,9 @@ const SsFilePolicy* ss_policy_at(u32 index);
 //(1 << SSF_x) that are left out
 SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, u32 ignore = 0);
 
+//The notification devcast is known to raise on a vector and to carry on from: the text of the msgboxf, 0 if
+//there is none. Any other notification is a defect
+const char* ss_policy_notification(const SsFilePolicy& policy, const SsTest& test);
+
 const char* ss_filter_name(SsFilterReason reason);
 const char* ss_filter_description(SsFilterReason reason);

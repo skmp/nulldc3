@@ -9,20 +9,24 @@
 	  pass-exact    every register matches the expected state bit for bit and the bus activity was as expected
 	  pass-lenient  as above, FP registers compared with ss_float_lenient (includes the exact passes)
 	  failed        run and not even a lenient pass: wrong bus activity, wrong state, crash or hang
+	and, counted on its own, whatever the result of the vector is:
+	  notified      vectors during which the emulator code raised a notification (msgboxf) and carried on
 
 	A suite that compiles the instructions (SsSuite::native) has one more count per file:
 	  native        vectors whose instruction under test was turned into native code. The others were handed
 	                to the interpreter's handler, and say nothing about the recompiler
 
 	The baseline has the counts of every file. The run fails when
-	  - a file passes fewer vectors than its baseline, exact or lenient, runs fewer vectors or has fewer
-	    native ones
+	  - a file passes fewer vectors than its baseline, exact or lenient, runs fewer vectors, has fewer
+	    native ones or more notified ones
 	  - a vector crashes in a file for which neither the policy (SSP_MAY_CRASH) nor the suite (SsSuiteKnown)
 	    announces it, or a vector hangs
+	  - a vector raises a notification that neither the policy (ss_policy_notification) nor the suite
+	    (SsSuiteKnown::notifies) announces by its text, whatever the baseline says
 	  - a vector file is not in the policy table or not in the baseline, or the other way around
-	Counts above the baseline are reported. They fail the run with --strict, which is how ctest runs the
-	suites: a baseline that is behind lets a regression back to its counts pass. --update-baseline writes the
-	counts into the file.
+	Counts that are better than the baseline are reported. They fail the run with --strict, which is how ctest
+	runs the suites: a baseline that is behind lets a regression back to its counts pass. --update-baseline
+	writes the counts into the file.
 
 	--file, --vector, --verbose and --unfilter are for looking at single files and vectors, the option list is
 	in the usage text.
@@ -36,6 +40,7 @@ struct SsSuiteKnown
 {
 	const char* file;		//file name without SS_FILE_SUFFIX
 	bool may_crash;			//vectors of the file may end in die()/verify() in this suite
+	const char* notifies;	//the notification (msgboxf text) vectors of the file may raise in this suite, 0: none
 	const char* known;		//why vectors of the file do not pass
 };
 

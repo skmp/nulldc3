@@ -525,11 +525,14 @@ static void test_policy()
 		t.cycles.c[1].actions = SS_ACTION_FETCH;
 	}
 
-	//FPU disabled
+	//FPU disabled, and the notification that is announced for it and for nothing else
 	CHECK(ss_policy_filter(*fadd, t) == SSF_NONE);
+	CHECK(ss_policy_notification(*fadd, t) == 0);
 	t.initial.s.SR = 0x8000;
 	CHECK(ss_policy_filter(*fadd, t) == SSF_FPU_DISABLED);
 	CHECK(ss_policy_filter(*mov_l, t) == SSF_NONE);
+	CHECK(strcmp(ss_policy_notification(*fadd, t), "Full MMU support needed") == 0);
+	CHECK(ss_policy_notification(*mov_l, t) == 0);
 	t.initial.s.SR = 0;
 
 	//a NaN result

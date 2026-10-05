@@ -40,12 +40,12 @@ static const char known_sum_order[] =
 
 static const SsSuiteKnown known[] =
 {
-	{ "0000000000101011_sz0_pr0", false, known_rte },
-	{ "0100mmmm01100110_sz0_pr0", true, known_fpscr_rm },
-	{ "0100mmmm01101010_sz0_pr0", true, known_fpscr_rm },
-	{ "1111nn0111111101_sz0_pr0", false, known_sum_order },
-	{ "1111nnmm11101101_sz0_pr0", false, known_sum_order },
-	{ 0, false, 0 },
+	{ "0000000000101011_sz0_pr0", false, 0, known_rte },
+	{ "0100mmmm01100110_sz0_pr0", true, 0, known_fpscr_rm },
+	{ "0100mmmm01101010_sz0_pr0", true, 0, known_fpscr_rm },
+	{ "1111nn0111111101_sz0_pr0", false, 0, known_sum_order },
+	{ "1111nnmm11101101_sz0_pr0", false, 0, known_sum_order },
+	{ 0, false, 0, 0 },
 };
 
 int main(int argc, char** argv)

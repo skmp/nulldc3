@@ -374,6 +374,16 @@ SsFilterReason ss_policy_filter(const SsFilePolicy& policy, const SsTest& test, 
 	return SSF_NONE;
 }
 
+const char* ss_policy_notification(const SsFilePolicy& policy, const SsTest& test)
+{
+	//RaiseFPUDisableException of the NO_MMU build, in front of the instruction that is then executed. Only the
+	//vectors that are run with --unfilter fpu-disabled get here, and all vectors of the differential
+	if ((policy.flags & SSP_FPU) && (test.initial.s.SR & 0x00008000) != 0)
+		return "Full MMU support needed";
+
+	return 0;
+}
+
 const char* ss_filter_name(SsFilterReason reason)
 {
 	switch (reason)

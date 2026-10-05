@@ -41,7 +41,8 @@ The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_W
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it.
 
 Every test but `common.selftest` is gated on a baseline file, and ctest runs them with `--strict`: a count
-below its baseline fails, and so does one above it, until the baseline is updated and committed.
+that is worse than its baseline fails, and so does one that is better, until the baseline is updated and
+committed.
 
 More about the suites:
 
@@ -76,6 +77,8 @@ and checks
   expected access was made. There is no guest memory besides these expectations (`common/ss_memory.h`).
 * the state: every register, bit for bit ("exact"). FP registers are also compared the way the vectors' README
   proposes ("lenient", `ss_float_lenient` in `common/ss_state.h`), both results are counted.
+* that the emulator code raised no notification on the way (`msgboxf`, an error box in the emulator, after which
+  the code carries on): a vector with one is counted as "notified", whatever its bus and state are.
 
 The vectors come from an emulator (Reicast's interpreter on an ARM64 host), not from a console, so
 `common/ss_policy.cpp` has, per file, what the files do not record (the width of the data accesses, the class
@@ -92,8 +95,8 @@ an SH4 does not do are filtered, each with a reason:
 | `host-nan` | the instruction produces a NaN, or converts one with FTRC: the expected value is the host's |
 
 Nothing else is skipped. The report has one line per file: total / run / pass-exact / pass-lenient / failed /
-filtered by reason, then the totals and, for every file with vectors that are not an exact pass, what its policy
-says about them.
+filtered by reason, and a line for its notified vectors if it has any, then the totals and, for every file with
+vectors that are not an exact pass, what its policy says about them.
 
 The FPU results in the vectors are host arithmetic. They are an oracle for the `fast` timing tier only, not for
 an exact FPU.
@@ -104,17 +107,22 @@ forced to 0 when SR.MD=0, SLEEP is executed again until an interrupt arrives.
 
 ### The baseline
 
-`sh4_singlestep/baseline.txt` has, per file, how many vectors are run, pass exactly and pass leniently. The test
-fails when
+`sh4_singlestep/baseline.txt` has, per file, how many vectors are run, pass exactly, pass leniently and are
+notified (none today). The test fails when
 
-* a file passes fewer vectors than its baseline (exact or lenient), or runs fewer,
+* a file passes fewer vectors than its baseline (exact or lenient), runs fewer, or has more notified ones,
 * a vector crashes (die(), verify(), a signal, an unaligned access) in a file for which neither the policy
   (`SSP_MAY_CRASH`) nor the suite (`SsSuite::known`) announces it, or a vector hangs,
+* a vector raises a notification that is not announced by its text, by the policy (`ss_policy_notification`) or
+  by the suite (`SsSuiteKnown::notifies`). The count in the baseline does not make it pass. The one notification
+  that is announced today is "Full MMU support needed" for an FPU instruction with SR.FD=1; those vectors are
+  filtered, the differential and `--unfilter fpu-disabled` run them,
 * a vector file is missing from the policy table or from the baseline, or the baseline lists a file that is
   not there.
 
-Counts above the baseline are reported. Run by hand they do not fail; ctest runs every test with `--strict`,
-where they do: a baseline that is behind lets a later regression back to its counts pass. After a fix:
+Counts that are better than the baseline (more passes, fewer notified vectors) are reported. Run by hand they do
+not fail; ctest runs every test with `--strict`, where they do: a baseline that is behind lets a later regression
+back to its counts pass. After a fix:
 
     <build dir>/sh4_singlestep/sh4_singlestep_interp --update-baseline
 
@@ -128,8 +136,8 @@ counts as well and needs the same.
     sh4_singlestep_interp --emu-output ...                       # do not hide what the emulator code prints
     sh4_singlestep_interp --unfilter fpu-disabled,privileged     # run filtered vectors as well (or: all)
 
-`--verbose` prints, for every vector that is not an exact pass, the opcodes, the expected and the actual bus
-activity and the registers before, expected and actual.
+`--verbose` prints, for every vector that is not an exact pass or that raises a notification nobody announces,
+the opcodes, the expected and the actual bus activity and the registers before, expected and actual.
 
 ## The directed vectors
 
@@ -172,5 +180,5 @@ A suite is a directory with a `CMakeLists.txt` that is added in `tests/CMakeList
 
 A second way to run the SH4 vectors only has to fill an `SsSuite` (`common/ss_suite.h`): how the 4 instructions
 of a loaded vector are executed, whether instruction fetches are part of the expected bus order, and what that
-way of executing is known to fail on top of the policy table. It gets its own baseline file.
+way of executing is known to fail, and to notify of, on top of the policy table. It gets its own baseline file.
 `sh4_singlestep/main.cpp` is the whole interpreter suite.

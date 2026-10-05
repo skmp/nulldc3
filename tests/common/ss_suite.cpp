@@ -42,7 +42,7 @@ struct SsCounts
 	u32 lenient;
 	u32 crash;
 	u32 hang;
-	u32 notified;	//vectors during which the emulator called msgboxf and carried on
+	u32 notified;	//vectors during which the emulator code called msgboxf and carried on, whatever their result
 	u32 native;		//vectors whose instruction under test was compiled to native code (SsSuite::native)
 	u32 filtered[SSF_COUNT];
 
@@ -71,7 +71,9 @@ struct SsBaseline
 	u32 run;
 	u32 exact;
 	u32 lenient;
+	u32 notified;
 	u32 native;
+	bool has_notified;
 	bool has_native;
 };
 
@@ -183,11 +185,13 @@ static bool load_baseline(const std::string& path, std::map<std::string, SsBasel
 		if (line[0] == '#')
 			continue;
 
+		b.notified = 0;
 		b.native = 0;
 
-		int fields = sscanf(line, "%255s %u %u %u %u %u", name, &b.total, &b.run, &b.exact, &b.lenient, &b.native);
+		int fields = sscanf(line, "%255s %u %u %u %u %u %u", name, &b.total, &b.run, &b.exact, &b.lenient, &b.notified, &b.native);
 
-		b.has_native = fields == 6;
+		b.has_notified = fields >= 6;
+		b.has_native = fields == 7;
 
 		if (fields >= 5)
 			baseline[name] = b;
@@ -206,15 +210,18 @@ static bool save_baseline(const std::string& path, const char* name, const SsSui
 		return false;
 
 	fprintf(f, "# %s baseline: what devcast passes of the single-step vectors, per file.\n", name);
-	fprintf(f, "# The test fails when a file runs or passes fewer vectors than listed here%s.\n",
-		suite.native ? ", or has fewer whose instruction is\n# compiled to native code" : "");
+	fprintf(f, "# The test fails when a file runs or passes fewer vectors than listed here,%s has more during which the\n",
+		suite.native ? "" : " or");
+	fprintf(f, "# emulator code raises a notification (msgboxf) and carries on%s.\n",
+		suite.native ? ", or fewer whose instruction is compiled to\n# native code" : "");
 	fprintf(f, "# Written by the test's --update-baseline, see tests/README.md.\n");
 	fprintf(f, "#\n");
-	fprintf(f, "# %-24s %5s %5s %5s %7s%s\n", "file", "total", "run", "exact", "lenient", suite.native ? " native" : "");
+	fprintf(f, "# %-24s %5s %5s %5s %7s %8s%s\n", "file", "total", "run", "exact", "lenient", "notified", suite.native ? " native" : "");
 
 	for (std::map<std::string, SsCounts>::const_iterator it = results.begin(); it != results.end(); ++it)
 	{
-		fprintf(f, "%-26s %5u %5u %5u %7u", it->first.c_str(), it->second.total, it->second.run, it->second.exact, it->second.lenient);
+		fprintf(f, "%-26s %5u %5u %5u %7u %8u", it->first.c_str(), it->second.total, it->second.run, it->second.exact, it->second.lenient,
+			it->second.notified);
 
 		if (suite.native)
 			fprintf(f, " %6u", it->second.native);
@@ -270,8 +277,8 @@ static int usage(const SsSuite& suite, const SsOptions& defaults)
 		"  --baseline <file>    baseline file, default %s\n"
 		"  --name <name>        what the report and the baseline call the test, for another set of vectors\n"
 		"  --update-baseline    write the counts of this run into the baseline file (all files have to be run)\n"
-		"  --strict             counts above the baseline fail as well: the baseline has to be the one of this\n"
-		"                       build. ctest runs the test this way\n"
+		"  --strict             counts that are better than the baseline fail as well: the baseline has to be the\n"
+		"                       one of this build. ctest runs the test this way\n"
 		"  --file <pattern>     only the files whose name or instruction contains <pattern>, or matches it if it\n"
 		"                       has * or ?\n"
 		"  --vector <N>         only vector N (0 based) of each file, no baseline check\n"
@@ -427,7 +434,10 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 
 		SsCounts counts;
 		std::string first;
+		std::string first_notified;
+		std::string first_unannounced;
 		u32 unannounced_crashes = 0;
+		u32 unannounced_notifications = 0;
 
 		for (size_t ti = 0; ti < tests.size(); ti++)
 		{
@@ -460,8 +470,39 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 			SsState actual;
 			ss_state_save(actual);
 
+			//A notification the code carries on from. One that nobody announces is a defect of its own, whatever
+			//the vector's result is
+			std::string unannounced;
+
 			if (guard == TGR_OK && test_guard_msgbox_count() != 0)
+			{
+				const char* announced = ss_policy_notification(*policy, test);
+
+				for (u32 n = 0; n < test_guard_msgbox_texts() && unannounced.empty(); n++)
+				{
+					const char* raised = test_guard_msgbox_text(n);
+
+					if (!(announced && strcmp(raised, announced) == 0) && !(known && known->notifies && strcmp(raised, known->notifies) == 0))
+						unannounced = raised;
+				}
+
+				char where[512];
+				snprintf(where, sizeof(where), "#%u op %04X: \"%.300s\"", (u32)ti, ss_opcode(test),
+					unannounced.empty() ? test_guard_last_msgbox() : unannounced.c_str());
+
 				counts.notified++;
+
+				if (first_notified.empty())
+					first_notified = where;
+
+				if (!unannounced.empty())
+				{
+					unannounced_notifications++;
+
+					if (first_unannounced.empty())
+						first_unannounced = where;
+				}
+			}
 
 			if (suite.native && suite.native())
 				counts.native++;
@@ -541,6 +582,10 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 				if (opt.verbose)
 					print_vector(file, (u32)ti, *policy, test, actual, tag, why);
 			}
+			else if (opt.verbose && !unannounced.empty())
+			{
+				print_vector(file, (u32)ti, *policy, test, actual, "NOTIFIED", "pass, with a notification that is not announced");
+			}
 			else if (opt.vector >= 0)
 			{
 				fprintf(report, "%s #%u (%s, op %04X): pass\n", file.c_str(), (u32)ti, policy->mnemonic, ss_opcode(test));
@@ -576,11 +621,14 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 		if (counts.crash || counts.hang)
 			fprintf(report, "    crashed: %u, hung: %u\n", counts.crash, counts.hang);
 
+		if (counts.notified)
+			fprintf(report, "    notified: %u, first: %s\n", counts.notified, first_notified.c_str());
+
 		results[file] = counts;
 		sum.add(counts);
 
 		//the gate
-		char text[512];
+		char text[1024];
 
 		if (unannounced_crashes)
 		{
@@ -592,6 +640,14 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 		if (counts.hang)
 		{
 			snprintf(text, sizeof(text), "FAIL %s: %u vectors hang", file.c_str(), counts.hang);
+			notes.push_back(text);
+			problems++;
+		}
+
+		if (unannounced_notifications)
+		{
+			snprintf(text, sizeof(text), "FAIL %s: %u vectors raise a notification that neither the file's policy nor the suite announces, first: %s",
+				file.c_str(), unannounced_notifications, first_unannounced.c_str());
 			notes.push_back(text);
 			problems++;
 		}
@@ -627,24 +683,37 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 			continue;
 		}
 
-#define GATE(what, now, was) \
-		if ((now) < (was)) \
+//A count that is worse than its baseline fails. One that is better says that the baseline is behind, which
+//fails with --strict
+#define GATE(what, now, was, more_is_worse) \
+		if ((more_is_worse) ? (now) > (was) : (now) < (was)) \
 		{ \
 			snprintf(text, sizeof(text), "FAIL %s: " what " %u, baseline %u", file.c_str(), (now), (was)); \
 			notes.push_back(text); \
 			problems++; \
 		} \
-		else if ((now) > (was)) \
+		else if ((now) != (was)) \
 		{ \
-			snprintf(text, sizeof(text), "%s: %s " what " %u, baseline %u", opt.strict ? "FAIL above the baseline" : "above the baseline", \
-				file.c_str(), (now), (was)); \
+			snprintf(text, sizeof(text), "%s%s the baseline: %s " what " %u, baseline %u", opt.strict ? "FAIL " : "", \
+				(now) > (was) ? "above" : "below", file.c_str(), (now), (was)); \
 			notes.push_back(text); \
 			improvements++; \
 		}
 
-		GATE("run", counts.run, b.run);
-		GATE("pass-exact", counts.exact, b.exact);
-		GATE("pass-lenient", counts.lenient, b.lenient);
+		GATE("run", counts.run, b.run, false);
+		GATE("pass-exact", counts.exact, b.exact, false);
+		GATE("pass-lenient", counts.lenient, b.lenient, false);
+
+		if (!b.has_notified)
+		{
+			snprintf(text, sizeof(text), "FAIL %s: the baseline has no notified count", file.c_str());
+			notes.push_back(text);
+			problems++;
+		}
+		else
+		{
+			GATE("notified", counts.notified, b.notified, true);
+		}
 
 		if (suite.native && !b.has_native)
 		{
@@ -654,7 +723,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 		}
 		else if (suite.native)
 		{
-			GATE("native", counts.native, b.native);
+			GATE("native", counts.native, b.native, false);
 		}
 
 #undef GATE
@@ -689,8 +758,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 	fprintf(report, "  failed       %6u  (crashed %u, hung %u)\n", sum.failed(), sum.crash, sum.hang);
 	if (suite.native)
 		fprintf(report, "  native       %6u  vectors whose instruction is compiled to native code, the others are handed to the interpreter\n", sum.native);
-	if (sum.notified)
-		fprintf(report, "  msgboxf      %6u  vectors during which the emulator code raised a notification and carried on\n", sum.notified);
+	fprintf(report, "  notified     %6u  vectors during which the emulator code raised a notification (msgboxf) and carried on\n", sum.notified);
 	fprintf(report, "  filtered     %6u\n", filtered_total);
 
 	for (u32 r = 1; r < SSF_COUNT; r++)
@@ -750,7 +818,7 @@ int ss_suite_main(int argc, char** argv, const SsSuite& suite)
 	}
 	else if (improvements)
 	{
-		fprintf(report, "\n%u counts are above the baseline%s: run with --update-baseline and commit %s\n", improvements,
+		fprintf(report, "\n%u counts are better than the baseline%s: run with --update-baseline and commit %s\n", improvements,
 			opt.strict ? ", which fails with --strict" : "", opt.baseline.c_str());
 
 		if (opt.strict)
