@@ -24,6 +24,8 @@
 #include "ngen.h"
 #include "decoder.h"
 
+#include "debugger/debugger.h"
+
 #define bm_printf(...)
 
 #if FEAT_SHREC != DYNAREC_NONE
@@ -225,6 +227,13 @@ void RuntimeBlockInfo::Setup(u32 rpc,fpscr_t rfpu_cfg,const DecodeLimits* limits
 	AnalyseBlock(this);
 }
 
+//The code cache is cleared when the guest enters one of these addresses and no block is there: compiled code of
+//the boot rom aliases with ram
+static bool rdv_IsSoftResetPc(u32 pc)
+{
+	return pc==0x8c0000e0 || pc==0xac010000 || pc==0xac008300;
+}
+
 DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
 {
 	u32 pc=next_pc;
@@ -234,7 +243,7 @@ DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
 
 	if (soft_resets)
 	{
-		if (pc==0x8c0000e0 || pc==0xac010000 || pc==0xac008300)
+		if (rdv_IsSoftResetPc(pc))
 		{
 			bm_printf("rdv_CompilePC: failed (soft jit reset) %08X\n", next_pc);	 	
 			return nullptr;
@@ -283,6 +292,52 @@ DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
 	bm_printf("rdv_CompilePC: end %08X\n", next_pc);
 
 	return rv->code;
+}
+
+/*
+	Compiles a block at next_pc that does not enter the block cache, runs it once and does the end-of-slice work
+	if the slice ran out, as the main loop does behind a block. The space its code took is given back.
+
+	This is a single step (limits: one instruction) and the rest of a block that a debugger check interrupted
+	(limits: the end and the cost of that block). A block that is cached at the same address stays, and the
+	dispatcher never finds this one: it would change the block boundaries and costs of the run.
+
+	Only with ngen_features::DebugChecks.
+*/
+void rdv_RunTempBlock(const DecodeLimits* limits)
+{
+	u32 pc=next_pc;
+
+	//what the dispatcher does when it has to compile at this pc
+	if ((rdv_IsSoftResetPc(pc) && bm_GetCode(pc)==rdv_ngen->FailedToFindBlock) || emit_FreeSpace()<16*1024)
+		sh4_cpu->ResetCache();
+
+	u32 cc_start=LastAddr;
+
+	RuntimeBlockInfo* rbi = rdv_ngen->AllocateBlock();
+
+	rbi->Setup(pc,fpscr,limits);
+
+	bool do_opts=((rbi->addr&0x3FFFFFFF)>0x0C010100);
+	rbi->staging_runs=do_opts?100:-100;
+
+	//The code was decoded this instant and runs right away: there is nothing to check at its entry, and the
+	//failure path of that check would look the block up in the cache
+	rdv_ngen->Compile(rbi,NoCheck,false,false,do_opts);
+
+	verify(rbi->code!=0);
+
+	u32 cc_end=LastAddr;
+
+	bm_SetTempBlock(rbi);
+	rdv_ngen->RunBlock((void*)CC_RW2RX(rbi->code));
+	bm_SetTempBlock(0);
+
+	//Nothing else is compiled while a block runs. A cache clear from inside the block moves LastAddr, and wins
+	if (LastAddr==cc_end)
+		LastAddr=cc_start;
+
+	delete rbi;
 }
 
 DynarecCodeEntryPtr rdv_FindOrCompile_OrFail()
@@ -459,6 +514,9 @@ void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc)
 struct recSH4 : SuperH4Backend {
 	~recSH4() { Term(); }
 
+    // of the backend, constant: read once at Init
+    ngen_features features = { };
+
     void ClearCache()
     {
         LastAddr = LastAddr_min;
@@ -470,22 +528,64 @@ struct recSH4 : SuperH4Backend {
     void Loop()
     {
         sh4_dyna_rcb = (u8*)& Sh4cntx + sizeof(Sh4cntx);
-        printf("cntx // fpcb offset: %td // pc offset: %td // pc %08X\n", (u8*)& sh4rcb.fpcb - sh4_dyna_rcb, (u8*)& sh4rcb.cntx.pc - sh4_dyna_rcb, sh4rcb.cntx.pc);
-
-        if (!settings.dynarec.safemode)
-            printf("Warning: Dynarec safe mode is off\n");
-
-        if (settings.dynarec.unstable_opt)
-            printf("Warning: Unstable optimizations is on\n");
-
-        if (settings.dynarec.SmcCheckLevel != FullCheck)
-            printf("Warning: SMC check mode is %d\n", settings.dynarec.SmcCheckLevel);
 
         verify(rcb_noffs(&next_pc) == -184);
+
+        // Resuming in the block that a debugger check interrupted: its rest runs first, as one block that ends
+        // where the interrupted block ends and costs the cycles that were given back. A backend that cannot run
+        // a block outside the block cache lets the rest go.
+        DecodeLimits rest = { 0, 0, -1, false };
+        u32 rest_cycles;
+
+        if (dbg_sh4_TakeRemainder(next_pc, &rest.end_pc, &rest_cycles) && features.DebugChecks)
+        {
+            rest.cycles = (s32)rest_cycles;
+            rdv_RunTempBlock(&rest);
+
+            if (dbg_sh4_StopPending())
+                return;
+        }
 
         rdv_ngen->Mainloop(sh4_dyna_rcb);
     }
 
+    u32 DebugCaps()
+    {
+        return (features.DebugChecks ? SH4DBG_NATIVE : 0) | (features.CtxAtSlice ? SH4DBG_CTX_AT_SLICE : 0);
+    }
+
+    bool Step()
+    {
+        if (!features.DebugChecks)
+            return false;
+
+        sh4_dyna_rcb = (u8*)& Sh4cntx + sizeof(Sh4cntx);
+
+        DecodeLimits one = { 1, 0, -1, false };
+        rdv_RunTempBlock(&one);
+
+        return true;
+    }
+
+    int SliceCyclesLeft()
+    {
+        return rdv_ngen->SliceCyclesLeft();
+    }
+
+    void ResetSlice()
+    {
+        rdv_ngen->ResetSlice();
+    }
+
+    void DebugDiscardPage(u32 addr)
+    {
+        bm_DiscardAddrPage(addr);
+    }
+
+    void DebugDiscardFlow(bool instrumented_only)
+    {
+        bm_DiscardFlowBlocks(instrumented_only);
+    }
 
     bool Init()
     {
@@ -522,6 +622,21 @@ struct recSH4 : SuperH4Backend {
         verify(rdv_ngen->Init());
 
         bm_Reset();
+
+        rdv_ngen->GetFeatures(&features);
+
+        // Loop() is entered again after every debugger stop: what is said once per backend is said here
+        sh4_dyna_rcb = (u8*)& Sh4cntx + sizeof(Sh4cntx);
+        printf("cntx // fpcb offset: %td // pc offset: %td // pc %08X\n", (u8*)& sh4rcb.fpcb - sh4_dyna_rcb, (u8*)& sh4rcb.cntx.pc - sh4_dyna_rcb, sh4rcb.cntx.pc);
+
+        if (!settings.dynarec.safemode)
+            printf("Warning: Dynarec safe mode is off\n");
+
+        if (settings.dynarec.unstable_opt)
+            printf("Warning: Unstable optimizations is on\n");
+
+        if (settings.dynarec.SmcCheckLevel != FullCheck)
+            printf("Warning: SMC check mode is %d\n", settings.dynarec.SmcCheckLevel);
 
         return true;
     }
