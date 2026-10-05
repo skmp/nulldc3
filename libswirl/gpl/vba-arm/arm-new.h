@@ -1446,9 +1446,11 @@ if(cond_res) {
       int dest = (opcode >> 16) & 0x0F;
       int mult = (opcode & 0x0F);
       u32 rs = reg[(opcode >> 8) & 0x0F].I;
-      reg[dest].I = reg[mult].I * rs;
+      u32 rm = reg[mult].I;
+      reg[dest].I = rm * rs;
       N_FLAG = (reg[dest].I & 0x80000000) ? true : false;
       Z_FLAG = (reg[dest].I) ? false : true;
+      C_FLAG = arm_MulCarry(rm, rs, C_FLAG);
       if(((s32)rs)<0)
         rs = ~rs;
       if((rs & 0xFFFFFF00) == 0)
@@ -2088,9 +2090,11 @@ if(cond_res) {
       int dest = (opcode >> 16) & 0x0F;
       int mult = (opcode & 0x0F);
       u32 rs = reg[(opcode >> 8) & 0x0F].I;
-      reg[dest].I = reg[mult].I * rs + reg[(opcode>>12)&0x0f].I;
+      u32 rm = reg[mult].I;
+      reg[dest].I = rm * rs + reg[(opcode>>12)&0x0f].I;
       N_FLAG = (reg[dest].I & 0x80000000) ? true : false;
       Z_FLAG = (reg[dest].I) ? false : true;
+      C_FLAG = arm_MulCarry(rm, rs, C_FLAG);
       if(((s32)rs)<0)
         rs = ~rs;
       if((rs & 0xFFFFFF00) == 0)

@@ -33,9 +33,9 @@ arm7.wren7.qemu_diff     s4:swp                  70    70
 arm7.wren7.mulsem        exit                     1     1
 arm7.wren7.mulsem        mla-rd-rm             1024    23
 arm7.wren7.mulsem        muls-result           1024  1024
-arm7.wren7.mulsem        muls-flags            1024   522
+arm7.wren7.mulsem        muls-flags            1024  1024
 arm7.wren7.mulsem        mlas-result           1024  1024
-arm7.wren7.mulsem        mlas-flags            1024   522
+arm7.wren7.mulsem        mlas-flags            1024  1024
 arm7.wren7.mulsem        muls-rd-rm            1024    69
 arm7.wren7.bringup       result                   5     5
 arm7.wren7.bringup       reset-state              4     0

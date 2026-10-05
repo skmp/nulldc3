@@ -10,32 +10,20 @@ Paths are relative to `libswirl/`; `arm-new.h` is `gpl/vba-arm/arm-new.h`.
 
 | | check | cases | pass | fail |
 |---|---|---|---|---|
-| D3 | `arm7.wren7.mulsem` `muls-flags` | 1024 | 522 | 502 |
-| D3 | `arm7.wren7.mulsem` `mlas-flags` | 1024 | 522 | 502 |
 | D4 | `arm7.wren7.mulsem` `muls-rd-rm` | 1024 | 69 | 955 |
 | D4 | `arm7.wren7.mulsem` `mla-rd-rm` | 1024 | 23 | 1001 |
 | D7 | `arm7.wren7.vendor` `cpsr` | 45 | 4 | 41 |
 | D7 | `arm7.wren7.bringup` `reset-state` | 4 | 0 | 4 |
 
 Everything else passes: `arm7.vendor` 45/45, `arm7.directed` 63/63, the r1 of the 45 vendor jobs, the 4000
-qemu_diff cases, the MULS and MLAS results, and how all 55 jobs end.
-
-### D3: MULS and MLAS leave C alone
-
-On the console C after MULS / MLAS is the carry out of the barrel shifter in the last step of the multiplier
-(Rm shifted left by 2k or 2k + 1 for the last Booth digit; a shift by 0 passes the old C on). N and Z are those
-of the result, V is kept. The interpreter sets N and Z and keeps C.
-
-* Code: `case 0x019` (MULS) and `case 0x039` (MLAS) in `arm-new.h` (`:1443`, `:2085`).
-* All 1004 differences are in C only; the results are right in all 1024 records.
-* The rule as code: `Arm7DI::c_mul` in `wren7-rtl/model/src/arm7di.cpp`.
+qemu_diff cases, the MULS and MLAS results and flags, and how all 55 jobs end.
 
 ### D4: MUL and MLA with Rd == Rm give the product
 
 The multiplier reads Rm again in every step, and Rd is written in every step. With Rd == Rm, MUL gives 0 and
 MLA gives what the 2 bit Booth datapath makes of an operand that changes under it. The interpreter multiplies.
 
-* Code: `case 0x009`, `0x019`, `0x029`, `0x039` in `arm-new.h` (`:1424`, `:1443`, `:2066`, `:2085`).
+* Code: `case 0x009`, `0x019`, `0x029`, `0x039` in `arm-new.h` (`:1424`, `:1443`, `:2068`, `:2087`).
 * `muls-rd-rm`: the console's answer is 0 in all 1024 records; the 69 that pass are the ones whose product
   is 0. `mla-rd-rm`: 23 pass.
 * The data sheet calls MUL with Rd == Rm "zero" and MLA "meaningless"; compilers do not emit either.
