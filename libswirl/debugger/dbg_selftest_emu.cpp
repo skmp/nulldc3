@@ -235,6 +235,8 @@ enum ProbeMode {
 	PROBE_EVENT_LOOP_PAUSE,			// the same, and asks for a pause in that slice as well
 	PROBE_EVENT_OFTEN,				// raises it every 64th slice
 	PROBE_PAUSE_WHEN_STOPPING,		// asks for a pause in the slice in which the machine stopped its cpu
+	PROBE_EVENT_HOST_STOP,			// raises the event once outside a SLEEP wait, and has the host stop the machine in
+									// that slice
 };
 
 // Counts the machines of the session: a scheduler callback belongs to the machine it was registered with
@@ -263,6 +265,10 @@ struct {
 	bool asked = false;
 
 	int slowUs = 0;						// host time a slice takes inside a SLEEP wait
+
+	// PROBE_EVENT_HOST_STOP: what the stop callback found
+	std::atomic<int> stopCallbacks { 0 };
+	std::atomic<bool> stopSawRunning { false }, stopSawLatch { false };
 } probe;
 
 void ProbeRaise()
@@ -334,6 +340,21 @@ int ProbeTick(void*, int, int, int)
 		{
 			probe.asked = true;
 			emu::RequestPause();
+		}
+		break;
+
+	case PROBE_EVENT_HOST_STOP:
+		if (!g_in_sleep && probe.calls >= probe.quietUntil && probe.raised == 0)
+		{
+			// the event while the cpu runs, the stop behind it: the slice hook of this call latches the event's
+			// stop for a machine that has been asked to stop
+			ProbeRaise();
+
+			virtualDreamcast->Stop([] {
+				probe.stopCallbacks++;
+				probe.stopSawRunning = sh4_cpu->IsRunning();
+				probe.stopSawLatch = g_stop_latched;
+			});
 		}
 		break;
 
@@ -2603,6 +2624,95 @@ DBG_SELFTEST_GUEST(emu_step, "emu.step")
 		Goto(EMU_G_spin);
 
 	sp.phase = 0;
+	return true;
+}
+
+/*
+	emu.stopevent: the host stops the machine in the slice in which an event breakpoint decides a stop. The
+	machine stops; it does not count as running when the stop callback looks, and the stop of the event is
+	never published.
+*/
+namespace {
+
+struct {
+	int phase;
+	u32 round;
+	std::atomic<bool> otherFailed { false };
+	emu::RunState stopped;
+	std::atomic<bool> runningStopped { true };
+} se;
+
+const u32 kStopEventRounds = 3;
+
+void StopEventRound()
+{
+	Goto(se.round % 2 ? EMU_G_busy_tmu : EMU_G_spin);
+	ProbeOn();
+	EventBreakpoints(true);
+	emu::SetActiveMask(~0u);
+
+	probe.stopCallbacks = 0;
+	probe.stopSawRunning = false;
+	probe.stopSawLatch = false;
+	ProbeMode_(PROBE_EVENT_HOST_STOP, 300);
+	TakeSeen();
+
+	Resume();
+
+	OtherStart([] {
+		if (!WaitLifetime(Lifetime::Stopped))
+		{
+			se.otherFailed = true;
+			return;
+		}
+
+		se.stopped = emu::GetRunState();
+		se.runningStopped = sh4_cpu->IsRunning();
+
+		virtualDreamcast->Resume();
+	});
+}
+
+}
+
+DBG_SELFTEST_GUEST(emu_stopevent, "emu.stopevent")
+{
+	if (se.phase == 0)
+	{
+		if (!Ready(stop))
+			return false;
+
+		se.round = 0;
+		se.phase = 1;
+
+		StopEventRound();
+		return false;
+	}
+
+	OtherJoin();
+
+	Check(!se.otherFailed && probe.raised == 1 && probe.stopCallbacks == 1 && probe.stopSawLatch,
+		"round %u: the event was raised and the host stop asked for in one slice, which latched the stop of the event (callbacks %d)", se.round, probe.stopCallbacks.load());
+	Check(!probe.stopSawRunning && !se.runningStopped, "round %u: the machine did not count as running when the stop callback ran, nor once it was stopped", se.round);
+
+	{
+		std::vector<Seen> list = TakeSeen();
+
+		Check(se.stopped.cause == StopCause::HostStopped && stop.cause == StopCause::Start
+			&& SeenIs(list, { { Lifetime::Running, StopCause::NoCause }, { Lifetime::Stopped, StopCause::HostStopped }, { Lifetime::Running, StopCause::NoCause }, { Lifetime::Parked, StopCause::Start } }),
+			"round %u: the host stop won, the stop of the event was never published: %s", se.round, SeenText(list).c_str());
+	}
+
+	EventBreakpoints(false);
+	ProbeOn();
+
+	if (++se.round < kStopEventRounds)
+	{
+		StopEventRound();
+		return false;
+	}
+
+	se.phase = 0;
 	return true;
 }
 

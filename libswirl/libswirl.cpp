@@ -825,12 +825,15 @@ struct Dreamcast_impl : VirtualDreamcast {
         if (!host_waits)
             g_GUIRenderer->WaitQueueEmpty();
 
-        // From here on a stop request finds no thread to take it
+        // From here on a stop request finds no thread to take it, and the machine does not count as running:
+        // a debugger stop that was decided in the slice of the request set g_parked again behind it
         callback_lock.Lock();
         function<void()> stopped = callback;
         callback = nullptr;
         stop_reasons = 0;
         thread_live = false;
+        p_sh4rcb->cntx.CpuRunning = false;
+        dbg::g_parked = false;
         callback_lock.Unlock();
 
         if (stopped)
