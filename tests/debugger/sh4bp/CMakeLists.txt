@@ -36,7 +36,7 @@ set(sh4bp_gates b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b12 b13 b14 slot arm)
 
 # The tests run the blocks of the x64 backend through its main loop
 if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})))
-  foreach(gate ${sh4bp_gates} selftest)
+  foreach(gate ${sh4bp_gates} selftest b11)
     add_test(NAME debugger.sh4bp.${gate}
       COMMAND ${CMAKE_COMMAND} -E echo "SKIPPED: the sh4bp gates need an x86-64 build with the SH4 recompiler")
     set_tests_properties(debugger.sh4bp.${gate} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
@@ -252,3 +252,32 @@ target_link_libraries(sh4bp_selftest PRIVATE nulldc_sh4bp)
 add_test(NAME debugger.sh4bp.selftest
   COMMAND ${CMAKE_COMMAND} -DSELFTEST=$<TARGET_FILE:sh4bp_selftest> -P "${CMAKE_CURRENT_SOURCE_DIR}/selftest_compare.cmake")
 set_tests_properties(debugger.sh4bp.selftest PROPERTIES TIMEOUT 600)
+
+
+## The cost for a guest that uses nothing of the mechanism (gate B11) ##
+#
+#	sh4bp_cost counts the host instructions of the workload. It is built twice from the same sources, with the
+#	debugger and without; b11_compare.cmake runs both and applies the criteria (README.md).
+#
+
+nulldc_add_libswirl_library(nulldc_sh4bp_off
+  SOURCES
+    ${NULLDC_SH4_INTERP_SOURCES}
+    hw/sh4/dyna/decoder.cpp
+    hw/sh4/dyna/shil.cpp
+    hw/sh4/dyna/driver.cpp
+    hw/sh4/dyna/blockmanager.cpp
+    jit/backend/x64/rec_x64.cpp
+    deps/crypto/sha1.cpp
+)
+
+add_executable(sh4bp_cost_on cost.cpp stubs.cpp guest.inc)
+target_link_libraries(sh4bp_cost_on PRIVATE nulldc_sh4bp)
+
+add_executable(sh4bp_cost_off cost.cpp stubs.cpp guest.inc)
+target_link_libraries(sh4bp_cost_off PRIVATE nulldc_sh4bp_off)
+
+add_test(NAME debugger.sh4bp.b11
+  COMMAND ${CMAKE_COMMAND} -DCOST_ON=$<TARGET_FILE:sh4bp_cost_on> -DCOST_OFF=$<TARGET_FILE:sh4bp_cost_off>
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/b11_compare.cmake")
+set_tests_properties(debugger.sh4bp.b11 PROPERTIES TIMEOUT 600 SKIP_REGULAR_EXPRESSION "SKIPPED:")

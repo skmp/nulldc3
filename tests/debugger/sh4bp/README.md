@@ -38,6 +38,7 @@ context and a hash of RAM.
 | `b8` | A breakpoint given through `0x0C..`, `0x8C..` or `0xAC..` stops code that runs through any of the three |
 | `b9` | The guest overwrites an instruction in a page with an armed address, in the block manager's write-fault path and then in the path of the entry check: the breakpoint hits again, in the new code. A stop in front of the instruction that does the write |
 | `b10` | After a stop inside a block the rest of the block is owed once. It is not run when the pc was written (also to the value it had), after a step, after a reset or a loaded state. A step that a breakpoint stops in front of its instruction runs nothing and owes nothing |
+| `b11` | What a guest that uses nothing of the mechanism pays, in host instructions: the build with the debugger against the build without, and one armed address that is never reached against none. Below: [the cost when nothing is armed](#the-cost-when-nothing-is-armed) |
 | `b12` | Integer workload: the state of the fallback loop, with continue-only checks and with stops, is the jit's baseline, in fast timing and with `idleskip` off. The loop is selected only while a breakpoint is active. With FPU code time and pc are the jit's; the comparison of the context is printed |
 | `b13` | Interpreter: 6000 steps through the workload with interrupts, and a run to the same instruction: identical context, memory and scheduler time |
 | `b14` | Jit: 3000 steps through FPU code, the workload and integer code, and runs to the same instructions: identical registers, the FPU registers bit for bit. No cost function of the tree is a sum over instructions, so the times are printed. The fallback's steps cost what the jit's cost |
@@ -47,13 +48,14 @@ context and a hash of RAM.
 Not here, because they need the emulator: the park loop itself and its arbitration with the host, a step over
 the reios trap, a reset and a loaded state made by the emulator, pauses and service excursions that another
 thread asks for, the rewrite of a memory access inside a block that runs outside the block cache (it happens
-on the emulator's host mapping of guest memory), the instruction counts of B11, and the 2ndmix workload.
+on the emulator's host mapping of guest memory), and the 2ndmix workload.
 `libswirl/debugger/dbg_selftest_sh4bp.cpp` has those, for `devcast -config Debugger:SelfTest=sh4bp`.
 
 ## The selftest of the emulator
 
 `libswirl/debugger/dbg_selftest_sh4bp.cpp` is the same mechanism on the real park loop and the real machine:
-the tests `sh4bp.b1` to `sh4bp.b14` of `devcast -config Debugger:SelfTest=sh4bp , Debugger:StartPaused=yes <elf>`.
+the tests `sh4bp.b1` to `sh4bp.b14` of `devcast -config Debugger:SelfTest=sh4bp , Debugger:StartPaused=yes <elf>`
+(none for B11: it compares two builds, and a session is one).
 They write the guest programs of this directory into main memory and drive them through `dbg::emu`, and add
 what only the emulator has: the boot of the guest through reios, a reset while stopped, an address armed by a
 call from another thread while the guest runs, the write protection of the host mapping. A session tests the
@@ -71,6 +73,52 @@ The same tests also run here, so that they are known to be right before the emul
 `sh4bp_selftest <jit|interpreter|fallback>` is the selftest file and its driver on the machine of this
 directory, with a park loop in place of `dbg::emu` (`selftest_shim.cpp`) and the boot of the guest reduced to
 a jump to the entry point. The test `debugger.sh4bp.selftest` runs the three sessions and the comparison.
+
+## The cost when nothing is armed
+
+`debugger.sh4bp.b11` measures it. `sh4bp_cost` (`cost.cpp`) runs the workload of the gates on a machine of its
+own, without run control, and counts the host instructions of its thread in user mode with the performance
+counter of the kernel (`perf_event_open`; where the kernel does not allow that, and on other hosts, the test
+is skipped). It is built twice from the same sources, with `NULLDC_DEBUGGER` and without. A run is two
+windows of 20000 slices: in the first the recompiler compiles the workload, in the second it compiles
+nothing. `b11_compare.cmake` runs every configuration three times and compares the lowest counts:
+
+| Compared | Per | Bound | Measured |
+| --- | --- | --- | --- |
+| compiled code: blocks, their guest instructions, bytes of host code; without the debugger, with it, with it and one armed address that is never reached | | equal | 16 blocks, 332 instructions, 7564 bytes |
+| recompiler, second window, with the debugger against without | slice | 32 host instructions | 17 |
+| interpreter, second window, with the debugger against without | slice | 32 | 6 |
+| recompiler, first window less second, with the debugger against without | decoded instruction | 16 | 4 |
+| recompiler, first window less second, one armed address against none | decoded instruction | 128 | 59 |
+| recompiler, second window, one armed address against none | | 0.01 % | 1 host instruction of 100.7 million |
+
+The counts of two runs of one program differ by some tens of host instructions; those of the program linked
+again with its objects in another order by up to 160 in the first window and by as little as two runs in the
+second. The bounds are per slice and per decoded instruction, not shares of a run, so that they say the same
+for a short run and a long one.
+
+What the numbers are made of:
+
+- **Compiled code and the dispatcher** are the same with and without the debugger, and with addresses armed
+  that the code does not hold.
+- **Per slice** the build with the debugger tests the stop latch and the attention word in `UpdateSystem()`
+  and the latch in `UpdateINTC()`, and reports an accepted interrupt (`dbg_sh4_OnException`): the calls of
+  the table below, which here are the copies this directory compiles. They are the whole difference of the
+  second window; nothing of it is per block or per instruction executed.
+- **Per decoded instruction** the decoder asks `dbg_sh4_WantsCheck`: a load and a branch while nothing is
+  armed; a block adds the test for a pending step-out. With an address armed, the query looks up the page of
+  the instruction, and searches the armed set when that page holds an armed address, as the page of this
+  workload does in the measurement.
+- **Per compiled block**, with and without the debugger, the mechanism costs against the tree without it: the
+  decoder keeps the limits and the cost of what it decodes for the refunds, and the register allocator
+  makes two more compares in its loops over ops and registers. The same program built from that tree
+  without the debugger takes 7600 host instructions less for the 19 blocks this workload compiles (16
+  stay in the cache): 400 per compiled block, of about 100000 that compiling one costs. Its second
+  window, and both windows of the interpreter, are within 0.2 host instructions per slice of this tree's.
+  In the emulator the difference is 170 to 190 host instructions per compiled block, measured with 2ndmix
+  and with the BIOS over 2689 and 6636 blocks, which are shorter than this workload's.
+
+`sh4bp_cost <jit|interpreter> [never]` prints the counts of one run.
 
 ## The guest
 

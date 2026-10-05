@@ -6,7 +6,8 @@
 
 /*
 	The selftest of SH4 code breakpoints and steps: sh4bp.b1 to sh4bp.b14, the gates of that mechanism on the
-	real park loop and the real machine.
+	real park loop and the real machine. There is no sh4bp.b11: that gate compares the build with the debugger
+	against the build without, which a session cannot (tests/debugger/sh4bp, debugger.sh4bp.b11).
 
 	    devcast -config Debugger:SelfTest=sh4bp , Debugger:StartPaused=yes <elf>
 
