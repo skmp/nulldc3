@@ -6,7 +6,8 @@
 	which leaves T and PR as they are. And what the single-step vectors expect another way than an SH4 does it:
 	the loads of FPSCR (they store bits that the register does not have), RTE to the other register bank (they
 	run the delay slot on the bank of the old SR), TRAPA (they have it as a nop) and FTRC of a NaN and of a
-	number above the range (they have the results of their generator's host).
+	number above the range (they have the results of their generator's host). And FMAC on operands that show
+	whether the sum is rounded once, which no random vector does.
 
 	sh4_directed_gen <dir> writes vector files in the format of the single-step vectors and under their file
 	names (ss_format.h), so the suites run them as they run those and the policy table applies as it is. A vector
@@ -641,6 +642,47 @@ static const Ftrc ftrcs[] =
 	{ true,   0xFFF00000, 0x80000000, 0x80000000 },
 };
 
+//// FMAC FR0,FRm,FRn: FR0 * FRm + FRn, the exact sum rounded once. A console's FMAC is that in every record
+//// (shrike4-rtl, tools/hw/fpdn: the 12,288 FMAC records of fpdn_p2.bin have results in and next to the
+//// denormal range and cancellations, and a product that is rounded before it is added is not the console's
+//// in any record in which it makes a difference). The operands here are ones for which rounding the product
+//// first, or rounding the sum to double precision first, gives another single:
+////   (8 + 2^-20) * (8 - 2^-20) = 64 - 2^-40. Around 2^30 the singles are 128 apart. Added to 2^30 + 128 the
+////     sum is 2^-40 below the middle of two of them, and the lower one is nearest. Added to -(2^30 + 384) it
+////     is 2^-40 beyond the middle of -(2^30 + 256) and -(2^30 + 384) in size, and the latter is nearest. A
+////     product rounded to single precision (64), or a sum rounded to double precision, is the middle itself,
+////     which goes to the even one of the two: the other one both times
+////   (1 + 2^-23) * (1 + 2^-23) = 1 + 2^-22 + 2^-46. Added to -(1 + 2^-22) it leaves 2^-46, a product that was
+////     rounded leaves 0
+//// Rounding to zero cuts the exact sum. FR0 and FR1 are multiplied, FR2 is added and gets the result
+
+struct Fmac
+{
+	u32 fpscr;
+	u32 fr0;
+	u32 fr1;
+	u32 fr2;
+	u32 fr2_after;
+};
+
+#define OP_FMAC_FR0_FR1_FR2 0xF21E
+
+#define FPSCR_RN 0x00040000		//DN = 1, round to nearest
+#define FPSCR_RZ 0x00040001		//DN = 1, round to zero
+
+static const Fmac fmacs[] =
+{
+	//FPSCR     FR0         FR1         FR2         FR2 after
+	{ FPSCR_RN, 0x40000000, 0x40400000, 0x3F800000, 0x40E00000 },		//2 * 3 + 1
+	{ FPSCR_RN, 0x41000001, 0x40FFFFFE, 0x4E800001, 0x4E800001 },		//2^30 + 192 - 2^-40: 2^30 + 128
+	{ FPSCR_RN, 0xC1000001, 0x40FFFFFE, 0xCE800001, 0xCE800001 },		//the same with the other signs
+	{ FPSCR_RN, 0x41000001, 0x40FFFFFE, 0xCE800003, 0xCE800003 },		//-(2^30 + 320 + 2^-40): -(2^30 + 384)
+	{ FPSCR_RN, 0x3F800001, 0x3F800001, 0xBF800002, 0x28800000 },		//2^-46
+	{ FPSCR_RZ, 0x3F800001, 0x3F800001, 0xBF800002, 0x28800000 },
+	{ FPSCR_RZ, 0x41000001, 0x40FFFFFE, 0x4E800001, 0x4E800001 },		//cut to 2^30 + 128
+	{ FPSCR_RZ, 0x41000001, 0x40FFFFFE, 0xCE800003, 0xCE800002 },		//cut to -(2^30 + 256)
+};
+
 //Every register has a value that no other one has, so an instruction that touches the wrong one shows
 static void base_state(SsState& s)
 {
@@ -913,6 +955,24 @@ static void make_ftrc_vector(const Ftrc& f, SsTest& t)
 	end_vector(t, PC_BASE + 6);
 }
 
+static void make_fmac_vector(const Fmac& f, SsTest& t)
+{
+	begin_vector(t);
+
+	t.initial.s.FPSCR = f.fpscr;
+	t.initial.s.FP0[0] = f.fr0;
+	t.initial.s.FP0[1] = f.fr1;
+	t.initial.s.FP0[2] = f.fr2;
+
+	t.final_.s = t.initial.s;
+
+	t.final_.s.FP0[2] = f.fr2_after;
+
+	t.opcodes.op[SS_TEST_INSTRUCTION] = OP_FMAC_FR0_FR1_FR2;
+
+	end_vector(t, PC_BASE + 6);
+}
+
 int main(int argc, char** argv)
 {
 	if (argc != 2)
@@ -988,6 +1048,15 @@ int main(int argc, char** argv)
 
 		make_ftrc_vector(ftrcs[f], t);
 		files[ftrcs[f].pr ? "1111mmm000111101_sz0_pr1" : "1111mmmm00111101_sz0_pr0"].push_back(t);
+		vectors++;
+	}
+
+	for (size_t f = 0; f < sizeof(fmacs) / sizeof(fmacs[0]); f++)
+	{
+		SsTest t;
+
+		make_fmac_vector(fmacs[f], t);
+		files["1111nnnnmmmm1110_sz0_pr0"].push_back(t);
 		vectors++;
 	}
 

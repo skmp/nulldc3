@@ -661,7 +661,8 @@ sh4op(i1111_nnnn_mmmm_1110)
 		u32 n = GetN(op);
 		u32 m = GetM(op);
 
-		fr[n] =(f32) ((f64)fr[n]+(f64)fr[0] * (f64)fr[m]);
+		// SH7091: FR0 * FRm + FRn is rounded once (console)
+		fr[n] = fmaf(fr[0], fr[m], fr[n]);
 		CHECK_FPU_32(fr[n]);
 	}
 	else

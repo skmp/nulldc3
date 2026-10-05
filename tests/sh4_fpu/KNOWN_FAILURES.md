@@ -3,7 +3,7 @@
 Why the counts of `baseline_scalar.txt` and `baseline_vector.txt` are below their totals. Every case that is
 not as on the hardware has one of the reasons below; `sh4_fpu scalar --why` and `sh4_fpu vector --why` print the
 reasons of every group with their counts, this document is written from that output, and no case is
-`NOT EXPLAINED`. The numbers are of an x86-64 host with FMA and SSE3. Where two numbers are given they are
+`NOT EXPLAINED`. The numbers are of an x86-64 host with SSE3. Where two numbers are given they are
 interpreter / dynarec.
 
 Sources: "console" is a record taken on a Dreamcast (shrike4-rtl, see `README.md`), "manual" the SH7091
@@ -217,12 +217,12 @@ The engines agree on every scalar record.
 
 ## What the records do not show
 
-* **FMAC.** The hardware rounds a * b + c once (console: 12,288 records with results in and next to the
-  denormal range, cancellations among them; manual 6.4). The interpreter computes it in double precision and
-  rounds the sum twice, the x64 backend emits `vfmadd231ss` on a CPU with FMA and `mulss` + `addss` on one
-  without. On this host both engines leave the hardware's value in every FMAC record that has no denormal
-  operand and is no trap: no record is one of the operand sets the interpreter's second rounding gets wrong, and
-  the backend's unfused code is not what runs here. The counts of the FMAC groups are those of an FMA host.
+* **That FMAC is rounded once.** The hardware rounds a * b + c once (console: 12,288 records with results in and
+  next to the denormal range, cancellations among them; manual 6.4), and so do both engines: `fmaf` in the
+  interpreter and in the canonical helper, `vfmadd231ss` in the x64 backend's code, or a call of that helper on a
+  CPU without FMA. Both leave the hardware's value in every FMAC record that has no denormal operand and is no
+  trap. But a sum that is rounded to double precision first leaves it in all of them as well: no record is one of
+  the operand sets that tell the two apart. `sh4.directed.*` have such operands (`tests/README.md`).
 * **FADD FSUB FMUL FDIV FSQRT of normal numbers** pass in every record, in both rounding modes, with DN = 0
   results in the denormal range included (but for 4.). The host's IEEE arithmetic is the hardware's there, as far
   as the records go.

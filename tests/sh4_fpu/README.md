@@ -130,9 +130,9 @@ with `--strict`, where they do, until the baseline is updated and committed with
 
 and the entry of what was fixed comes out of `KNOWN_FAILURES.md`.
 
-The baselines are of a host with FMA and SSE3: the x64 backend generates other code for FMAC on a CPU without
-FMA and for FIPR on one without SSE3, and the dynarec's counts of those instructions are then others. The
-report's third line says what the host has.
+The baselines are of a host with SSE3: the x64 backend generates other code for FIPR on a CPU without it, and
+the dynarec's counts of FIPR are then others. The report's third line says what the host has. On a CPU without
+FMA the backend's FMAC is a call of the helper the interpreter's FMAC is, with the same results.
 
 ## Looking at a failure
 
@@ -163,5 +163,6 @@ A run with `--group` or `--update-baseline` is not compared with the baseline an
 * FPSCR.FR = 1 and the reserved rounding modes: not on record, and a case that has them is not run.
 * FIPR and FTRV with generated operands and DN = 0: the model is proven against a console for FIPR only, the
   special cases of both are in `console.specials.dn0`.
-* The scalar instructions are not swept: the records are what the console program ran. Whether FMAC is fused is
-  not decided by them on this host, see `KNOWN_FAILURES.md`.
+* The scalar instructions are not swept: the records are what the console program ran. They do not tell an FMAC
+  that is rounded once from one that is rounded to double precision first, see `KNOWN_FAILURES.md`;
+  `sh4.directed.*` have operands that do.

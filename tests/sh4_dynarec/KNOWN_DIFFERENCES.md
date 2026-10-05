@@ -62,9 +62,9 @@ Both engines end in the same `die()` / `verify()` / unaligned access. They agree
   compares the decoder's bookkeeping around it (PC, block ends, register write-back), not two implementations. The
   `native` column of the baselines has, per file, for how many vectors it is not so; `README.md` lists the 35 files
   that are at 0.
-* The x64 backend picks code by host CPU feature. With FMA, as measured, FMAC is `vfmadd231ss` and agrees with the
-  interpreter's double precision multiply-add on all 500 vectors; the path without FMA (`mulss`, `addss`) was not run.
-  The AVX-512 path of `shop_frswap` was not run either.
+* The x64 backend picks code by host CPU feature. With FMA, as measured, FMAC is `vfmadd231ss`; without it the
+  backend calls the canonical helper, which is the `fmaf` the interpreter computes FMAC with. That path is not what
+  ctest runs on a CPU with FMA. The AVX-512 path of `shop_frswap` was not run either.
 
 ## sh4.singlestep.dynarec
 
@@ -89,7 +89,7 @@ does not pass, the interpreter does not pass either (`tests/common/ss_policy.cpp
 
 ## sh4.directed.*
 
-The hand-written vectors of `tests/sh4_directed` (256 in 32 files). What they expect is the SH-4 software manual's
+The hand-written vectors of `tests/sh4_directed` (264 in 33 files). What they expect is the SH-4 software manual's
 description of the instruction, and for the two things of the last section here what that section says. Both engines
 pass all of them, and `sh4.directed.differential` finds no difference.
 
@@ -102,6 +102,9 @@ RTE restores (`mov r0,r8` in it reads R0 of the new bank, `movt r8` the new T).
 FTRC, single and double precision: 2^31 and above and +inf give 7FFFFFFF, -2^31 and below, -inf and every NaN
 80000000, in the interpreter and in the x64 backend's code (`shop_cvt_f2i_t`: `cvttss2si`, and 7FFFFFFF from
 2147483648.0f on).
+
+FMAC is FR0 * FRm + FRn rounded once, on operands for which a product that is rounded first, or a sum that is
+rounded to double precision first, gives another single.
 
 ## Not measured on a console
 

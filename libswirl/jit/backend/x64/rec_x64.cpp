@@ -595,16 +595,15 @@ public:
 				break;
 
 			case shop_fmac:
+				// FMAC rounds once: a CPU without FMA calls the helper, mulss and addss would round twice
+				if (!cpu.has(Xbyak::util::Cpu::tFMA))
+				{
+					shil_chf[op.op](&op);
+					break;
+				}
 				if (regalloc.mapf(op.rd) != regalloc.mapf(op.rs1))
 					movss(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs1));
-				if (cpu.has(Xbyak::util::Cpu::tFMA))
-					vfmadd231ss(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs2), regalloc.MapXRegister(op.rs3));
-				else
-				{
-					movss(xmm0, regalloc.MapXRegister(op.rs2));
-					mulss(xmm0, regalloc.MapXRegister(op.rs3));
-					addss(regalloc.MapXRegister(op.rd), xmm0);
-				}
+				vfmadd231ss(regalloc.MapXRegister(op.rd), regalloc.MapXRegister(op.rs2), regalloc.MapXRegister(op.rs3));
 				GenFixNaN(regalloc.MapXRegister(op.rd));
 				break;
 

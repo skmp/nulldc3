@@ -32,7 +32,7 @@ way.
 | `sh4.singlestep.interp` | every single-step vector through the SH4 interpreter, gated on `sh4_singlestep/baseline.txt` | `vendor/sh4-tests` |
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
-| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses, RTE with a delay slot that reads what it restores, loads of FPSCR, TRAPA, FTRC at the edges of its range and of NaNs) | none |
+| `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses, RTE with a delay slot that reads what it restores, loads of FPSCR, TRAPA, FTRC at the edges of its range and of NaNs, FMAC on operands that show how often it rounds) | none |
 | `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them, the host rounding mode of every FPSCR.RM, the host FP mode of a thread that starts to run the CPU, the exception registers of TRAPA | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | ADC, SBC and RSC at the edges with the carry clear and set, hand-written results | none |
@@ -193,6 +193,13 @@ FTRC of a NaN is 0 in the single-step vectors and FTRC of a single of 2^31 or mo
 zero), on the last number below 2^31 and on 2^31, the largest number and +inf (7FFFFFFF from 2^31 on), on -2^31,
 the next number below it and -inf (80000000) and on NaNs of both kinds and signs (80000000). That is the manual's
 FTRC, and what a console answers for +max, the infinities and the NaNs (`sh4.fpu.scalar` has those records).
+
+FMAC rounds FR0 * FRm + FRn once on a console (the FMAC records of `sh4.fpu.scalar`), but none of those records
+and none of the 258 single-step vectors that are run has operands for which that shows: a sum that is rounded to
+double precision and then to single precision passes them all. The file has FMAC (8 vectors, in both rounding
+modes) on operands that are worked out for it: the exact sum is 2^-40 off the middle of two singles, where a
+product that is rounded first, or a sum that is rounded to double precision first, lands on the middle and goes
+to the other single, and a product whose last bits are all that is left of the sum.
 
 What an instruction leaves is written down from its definition in the SH-4 software manual, nothing of it comes
 from an emulator.

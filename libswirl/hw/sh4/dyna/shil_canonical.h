@@ -920,7 +920,7 @@ shil_opc(fmac)
 shil_canonical
 (
 f32,f1,(float fn, float f0,float fm),
-	return fixNaN(fn + f0 * fm);
+	return fixNaN(fmaf(f0, fm, fn));
 )
 shil_compile
 (
