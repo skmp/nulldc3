@@ -184,9 +184,9 @@ nothing. `b11_compare.cmake` runs every configuration three times and compares t
 | compiled code: blocks, their guest instructions, bytes of host code; without the debugger, with it, with it and one armed address that is never reached | | equal | 16 blocks, 332 instructions, 7564 bytes | the same |
 | recompiler, second window, with the debugger against without | slice | 48 host instructions | 18 | 23 |
 | interpreter, second window, with the debugger against without | slice | 48 | 6 | 8 |
-| recompiler, first window less second, with the debugger against without | decoded instruction | 24 | 2 | 15 |
+| recompiler, first window less second, with the debugger against without | decoded instruction | 24 | 0 | 16 |
 | recompiler, first window less second, one armed address against none | decoded instruction | 128 | 59 | 48 |
-| recompiler, second window, one armed address against none | | 0.01 % | within 163 host instructions of 100.7 million | within 31 of 95.3 million |
+| recompiler, second window, one armed address against none | | 0.01 % | within 200 host instructions of 100.7 million | within 200 of 95.3 million |
 
 The counts of two runs of one program differ by up to two hundred host instructions; those of the program linked
 again with its objects in another order by up to 160 in the first window and by as little as two runs in the
@@ -215,11 +215,11 @@ What the numbers are made of:
   In all, the same program built from that tree without the debugger takes 14950 host instructions more
   for the 19 blocks this workload compiles (16 stay in the cache), 790 for each. Its second window, and both
   windows of the interpreter, are within 0.3 host instructions per slice of this tree's. In the emulator
-  this tree takes 460 to 540 host instructions fewer per compiled block than the tree without the
-  mechanism, with the debugger and without it, measured with 2ndmix over 4000 vblanks and 2684 blocks and
-  with the BIOS over 3000 vblanks and 6604 blocks, which are shorter than this workload's; the blocks, and
-  the host code of every one of them, are the same in both trees, and behind the compiling the two cost
-  the same within 0.0001 %.
+  this tree takes 60 to 340 host instructions fewer per compiled block than the tree without the
+  mechanism, with the debugger and without it: 340 and 210 with 2ndmix over 4000 vblanks and 2684 blocks,
+  60 with the BIOS over 3000 vblanks and 6604 blocks, which are shorter than this workload's. The blocks,
+  and the host code of every one of them, are the same in both trees, and behind the compiling the two
+  cost the same within 0.0001 % without the debugger and within 0.002 % with it.
 
 `sh4bp_cost <jit|interpreter> [never]` prints the counts of one run.
 
