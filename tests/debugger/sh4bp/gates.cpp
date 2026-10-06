@@ -17,6 +17,10 @@
 #include <set>
 #include <vector>
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 using dbg::StopCause;
 
 //hw/sh4/dyna/blockmanager.cpp: every cached block
@@ -1911,6 +1915,28 @@ static MachineState dense_timed(Engine e, u32 top, u32 n, bool fp, u32 armed, bo
 	return s;
 }
 
+//The heap of the process: the bytes in use, and the bytes the C library holds for them
+struct HeapSize
+{
+	s64 in_use;
+	s64 held;
+};
+
+//false: this C library does not tell (nor does it under a sanitizer that has its own allocator)
+static bool heap_size(HeapSize* h)
+{
+	h->in_use = h->held = 0;
+
+#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
+	struct mallinfo2 m = mallinfo2();
+
+	h->in_use = (s64)m.uordblks;
+	h->held = (s64)m.arena + (s64)m.hblkhd;
+#endif
+
+	return h->held != 0;
+}
+
 static void gate_dense()
 {
 	ngen_features features = { };
@@ -2046,6 +2072,35 @@ static void gate_dense()
 		}
 
 		settings.dynarec.idleskip = true;
+	}
+
+	//The rest of a block is compiled every time the block runs. A compile gives back what it takes from the heap:
+	//the run that repeats one leaves the heap as it found it
+	{
+		const u64 slices = 45;
+		u64 stops;
+		HeapSize before, after;
+
+		settings.dynarec.idleskip = false;
+
+		dense_timed(ENGINE_JIT, 0x8C020000, n, true, n, true, slices, &stops);
+
+		const bool told = heap_size(&before);
+
+		dense_timed(ENGINE_JIT, 0x8C020000, n, true, n, true, slices, &stops);
+
+		const u32 passes = 0 - R(8);
+
+		heap_size(&after);
+
+		settings.dynarec.idleskip = true;
+
+		if (told)
+			check(passes >= 8 && after.in_use - before.in_use <= 64 * 1024 && after.held - before.held <= 1024 * 1024,
+				"fp line in one page, idleskip off: %u addresses armed and muted, the run of %u passes made again: the heap is as large behind it as in front of it (in use %+lld bytes, held %+lld bytes)",
+				n + 1, passes, (long long)(after.in_use - before.in_use), (long long)(after.held - before.held));
+		else
+			note("the size of the heap is not known here: the run that is made again is not measured");
 	}
 
 	//A stop and a resume at every arrival, in a block with more armed instructions than its code has checks: the

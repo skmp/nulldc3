@@ -1155,6 +1155,14 @@ struct RegAlloc
 		all_spans.clear();
 	}
 
+	//The spans of the last DoAlloc go with the allocator: a backend that makes an allocator for every block it
+	//compiles would leave them on the heap, block after block
+	virtual ~RegAlloc()
+	{
+		for (size_t sid=0;sid<all_spans.size();sid++)
+			delete all_spans[sid];
+	}
+
 	virtual nregf_t FpuMap(u32 reg) { return (nregf_t)-1; }
 
 	virtual void Preload(u32 reg,nreg_t nreg)=0;
