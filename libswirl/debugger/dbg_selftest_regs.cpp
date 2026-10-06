@@ -1735,7 +1735,8 @@ DBG_SELFTEST(regs_mem_read, "regs.mem.read")
 
 /*
 	regs.mem.arm7: the register window of the AICA for the ARM7 target against loads by the ARM7 itself, at the
-	moment the test runs and with bytes in the register file that the two processors read differently.
+	moment the test runs and with bytes in the register file that the two processors read differently: the two
+	behind ARMRST and VREG, and the ones where the ARM7 has its interrupt controller.
 */
 DBG_SELFTEST(regs_mem_arm7, "regs.mem.arm7")
 {
@@ -1808,6 +1809,53 @@ DBG_SELFTEST(regs_mem_arm7, "regs.mem.arm7")
 			sh4_before[0], sh4_before[1]);
 
 		std::vector<u8> state = device;
+		RestoreDevice(aica, state);
+	}
+
+	// L and M are registers of the interrupt controller in front of nFIQ, which the sound CPU keeps. The register
+	// file has bytes at 0x2D00 and 0x2D04 all the same, and a write by the SH4 changes them: the ARM7 reads L and,
+	// for M, 0 whatever they are. With 71..78 in the file from 0x2D00 on, as the controller stands and in states
+	// of it that are made up: a request latched and nFIQ pulled, one that the ARM7 has acknowledged, one whose
+	// service has ended with nFIQ still pulled, and nothing at all
+	{
+		u8 file[8] = { };
+
+		for (u32 i = 0; i < 8; i++)
+			aica->Write(0x00702D00 + i, 0x71 + i, 1);
+
+		aica->DebugReadRegs(0x2D00, 8, file);
+		Check(memcmp(file, "\x71\x72\x73\x74\x75\x76\x77\x78", 8) == 0, "the SH4 wrote 71..78 to 0x00702D00..0x00702D07 and reads %02X %02X %02X %02X %02X %02X %02X %02X there",
+			file[0], file[1], file[2], file[3], file[4], file[5], file[6], file[7]);
+
+		auto controller = [&](const char* when, u32 want_level) {
+			compare(when, 0x2D00, 8, &view);
+			Check(view[0] == (u8)want_level && view[4] == 0 && memcmp(&view[1], &file[1], 3) == 0 && memcmp(&view[5], &file[5], 3) == 0,
+				"%s: the debugger shows the ARM7 %02X for L (%X) and %02X for M, with %02X and %02X in the register file there", when, view[0], want_level,
+				view[4], file[0], file[4]);
+		};
+
+		controller("0x00802D00..0x00802D07 with 71..78 in the register file", level);
+
+		const struct { u32 level, service; bool out; } made_up[] = { { 5, 1, true }, { 7, 1, false }, { 1, 0, true }, { 0, 0, false } };
+
+		for (const auto& c : made_up)
+		{
+			std::vector<u8> made = cpu;
+			char when[120];
+
+			made[scpu_out_at] = c.out;
+			memcpy(&made[scpu_level_at], &c.level, 4);
+			memcpy(&made[scpu_service_at], &c.service, 4);
+			RestoreDevice(scpu, made);
+
+			snprintf(when, sizeof(when), "the same with L %u, %s and nFIQ %s", c.level, c.service ? "a request in service" : "no request in service",
+				c.out ? "pulled" : "released");
+			controller(when, c.level);
+		}
+
+		std::vector<u8> state = cpu;
+		RestoreDevice(scpu, state);
+		state = device;
 		RestoreDevice(aica, state);
 	}
 
