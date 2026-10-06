@@ -23,6 +23,7 @@ A complete headless run:
 | `config:Exit.FramePng` | a path | That frame is written there as a PNG (implies `Exit.FrameHash`). |
 | `config:Dreamcast.RTC` | N, seconds since 1970 | Pins the real-time clock: every run starts at that second, taken as the time of the console (no time zone). 0 or absent: the time of the host. |
 | `config:Debug.FixedRtc` | N, seconds since 1970 | The same pin under a second key. When both keys are there and this one is not 0, this one is taken. |
+| `<product id>:Dreamcast.RTC`, `<product id>:Debug.FixedRtc` | as above | The two keys in the section of a game (`[T1234N]` in `emu.cfg`, the product number of the disc). Like every setting of a game they go over the keys of that name in section `config` for that game, 0 included; between the two keys the rule is the same: `Debug.FixedRtc`, when it is not 0, is taken. |
 | `config:Debug.BlockOnFault` | `yes` | A fatal fault blocks the process for a native debugger instead of ending it. Linux. See "Faults". |
 
 Keys that were there before and that a headless run usually wants: `audio:backend=none` (no audio device is opened;
