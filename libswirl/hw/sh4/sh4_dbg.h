@@ -36,10 +36,15 @@ void sh4_host_fp_resync();
 	before it tests its slice counter, so block boundaries and costs are the backend's. A stop in a block
 	refunds the cost of the instructions that did not run: that decode carries the debugger checks with their
 	refunds (debugger/debugger.h) whether or not the backend sets ngen_features::DebugChecks, and nothing is
-	compiled from it. Its slice counter is its own and survives leaving and entering the loop; the JIT
-	backend's ResetSlice() resets it. Entered with a counter that is not positive and no remainder to run, the
+	compiled from it. Where the JIT backend keeps its slice counter across Loop() (hw/sh4/sh4_if.h), the
+	fallback continues that counter when it runs behind the backend's loop and hands its own back when the
+	backend's loop or Step() runs behind it: a switch between the two loops moves no slice end. Behind a
+	backend that restarts its slice at loop entry the counter is the fallback's own, and a switch moves SH4
+	time by less than one slice. Entered with a counter that is not positive and no remainder to run, the
 	loop does the end-of-slice work before its first block, as a backend's Loop() does (sh4_if.h). The backend
 	object and its code cache are not touched.
+	The definitions (hw/sh4/dyna/driver.cpp) are compiled under the same condition as these declarations:
+	defined(NULLDC_DEBUGGER) && FEAT_SHREC != DYNAREC_NONE.
 */
 #if defined(NULLDC_DEBUGGER) && FEAT_SHREC != DYNAREC_NONE
 
@@ -52,6 +57,10 @@ void sh4_fallback_loop();
 // From the park loop, in place of SuperH4Backend::Step(): executes the instruction at pc (a delayed branch
 // together with its slot), charged as a block of that one instruction, with the end-of-slice work if the
 // slice ran out. The caller has checked the step preconditions and set CpuRunning for its duration.
+// Like Step(), it does not apply the loop's rule for a counter that is not positive: entered with one it
+// executes its instruction first and does the end-of-slice work behind it. After a flow report that stopped
+// behind the block that used the slice up, that is one instruction ahead of an undebugged run (a documented
+// skew of a debugger stop).
 void sh4_fallback_step();
 
 #else

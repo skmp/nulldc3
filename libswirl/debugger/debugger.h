@@ -235,6 +235,8 @@ void OnThreadExiting(bool guestExit);
 // state with a machine: (U) while Stopped, (E) for a guest reset or a reset by the debugger (park context).
 // The debugger drops what belonged to the old state: the owed remainder and resume exemption of the SH4
 // breakpoint mechanism, g_sleep_cut, temporary breakpoints, a pending step-out.
+// On (E) it calls dbg::sh4::OnPcWritten() and OnStop(nullptr). While Stopped it calls OnPcWritten() only: no
+// temporary breakpoint and no step-out exists then, because OnThreadExiting() ended them.
 // While Stopped it publishes a new stop (the stop counter advances) so that clients fetch again; on (E) the
 // stop, if one is in force, is published by Park().
 void OnGuestStateReplaced();
@@ -278,6 +280,10 @@ enum : u32 {
 //   g_stop_latched; makes the interrupt acceptance that the latch deferred; calls sh4_host_fp_resync(); for a
 //   resume arms the SH4 resume exemption; sets CpuRunning and clears g_parked, unless a host stop or a guest
 //   exit is pending; for a resume invokes the listener with Running.
+// - The first Park() of a thread that follows a thread exit taken in a debugger stop (the host stopped the
+//   machine while the thread before it was parked) is a resume of that stop: the debugger pause that was in
+//   force before the host stop is not applied again, and dbg::emu calls dbg::sh4::PrepareResume() there, so
+//   that the instruction of the stop executes and its breakpoint does not stop again at once.
 //
 // Returns PARK_RUN after leaving, with CpuRunning set and g_stop_latched clear.
 // Returns PARK_EVALUATE, with CpuRunning clear, whenever a stop reason of the machine may be pending: after
@@ -375,10 +381,16 @@ bool dbg_sh4_AnyArmed(u32 pc, u32 bytes);
 //              charges per instruction and has no blocks
 // Returns 0 to continue: guest state was only read; registers are reloaded from the context after the call.
 // Returns non-zero to stop in front of the instruction: it has written Sh4cntx.pc = pc, recorded
-// { pc, block_end, refund } as the owed remainder (none when block_end is 0) and latched the stop
-// (dbg::emu::LatchStop: g_stop_latched and g_parked set, CpuRunning cleared). The caller adds refund to
-// its slice counter and leaves its loop at once: no further guest instruction, no UpdateSystem().
+// { pc, block_end, refund } as the owed remainder (none when block_end is 0, or when the check stopped a
+// step: the block of a step is its one instruction and a later resume dispatches normally) and latched the
+// stop (dbg::emu::LatchStop: g_stop_latched and g_parked set, CpuRunning cleared). The caller adds refund
+// to its slice counter and leaves its loop at once: no further guest instruction, no UpdateSystem().
 extern "C" u32 DYNACALL dbg_sh4_Check(u32 pc, u32 refund, u32 block_end);
+
+// From an interpreter-type loop, when it executes the slot of a delayed conditional branch that was not taken:
+// the instruction runs without a check, because the check of the pair was made in front of its branch. Ends
+// the resume exemption, which otherwise waits for the next check call. No other effect; does not stop.
+void dbg_sh4_SlotRuns();
 
 // Non-zero while a step-out is pending. The decoder of a JIT with ngen_features::DebugChecks then marks the
 // blocks that end with a call or a return and their epilogue reports to dbg_sh4_CheckFlow; an
@@ -399,7 +411,8 @@ extern u32 dbg_sh4_stepout;
 extern "C" u32 DYNACALL dbg_sh4_CheckFlow(u32 flow);
 
 // From Do_Interrupt and Do_Exception, on every call: an interrupt or exception is being accepted (TRAPA
-// included). Counts handler levels for a pending step-out; no other effect, does not stop.
+// included). Counts handler levels for a pending step-out and clears the resume exemption (the instruction
+// of the stop has not run when its handler returns to it); does not stop.
 void dbg_sh4_OnException();
 
 // Did a check or flow report stop? True from a non-zero return of dbg_sh4_Check / dbg_sh4_CheckFlow until
@@ -423,9 +436,11 @@ struct NoFlag {
 	constexpr bool load(std::memory_order = std::memory_order_seq_cst) const { return false; }
 	const NoFlag& operator=(bool) const { return *this; }
 	void store(bool, std::memory_order = std::memory_order_seq_cst) const { }
+	constexpr bool exchange(bool, std::memory_order = std::memory_order_seq_cst) const { return false; }
 };
 
 struct NoWord {
+	constexpr operator u32() const { return 0; }
 	constexpr u32 load(std::memory_order = std::memory_order_seq_cst) const { return 0; }
 };
 
@@ -490,6 +505,7 @@ static inline bool dbg_sh4_IsArmed(u32) { return false; }
 static inline bool dbg_sh4_WantsCheck(u32, bool) { return false; }
 static inline bool dbg_sh4_AnyArmed(u32, u32) { return false; }
 static inline u32 DYNACALL dbg_sh4_Check(u32, u32, u32) { return 0; }
+static inline void dbg_sh4_SlotRuns() { }
 static inline u32 DYNACALL dbg_sh4_CheckFlow(u32) { return 0; }
 static inline void dbg_sh4_OnException() { }
 static inline bool dbg_sh4_StopPending() { return false; }

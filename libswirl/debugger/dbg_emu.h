@@ -14,8 +14,8 @@
 #endif
 
 /*
-	dbg::emu: the debugger on the emulator thread — lifetime, the call queue, the slice hook, the stop latch,
-	the park loop and the sequencing of run control (dbg_emu.cpp) — and the types every debugger module
+	dbg::emu: the debugger on the emulator thread (lifetime, the call queue, the slice hook, the stop latch,
+	the park loop and the sequencing of run control: dbg_emu.cpp), and the types every debugger module
 	shares. Debugger sources include this header; emulator code includes debugger.h, which has the threads,
 	the lifetime states and the contexts this header refers to.
 
@@ -189,7 +189,12 @@ const u32 kMaxMessageBytes      = 1u << 20;		// inbound message; the transport c
 const u32 kCallTimeoutMs        = 2000;			// emu::Call waits this long for a call that has not started
 const u32 kPauseLivenessMs      = 250;			// a pause request or queued call met inside a SLEEP wait is latched
 												// after this long
-const u32 kClientGraceMs        = 10000;		// after the last client left, breakpoints stay active this long
+const u32 kClientGraceMs        = 10000;		// after the last client left, breakpoints stay active this long.
+												// When it expires with no client connected, the core (dbg_core, on (C))
+												// clears the active mask (a CC_TABLE call with SetActiveMask(0)) and
+												// releases a parked thread (a CC_EXEC call with Resume()). dbg::emu has no
+												// timer for this. The time starts at a disconnect only, so a start park
+												// waits for its first client without limit
 const u32 kCaptureTimeoutMs     = 5000;			// state.recordSgcFrames
 
 namespace emu {
@@ -322,6 +327,7 @@ void SetEventBreakpoints(const u32* ids, const u8* events, u32 n);
 // or no category soloed, and a client connected or within kClientGraceMs of the last one. Read at every
 // arrival at a breakpoint; never causes code-cache work. Forwarded to dbg::sh4::SetActiveMask; it can make
 // UseFallbackLoop() change as SetSh4Breakpoints can.
+// Before the first call the mask is 0: no listed breakpoint and no event breakpoint stops.
 void SetActiveMask(u32 categories);
 
 // Any thread, never blocks. The state last published, as one consistent copy. notice is current even when

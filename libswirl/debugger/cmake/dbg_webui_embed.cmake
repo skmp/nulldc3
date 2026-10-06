@@ -66,7 +66,7 @@ if(NOT DIST STREQUAL "")
   endif()
 
   # The listing separates the names with ';' and leaves one inside a name as it is, so such a name would
-  # arrive in pieces.
+  # arrive in pieces. A file name with one is refused here, a hidden file's as well.
   file(GLOB_RECURSE cut RELATIVE "${DIST}" "${DIST}/*;*")
   if(NOT cut STREQUAL "")
     message(FATAL_ERROR "nullDC devtools UI: ${DIST}/${cut}: this file name cannot be embedded")
@@ -79,8 +79,10 @@ if(NOT DIST STREQUAL "")
     if(path MATCHES "(^|/)[.]")
       continue()
     endif()
-    # Names go into a C string and a CMake list as they are. A piece of a path that a ';' in a directory
-    # name has cut is no file.
+    # Names go into a C string and a CMake list as they are. A ';' in a directory name is not seen above:
+    # the paths below it arrive cut, and a piece that is no file ends here, under the name of the piece.
+    # Pieces that exist get past this: one that is a directory stops at file(SIZE), ones that are files are
+    # embedded in place of the file that was meant.
     if(NOT path MATCHES "^[-A-Za-z0-9 !#%&'()+,./=@^_{}~]+$" OR NOT EXISTS "${DIST}/${path}")
       message(FATAL_ERROR "nullDC devtools UI: ${DIST}/${path}: this file name cannot be embedded")
     endif()

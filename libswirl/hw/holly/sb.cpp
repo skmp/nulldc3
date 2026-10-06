@@ -103,6 +103,43 @@ struct SystemBus_impl final : SystemBus {
 		return SB_FFST; // does the fifo status has really to be faked ?
 	}
 
+	bool DebugRead(u32 reg_addr, u32* value)
+	{
+		u32 offset = reg_addr - SB_BASE;
+
+		if (reg_addr < SB_BASE || (offset & 3) != 0 || offset / 4 >= sb_regs.size())
+			return false;
+
+		const RegisterStruct& reg = sb_regs[offset / 4];
+
+		//a slot that is no register cannot be read either
+		if (reg.flags & REG_WO)
+			return false;
+
+		if (!(reg.flags & REG_RF))
+		{
+			*value = reg.data32;
+			return true;
+		}
+
+		//behind a read function: only the ones that have a reader without side effects
+		if (reg_addr == SB_FFST_addr)
+		{
+			//what the next read gives, with the poll counter left alone
+			*value = ((SB_FFST_rc + 1) & 0x8) ? SB_FFST ^ 31 : SB_FFST;
+			return true;
+		}
+
+		if (reg_addr == SB_ISTNRM_addr)
+		{
+			ASIC* asic = sh4_cpu != nullptr ? sh4_cpu->GetA0H<ASIC>(A0H_ASIC) : nullptr;
+
+			return asic != nullptr && asic->DebugReadISTNRM(value);
+		}
+
+		return false;
+	}
+
 	void SB_SFRES_write32(u32 addr, u32 data)
 	{
 		if ((u16)data == 0x7611)

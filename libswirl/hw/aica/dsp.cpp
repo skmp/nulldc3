@@ -91,6 +91,23 @@ struct DSP_impl final : DSP {
 		return &dsp;
 	}
 
+	//Every backend runs the 128 steps of a sample in one call: between two calls the next step is the first
+	bool DebugGetState(DspDebugState* out) {
+		out->step = 0;
+		out->mdecCt = dsp.regs.MDEC_CT;
+		return true;
+	}
+
+	bool DebugGetProgramStep(u32 step, u16* mpro) {
+		if (step >= 128)
+			return false;
+
+		for (int i = 0; i < 4; i++)
+			mpro[i] = (u16)DSPData->MPRO[step * 4 + i];
+
+		return true;
+	}
+
 	void serialize(void** data, unsigned int* total_size) {
 		REICAST_S(dsp);
 	}
