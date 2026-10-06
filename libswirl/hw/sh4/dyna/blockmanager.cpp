@@ -40,6 +40,7 @@ bm_List page_blocks[RAM_SIZE/REI_PAGE_SIZE];
 bool	page_has_data[RAM_SIZE/REI_PAGE_SIZE];
 
 std::map<void*, RuntimeBlockInfo*> blkmap;
+static RuntimeBlockInfo* temp_block;
 u32 bm_gc_luc,bm_gcf_luc;
 
 
@@ -73,10 +74,14 @@ RuntimeBlockInfo* DYNACALL bm_GetBlock(u32 addr)
 // This takes a RX address and returns the info block ptr (RW space)
 RuntimeBlockInfo* bm_GetBlock(void* dynarec_code)
 {
+	void *dynarecrw = CC_RX2RW(dynarec_code);
+
+	if (temp_block && temp_block->contains_code((u8*)dynarecrw))
+		return temp_block;
+
 	if (blkmap.empty())
 		return 0;
 
-	void *dynarecrw = CC_RX2RW(dynarec_code);
 	// Returns a block who's code addr is bigger than dynarec_code (or end)
 	auto iter = blkmap.upper_bound(dynarecrw);
 	
@@ -182,6 +187,38 @@ void bm_DiscardAddress(u32 codeaddr)
 			bm_DiscardBlock(*it);
 		}
 	}
+}
+
+void bm_DiscardAddrPage(u32 addr)
+{
+	u32 ram_page = (addr & RAM_MASK) / REI_PAGE_SIZE;
+
+	// Make a local copy so we can remove from the page_blocks list while iterating
+	auto list = page_blocks[ram_page];
+
+	for (auto it = list.begin(); it != list.end(); it++)
+	{
+		bm_DiscardBlock(*it);
+	}
+}
+
+void bm_DiscardFlowBlocks(bool instrumented_only)
+{
+	// Make a local copy so we can remove from the all_blocks list while iterating
+	auto blocks = all_blocks;
+
+	for (auto it = blocks.begin(); it != blocks.end(); it++)
+	{
+		RuntimeBlockInfo* blk = *it;
+
+		if (blk->dbg_flow || (!instrumented_only && dec_BlockFlow(blk->BlockType)))
+			bm_DiscardBlock(blk);
+	}
+}
+
+void bm_SetTempBlock(RuntimeBlockInfo* blk)
+{
+	temp_block = blk;
 }
 
 void bm_Periodical_1s()

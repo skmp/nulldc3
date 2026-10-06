@@ -24,7 +24,7 @@ struct RuntimeBlockInfo_Core
 
 struct RuntimeBlockInfo: RuntimeBlockInfo_Core
 {
-	void Setup(u32 pc,fpscr_t fpu_cfg);
+	void Setup(u32 pc,fpscr_t fpu_cfg,const DecodeLimits* limits=0);
 	const char* hash(bool full=true, bool reloc=false);
 
 	u32 host_code_size;	//in bytes
@@ -55,6 +55,14 @@ struct RuntimeBlockInfo: RuntimeBlockInfo_Core
 
 	BlockEndType BlockType;
 	bool has_jcond;
+	u8 dbg_flow; //DbgSh4Flow: the block ends with a call or a return and its epilogue reports it to the debugger (step-out)
+
+	//A block with more debugger checks than its backend compiles into one (ngen_features::DebugCheckBudget): oplist
+	//ends in front of the instruction at dbg_rest_pc, and the compiled code hands the rest of the block over there,
+	//with dbg_rest_cycles of guest_cycles given back for it (rdv_BlockRest). addr, sh4_code_size, guest_opcodes and
+	//guest_cycles are those of the whole block; BlockType is BET_StaticJump to dbg_rest_pc. 0: the block is whole
+	u32 dbg_rest_pc;
+	u32 dbg_rest_cycles;
 
 	vector<shil_opcode> oplist;
 
@@ -109,6 +117,16 @@ RuntimeBlockInfo* DYNACALL bm_GetBlock(u32 addr);
 
 void bm_AddBlock(RuntimeBlockInfo* blk, bool lockRam);
 void bm_DiscardBlock(RuntimeBlockInfo* blk);
+
+//Discards every block that overlaps the page of the guest address, in any mirror: the blocks that have the address
+//as an instruction or as a delay slot are among them. Page protection and the pages marked as holding data stay.
+void bm_DiscardAddrPage(u32 addr);
+//Discards the blocks that end with a call or a return (false), or of those the ones that report it to the
+//debugger (true)
+void bm_DiscardFlowBlocks(bool instrumented_only);
+//The block that runs outside the block cache, 0: none. It is in no list: bm_GetBlock(void*) knows it, so that a
+//memory access of its code can be rewritten
+void bm_SetTempBlock(RuntimeBlockInfo* blk);
 
 void bm_Reset();
 void bm_Periodical_1s();

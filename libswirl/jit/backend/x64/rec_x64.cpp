@@ -23,6 +23,7 @@
 #include "hw/sh4/sh4_core.h"
 #include "hw/sh4/sh4_mem.h"
 #include "hw/sh4/sh4_rom.h"
+#include "debugger/debugger.h"
 #include "profiler/profiler.h"
 #include "oslib/oslib.h"
 #include "x64_regalloc.h"
@@ -39,8 +40,37 @@ struct DynaRBI : RuntimeBlockInfo
 };
 
 extern "C" {
-	int cycle_counter;
+	// The slice counter: cycles left until the next UpdateSystem. It is kept when the main loop is left and
+	// entered again, so that leaving and entering it is not visible to the guest; a machine reset sets it.
+	int cycle_counter = SH4_TIMESLICE;
 }
+
+// The exit of the main loop: restores the callee saved registers and returns to the caller of Mainloop or
+// RunBlock. Jumped to with the stack as the main loop has it between two blocks.
+static const void* mainloop_exit;
+
+#if defined(NULLDC_DEBUGGER)
+// The debugger check of every block (build_check_stub): called from the block with the arguments of
+// dbg_sh4_Check. Returns into the block when the check answers "continue".
+static const void* check_stub;
+#endif
+
+/*
+	What debugger checks add to a block, at most.
+
+	A check is DBG_CHECK_CALL_BYTES in the block: two arguments and the call of the block's own tail, which adds
+	the third and goes on to check_stub. The register allocator flushes for it: every host register that holds a
+	guest register is written to the context in front of the check and loaded again behind it, 13 bytes each
+	way for one of the 6 general registers and 15 for one of the 4 xmm registers.
+
+	A block holds DBG_CHECK_BUDGET of them (ngen_features::DebugCheckBudget), which keeps their code within
+	DBG_CHECKS_BYTES_MAX whatever is armed.
+*/
+#define DBG_CHECK_CALL_BYTES   15
+#define DBG_CHECK_FLUSH_BYTES  (2 * (6 * 13 + 4 * 15))
+#define DBG_CHECK_TAIL_BYTES   10
+#define DBG_CHECKS_BYTES_MAX   (16 * 1024)
+#define DBG_CHECK_BUDGET       ((DBG_CHECKS_BYTES_MAX - DBG_CHECK_TAIL_BYTES) / (DBG_CHECK_CALL_BYTES + DBG_CHECK_FLUSH_BYTES))
 
 double host_cpu_time;
 u64 guest_cpu_cycles;
@@ -82,7 +112,8 @@ static void ngen_blockcheckfail2(u32 pc) {
 class BlockCompiler : public Xbyak::CodeGenerator
 {
 public:
-	BlockCompiler(void *buffer) : Xbyak::CodeGenerator(64 * 1024, buffer), regalloc(this)
+	// The code is written where it will run: max_size is what the place has room for
+	BlockCompiler(void *buffer, size_t max_size = 64 * 1024) : Xbyak::CodeGenerator(max_size, buffer), regalloc(this)
 	{
 		#if HOST_OS == OS_WINDOWS
 			call_regs.push_back(ecx);
@@ -131,7 +162,7 @@ public:
 
 	//TODO: FIXME THIS DOES NOT CONFORM TO NGEN SPEC AROUND INTERRUPT HANDLING
 	void build_mainloop() {
-		Xbyak::Label run_loop, slice_loop, end_loop;
+		Xbyak::Label run_loop, slice_loop, slice_end, end_loop;
 		// Store callee saved registers (64 bytes) + align stack
 		push(rbx);
 		push(rbp);
@@ -143,7 +174,11 @@ public:
 		push(r15);
 		sub(rsp, STACK_ALIGN);
 
-		mov(dword[rip + &cycle_counter], SH4_TIMESLICE);
+		// The loop can have been left behind the block that used the slice up, in front of the test of the
+		// counter (a flow report of the debugger stopped there): the end-of-slice work comes first then
+		mov(ecx, dword[rip + &cycle_counter]);
+		test(ecx, ecx);
+		jle(slice_end, T_NEAR);
 
 		L(run_loop);  // -- run_loop
 			mov(rax, qword[rip + &p_sh4rcb]);
@@ -164,6 +199,7 @@ public:
 				test(ecx, ecx);
 			jg(slice_loop);                      // Continue if the cycle counter is still >0
 
+			L(slice_end);  // -- slice_end
 			add(ecx, SH4_TIMESLICE);
 			mov(dword[rip + &cycle_counter], ecx);  // Update cycle counter back (+slice)
 
@@ -174,6 +210,7 @@ public:
 		jmp(run_loop);
 
 		L(end_loop);  // -- end_loop
+		mainloop_exit = getCurr();
 		add(rsp, STACK_ALIGN); // Restore to previous state
 		pop(r15);
 		pop(r14);
@@ -193,9 +230,87 @@ public:
 		emit_Skip((u32)getSize());
 	}
 
+	// One pass of the main loop's slice_loop for a block that is not in the block cache: runs it, then does the
+	// end-of-slice work if the slice ran out. It has the frame of the main loop, so that the block can leave
+	// through mainloop_exit as any other.
+	void build_runblock() {
+		Xbyak::Label slice_left;
+
+		push(rbx);
+		push(rbp);
+		push(rdi);
+		push(rsi);
+		push(r12);
+		push(r13);
+		push(r14);
+		push(r15);
+		sub(rsp, STACK_ALIGN);
+
+		call(call_regs[0].cvt64());          // The block
+		mov(ecx, dword[rip + &cycle_counter]);
+		test(ecx, ecx);
+		jg(slice_left);
+
+		add(ecx, SH4_TIMESLICE);
+		mov(dword[rip + &cycle_counter], ecx);
+		call(UpdateSystem_INTC);
+
+		L(slice_left);
+		jmp(mainloop_exit);
+
+		// Align end for perf
+		while (getSize() & 15)
+			nop();
+
+		ready();
+		emit_Skip((u32)getSize());
+	}
+
+#if defined(NULLDC_DEBUGGER)
+	// The debugger check of a block, out of line and shared by every block: entered by a call from the block
+	// (through the block's tail) with the arguments of dbg_sh4_Check in place. No host register holds anything
+	// across it: the register allocator flushes for the check.
+	void build_check_stub() {
+		Xbyak::Label stop;
+
+		// the refund, across the call; the stack is aligned again with it
+		push(call_regs[1].cvt64());
+		call(CC_RX2RW(dbg_sh4_Check));
+		pop(call_regs[1].cvt64());
+
+		test(eax, eax);
+		jnz(stop);
+		ret();
+
+		// A stop in front of the instruction: the cycles of the instructions that did not run go back to the
+		// slice counter, and the block and the main loop are left without the end-of-slice work
+		L(stop);
+		#ifdef FEAT_NO_RWX_PAGES
+		mov(rax, (uintptr_t)&cycle_counter);
+		add(dword[rax], call_regs[1]);
+		#else
+		add(dword[rip + &cycle_counter], call_regs[1]);
+		#endif
+		add(rsp, 8 + STACK_ALIGN + 8);       // the return addresses into the block and into the main loop, and the frame of the block
+		jmp(mainloop_exit);
+
+		while (getSize() & 15)
+			nop();
+
+		ready();
+		emit_Skip((u32)getSize());
+	}
+#endif
+
 	void compile(RuntimeBlockInfo* block, SmcCheckEnum smc_checks, bool reset, bool staging, bool optimise)
 	{
 		//printf("X86_64 compiling %08x to %p\n", block->addr, emit_GetCCPtr());
+#if defined(NULLDC_DEBUGGER)
+		// the tail of the debugger checks of the block, and whether there is one
+		Xbyak::Label check_tail;
+		bool has_checks = false;
+#endif
+
 		CheckBlock(smc_checks, block);
 		
 		regalloc.DoAlloc(block);
@@ -234,6 +349,24 @@ public:
 
 				GenCall(OpDesc[op.rs3._imm]->oph);
 				break;
+
+#if defined(NULLDC_DEBUGGER)
+			case shop_dbg_check:
+				{
+					// The register allocator flushes for this op: every register is in the context, and none is
+					// cached across the call. The pc is an argument, the debugger writes it when it stops; the
+					// tail of the block adds the block end.
+					const size_t at = getSize();
+
+					mov(call_regs[0], op.rs1._imm);
+					mov(call_regs[1], op.rs2._imm);
+					call(check_tail);
+
+					verify(getSize() - at == DBG_CHECK_CALL_BYTES);
+					has_checks = true;
+				}
+				break;
+#endif
 
 			case shop_jcond:
 			case shop_jdyn:
@@ -792,6 +925,58 @@ public:
 			regalloc.OpEnd(&op);
 		}
 
+		// what is behind the last instruction of every block
+		auto finish = [&]()
+		{
+#if defined(NULLDC_DEBUGGER)
+			if (has_checks)
+			{
+				// The tail of the checks: the third argument, the same for all of them
+				const size_t at = getSize();
+
+				L(check_tail);
+				mov(call_regs[2], block->addr + block->sh4_code_size);
+				jmp(check_stub, T_NEAR);
+
+				verify(getSize() - at == DBG_CHECK_TAIL_BYTES);
+			}
+#endif
+
+			ready();
+
+			block->code = (DynarecCodeEntryPtr)getCode();
+			block->host_code_size = (u32)getSize();
+
+			emit_Skip((u32)getSize());
+		};
+
+#if defined(NULLDC_DEBUGGER)
+		if (block->dbg_rest_pc)
+		{
+			// The code of the block ends here and its rest runs outside the block cache. Every register is in
+			// the context. The rest gets the cycles of its instructions back, and the main loop is left without
+			// its test of the slice counter: that comes behind the last instruction of the block.
+			mov(call_regs[0], block->dbg_rest_pc);
+			mov(call_regs[1], block->dbg_rest_cycles);
+			mov(call_regs[2], block->addr + block->sh4_code_size);
+			call(CC_RX2RW(rdv_BlockRest));
+
+			if (block->dbg_rest_cycles != 0)
+			{
+				#ifdef FEAT_NO_RWX_PAGES
+				mov(rax, (uintptr_t)&cycle_counter);
+				add(dword[rax], block->dbg_rest_cycles);
+				#else
+				add(dword[rip + &cycle_counter], block->dbg_rest_cycles);
+				#endif
+			}
+			GenLeaveMainloop();
+
+			finish();
+			return;
+		}
+#endif
+
 		mov(rax, (size_t)&next_pc);
 
 		switch (block->BlockType) {
@@ -846,23 +1031,50 @@ public:
 				//next_pc = next_pc_value;
 				mov(dword[rax], block->NextBlock);
 			}
-
-			GenCall(UpdateINTC);
 			break;
 
 		default:
 			die("Invalid block end type");
 		}
 
+		const bool update_intc = block->BlockType == BET_DynamicIntr || block->BlockType == BET_StaticIntr;
+
+#if defined(NULLDC_DEBUGGER)
+		if (block->dbg_flow)
+		{
+			// A step-out is pending: the call or return and its slot have run, next_pc is where it goes. A return
+			// from exception reports in front of its interrupt check, which is still made when the report stops:
+			// if it lets an interrupt in, the stop is at the handler.
+			mov(call_regs[0], block->dbg_flow);
+			GenCall(dbg_sh4_CheckFlow);
+
+			Xbyak::Label no_stop;
+			test(eax, eax);
+			jz(no_stop);
+
+			if (update_intc)
+				GenCall(UpdateINTC);
+			GenLeaveMainloop();
+
+			L(no_stop);
+		}
+#endif
+
+		if (update_intc)
+			GenCall(UpdateINTC);
+
 		add(rsp, STACK_ALIGN);
 		ret();
 
-		ready();
+		finish();
+	}
 
-		block->code = (DynarecCodeEntryPtr)getCode();
-		block->host_code_size = (u32)getSize();
-
-		emit_Skip((u32)getSize());
+	// Leaves the block and the main loop from inside a block: drops the frame of the block and the return
+	// address into the main loop. The stack then is as the main loop has it between two blocks.
+	void GenLeaveMainloop()
+	{
+		add(rsp, STACK_ALIGN + 8);
+		jmp(mainloop_exit);
 	}
 
 	void GenReadMemoryImmediate(const shil_opcode& op) {
@@ -1413,13 +1625,30 @@ struct X64NGenBackend : NGenBackend
 {
 	BlockCompiler* compiler;
 
+	// The code goes to the end of the code cache, with what is left of the cache as its bound. Code that does
+	// not fit is given up: block->code stays 0 and the cache is as it was, for the caller to make room or to
+	// ask for less.
 	void Compile(RuntimeBlockInfo* block, SmcCheckEnum smc_checks, bool reset, bool staging, bool optimise)
 	{
-		verify(emit_FreeSpace() >= 16 * 1024);
+		block->code = 0;
+		block->host_code_size = 0;
 
-		compiler = new BlockCompiler(emit_GetCCPtr());
-		compiler->compile(block, smc_checks, reset, staging, optimise);
-		delete compiler;
+		BlockCompiler comp(emit_GetCCPtr(), emit_FreeSpace());
+
+		compiler = &comp;
+
+		try
+		{
+			comp.compile(block, smc_checks, reset, staging, optimise);
+		}
+		catch (const Xbyak::Error&)
+		{
+			block->code = 0;
+			block->host_code_size = 0;
+			block->memory_accesses.clear();
+		}
+
+		compiler = 0;
 	}
 
 	bool Rewrite(rei_host_context_t* ctx)
@@ -1486,6 +1715,20 @@ struct X64NGenBackend : NGenBackend
 			comp.build_mainloop();
 		}
 
+		{
+			this->RunBlock = (RunBlockFnPtr_t)emit_GetCCPtr();
+			BlockCompiler comp(emit_GetCCPtr());
+			comp.build_runblock();
+		}
+
+#if defined(NULLDC_DEBUGGER)
+		{
+			check_stub = emit_GetCCPtr();
+			BlockCompiler comp(emit_GetCCPtr());
+			comp.build_check_stub();
+		}
+#endif
+
 		// To prevent code cache reset from wiping these out.
 		emit_SetBaseAddr();
 
@@ -1526,6 +1769,40 @@ struct X64NGenBackend : NGenBackend
 	{
 		dst->InterpreterFallback = false;
 		dst->OnlyDynamicEnds = false;
+
+		// The check, its stop path, RunBlock and the flow report are stated where they have been run: with the
+		// System V calling convention. Elsewhere the debugger uses the interpreter fallback (hw/sh4/sh4_dbg.h).
+#if defined(NULLDC_DEBUGGER) && !defined(_WIN32)
+		dst->DebugChecks = true;
+		dst->DebugCheckBudget = DBG_CHECK_BUDGET;
+#else
+		dst->DebugChecks = false;
+		dst->DebugCheckBudget = 0;
+#endif
+
+		// Between two blocks every register is in the context and the epilogue has written the pc. Inside a
+		// block UpdateSystem is only called by SLEEP, in front of which the register allocator flushes.
+		dst->CtxAtSlice = true;
+	}
+
+	int SliceCyclesLeft()
+	{
+		return cycle_counter;
+	}
+
+	void ResetSlice()
+	{
+		cycle_counter = SH4_TIMESLICE;
+	}
+
+	bool KeepsSlice()
+	{
+		return true;
+	}
+
+	void SetSliceCyclesLeft(int cycles)
+	{
+		cycle_counter = cycles;
 	}
 	
 };

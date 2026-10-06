@@ -18,12 +18,16 @@
 #include "hw/sh4/sh4_opcode_list.h"
 #include "hw/sh4/sh4_core.h"
 #include "hw/sh4/sh4_mem.h"
+#include "debugger/debugger.h"
 #include "decoder_opcodes.h"
 
 #define BLOCK_MAX_SH_OPS_SOFT 500
 #define BLOCK_MAX_SH_OPS_HARD 511
 
 RuntimeBlockInfo *blk;
+
+// The limits of the running decode, 0: those of a cached block
+static const DecodeLimits *dec_limits;
 
 const char idle_hash[] =
 	// BIOS
@@ -641,9 +645,29 @@ u32 MatchDiv32(u32 pc, Sh4RegType &reg1, Sh4RegType &reg2, Sh4RegType &reg3)
 
 	return match;
 }
-bool MatchDiv32u(u32 op, u32 pc)
+// The idiom at pc is folded into one unit, which then cannot be split: it is not folded in a step of one
+// instruction, across the end of a block that ends at a given address, or when one of the folded instructions
+// gets a debugger check
+static bool Div32Allowed(u32 pc)
 {
 	if (settings.dynarec.safemode)
+		return false;
+
+	if (dec_limits)
+	{
+		if (dec_limits->max_opcodes)
+			return false;
+
+		if (dec_limits->end_pc && dec_limits->end_pc - pc < 130)
+			return false;
+	}
+
+	return !dbg_sh4_AnyArmed(pc + 2, 128);
+}
+
+bool MatchDiv32u(u32 op, u32 pc)
+{
+	if (!Div32Allowed(pc))
 		return false;
 
 	div_som_reg1 = NoReg;
@@ -664,7 +688,7 @@ bool MatchDiv32u(u32 op, u32 pc)
 
 bool MatchDiv32s(u32 op, u32 pc)
 {
-	if (settings.dynarec.safemode)
+	if (!Div32Allowed(pc))
 		return false;
 
 	u32 n = GetN(op);
@@ -1012,6 +1036,25 @@ bool dec_generic(u32 op)
 	return true;
 }
 
+u32 dec_BlockFlow(BlockEndType type)
+{
+	switch (type)
+	{
+	case BET_StaticCall:
+	case BET_DynamicCall:
+		return DBG_SH4_FLOW_CALL;
+
+	case BET_DynamicRet:
+		return DBG_SH4_FLOW_RTS;
+
+	case BET_DynamicIntr:
+		return DBG_SH4_FLOW_RTE;
+
+	default:
+		return DBG_SH4_FLOW_NONE;
+	}
+}
+
 void state_Setup(u32 rpc, fpscr_t fpu_cfg)
 {
 	state.cpu.rpc = rpc;
@@ -1029,15 +1072,24 @@ void state_Setup(u32 rpc, fpscr_t fpu_cfg)
 	state.info.has_readm = false;
 	state.info.has_writem = false;
 	state.info.has_fpu = false;
+
+	state.dbg_checks = 0;
 }
 
-void dec_DecodeBlock(RuntimeBlockInfo *rbi, u32 max_cycles)
+void dec_DecodeBlock(RuntimeBlockInfo *rbi, u32 max_cycles, const DecodeLimits *limits)
 {
 	blk = rbi;
+	dec_limits = limits;
 	state_Setup(blk->addr, blk->fpu_cfg);
 	rdv_ngen->GetFeatures(&state.ngen);
 
+	// Debugger checks go into the blocks of a backend that compiles them, and into a decode that is not compiled
+	const bool dbg_checks = state.ngen.DebugChecks || (limits && limits->no_compile);
+
 	blk->guest_opcodes = 0;
+
+	// instructions decoded, a delay slot goes with its branch
+	u32 decoded = 0;
 
 	for (;;)
 	{
@@ -1049,8 +1101,16 @@ void dec_DecodeBlock(RuntimeBlockInfo *rbi, u32 max_cycles)
 			// there is no break here by design
 		case NDO_NextOp:
 		{
-			if (
-				((blk->oplist.size() >= BLOCK_MAX_SH_OPS_SOFT) || (blk->guest_cycles >= max_cycles)) && !state.cpu.is_delayslot)
+			// a debugger check must not move a block end: the checks are not counted
+			bool full = (blk->oplist.size() - state.dbg_checks >= BLOCK_MAX_SH_OPS_SOFT) || (blk->guest_cycles >= max_cycles);
+
+			if (limits)
+			{
+				full = full || (limits->max_opcodes && decoded >= limits->max_opcodes);
+				full = full || (limits->end_pc && state.cpu.rpc == limits->end_pc);
+			}
+
+			if (full && !state.cpu.is_delayslot)
 			{
 				dec_End(state.cpu.rpc, BET_StaticJump, false);
 			}
@@ -1076,6 +1136,20 @@ void dec_DecodeBlock(RuntimeBlockInfo *rbi, u32 max_cycles)
 				*/
 
 				u32 op = ReadMem16(state.cpu.rpc);
+
+				if (!state.cpu.is_delayslot)
+				{
+					decoded++;
+
+					// A breakpoint on a delay slot is checked in front of its branch, nothing stops between the two.
+					// Until the cost of the block is final rs2 holds the cost of the instructions in front of this one
+					if (dbg_checks && dbg_sh4_WantsCheck(state.cpu.rpc, (OpDesc[op]->type & Delayslot) != 0))
+					{
+						Emit(shop_dbg_check, shil_param(), mk_imm(state.cpu.rpc), mk_imm(blk->guest_cycles));
+						state.dbg_checks++;
+					}
+				}
+
 				if (op == 0 && state.cpu.is_delayslot)
 				{
 					printf("Delayslot 0 hack!\n");
@@ -1139,7 +1213,13 @@ _end:
 	blk->BranchBlock = state.JumpAddr;
 	blk->BlockType = state.BlockType;
 
-	verify(blk->oplist.size() <= BLOCK_MAX_SH_OPS_HARD);
+	verify(blk->oplist.size() - state.dbg_checks <= BLOCK_MAX_SH_OPS_HARD);
+
+	// While a step-out is pending, the blocks that end with a call or a return report it to the debugger
+	blk->dbg_flow = (state.ngen.DebugChecks && dbg_sh4_stepout != 0) ? dec_BlockFlow(blk->BlockType) : DBG_SH4_FLOW_NONE;
+
+	// the cost of the block as the sum of its instructions, in front of the cycle tricks
+	const u32 opcode_cycles = blk->guest_cycles;
 
 #if HOST_OS == OS_WINDOWS
 	switch (rbi->addr)
@@ -1218,6 +1298,52 @@ _end:
 	blk->guest_cycles = std::min(blk->guest_cycles, max_cycles);
 	// make sure we don't use wayy-too-few cycles
 	blk->guest_cycles = std::max(1U, blk->guest_cycles);
+
+	if (limits && limits->cycles >= 0)
+		blk->guest_cycles = limits->cycles;
+
+	blk->dbg_rest_pc = 0;
+	blk->dbg_rest_cycles = 0;
+
+	if (state.dbg_checks)
+	{
+		// What a compiled block holds of them. The decode went on to the end of the block all the same: its
+		// boundaries and its cost are those of the block without a check.
+		const u32 budget = (limits && limits->no_compile) ? 0 : state.ngen.DebugCheckBudget;
+		u32 checks = 0;
+
+		// A check that stops gives back the part of the block cost that belongs to the instructions from its
+		// own on. The cost is spread over the instructions in proportion to what each of them added to it.
+		for (size_t i = 0; i < blk->oplist.size(); i++)
+		{
+			shil_opcode &sop = blk->oplist[i];
+
+			if (sop.op == shop_dbg_check)
+			{
+				u32 charged = opcode_cycles ? (u32)((u64)blk->guest_cycles * sop.rs2._imm / opcode_cycles) : 0;
+				sop.rs2._imm = blk->guest_cycles - charged;
+
+				if (budget && checks++ == budget)
+				{
+					// One check too many. The code of the block ends in front of its instruction, where the
+					// rest of the block is handed over with the cycles this check would give back: the block
+					// is charged once, and the slice counter is tested behind its last instruction only.
+					blk->dbg_rest_pc = sop.rs1._imm;
+					blk->dbg_rest_cycles = sop.rs2._imm;
+					blk->oplist.resize(i);
+
+					blk->BlockType = BET_StaticJump;
+					blk->BranchBlock = blk->dbg_rest_pc;
+					blk->NextBlock = 0xFFFFFFFF;
+					blk->has_jcond = false;
+					blk->dbg_flow = DBG_SH4_FLOW_NONE;
+					break;
+				}
+			}
+		}
+	}
+
+	dec_limits = 0;
 	blk = 0;
 }
 
