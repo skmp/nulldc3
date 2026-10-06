@@ -44,6 +44,9 @@ FORBIDDEN = ('Fatal error', 'Verify Failed', 'fault_handler')
 RTC_PIN = 946684800
 RTC_PIN_REGISTER = RTC_PIN + (20 * 365 + 5) * 24 * 60 * 60
 
+# The product number in the IP.BIN of the disc image of the tests: the id of the game whose settings the emulator loads
+GAME_ID = 'T-PIN01'
+
 WATCHDOG = 120      # seconds of wall clock for one run of the emulator (--watchdog), generous: the machine may be busy
 
 
@@ -93,6 +96,19 @@ class Harness:
         if not os.path.exists(path):
             with open(path, 'wb') as f:
                 f.write(bytes.fromhex(GUESTS[name]))
+        return path
+
+    def disc(self):
+        """A disc image that has a product number and nothing else: the 256 sectors reios reads to find out which
+        game is in the drive, as an .iso, with GAME_ID where an IP.BIN has it. The emulator loads the settings of
+        that game; what it runs is given with reios:ElfFile."""
+        path = os.path.join(self.work, 'disc.iso')
+        if not os.path.exists(path):
+            ip_bin = bytearray(256 * 2048)
+            ip_bin[0:16] = b'SEGA SEGAKATANA '
+            ip_bin[64:74] = GAME_ID.ljust(10).encode()
+            with open(path, 'wb') as f:
+                f.write(ip_bin)
         return path
 
     def elf(self, name):
@@ -322,6 +338,56 @@ def case_rtc(h):
     check(m is not None, 'the guest printed no clock', run)
     host = time.time() + (20 * 365 + 5) * 24 * 60 * 60
     check(abs(int(m.group(1), 16) - host) < 2 * 24 * 60 * 60, 'the unpinned clock is not the time of the host', run)
+
+
+def case_rtc_game(h):
+    """The two keys that pin the clock are settings like any other: in the section of the game that is in the drive
+    they go over the ones of section config, and Debug.FixedRtc, wherever it comes from, goes over Dreamcast.RTC."""
+    a, b, c = RTC_PIN, RTC_PIN + 86400, RTC_PIN + 3 * 86400
+
+    def game_run(tag, keys, sections, engine='jit'):
+        seed = ''.join('[%s]\n%s\n' % (name, ''.join('%s = %d\n' % kv for kv in entries)) for name, entries in sections)
+        run = h.run(tag, headless('config:bios.UseReios=1', 'reios:ElfFile=' + h.guest('guest_rtc'), *keys, engine=engine,
+                                  rtc=None), h.disc(), seed_config=seed)
+        check_clean(run, 'guest-exit')
+        check('Game ID is [%s]' % GAME_ID in run.log, 'the emulator did not take the disc image for the game %s' % GAME_ID,
+              run)
+        m = re.search(r'rtc=([0-9A-F]{8})', run.log)
+        check(m is not None, 'the guest printed no clock', run)
+        return run, int(m.group(1), 16) - (RTC_PIN_REGISTER - RTC_PIN)
+
+    dreamcast_rtc = lambda second: 'config:Dreamcast.RTC=%d' % second
+    fixed_rtc = lambda second: 'config:Debug.FixedRtc=%d' % second
+
+    for tag, keys, sections, want, what in (
+            # Dreamcast.RTC of the game: alone, on both engines, and over the one of section config
+            ('game_jit', [], [(GAME_ID, [('Dreamcast.RTC', b)])], b, 'Dreamcast.RTC of the game'),
+            ('game_interp', [], [(GAME_ID, [('Dreamcast.RTC', b)])], b, 'Dreamcast.RTC of the game'),
+            ('game_over_config', [dreamcast_rtc(a)], [(GAME_ID, [('Dreamcast.RTC', b)])], b,
+             'Dreamcast.RTC of the game, not the one of section config'),
+            ('game_over_config_file', [], [('config', [('Dreamcast.RTC', a)]), (GAME_ID, [('Dreamcast.RTC', b)])], b,
+             'Dreamcast.RTC of the game, not the one of section config'),
+            # the section of the game on the command line
+            ('game_line', [dreamcast_rtc(a), '%s:Dreamcast.RTC=%d' % (GAME_ID, b)], [], b,
+             'Dreamcast.RTC of the game, given with -config'),
+            # Debug.FixedRtc of the game: over its own Dreamcast.RTC, and over both keys of section config
+            ('game_fixed', [], [(GAME_ID, [('Debug.FixedRtc', c), ('Dreamcast.RTC', b)])], c, 'Debug.FixedRtc of the game'),
+            ('game_fixed_over_config', [dreamcast_rtc(a), fixed_rtc(b)], [(GAME_ID, [('Debug.FixedRtc', c)])], c,
+             'Debug.FixedRtc of the game, not a key of section config'),
+            # Debug.FixedRtc of section config stays in front of a Dreamcast.RTC, also of one the game has
+            ('config_fixed', [fixed_rtc(a)], [(GAME_ID, [('Dreamcast.RTC', b)])], a,
+             'Debug.FixedRtc of section config, in front of Dreamcast.RTC of the game'),
+            # a game that has other settings, and the settings of another game, leave the keys of section config
+            ('game_without', [fixed_rtc(a), dreamcast_rtc(b)], [(GAME_ID, [('Dreamcast.Cable', 3)])], a,
+             'Debug.FixedRtc of section config, the game has neither key'),
+            ('other_game', [dreamcast_rtc(a)], [('T-OTHER', [('Dreamcast.RTC', b), ('Debug.FixedRtc', c)])], a,
+             'Dreamcast.RTC of section config, the keys of another game are not for this one')):
+        run, got = game_run('rtc_' + tag, keys, sections, engine='interp' if tag.endswith('_interp') else 'jit')
+        check(got == want, 'the guest read the second %d, expected %d: %s' % (got, want, what), run)
+
+    # 0 in the section of the game takes the pin of section config away: the clock is the host's
+    run, got = game_run('rtc_game_zero', [dreamcast_rtc(a)], [(GAME_ID, [('Dreamcast.RTC', 0)])])
+    check(abs(got - time.time()) < 2 * 24 * 60 * 60, 'Dreamcast.RTC = 0 for the game did not leave the clock to the host', run)
 
 
 def case_cfg_untouched(h):
@@ -659,6 +725,7 @@ CASES = {
     'exit.vblanks.interp': lambda h: case_exit_vblanks(h, 'interp'),
     'exit.seconds': case_exit_seconds,
     'rtc': case_rtc,
+    'rtc.game': case_rtc_game,
     'cfg.untouched': case_cfg_untouched,
     'headless.no_program': case_headless_no_program,
     'headless.gl_renderer': case_headless_gl_renderer,

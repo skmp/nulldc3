@@ -69,7 +69,9 @@ static void aica_hash_tick(const u8* aica_reg)
 	}
 }
 
-// Two keys name the second the clock is pinned to. Debug.FixedRtc goes first; a key that is 0 or missing pins nothing
+// Two keys name the second the clock is pinned to. Debug.FixedRtc goes first; a key that is 0 or missing pins nothing.
+// Each is a setting of section config that the section of a game overrides: the config store returns the key of the
+// game's own section, where that section has it, from the moment the id of the game is set (cfgLoadInt)
 static u32 aica_hash_pinned_rtc()
 {
 	u32 pinned = (u32)cfgLoadInt("config", "Debug.FixedRtc", 0);

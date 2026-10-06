@@ -381,7 +381,9 @@ void LoadSettings(bool game_specific)
     settings.dreamcast.broadcast = cfgLoadInt(config_section, "Dreamcast.Broadcast", settings.dreamcast.broadcast);
     settings.dreamcast.language = cfgLoadInt(config_section, "Dreamcast.Language", settings.dreamcast.language);
     settings.dreamcast.FullMMU = cfgLoadBool(config_section, "Dreamcast.FullMMU", settings.dreamcast.FullMMU);
-    // The pinned real-time clock has two keys and one rule for them (hw/aica/aica_hash.h): config:Debug.FixedRtc, else config:Dreamcast.RTC
+    // The pinned real-time clock has two keys and one rule for them (hw/aica/aica_hash.h): Debug.FixedRtc, else
+    // Dreamcast.RTC. The rule names section config for both and is asked again for a game: once the id of the
+    // game is set the config store puts a key of the game's own section in front of the one of the section named
     settings.dreamcast.RTC = aica_hash.pinned_rtc != nullptr ? aica_hash.pinned_rtc() : 0;
     settings.aica.LimitFPS = cfgLoadBool(config_section, "aica.LimitFPS", settings.aica.LimitFPS);
     settings.aica.NoBatch = cfgLoadBool(config_section, "aica.NoBatch", settings.aica.NoBatch);

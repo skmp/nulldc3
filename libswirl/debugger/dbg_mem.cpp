@@ -20,7 +20,8 @@
 /*
 	Guest memory for the debugger. A read is cut into runs of one region; each run is copied from the backing
 	store of its region, or put together from register values. Nothing here calls a guest memory handler or the
-	read function of a register.
+	read function of a register, but for two bytes of the ARM7 (Arm7RegisterView), where that function copies a
+	byte and changes nothing.
 
 	The backing stores are looked up from the machine for every run; no pointer outlives a call.
 */
@@ -204,11 +205,12 @@ u32 CopyRegisters(u32 addr, u32 count, u8* out, u8* bits, u32 first, ReadWord re
 // The register window of the AICA as byte reads by the ARM7 deliver it. out holds the run [offset, offset +
 // count) of the register file as the SH4 reads it (AICA::DebugReadRegs); the ARM7 reads the same bytes but for
 //   0x2C00, 0x2C01   where the SH4 has ARMRST and VREG and the ARM7 the two bytes of the register file behind
-//                    them, which no accessor delivers: not readable
+//                    them. No accessor has those two. AICA::ReadReg is what a read by the ARM7 calls there, and
+//                    at these two offsets it returns the byte of the file and changes nothing
 //   0x2D00           the interrupt level L of the controller in front of nFIQ, which the sound CPU keeps
-//   0x2D04           M of that controller, which reads 0
+//   0x2D04           M of that controller, which reads 0 whatever the register file holds there
 // Marks the readable bytes from bit `first` on and returns their number.
-u32 Arm7RegisterView(u32 offset, u32 count, u8* out, u8* bits, u32 first)
+u32 Arm7RegisterView(AICA* aica, u32 offset, u32 count, u8* out, u8* bits, u32 first)
 {
 	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
 	u32 level = 0, in_service = 0;
@@ -223,8 +225,7 @@ u32 Arm7RegisterView(u32 offset, u32 count, u8* out, u8* bits, u32 first)
 		{
 		case 0x2C00:
 		case 0x2C01:
-			out[i] = 0;
-			known = false;
+			out[i] = (u8)aica->ReadReg(offset + i, 1);
 			break;
 
 		case 0x2D00:
@@ -309,7 +310,7 @@ u32 ReadRun(Target t, Region region, u32 addr, u32 count, u8* out, u8* bits, u32
 			break;
 
 		if (t == Target::Arm7)
-			return Arm7RegisterView(addr & 0x7FFF, count, out, bits, first);
+			return Arm7RegisterView(aica, addr & 0x7FFF, count, out, bits, first);
 
 		readable = count;
 		break;
