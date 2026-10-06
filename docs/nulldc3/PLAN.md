@@ -12,7 +12,9 @@ track.
 - Repos: emulator `dreamster/devcast`, UI `dreamster/dreamcast-devtools`; work on local branch `skmp/nulldc3` in each;
   commits are made as work lands, nothing is pushed. `~/projects/devcast` is a stale checkout — do not use it.
 - New surfaces say "nullDC" / "3.0.0". The tree is not mass-renamed (config/data dirs stay `reicast` until the user renames).
-- Scratch, build dirs, reports: `dreamster/agents/nulldc3/` only.
+- Scratch, build dirs, reports: `dreamster/agents/nulldc3/` only; agents delete their clones and build trees before returning.
+- **Machine**: 15 GB RAM. One workflow at a time; `ninja -j8`, `ctest -j4`, at most 4 emulator processes; every emulator run
+  headless. Three parallel build-and-stress workflows were OOM-killed on 2026-10-06.
 - Console access: none in this work unless the user asks; unmeasured behaviour is listed under "Needs the console".
 - **Performance numbers** are taken with the hardware-accelerated renderers or the `none` renderer, never the reference
   software renderers (those make the run render-bound: 34-44 % of real time with refsw2). Both live in the
@@ -35,13 +37,15 @@ on one port, default `127.0.0.1:55543`, UI bundle embedded), all guest-state acc
 (v2 + target metadata, register merge, writes, tables, correlated binary frames), and a contract test runner that validates
 either server (mock or emulator) with the UI's own zod schemas.
 
-**Package status (2026-10-05).** Merged into devcast `skmp/nulldc3`: E1 transport + UI embed, E2 disassemblers, E0 shared
-headers (frozen after three review rounds; 15 comment-level notes being applied). Running against the frozen headers: E3
-(registers, memory, device accessors, events, sound regression harness), E4b (port of the SH4 breakpoint prototype), I0 (one
-ctest for everything), E4a (emulator thread and run control; its no-regression gate is the deterministic state hash).
-Then E5 (core) gated by the contract runner. For E5: in automated runs (headless or an `Exit.*` key) the server stays off
-unless `Debugger:Enabled` is set explicitly, so parallel test runs do not fight over the port. Devtools: F0 done (+ Playwright e2e suite, error boundaries, offline bundle);
-F1 (protocol v3, mock module, contract runner) and F2 (M1 panels) running.
+**Package status (PAUSED 2026-10-06; how to resume: `agents/nulldc3/resume/RESUME.md`).** Merged into devcast
+`skmp/nulldc3` (31d9fe30, 146 ctest targets green): E1 transport + UI embed, E2 disassemblers, E0 shared headers (frozen;
+header revision 2 applied), E3 registers / memory / device side with the sound regression harness, E4b SH4 breakpoints and
+steps native to the active backend (x64 JIT and interpreter; fallback loop for the other JIT backends). Not merged: E4a
+(emulator thread and run control — two verification rounds done, an exit deadlock and approved header notes open; its fix
+round was interrupted). Not started: E5 (core), which completes M1 and is gated by the contract runner. Until E4a is merged
+the debugger does nothing at run time. Devtools: F0 done; F1 (protocol v3, mock module, contract runner) committed with
+runner gaps open; F2 (M1 panels) committed, second verification pending. For E5: in automated runs (headless or an `Exit.*`
+key) the server stays off unless `Debugger:Enabled` is set explicitly.
 
 | Milestone | Content | Gate |
 | --- | --- | --- |
@@ -52,7 +56,7 @@ F1 (protocol v3, mock module, contract runner) and F2 (M1 panels) running.
 | M4 | CORE inspector fed by the emulator; TA inspector; TLB/SQ/OC-RAM tables; TA/CORE event breakpoints | contract (holly) |
 | M5 | SH4 simulator panel re-based on the measured model (shares the table generator of track 3) | fixture gate >= 300/305 |
 
-### Track 2 — test suite  (T2.0-T2.4 DONE, verified, merged; 91 ctest targets on `skmp/nulldc3` at c185f4a6)
+### Track 2 — test suite  (T2.0-T2.4 DONE, verified, merged; 146 ctest targets on `skmp/nulldc3` with the debugger's suites)
 
 **T2.0 (merged).** Headless runs (no display needed), `Exit.AfterVblanks/AfterSeconds/OnGuestExit` with a machine-readable
 exit line and a state hash, pinned RTC (`Dreamcast.RTC`), `-config` overrides not saved, `-help` and fatal faults terminate,

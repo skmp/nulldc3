@@ -11,9 +11,9 @@ issue is accounted for in Appendix A); and the specification of the SH4 breakpoi
 `agents/nulldc3/review/jit-breakpoints-spec.md` (integrated as 2.3.4 to 2.3.7; results in Appendix C).
 
 Repos and branches (local only, never pushed; commits are made as work lands):
-- emulator: `/home/skmp/projects/dreamster/devcast`, integration branch `skmp/nulldc3`. One git worktree per work package
+- emulator: the `devcast` repository, integration branch `skmp/nulldc3`. One git worktree per work package
   under `agents/nulldc3/wt/<pkg>` on branch `skmp/nulldc3-<pkg>`, own out-of-tree build directory; an integrator merges.
-- web UI: `/home/skmp/projects/dreamster/dreamcast-devtools`, branch `skmp/nulldc3` (frontend packages are sequential on it).
+- web UI: the `dreamcast-devtools` repository (a sibling checkout), branch `skmp/nulldc3` (frontend packages are sequential on it).
 
 Decisions in force (project owner; everything below is written to them):
 - **D1 — what you debug is what runs.** Breakpoints and single steps are native to the active SH4 backend; nothing switches
@@ -1718,7 +1718,7 @@ waiting for a call, and the test arms, resumes and steps through `dbg::emu` on (
 ### 5.4 Integration recipe (emulator + contract runner)
 
 - Build the emulator with `-DNULLDC_DEVTOOLS_DIST=<dreamcast-devtools>/dist-native`.
-- Start it with the test ELF `/home/skmp/projects/nullDC/2ndmix.elf` (runs under reios, no BIOS; starts the ARM7; has
+- Start it with the test ELF `2ndmix.elf` from the directory given as `NULLDC_ELF_DIR` (runs under reios, no BIOS; starts the ARM7; has
   `.symtab`; entry `0x8C010000`) and always with
   `-config Debugger:Port=0 -config Debugger:Required=yes -config Debugger:StartPaused=yes -config audio:backend=none`.
   `Port=0` avoids collisions between packages running in parallel; `Required=yes` makes a failed bind fatal instead of a
