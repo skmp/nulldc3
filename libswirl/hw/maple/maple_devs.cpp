@@ -637,7 +637,7 @@ struct maple_sega_vmu: maple_base
 
 							if (settings.dreamcast.RTC != 0)
 							{
-								// a pinned clock (config:Dreamcast.RTC): the VMU has the time of the console's
+								// a pinned clock (config:Dreamcast.RTC; config:Debug.FixedRtc pins the same value and wins): the VMU has the time of the console's
 								now = (time_t)libAICA_GetRTC() - (20 * 365 + 5) * 24 * 60 * 60;
 								timenow = gmtime(&now);
 							}

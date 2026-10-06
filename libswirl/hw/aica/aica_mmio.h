@@ -85,7 +85,7 @@ struct DSP;
 
 void libAICA_TimeStep();
 
-u32 libAICA_GetRTC_now();	// what the clock is set to at a reset: the host's time, or config:Dreamcast.RTC
+u32 libAICA_GetRTC_now();	// what the clock is set to at a reset: the host's time, or config:Dreamcast.RTC; config:Debug.FixedRtc pins the same value and wins
 u32 libAICA_GetRTC();		// the clock of the console, in seconds since 1/1/1950
 
 // Debugger access to the RTC behind 0x00710000, same threads as AICA::DebugReadRegs: the seconds counter
