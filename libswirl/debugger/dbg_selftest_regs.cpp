@@ -14,6 +14,7 @@
 #include "hw/aica/dsp.h"
 #include "hw/aica/dsp_backend.h"
 #include "hw/arm7/SoundCPU.h"
+#include "hw/arm7/arm7.h"
 #include "hw/arm7/arm7_context.h"
 #include "hw/gdrom/gdromv3.h"
 #include "hw/holly/holly_intc.h"
@@ -43,9 +44,13 @@
 
 	Where a value has a second source that is not the debugger's (the SH4 context, a save state of a device, a
 	guest read that is known to have no side effect) the two are compared. Guest reads are made by this file
-	only, never by the modules under test, and only of registers whose read function changes nothing; the two
-	reads that do change something (the FIFO status of the system bus, the status of an AICA channel) are
-	followed by putting the device back from a save state of it.
+	only, never by the modules under test (but for the two bytes of the ARM7 that dbg_mem.cpp names), and only
+	of registers whose read function changes nothing; the two reads that do change something (the FIFO status of
+	the system bus, the status of an AICA channel) are followed by putting the device back from a save state of
+	it.
+
+	The register window of the AICA for the ARM7 has the ARM7 itself as its second source: Arm7Loads executes a
+	loop of the test's own on the sound CPU, and puts back what that changed.
 */
 
 using namespace dbg;
@@ -384,11 +389,8 @@ bool ExpectReadable(Target t, u32 addr, mem::Region region)
 		return row != nullptr && !(row->flags & regs::kRegNoReader) && (addr & 3) < row->width / 8u;
 	}
 
-	case mem::Region::AicaRegs:
-		// the ARM7 has the register file where the SH4 has ARMRST and VREG, and nothing delivers those two bytes
-		return !(t == Target::Arm7 && ((addr & 0x7FFF) == 0x2C00 || (addr & 0x7FFF) == 0x2C01));
-
 	default:
+		(void)t;
 		return true;
 	}
 }
@@ -440,6 +442,111 @@ void ForEachBoundaryWindow(Fn fn)
 
 	fn(Target::Dsp, 0, 2 * half);
 	fn(Target::Dsp, 0x00800000 - half, 2 * half);
+}
+
+// What the sound CPU writes into a save state: bool aica_interr, u32 aica_reg_L, bool e68k_out, u32 e68k_reg_L,
+// u32 e68k_reg_M, the registers, bool armIrqEnable, bool armFiqEnable, int armMode, bool enabled
+const size_t scpu_out_at = 1 + 4;
+const size_t scpu_level_at = scpu_out_at + 1;
+const size_t scpu_service_at = scpu_level_at + 4;
+const size_t scpu_regs_at = scpu_service_at + 4;
+const size_t scpu_tail_at = scpu_regs_at + RN_ARM_REG_COUNT * 4;
+const size_t scpu_state_size = scpu_tail_at + 1 + 1 + 4 + 1;
+
+// A loop of the ARM7: it copies the bytes from R0 up to R3 to R1, one by one, and then stays where it is
+const u32 arm7_loads[] = {
+	0xE4D02001,		// ldrb r2, [r0], #1
+	0xE4C12001,		// strb r2, [r1], #1
+	0xE1500003,		// cmp  r0, r3
+	0x1AFFFFFB,		// bne  the ldrb
+	0xEAFFFFFE,		// b    .
+};
+
+/*
+	Byte loads by the ARM7 itself: what the bytes [first, first + count) are for the sound CPU, count up to 0x8000.
+
+	The sound CPU is given a state that executes the loop above out of the wave memory: one LDRB for every byte,
+	stored in the wave memory behind the loop. Then the bytes of the wave memory, the sound CPU, the AICA and the
+	interrupt line of the AICA to the SH4 are put back as they were.
+
+	SoundCPU::Update() is what executes code of the ARM7. It runs the core in 32 slices and steps the AICA by a
+	sample behind each of them: the timers count, the sample interval is raised, the interrupt lines follow. A
+	slice is 64 cycles for every instruction of the loop, of which the core charges 10 at most, so the loop ends
+	within the first slice: every load finds the registers as they were when this was called. The state it runs
+	on masks FIQ, so that a request in front of nFIQ does not take the core out of the loop. What the 32 steps
+	and the loads themselves change (the status of the selected channel and its loop flag, the acknowledge of a
+	request) is in the two save states that are put back; the sound generator is kept from producing samples in
+	the steps, which no save state of the two would undo.
+
+	*loads are the bytes. Returns false when the loop did not come to its end or something is not as it was.
+*/
+bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
+{
+	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+	AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
+	ASIC* asic = sh4_cpu->GetA0H<ASIC>(A0H_ASIC);
+	SystemBus* sb = sh4_cpu->GetA0H<SystemBus>(A0H_SB);
+	u8* ram = sh4_cpu->aica_ram.data;
+
+	// the loop and what it stores are in the last 64 KiB of the wave memory
+	const u32 loop_at = sh4_cpu->aica_ram.size - 0x10000;
+	const u32 store_at = loop_at + sizeof(arm7_loads);
+
+	std::vector<u8> cpu = DeviceState(scpu);
+	std::vector<u8> device = DeviceState(aica);
+
+	if (count == 0 || count > 0x8000 || cpu.size() != scpu_state_size)
+		return false;
+
+	std::vector<u8> wave(ram + loop_at, ram + store_at + count);
+	const u32 line_bit = 1 << (u8)holly_SPU_IRQ;
+	u32 line = SB_ISTEXT & line_bit;
+	bool no_batch = settings.aica.NoBatch;
+
+	std::vector<u8> made = cpu;
+	auto set = [&](u32 reg, u32 value) { memcpy(&made[scpu_regs_at + reg * 4], &value, 4); };
+
+	set(0, first);
+	set(1, store_at);
+	set(3, first + count);
+	set(R15_ARM_NEXT, loop_at);
+	set(INTR_PEND, 0);
+	made[scpu_tail_at] = 0;			// IRQ and FIQ masked
+	made[scpu_tail_at + 1] = 0;
+	made[scpu_tail_at + 6] = 1;		// not held in reset
+
+	memcpy(ram + loop_at, arm7_loads, sizeof(arm7_loads));
+	memset(ram + store_at, 0, count);
+	RestoreDevice(scpu, made);
+	scpu->InvalidateJitCache();
+
+	settings.aica.NoBatch = false;
+	scpu->Update(count * 4 * 64 * 32 * arm_sh4_bias);
+	settings.aica.NoBatch = no_batch;
+
+	// where the core stands, and how far it came
+	std::vector<u8> behind = DeviceState(scpu);
+	u32 r0, next;
+
+	memcpy(&r0, &behind[scpu_regs_at], 4);
+	memcpy(&next, &behind[scpu_regs_at + R15_ARM_NEXT * 4], 4);
+	loads->assign(ram + store_at, ram + store_at + count);
+
+	memcpy(ram + loop_at, wave.data(), wave.size());
+	RestoreDevice(aica, device);
+	RestoreDevice(scpu, cpu);
+	scpu->InvalidateJitCache();
+
+	// a timer that ran out in the steps has raised the interrupt of the AICA
+	if ((SB_ISTEXT & line_bit) != line)
+	{
+		if (line)
+			asic->RaiseInterrupt(holly_SPU_IRQ);
+		else
+			asic->CancelInterrupt(holly_SPU_IRQ);
+	}
+
+	return r0 == first + count && next == loop_at + 16 && DeviceState(scpu) == cpu && DeviceState(aica) == device;
 }
 
 }
@@ -802,24 +909,19 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 		SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
 		std::vector<u8> state = DeviceState(scpu);
 
-		// bool aica_interr, u32 aica_reg_L, bool e68k_out, u32 e68k_reg_L, u32 e68k_reg_M, the registers,
-		// bool armIrqEnable, bool armFiqEnable, int armMode, bool enabled
-		const size_t regs_at = 1 + 4 + 1 + 4 + 4;
-		const size_t tail_at = regs_at + RN_ARM_REG_COUNT * 4;
-
-		if (Check(state.size() == tail_at + 1 + 1 + 4 + 1, "the save state of the sound CPU has %zu bytes", state.size()))
+		if (Check(state.size() == scpu_state_size, "the save state of the sound CPU has %zu bytes", state.size()))
 		{
 			const regs::Node* arm7 = regs::Find("dc.aica.arm7");
 
 			// every row of dc.aica.arm7 against what the bytes of a save state say it is
 			auto compare = [&](const std::vector<u8>& bytes, Tally* tally) {
 				u32 raw[RN_ARM_REG_COUNT];
-				memcpy(raw, &bytes[regs_at], sizeof(raw));
+				memcpy(raw, &bytes[scpu_regs_at], sizeof(raw));
 
-				bool irq = bytes[tail_at] != 0;
-				bool fiq = bytes[tail_at + 1] != 0;
+				bool irq = bytes[scpu_tail_at] != 0;
+				bool fiq = bytes[scpu_tail_at + 1] != 0;
 				u32 mode;
-				memcpy(&mode, &bytes[tail_at + 2], 4);
+				memcpy(&mode, &bytes[scpu_tail_at + 2], 4);
 
 				// the bank of the mode the core is in is live in R8..R14 and SPSR
 				const struct { u32 mode, first, last, live; } banks[] = {
@@ -871,13 +973,13 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 			live.Report("dc.aica.arm7 against the save state of the sound CPU");
 
 			u32 next, r15, mode;
-			memcpy(&next, &state[regs_at + R15_ARM_NEXT * 4], 4);
-			memcpy(&r15, &state[regs_at + 15 * 4], 4);
-			memcpy(&mode, &state[tail_at + 2], 4);
+			memcpy(&next, &state[scpu_regs_at + R15_ARM_NEXT * 4], 4);
+			memcpy(&r15, &state[scpu_regs_at + 15 * 4], 4);
+			memcpy(&mode, &state[scpu_tail_at + 2], 4);
 
 			u64 pc = 0;
 			bool ok = ReadRegister("dc.aica.arm7", "PC", &pc);
-			bool enabled = state[tail_at + 6] != 0;
+			bool enabled = state[scpu_tail_at + 6] != 0;
 
 			Check(ok && pc == next, "dc.aica.arm7.PC is the next instruction, %08llX (R15 is %08X), mode %02X", (unsigned long long)pc, r15, mode);
 			Check(scpu->DebugEnabled() == enabled, "the ARM7 is %s, and DebugEnabled() says so", enabled ? "running" : "held in reset");
@@ -893,12 +995,12 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 				for (u32 i = 0; i < RN_ARM_REG_COUNT; i++)
 				{
 					u32 word = 0xA5000000 + other * 0x10000 + i * 0x0101;
-					memcpy(&made[regs_at + i * 4], &word, 4);
+					memcpy(&made[scpu_regs_at + i * 4], &word, 4);
 				}
 
-				made[tail_at] = (other & 1) != 0;
-				made[tail_at + 1] = (other & 2) != 0;
-				memcpy(&made[tail_at + 2], &other, 4);
+				made[scpu_tail_at] = (other & 1) != 0;
+				made[scpu_tail_at + 1] = (other & 2) != 0;
+				memcpy(&made[scpu_tail_at + 2], &other, 4);
 
 				RestoreDevice(scpu, made);
 				compare(made, &modes);
@@ -911,15 +1013,14 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 		// the interrupt controller in front of nFIQ: L and the in-service flag against the save state, and the
 		// ARM7's view of the two registers through memory. Looking is no acknowledge: the state stands, with
 		// its request line
-		if (state.size() > 1 + 4 + 1 + 4 + 4)
+		if (state.size() >= scpu_regs_at)
 		{
-			const size_t out_at = 1 + 4, level_at = out_at + 1, service_at = level_at + 4;
 			Tally controller;
 
 			auto compare = [&](const std::vector<u8>& bytes) {
 				u32 want_level, want_service;
-				memcpy(&want_level, &bytes[level_at], 4);
-				memcpy(&want_service, &bytes[service_at], 4);
+				memcpy(&want_level, &bytes[scpu_level_at], 4);
+				memcpy(&want_service, &bytes[scpu_service_at], 4);
 
 				u32 level = ~want_level, in_service = ~want_service;
 				bool ok = scpu->DebugGetInterrupt(&level, &in_service);
@@ -952,9 +1053,9 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 			{
 				std::vector<u8> made = state;
 
-				made[out_at] = c.out;
-				memcpy(&made[level_at], &c.level, 4);
-				memcpy(&made[service_at], &c.service, 4);
+				made[scpu_out_at] = c.out;
+				memcpy(&made[scpu_level_at], &c.level, 4);
+				memcpy(&made[scpu_service_at], &c.service, 4);
 
 				RestoreDevice(scpu, made);
 				compare(made);
@@ -1510,26 +1611,26 @@ DBG_SELFTEST(regs_mem_read, "regs.mem.read")
 		u32 n_sh4 = mem::Read(Target::Sh4, 0xA0700000, 0x8000, sh4_view.data(), nullptr);
 		u32 n_arm = mem::Read(Target::Arm7, 0x00800000, 0x8000, arm_view.data(), nullptr);
 
-		// The ARM7 reads the file as the SH4 does, but for four bytes: it has no ARMRST and VREG at 0x2C00 (what it
-		// has there instead nothing delivers), and at 0x2D00 and 0x2D04 it reads its interrupt controller, L and 0
-		SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
-		u32 level = ~0u, in_service = ~0u;
-		bool controller = scpu->DebugGetInterrupt(&level, &in_service);
-		std::vector<u8> arm_file = file;
-
-		arm_file[0x2C00] = arm_file[0x2C01] = 0;
-		arm_file[0x2D00] = (u8)level;
-		arm_file[0x2D04] = 0;
-
 		Check(n_sh4 == 0x8000 && sh4_view == file && DeviceState(aica) == before, "the AICA register file through memory for the SH4, and the AICA stands");
-		Check(controller && n_arm == 0x8000 - 2 && arm_view == arm_file, "the AICA register file through memory for the ARM7: %u bytes, first difference at %zX",
-			n_arm, FirstDifference(arm_view, arm_file));
+
+		// The ARM7 reads the file as the SH4 does, but for four bytes: it has no ARMRST and VREG at 0x2C00, where it
+		// reads the two bytes of the file behind them, and at 0x2D00 and 0x2D04 it reads its interrupt controller.
+		// What these four are is the business of regs.mem.arm7
+		Tally others;
+
+		for (u32 offset = 0; offset < 0x8000; offset++)
+		{
+			if (offset != 0x2C00 && offset != 0x2C01 && offset != 0x2D00 && offset != 0x2D04)
+				others.Add(arm_view[offset] == file[offset], "register file byte %04X: %02X for the ARM7, %02X for the SH4", offset, arm_view[offset], file[offset]);
+		}
+
+		others.Report("the AICA register file through memory for the ARM7, but for the four bytes the SH4 reads otherwise");
+		Check(n_arm == 0x8000 && DeviceState(aica) == before, "every byte of it is readable for the ARM7, %u of 32768, and the AICA stands", n_arm);
 
 		memset(bits, 0xEE, sizeof(bits));
 		u32 n_window = mem::Read(Target::Arm7, 0x00802BFE, 8, buffer, bits);
 
-		Check(n_window == 6 && bits[0] == 0xF3 && buffer[2] == 0 && buffer[3] == 0 && memcmp(buffer, &file[0x2BFE], 2) == 0 && memcmp(buffer + 4, &file[0x2C02], 4) == 0,
-			"the ARM7 at 0x00802BFE: %u of 8 bytes readable, bits %02X: ARMRST and VREG are the SH4's", n_window, bits[0]);
+		Check(n_window == 8 && bits[0] == 0xFF && memcmp(buffer, &arm_view[0x2BFE], 8) == 0, "the ARM7 at 0x00802BFE: %u of 8 bytes readable, bits %02X", n_window, bits[0]);
 
 		n_window = mem::Read(Target::Sh4, 0x00702BFE, 8, buffer, bits);
 		Check(n_window == 8 && bits[0] == 0xFF && memcmp(buffer, &file[0x2BFE], 8) == 0, "the SH4 at 0x00702BFE: %u of 8 bytes readable", n_window);
@@ -1629,6 +1730,100 @@ DBG_SELFTEST(regs_mem_read, "regs.mem.read")
 
 		windows.Report("readable bits of the 64 KiB windows around every region boundary");
 		Note("%u windows", count);
+	}
+}
+
+/*
+	regs.mem.arm7: the register window of the AICA for the ARM7 target against loads by the ARM7 itself, at the
+	moment the test runs and with bytes in the register file that the two processors read differently.
+*/
+DBG_SELFTEST(regs_mem_arm7, "regs.mem.arm7")
+{
+	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+	AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
+	std::vector<u8> machine;
+	bool quiescent = WaitQuiescent(&machine);
+
+	if (!Check(quiescent, "the machine stands still: two save states of %zu bytes are equal", machine.size()))
+		return;
+
+	const std::vector<u8> cpu = DeviceState(scpu);
+	const std::vector<u8> device = DeviceState(aica);
+
+	if (!Check(cpu.size() == scpu_state_size, "the save state of the sound CPU has %zu bytes", cpu.size()))
+		return;
+
+	// The view of [0x00800000 + offset, + count) and then the loads of the same bytes. The view is taken first:
+	// it has to leave the two devices alone, and a load of L is the acknowledge of a request
+	auto compare = [&](const char* when, u32 offset, u32 count, std::vector<u8>* view) {
+		const std::vector<u8> cpu_now = DeviceState(scpu);
+		const std::vector<u8> device_now = DeviceState(aica);
+		std::vector<u8> loads, bits((count + 7) / 8, 0);
+
+		view->assign(count, 0xEE);
+
+		u32 n = mem::Read(Target::Arm7, 0x00800000 + offset, count, view->data(), bits.data());
+		bool stands = DeviceState(scpu) == cpu_now && DeviceState(aica) == device_now;
+		bool loaded = Arm7Loads(0x00800000 + offset, count, &loads);
+		Tally bytes;
+
+		for (u32 i = 0; loaded && i < count; i++)
+		{
+			bool bit = (bits[i >> 3] >> (i & 7)) & 1;
+
+			bytes.Add(bit && (*view)[i] == loads[i], "0x%08X: %s, %02X for the debugger, the ARM7 loads %02X", 0x00800000 + offset + i,
+				bit ? "readable" : "not readable", (*view)[i], loads[i]);
+		}
+
+		Check(loaded, "%s: the ARM7 loaded %u bytes from 0x%08X, and the machine is as it was in front of that", when, count, 0x00800000 + offset);
+		Check(n == count && stands, "%s: %u of %u bytes are readable for the debugger, and reading them changed neither the sound CPU nor the AICA", when, n, count);
+
+		bytes.Report(when);
+	};
+
+	std::vector<u8> view;
+	u32 level, service;
+
+	memcpy(&level, &cpu[scpu_level_at], 4);
+	memcpy(&service, &cpu[scpu_service_at], 4);
+	Note("the ARM7 is %s, mode %02X; L is %u, a request is %s, nFIQ is %s", cpu[scpu_tail_at + 6] ? "running" : "held in reset", cpu[scpu_tail_at + 2] & 0x1F,
+		level, service ? "in service" : "not in service", cpu[scpu_out_at] ? "pulled" : "released");
+
+	// the whole window as the machine stands
+	compare("the register window for the ARM7 against its own loads", 0, 0x8000, &view);
+
+	// ARMRST and VREG are registers of the SH4. The ARM7 has the two bytes of the register file behind them
+	// there, which only its own writes change (AICA::WriteReg is what such a write calls)
+	{
+		u8 sh4_before[2] = { }, sh4_after[2] = { };
+
+		aica->DebugReadRegs(0x2C00, 2, sh4_before);
+		aica->WriteReg(0x2C00, 0x5A, 1);
+		aica->WriteReg(0x2C01, 0xA5, 1);
+		aica->DebugReadRegs(0x2C00, 2, sh4_after);
+
+		compare("0x00802BFE..0x00802C05 behind writes of 5A and A5 to 0x00802C00 and 0x00802C01 by the ARM7", 0x2BFE, 8, &view);
+		Check(view[2] == 0x5A && view[3] == 0xA5, "the debugger shows the ARM7 %02X %02X there", view[2], view[3]);
+		Check(memcmp(sh4_before, sh4_after, 2) == 0, "ARMRST and VREG are %02X %02X for the SH4, as in front of the writes (%02X %02X)", sh4_after[0], sh4_after[1],
+			sh4_before[0], sh4_before[1]);
+
+		std::vector<u8> state = device;
+		RestoreDevice(aica, state);
+	}
+
+	Check(DeviceState(scpu) == cpu && DeviceState(aica) == device, "the sound CPU and the AICA are as they were");
+
+	std::vector<u8> after;
+
+	if (Check(MachineState(&after), "a second save state"))
+	{
+		size_t at = FirstDifference(machine, after);
+
+		if (machine == after)
+			Check(true, "the save state of the machine is the same %zu bytes", machine.size());
+		else
+			Check(false, "the save state of the machine differs at byte %zu of %zu (%02X, then %02X)", at, machine.size(), at < machine.size() ? machine[at] : 0,
+				at < after.size() ? after[at] : 0);
 	}
 }
 

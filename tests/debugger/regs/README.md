@@ -31,4 +31,6 @@ too.
 
 What needs the machine is not here but in the emulator's selftest (`libswirl/debugger/dbg_selftest_regs.cpp`,
 `devcast -config Debugger:SelfTest=regs <program>`): that every row is a register the emulator has, that every value
-reads without a side effect and equals what the guest would read, and the memory map of `dbg_mem.h`.
+reads without a side effect and equals what the guest would read, the memory map of `dbg_mem.h`, and that the ARM7
+target has the register window of the AICA byte for byte as loads by the ARM7 deliver it (`regs.mem.arm7`, which
+runs a loop of its own on the sound CPU and puts the machine back).
