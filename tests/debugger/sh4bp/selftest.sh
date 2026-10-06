@@ -19,9 +19,10 @@
 #
 # How the baselines of the fallback compare with the JIT's is printed (B12): their FPU arithmetic differs.
 #
-# The emulator needs a display. Every session runs with its own HOME and configuration under the work dir, and
-# with the real-time clock pinned: the guest reads the clock. The config items are given to every session as
-# well, section:key=value each: for one, config:pvr.backend=none in a build that has that renderer.
+# Every session is headless (config:Headless=yes) and has no display in its environment: it opens no window, and
+# a binary that does not know the key ends with an error instead of opening one. Every session runs with its own
+# HOME and configuration under the work dir, and with the real-time clock pinned: the guest reads the clock. The
+# config items are given to every session as well, section:key=value each, behind the script's own.
 # Exit code 0 when all of it held.
 
 bin=$1; elf=$2; work=${3:-$(mktemp -d)}
@@ -46,9 +47,9 @@ session() {
 	rm -rf "$dir"; mkdir -p "$dir/home" "$dir/cfg" "$dir/data"
 
 	( cd "$dir" && ulimit -S -c 1 2>/dev/null
-	  exec env DISPLAY="${DISPLAY:-:0}" HOME="$dir/home" XDG_CONFIG_HOME="$dir/cfg" XDG_DATA_HOME="$dir/data" \
-		stdbuf -oL -eL "$bin" -config audio:backend=none , config:Debug.FixedRtc=946684800 , Debugger:Port=0 , Debugger:SelfTest=sh4bp , \
-		Debugger:StartPaused=yes "${more[@]}" "$@" "$elf" \
+	  exec env -u DISPLAY -u WAYLAND_DISPLAY HOME="$dir/home" XDG_CONFIG_HOME="$dir/cfg" XDG_DATA_HOME="$dir/data" \
+		stdbuf -oL -eL "$bin" -config config:Headless=yes , audio:backend=none , config:Debug.FixedRtc=946684800 , Debugger:Port=0 , \
+		Debugger:SelfTest=sh4bp , Debugger:StartPaused=yes "${more[@]}" "$@" "$elf" \
 		> "$work/$name.log" 2>&1 ) &
 	local pid=$!
 	local waited=0

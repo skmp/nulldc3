@@ -76,8 +76,9 @@ tests/debugger/sh4bp/selftest.sh <devcast> <elf> [work dir] [config item ...]
 runs three sessions of `sh4bp` (JIT, interpreter, JIT with `Debugger:ForceFallback=yes`) and compares what
 they have to agree on: registers and step traces of the JIT and of the fallback with the interpreter's, time
 and the state of the integer workload of the fallback with the JIT's. Then it makes the gates on the booted
-guest, for those three and for the JIT and the fallback with `config:Dynarec.idleskip=no`. Every session has
-the real-time clock pinned (`config:Debug.FixedRtc`).
+guest, for those three and for the JIT and the fallback with `config:Dynarec.idleskip=no`. Every session is
+headless (`config:Headless=yes`, and no display in its environment: no window is opened) and has the real-time
+clock pinned (`config:Debug.FixedRtc`).
 
 The same tests also run here, so that they are known to be right before the emulator's park loop runs them:
 `sh4bp_selftest <jit|interpreter|fallback> [filter] [idleskip=off]` is the selftest file and its driver on the
