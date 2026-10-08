@@ -245,6 +245,13 @@ if(TARGET_NO_AREC)
   set(FEAT_DSPREC ${DYNAREC_NONE})
 endif()
 
+## A generic host has no fault context (oslib/context.h) and no fault trampoline (linux/common.cpp): it is built without
+#  the fault handler, so without nvmem and without write protection of VRAM, and without the sampling profiler.
+#
+if(${HOST_CPU} EQUAL ${CPU_GENERIC})
+  add_definitions(-DTARGET_NO_EXCEPTIONS -DTARGET_NO_NIXPROF)
+endif()
+
 
 
 
