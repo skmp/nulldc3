@@ -167,7 +167,7 @@ bool startPaused;				// Debugger:StartPaused
 bool forceFallback;				// Debugger:ForceFallback
 
 u32 eventBp[EV_ID_COUNT];		// the lowest id of the enabled event breakpoints on an event, 0: none
-u32 activeMask = ~0u;
+u32 activeMask;					// no category is active before the first SetActiveMask()
 
 const char* JitName()
 {

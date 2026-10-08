@@ -963,6 +963,15 @@ void EventBreakpoints(bool on)
 	g_event_on[EV_DEBUGGER_NOTE].store(on ? 1 : 0);
 }
 
+// No client is connected: the active mask is the test's as well. It is 0 until somebody sets it
+bool mask_set;
+
+void ActiveMask(u32 categories)
+{
+	mask_set = true;
+	emu::SetActiveMask(categories);
+}
+
 bool EventStop(const emu::RunState& stop, const char* where)
 {
 	bool ok = Check(stop.cause == StopCause::Event && stop.breakpointId == 3 && stop.stopId == ev.last_stop + 1,
@@ -987,10 +996,46 @@ DBG_SELFTEST_GUEST(emu_events, "emu.events")
 		if (!Ready(stop))
 			return false;
 
+		ev.last_stop = stop.stopId;
+
+		// Before anybody has set the active mask no category is active: the event is raised and nothing stops.
+		// The tests in front of this one set no mask
+		if (!mask_set)
+		{
+			Goto(EMU_G_spin);
+			ProbeOn();
+			EventBreakpoints(true);
+
+			ev.phase = 8;
+
+			ProbeMode_(PROBE_EVENT_OFTEN, 0);
+			Resume();
+
+			OtherStart([] {
+				u32 after = ev.last_stop;
+
+				WaitLifetime(Lifetime::Running);
+				Nap(30);
+				PauseAndWait(after);
+			});
+			return false;
+		}
+
+		[[fallthrough]];
+
+	case 8:
+		if (ev.phase == 8)
+		{
+			OtherJoin();
+
+			Check(stop.cause == StopCause::Pause && stop.stopId == ev.last_stop + 1 && probe.raised > 3,
+				"before the active mask was ever set no category is active: the event is raised (%u times) and does not stop", probe.raised);
+		}
+
 		Goto(EMU_G_sleep_tmu);
 		ProbeOn();
 		EventBreakpoints(true);
-		emu::SetActiveMask(~0u);
+		ActiveMask(~0u);
 
 		ev.last_stop = stop.stopId;
 		ev.phase = 1;
@@ -1070,7 +1115,7 @@ DBG_SELFTEST_GUEST(emu_events, "emu.events")
 
 		// The category is not active (it is muted, or the last client has been gone for the grace period): the
 		// event is raised and nothing stops
-		emu::SetActiveMask(~CategoryBit(Category::Events));
+		ActiveMask(~CategoryBit(Category::Events));
 
 		ev.raised_before = probe.raised;
 		ev.phase = 6;
@@ -1096,7 +1141,7 @@ DBG_SELFTEST_GUEST(emu_events, "emu.events")
 		ev.last_stop = stop.stopId;
 
 		// active again, and the gate of the event closed: the raise does not reach the debugger
-		emu::SetActiveMask(~0u);
+		ActiveMask(~0u);
 		g_event_on[EV_DEBUGGER_NOTE].store(0);
 
 		ev.phase = 7;
@@ -1122,7 +1167,7 @@ DBG_SELFTEST_GUEST(emu_events, "emu.events")
 	}
 
 	EventBreakpoints(false);
-	emu::SetActiveMask(~0u);
+	ActiveMask(~0u);
 	ProbeOn();
 	Goto(EMU_G_spin);
 	OtherJoin();
@@ -2666,7 +2711,7 @@ DBG_SELFTEST_GUEST(emu_step, "emu.step")
 
 		// An event breakpoint while a step executes ends the step at that slice
 		EventBreakpoints(true);
-		emu::SetActiveMask(~0u);
+		ActiveMask(~0u);
 		ProbeMode_(PROBE_EVENT_SLEEP_IDLE, 40);
 
 		sp.stop0 = stop.stopId;
@@ -2716,7 +2761,7 @@ void StopEventRound()
 	Goto(se.round % 2 ? EMU_G_busy_tmu : EMU_G_spin);
 	ProbeOn();
 	EventBreakpoints(true);
-	emu::SetActiveMask(~0u);
+	ActiveMask(~0u);
 
 	probe.stopCallbacks = 0;
 	probe.stopSawRunning = false;
