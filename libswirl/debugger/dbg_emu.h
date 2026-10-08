@@ -368,7 +368,7 @@ void OnEvent(EventId id);
 	sh4_cpu->DebugBackend() (hw/sh4/sh4_if.h).
 */
 struct Sh4EngineInfo {
-	const char* backend;	// "interpreter", "x64", "arm64", "arm32", "x86": constant string
+	const char* backend;	// "interpreter", "x64", "arm64": constant string
 	u32 caps;				// SuperH4Backend::DebugCaps() of the active backend
 	bool fallback;			// breakpoints and steps use the interpreter fallback on this backend: it is a JIT
 							// without SH4DBG_NATIVE, or a JIT with Debugger:ForceFallback set (the key has no

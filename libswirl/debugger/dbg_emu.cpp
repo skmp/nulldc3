@@ -186,10 +186,6 @@ const char* JitName()
 	return "x64";
 #elif HOST_CPU == CPU_ARM64
 	return "arm64";
-#elif HOST_CPU == CPU_ARM
-	return "arm32";
-#elif HOST_CPU == CPU_X86
-	return "x86";
 #else
 	return "jit";
 #endif
