@@ -59,6 +59,18 @@ test starts. Headless, nothing else plays the host.
 | `debugger.selftest.emuhang.parked` | a session that stays parked at its start, with `Exit.AfterVblanks=5`: 4 s later the process is still there and has printed no exit line. Emulated time stands still while the thread is parked, so no `Exit.*` key ends such a run |
 | `debugger.selftest.startpaused` | the same for `Debugger:StartPaused=yes` without a session: the start park waits without limit |
 
+## The tests of the SH4 breakpoints and steps
+
+`libswirl/debugger/dbg_selftest_sh4bp.cpp`, which `tests/debugger/sh4bp/README.md` describes: the gates of that
+mechanism on the park loop of the emulator. They boot `2ndmix.elf` of `NULLDC_ELF_DIR`.
+
+| test | what has to hold |
+|---|---|
+| `debugger.selftest.sh4bp` `.interp` | the session `sh4bp`: the gates B1 to B14 (none for B11) |
+| `debugger.selftest.sh4bpboot` `.interp` | the session `sh4bpboot`: B3, B6 and B7 on the booted guest, every check of its own |
+| `debugger.selftest.sh4bpbase` `.interp` | the session `sh4bpbase`: the baselines of those runs |
+| `debugger.selftest.sh4bp.sessions` | `tests/debugger/sh4bp/selftest.sh`: the sessions of `sh4bp` on the JIT, on the interpreter and on the JIT with the interpreter fallback forced agree on registers, step traces and time; the runs of the booted guest are in the state of their baselines, on those three and on the JIT and the fallback with idleskip off |
+
 ## With a window
 
 `window_checklist.sh <devcast> <work dir>` does at the window of the emulator what a person does there, once

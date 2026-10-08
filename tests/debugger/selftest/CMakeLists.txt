@@ -98,6 +98,27 @@ endfunction()
 
 nulldc_debugger_selftest(emu)
 
+# SH4 breakpoints and steps on the park loop of the emulator (libswirl/debugger/dbg_selftest_sh4bp.cpp,
+# tests/debugger/sh4bp/README.md): the session of the gates, and the two that make gates on the booted guest
+nulldc_debugger_selftest(sh4bp     ELF 2ndmix.elf CONFIG Debugger:StartPaused=yes)
+nulldc_debugger_selftest(sh4bpboot ELF 2ndmix.elf CONFIG Debugger:StartPaused=yes)
+nulldc_debugger_selftest(sh4bpbase ELF 2ndmix.elf CONFIG Debugger:StartPaused=yes)
+
+# What sessions of those have to agree on, and the forced fallback and idleskip off: the script of that
+# directory, whose sessions are headless too
+set(test debugger.selftest.sh4bp.sessions)
+if(nulldc_selftest_skip)
+  nulldc_add_skipped_test(${test} "${nulldc_selftest_skip}")
+elseif(NOT NULLDC_ELF_DIR OR NOT EXISTS "${NULLDC_ELF_DIR}/2ndmix.elf")
+  nulldc_add_missing_data_test(${test}
+    "no 2ndmix.elf in NULLDC_ELF_DIR (\"${NULLDC_ELF_DIR}\"), configure with -DNULLDC_ELF_DIR=<directory with the KallistiOS examples>")
+else()
+  add_test(NAME ${test}
+           COMMAND bash "${nulldc_tests_path}/debugger/sh4bp/selftest.sh" "${nulldc_selftest_emulator}" "${NULLDC_ELF_DIR}/2ndmix.elf"
+                   "${CMAKE_BINARY_DIR}/debugger/selftest/work/${test}")
+  set_tests_properties(${test} PROPERTIES TIMEOUT 1800)
+endif()
+
 
 # What the selftest of dbg::emu has besides its session (README.md)
 
