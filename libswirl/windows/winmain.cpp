@@ -135,14 +135,7 @@ LONG ExeptionHandler(EXCEPTION_POINTERS *ExceptionInfo)
 	rei_host_context_t ctx = { 0 };
 
 	// TODO: Implement context abstraction for windows
-	#if HOST_CPU == CPU_X86
-		ctx.pc = (unat&)ep->ContextRecord->Eip;
-
-		ctx.eax = (unat&)ep->ContextRecord->Eax;
-		ctx.ecx = (unat&)ep->ContextRecord->Ecx;
-		ctx.esp = (unat&)ep->ContextRecord->Esp;
-		
-	#elif HOST_CPU == CPU_X64
+	#if HOST_CPU == CPU_X64
 		ctx.pc = (unat&)ep->ContextRecord->Rip;
 	#else
 		#error missing arch for windows
@@ -151,14 +144,7 @@ LONG ExeptionHandler(EXCEPTION_POINTERS *ExceptionInfo)
 	if (virtualDreamcast && virtualDreamcast->HandleFault(address, &ctx))
 	{
 		// TODO: Implement context abstraction for windows
-		#if HOST_CPU == CPU_X86
-			(unat&)ep->ContextRecord->Eip = ctx.pc;
-
-			(unat&)ep->ContextRecord->Eax = ctx.eax;
-			(unat&)ep->ContextRecord->Ecx = ctx.ecx;
-			(unat&)ep->ContextRecord->Esp = ctx.esp;
-			
-		#elif HOST_CPU == CPU_X64
+		#if HOST_CPU == CPU_X64
 			(unat&)ep->ContextRecord->Rip = ctx.pc;
 		#else
 			#error missing arch for windows
