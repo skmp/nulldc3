@@ -32,7 +32,7 @@
 				be FEAT_HAS_MMU
 
 			TARGET_*
-				A preconfigured default. Eg TARGET_WIN86. 
+				A preconfigured default. Eg TARGET_WIN64. 
 
 		Naming of options, option values, and how to use them
 			
@@ -149,8 +149,6 @@
 
 
 //HOST_CPU
-#define CPU_X86      0x20000001
-#define CPU_ARM      0x20000002
 #define CPU_MIPS     0x20000003
 #define CPU_X64      0x20000004
 #define CPU_GENERIC  0x20000005 //used for pnacl, emscripten, etc
@@ -178,6 +176,12 @@
 #define TA_HLE 0x60000001
 #define TA_LLE 0x60000002
 
+// Native builds are for x86_64 and arm64. A 32-bit x86 or arm host has no recompiler, no fault context and no FP
+// mode code in this tree. Any other host has no recompiler and runs the interpreters
+#if defined(__i386__) || defined(_M_IX86) || defined(__arm__) || defined(_M_ARM)
+#error "32-bit x86 and arm hosts are not supported: nullDC builds for x86_64 and arm64"
+#endif
+
 //automatic
 
 #if !defined(TARGET_LICENSE)
@@ -190,12 +194,8 @@
 
 #ifndef CMAKE_BUILD
 
-#if defined(_WIN32) && !defined(TARGET_WIN86) && !defined(TARGET_WIN64)
-	#if !defined(_M_AMD64) && !defined(__x86_64__)
-		#define TARGET_WIN86
-	#else
-		#define TARGET_WIN64
-	#endif
+#if defined(_WIN32) && !defined(TARGET_WIN64) && (defined(_M_AMD64) || defined(__x86_64__))
+	#define TARGET_WIN64
 #endif
 
 #if defined(__clang__)
@@ -207,24 +207,12 @@
 #endif
 
 //Targets
-#if defined(TARGET_WIN86)
-	#define HOST_OS OS_WINDOWS
-	#define HOST_CPU CPU_X86
-#elif defined(TARGET_WIN64)
+#if defined(TARGET_WIN64)
 	#define HOST_OS OS_WINDOWS
 	#define HOST_CPU CPU_X64
-#elif defined(TARGET_PANDORA)
-	#define HOST_OS OS_LINUX
-	#define HOST_CPU CPU_ARM
-#elif defined(TARGET_LINUX_ARMELv7)
-	#define HOST_OS OS_LINUX
-	#define HOST_CPU CPU_ARM
 #elif defined(TARGET_LINUX_ARMv8)
 	#define HOST_OS OS_LINUX
 	#define HOST_CPU CPU_ARM64
-#elif defined(TARGET_LINUX_x86)
-	#define HOST_OS OS_LINUX
-	#define HOST_CPU CPU_X86
 #elif defined(TARGET_LINUX_x64)
 	#define HOST_OS OS_LINUX
 	#define HOST_CPU CPU_X64
@@ -237,12 +225,6 @@
 #elif defined(TARGET_NACL32) || defined(TARGET_EMSCRIPTEN)
 	#define HOST_OS OS_LINUX
 	#define HOST_CPU CPU_GENERIC
-#elif defined(TARGET_IPHONE)
-    #define HOST_OS OS_DARWIN
-    #define HOST_CPU CPU_ARM
-#elif defined(TARGET_OSX)
-    #define HOST_OS OS_DARWIN
-    #define HOST_CPU CPU_X86
 #elif defined(TARGET_OSX_X64)
     #define HOST_OS OS_DARWIN
     #define HOST_CPU CPU_X64
@@ -289,7 +271,11 @@
 #endif
 
 #ifndef FEAT_SHREC
-	#define FEAT_SHREC DYNAREC_JIT
+	#if HOST_CPU == CPU_X64 || HOST_CPU == CPU_ARM64
+		#define FEAT_SHREC DYNAREC_JIT
+	#else
+		#define FEAT_SHREC DYNAREC_NONE
+	#endif
 #endif
 
 #ifndef FEAT_AREC
@@ -357,11 +343,13 @@
 #endif
 
 
-// Some restrictions on FEAT_NO_RWX_PAGES
-#if defined(FEAT_NO_RWX_PAGES) && FEAT_SHREC == DYNAREC_JIT
-#if HOST_CPU != CPU_X64 && HOST_CPU != CPU_ARM64
-#error "FEAT_NO_RWX_PAGES Only implemented for X64 and ARMv8"
+// The recompilers there are: SH4 for x86_64 and arm64 (both with FEAT_NO_RWX_PAGES), ARM7 and DSP for arm64
+#if FEAT_SHREC == DYNAREC_JIT && HOST_CPU != CPU_X64 && HOST_CPU != CPU_ARM64
+#error "FEAT_SHREC is DYNAREC_JIT and this HOST_CPU has no SH4 recompiler"
 #endif
+
+#if (FEAT_AREC == DYNAREC_JIT || FEAT_DSPREC == DYNAREC_JIT) && HOST_CPU != CPU_ARM64
+#error "FEAT_AREC or FEAT_DSPREC is DYNAREC_JIT and this HOST_CPU has no ARM7 and no DSP recompiler"
 #endif
 
 

@@ -46,9 +46,7 @@ set(OS_PS4_BSD     0x80000002)
 
 
 
-set(CPU_X86        0x20000001)  # HOST_CPU
-set(CPU_X64        0x20000004)
-set(CPU_ARM        0x20000002)
+set(CPU_X64        0x20000004)  # HOST_CPU
 set(CPU_A64        0x20000008)
 set(CPU_MIPS       0x20000003)
 set(CPU_MIPS64     0x20000009)
@@ -103,17 +101,20 @@ endif()
 
 
 
+## Native builds are for x86_64 and arm64. A 32-bit x86 or arm host has no recompiler, no fault context and no FP mode
+#  code in this tree, and the configure stops instead of building what is left. Any other processor has no recompiler
+#  and runs the interpreters.
+#
+function(nulldc_no_32bit_host what)
+  message(FATAL_ERROR "32-bit x86 and arm hosts are not supported (${what}): nullDC builds for x86_64 and arm64.")
+endfunction()
+
 ## strings are used to append to path/file names, and to filter multiple possibilities down to one 
-#		AMD64/x86_64:x64, i*86:x86, ppc/powerpc[64][b|l]e:ppc[64] etc 
+#		AMD64/x86_64:x64, ppc/powerpc[64][b|l]e:ppc[64] etc 
 #
-if(("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "i686") OR
-   ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "X86"))   # todo: check MATCHES "i.86" ?
-  set(host_arch "x86")
-  set(HOST_CPU ${CPU_X86})
-#
-elseif(("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64") OR
-       ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64") OR
-       ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x64"))
+if(("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64") OR
+   ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64") OR
+   ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x64"))
   set(host_arch "x64")
   set(HOST_CPU ${CPU_X64}) 
 #
@@ -124,9 +125,11 @@ elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "arm64")
   set(host_arch "arm64")
   set(HOST_CPU ${CPU_A64})
 #
-elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "arm")
-  set(host_arch "arm")
-  set(HOST_CPU ${CPU_ARM})
+elseif(("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^i[3-6]86$") OR
+       ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^[xX]86$") OR
+       ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "arm") OR			# has to be done after arm64
+       ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^ARM(V[0-9A-Z]+)?$"))	# the names MSVC has for it
+  nulldc_no_32bit_host("CMAKE_SYSTEM_PROCESSOR is \"${CMAKE_SYSTEM_PROCESSOR}\"")
 #
 elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "ppc64")
   set(host_arch "ppc64")
@@ -148,6 +151,11 @@ else()
   message("Warning: Unknown Host System Processor: \"${CMAKE_SYSTEM_PROCESSOR}\"")
   set(host_arch "${CMAKE_SYSTEM_PROCESSOR}")
   set(HOST_CPU ${CPU_GENERIC})
+endif()
+
+# The same host with a 32-bit compiler (-m32, a 32-bit userland on a 64-bit kernel)
+if(((${HOST_CPU} EQUAL ${CPU_X64}) OR (${HOST_CPU} EQUAL ${CPU_A64})) AND ("${CMAKE_SIZEOF_VOID_P}" STREQUAL "4"))
+  nulldc_no_32bit_host("the compiler has 4 byte pointers on \"${CMAKE_SYSTEM_PROCESSOR}\"")
 endif()
 
 string(TOLOWER ${CMAKE_SYSTEM_NAME} host_os)
@@ -304,13 +312,9 @@ if ((${BUILD_COMPILER} EQUAL ${COMPILER_VC}) OR
 elseif ((${BUILD_COMPILER} EQUAL ${COMPILER_GCC}) OR
 		(${BUILD_COMPILER} EQUAL ${COMPILER_CLANG})) # AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS}))
   
-  if(USE_32B OR TARGET_LINUX_X86)
-    set(_C_FLAGS "${_C_FLAGS} -m32")
-  endif()
-  
-  if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_X64}))
+  if(${HOST_CPU} EQUAL ${CPU_X64})
     set(_C_FLAGS "${_C_FLAGS} -msse4")
-  endif() # X86 family
+  endif()
   
     
   set(_CXX_FLAGS "${_CXX_FLAGS} -fno-operator-names -fpermissive -fno-strict-aliasing") # -fcxx-exceptions") ## xbyak needs exceptions

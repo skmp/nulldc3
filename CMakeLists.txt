@@ -11,9 +11,6 @@ set(TNAME devcast)
 
 project(${TNAME})
 
-enable_language(ASM)
-enable_language(ASM_MASM)
-
 set(DEBUG_CMAKE ON)
 
 set(CMAKE_VERBOSE_MAKEFILE ON)
