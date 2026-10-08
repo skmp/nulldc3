@@ -55,7 +55,7 @@ test starts. Headless, nothing else plays the host.
 | `debugger.selftest.emuexit.running` `.pending` `.parked` (and `.interp`) | the guest returns to the BIOS while running, with a pause asked for in the same slice, and the exit hook is called while parked: a headless run ends there, exit code 0, `reason=guest-exit` |
 | `debugger.selftest.emurun.reads` (and `.interp`) | 2ndmix for 600 vblanks with another thread reading guest state through `CC_READ` calls for the whole run: the state hash of the exit line is that of the same run without a session, part for part |
 | `debugger.selftest.emurun.pending` (and `.interp`) | the same with a pause asked for in the very slice that ends the run: the run ends, with that hash |
-| `debugger.selftest.emurun.pauses.interp` | the same with 150 pauses, each resumed at once: that hash. On the interpreter only: a pause is exact on a backend whose slice counter is the same after its loop was left and entered again |
+| `debugger.selftest.emurun.pauses` (x86-64 hosts) `.interp` | the same with 150 pauses, each resumed at once: that hash. On the interpreter and the x64 recompiler: a pause is exact on a backend whose slice counter is the same after its loop was left and entered again |
 | `debugger.selftest.emuhang.parked` | a session that stays parked at its start, with `Exit.AfterVblanks=5`: 4 s later the process is still there and has printed no exit line. Emulated time stands still while the thread is parked, so no `Exit.*` key ends such a run |
 | `debugger.selftest.startpaused` | the same for `Debugger:StartPaused=yes` without a session: the start park waits without limit |
 

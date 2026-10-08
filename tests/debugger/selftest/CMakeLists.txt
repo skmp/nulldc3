@@ -129,11 +129,16 @@ nulldc_debugger_selftest(emuexit.parked  MODE guest-exit)
 
 # The debugger at work in a run that an Exit.* key ends: the state hash of a run nobody touched.
 # A pause and its resume leave no trace on a backend whose slice counter is the same after Loop() was left and
-# entered again: emurun.pauses runs on those. The interpreter is one, it leaves at a slice end with nothing
-# over; a backend that starts its counter anew at every entry loses what its last block ran over the slice
+# entered again (SH4DBG_NATIVE, hw/sh4/sh4_if.h): emurun.pauses runs on those, the interpreter and the x64
+# recompiler. A backend that starts its counter anew at every entry loses what its last block ran over the slice
+set(nulldc_selftest_exact_engines interp)
+if(${HOST_CPU} EQUAL ${CPU_X64})
+  set(nulldc_selftest_exact_engines jit interp)
+endif()
+
 nulldc_debugger_selftest(emurun.reads   MODE same-hash ELF 2ndmix.elf)
 nulldc_debugger_selftest(emurun.pending MODE same-hash ELF 2ndmix.elf)
-nulldc_debugger_selftest(emurun.pauses  MODE same-hash ELF 2ndmix.elf ENGINES interp
+nulldc_debugger_selftest(emurun.pauses  MODE same-hash ELF 2ndmix.elf ENGINES ${nulldc_selftest_exact_engines}
                          ARGS --expect "pauses were taken and resumed")
 
 # A parked run stays parked, whatever Exit.* key it has: by a session, and by Debugger:StartPaused
