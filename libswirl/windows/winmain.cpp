@@ -230,7 +230,7 @@ BOOL CtrlHandler( DWORD fdwCtrlType )
 
 void ReserveBottomMemory()
 {
-#if defined(_WIN64) && defined(_DEBUG)
+#ifdef _DEBUG
     static bool s_initialized = false;
     if ( s_initialized )
         return;
@@ -322,7 +322,6 @@ void ReserveBottomMemory()
 #endif
 }
 
-#ifdef _WIN64
 #include "hw/sh4/dyna/ngen.h"
 
 typedef union _UNWIND_CODE {
@@ -422,7 +421,6 @@ void setup_seh() {
 
 	//verify(RtlInstallFunctionTableCallback((unat)CodeCache | 0x3, (DWORD64)CodeCache, CODE_SIZE, seh_callback, 0, 0));
 }
-#endif
 
 
 
@@ -477,11 +475,7 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 	ReserveBottomMemory();
 	SetupPath();
 
-#ifdef _WIN64
 	AddVectoredExceptionHandler(1, ExeptionHandler);
-#else
-	SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)&ExeptionHandler);
-#endif
 #ifndef __GNUC__
 	__try
 #endif
@@ -494,9 +488,7 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 		if (init_rv != 0)
 			die("Reicast initialization failed");
 
-		#ifdef _WIN64
-			setup_seh();
-		#endif
+		setup_seh();
 
         reicast_ui_loop();
 
@@ -524,11 +516,7 @@ void retro_reicast_entry_point() {
 	ReserveBottomMemory();
 	SetupPath();
 
-#ifdef _WIN64
 	AddVectoredExceptionHandler(1, ExeptionHandler);
-#else
-	SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)&ExeptionHandler);
-#endif
 #ifndef __GNUC__
 	__try
 #endif
@@ -538,9 +526,7 @@ void retro_reicast_entry_point() {
 		if (reicast_init(0, nullptr) != 0)
 			die("Reicast initialization failed");
 
-#ifdef _WIN64
 		setup_seh();
-#endif
 
 		reicast_ui_loop();
 
