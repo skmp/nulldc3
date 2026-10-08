@@ -182,9 +182,7 @@ u32 activeMask;					// no category is active before the first SetActiveMask()
 
 const char* JitName()
 {
-#if FEAT_SHREC == DYNAREC_CPP
-	return "cpp";
-#elif HOST_CPU == CPU_X64
+#if HOST_CPU == CPU_X64
 	return "x64";
 #elif HOST_CPU == CPU_ARM64
 	return "arm64";

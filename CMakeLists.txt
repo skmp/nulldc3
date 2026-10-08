@@ -134,8 +134,6 @@ if(${FEAT_SHREC} EQUAL ${DYNAREC_JIT})
 	error()
   endif()
 
-elseif(${FEAT_SHREC} EQUAL ${DYNAREC_CPP})
-    list(APPEND core_SRCS ${d_core}/jit/backend/cpp/rec_cpp.cpp)
 endif()
 
 # add_definitions(/DFEAT_HAS_SOFTREND=1)

@@ -58,7 +58,6 @@ set(CPU_GENERIC    0x20000005)  # used for pnacl, emscripten, etc
 
 set(DYNAREC_NONE   0x40000001)  # FEAT_SHREC, FEAT_AREC, FEAT_DSPREC
 set(DYNAREC_JIT    0x40000002)
-set(DYNAREC_CPP    0x40000003)
 
 set(COMPILER_VC    0x30000001)  # BUILD_COMPILER
 set(COMPILER_GCC   0x30000002)
@@ -190,7 +189,6 @@ endif()
 
 option(TARGET_NO_REC  "Interpreters only: no SH4, ARM7 or DSP recompiler, on any host" OFF)
 option(TARGET_NO_AREC "No ARM7 and no DSP recompiler" OFF)
-#option(TARGET_NO_JIT  BOOL "")
 
 
 
@@ -201,7 +199,7 @@ if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_X64}) OR
   set(FEAT_SHREC  ${DYNAREC_JIT})
 else()
   message("SH4 Dynarec Features Missing")
-  set(FEAT_SHREC  ${DYNAREC_CPP})
+  set(FEAT_SHREC  ${DYNAREC_NONE})
 endif()
 
 # Sound CPU dynarec
@@ -232,12 +230,6 @@ if(TARGET_NO_REC)
 endif()
 
 if(TARGET_NO_AREC)
-  set(FEAT_AREC   ${DYNAREC_NONE})
-  set(FEAT_DSPREC ${DYNAREC_NONE})
-endif()
-
-if(TARGET_NO_JIT)
-  set(FEAT_SHREC  ${DYNAREC_CPP})
   set(FEAT_AREC   ${DYNAREC_NONE})
   set(FEAT_DSPREC ${DYNAREC_NONE})
 endif()

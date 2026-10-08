@@ -145,9 +145,9 @@ says what the host has: a test run covers the code of that host only.
 ## The canonical helpers
 
 The shil opcodes that compute have a canonical helper, a C function in `hw/sh4/dyna/shil_canonical.h`. A backend
-calls it for an opcode it has no code of its own for: the x64 backend for FMAC on a CPU without FMA, and a build
-without a JIT (`TARGET_NO_JIT`, the `cpp` backend) for all of them. On an x86-64 host with FMA the two tests above
-do not reach the helpers of FADD to FDIV, FSQRT, FMAC, FSRRA, FTRC, FIPR and FTRV: the backend has code for each.
+calls it for an opcode it has no code of its own for: the x64 backend for FMAC on a CPU without FMA. On an x86-64
+host with FMA the two tests above do not reach the helpers of FADD to FDIV, FSQRT, FMAC, FSRRA, FTRC, FIPR and
+FTRV: the backend has code for each.
 
 `sh4_fpu_canonical` is `sh4_fpu` linked with the x64 backend built with `CANONICAL_TEST`: it compiles the calls of
 the interpreter, the jumps, the moves and the memory accesses itself and calls the helper for every other opcode,

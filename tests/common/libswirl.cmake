@@ -24,7 +24,7 @@ if(${HOST_OS} EQUAL ${OS_WINDOWS})
 endif()
 
 # nulldc_add_libswirl_library(<target>
-#                             [SHREC <DYNAREC_NONE|DYNAREC_JIT|DYNAREC_CPP>] [AREC <...>] [DSPREC <...>]
+#                             [SHREC <DYNAREC_NONE|DYNAREC_JIT>] [AREC <...>] [DSPREC <...>]
 #                             SOURCES <file relative to libswirl>...)
 #
 # Object library of libswirl translation units. Linking it adds every object to the executable (their static
