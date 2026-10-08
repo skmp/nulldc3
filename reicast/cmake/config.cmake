@@ -203,7 +203,7 @@ else()
 endif()
 
 # Sound CPU dynarec
-if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_A64}))
+if(${HOST_CPU} EQUAL ${CPU_A64})
   message("ARM7 Dynarec Features Available")
   set(FEAT_AREC  ${DYNAREC_JIT})
 else()
