@@ -66,7 +66,7 @@ void (*observer)(const RunState& state);
 u32 pausedTitles;
 
 // For the selftest: while it is set a thread of a session starts as a thread without a session does, with no
-// start park. Set and cleared while no emulator thread exists
+// start park. Read by the first Park() of a thread; written while no emulator thread exists, or by that thread
 bool plainStart;
 
 }
@@ -130,6 +130,8 @@ struct {
 	bool inPark;				// in the park context: the guest does not execute
 	bool inStep;				// the park loop is executing a step
 	bool stopInForce;			// a debugger stop is published and in force
+	u32 stopPc;					// the pc it was published with
+	bool stepped;				// a step has executed since it was published
 	bool stepFallback;			// the stop that is decided ends a step the interpreter fallback made
 	bool titled;				// the park loop of this thread has put its title on the window
 	float titledAt;				// last_fps when it last did
@@ -163,6 +165,8 @@ struct {
 } engine;
 
 bool machineFirstPark;			// no thread of this machine has parked yet
+bool resumeOwed;				// the last thread of this machine ended in a debugger stop, with the guest as that
+								// stop left it: the first Park() of the next thread is the resume of that stop
 bool startPaused;				// Debugger:StartPaused
 bool forceFallback;				// Debugger:ForceFallback
 
@@ -450,7 +454,12 @@ void EnterStop()
 	sh4::OnStop(&info);
 
 	e.stopInForce = true;
+	e.stopPc = p_sh4rcb->cntx.pc;
+	e.stepped = false;
 	e.armed = ACT_NONE;
+
+	// the stop of the thread before is this stop now
+	resumeOwed = false;
 
 	RunState state = Publish(Lifetime::Parked, cause, id, notice, true);
 
@@ -485,7 +494,9 @@ u32 Leave(bool resume)
 
 	sh4_host_fp_resync();
 
-	if (resume)
+	// Also for the stop that the thread before this one ended in, which nothing has resumed: the instruction
+	// of that stop executes, and its breakpoint does not stop again at once
+	if (resume || resumeOwed)
 		sh4::PrepareResume();
 
 	SelectLoop();
@@ -494,6 +505,7 @@ u32 Leave(bool resume)
 	if (!virtualDreamcast->StartCpu(true))
 		return PARK_EVALUATE;
 
+	resumeOwed = false;
 	e.inPark = false;
 
 	if (e.stopInForce)
@@ -568,6 +580,7 @@ bool DoStep(Action action, u32* rv)
 
 	e.inPark = false;
 	e.inStep = true;
+	e.stepped = true;
 
 	if (engine.fallback)
 		sh4_fallback_step();
@@ -1039,6 +1052,7 @@ void OnMachineCreated()
 	engine = { };
 
 	machineFirstPark = true;
+	resumeOwed = false;
 	startPaused = cfgLoadBool("Debugger", "StartPaused", false);
 	forceFallback = cfgLoadBool("Debugger", "ForceFallback", false);
 
@@ -1098,6 +1112,11 @@ void OnThreadExiting(bool guestExit)
 	AcceptDeferred();
 
 	sh4::OnStop(nullptr);
+
+	// A thread that ends in a debugger stop leaves the resume of that stop to the next one, when the guest is
+	// where the stop was published: no step has executed behind it and nothing has written the pc
+	if (e.stopInForce && !e.stepped && p_sh4rcb->cntx.pc == e.stopPc)
+		resumeOwed = true;
 
 	e.inPark = true;
 	e.stopInForce = false;
@@ -1166,6 +1185,7 @@ void OnGuestStateReplaced()
 	// what belonged to the state that is gone
 	g_intc_deferred = false;
 	g_sleep_cut = false;
+	resumeOwed = false;
 
 	sh4::OnPcWritten();
 

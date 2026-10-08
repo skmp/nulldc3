@@ -2832,6 +2832,160 @@ DBG_SELFTEST_GUEST(emu_stopevent, "emu.stopevent")
 }
 
 /*
+	emu.stopresume: the host stops the machine while its emulator thread is parked in a debugger stop, and starts
+	it again. The first Park() of the next thread is the resume of that stop: the instruction the stop is in
+	front of executes, and a breakpoint on it stops at its next arrival, not again at once. The threads of the
+	first two rounds start as they do without a session: the start park of a session is a stop of its own, whose
+	resume is a resume.
+*/
+namespace {
+
+struct {
+	int phase;
+	u32 count;
+	HostStop host;
+	std::atomic<bool> otherFailed { false };
+} rsm;
+
+const u32 kStopResumeLoop = EMU_G_spin_loop;			// add #1, r1
+const u32 kStopResumeStore = EMU_G_spin_loop + 2;		// mov.l r1, @r2
+const u32 kStopResumeMark = 0x00C0FFEE;
+
+void StopResumeBreakpoints(u32 n)
+{
+	static const u32 ids[2] = { 5, 6 };
+	static const u32 addrs[2] = { kStopResumeLoop, kStopResumeStore };
+
+	emu::SetSh4Breakpoints(ids, addrs, n);
+}
+
+// The other thread is the host: it stops the machine, whose thread is parked, and starts it again
+void StopResumeRestart(bool plain)
+{
+	OtherStart([plain] {
+		if (!StopMachine(&rsm.host))
+		{
+			rsm.otherFailed = true;
+			return;
+		}
+
+		emu::test::plainStart = plain;
+
+		virtualDreamcast->Resume();
+	});
+}
+
+}
+
+DBG_SELFTEST_GUEST(emu_stopresume, "emu.stopresume")
+{
+	Sh4Context& c = Ctx();
+
+	switch (rsm.phase)
+	{
+	case 0:
+		if (!Ready(stop))
+			return false;
+
+		Goto(EMU_G_spin);
+		StopResumeBreakpoints(1);
+		ActiveMask(~0u);
+
+		rsm.host.callbacks = 0;
+		rsm.phase = 1;
+
+		Resume();
+		return false;
+
+	case 1:
+		if (!Check(stop.cause == StopCause::Breakpoint && stop.breakpointId == 5 && c.pc == kStopResumeLoop,
+				"the loop stops at its breakpoint (\"%s\", id %u, pc %08X)", StopCauseName(stop.cause), stop.breakpointId, c.pc))
+			break;
+
+		rsm.count = c.r[1];
+		rsm.phase = 2;
+
+		TakeSeen();
+		StopResumeRestart(true);
+		return false;
+
+	case 2:
+		OtherJoin();
+
+		{
+			std::vector<Seen> list = TakeSeen();
+
+			Check(!rsm.otherFailed && rsm.host.callbacks == 1
+				&& SeenIs(list, { { Lifetime::Stopped, StopCause::HostStopped }, { Lifetime::Running, StopCause::NoCause }, { Lifetime::Parked, StopCause::Breakpoint } }),
+				"the host stopped the machine in the stop of a breakpoint and started it again: the stop is not applied again, the guest runs (%s)", SeenText(list).c_str());
+		}
+
+		Check(stop.cause == StopCause::Breakpoint && stop.breakpointId == 5 && c.pc == kStopResumeLoop && c.r[1] == rsm.count + 1,
+			"the next thread resumed that stop: the instruction of the breakpoint executed, and the breakpoint stopped at its next arrival (count %u behind %u)", c.r[1], rsm.count);
+
+		// The pc is written in the stop, onto another breakpoint: that instruction is not the one of the stop
+		StopResumeBreakpoints(2);
+
+		rsm.count = ReadMem32(EMU_G_count);
+		c.r[1] = kStopResumeMark;
+		c.pc = kStopResumeStore;
+		sh4::OnPcWritten();
+
+		rsm.phase = 3;
+
+		TakeSeen();
+		StopResumeRestart(true);
+		return false;
+
+	case 3:
+		OtherJoin();
+
+		Check(!rsm.otherFailed && stop.cause == StopCause::Breakpoint && stop.breakpointId == 6 && c.pc == kStopResumeStore && ReadMem32(EMU_G_count) == rsm.count,
+			"a pc that was written in the stop is not the instruction of the stop: its breakpoint stops the next thread at once, as it stops a resume (\"%s\", id %u, pc %08X, count %u, was %u)",
+			StopCauseName(stop.cause), stop.breakpointId, c.pc, ReadMem32(EMU_G_count), rsm.count);
+
+		// With the start park of a session in between
+		StopResumeBreakpoints(1);
+
+		rsm.phase = 4;
+
+		TakeSeen();
+		StopResumeRestart(false);
+		return false;
+
+	case 4:
+		OtherJoin();
+
+		if (!Check(!rsm.otherFailed && stop.cause == StopCause::Start && c.pc == kStopResumeStore, "a thread of the session parks at its start, where the thread before was stopped (\"%s\", pc %08X)", StopCauseName(stop.cause), c.pc))
+			break;
+
+		rsm.phase = 5;
+
+		Resume();
+		return false;
+
+	case 5:
+		Check(stop.cause == StopCause::Breakpoint && stop.breakpointId == 5 && c.pc == kStopResumeLoop && c.r[1] == kStopResumeMark && ReadMem32(EMU_G_count) == kStopResumeMark,
+			"and goes on from there when the start park is resumed (\"%s\", id %u, pc %08X, count %08X)", StopCauseName(stop.cause), stop.breakpointId, c.pc, ReadMem32(EMU_G_count));
+		break;
+	}
+
+	OtherJoin();
+
+	// a thread that a failed round left without its start park: the session goes on with the stops it gets
+	emu::test::plainStart = false;
+
+	StopResumeBreakpoints(0);
+	TakeSeen();
+
+	if (!AtResetVector())
+		Goto(EMU_G_spin);
+
+	rsm.phase = 0;
+	return true;
+}
+
+/*
 	emu.stopruns: a machine that has been asked to stop counts as running until its emulator thread has taken
 	its stop callback. A host that acts twice in a row (the close button of the window clicked twice, the escape
 	key and then the close button) looks at IsRunning() for its second action. Where it finds the machine
