@@ -75,10 +75,6 @@ namespace {
 
 typedef std::chrono::steady_clock Clock;
 
-// A bit of the attention word that is set exactly while the stop latch is: the slice end tests the word and
-// nothing else, and finds the latch behind it (hw/sh4/SuperH4_impl.cpp). The emulator thread's own
-const u32 kAttnLatched = 4;
-
 const char* const kPausedTitle = "nullDC 3.0.0 [paused by debugger]";
 
 /*
@@ -311,14 +307,16 @@ void QueueEmptied()
 	The stop latch
 */
 
+// The latch has its bit in the attention word: the slice end tests the word and nothing else, and finds the
+// latch behind it (hw/sh4/SuperH4_impl.cpp)
 void SetLatch(bool latched)
 {
 	g_stop_latched = latched;
 
 	if (latched)
-		g_attn.fetch_or(kAttnLatched);
+		g_attn.fetch_or(ATTN_LATCHED);
 	else
-		g_attn.fetch_and(~kAttnLatched);
+		g_attn.fetch_and(~(u32)ATTN_LATCHED);
 }
 
 void Latch()

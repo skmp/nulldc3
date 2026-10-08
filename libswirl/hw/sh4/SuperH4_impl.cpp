@@ -45,8 +45,8 @@
 static SLICE_INLINE int slice_end()
 {
     // The one test a slice pays for the debugger. The attention word is not zero while a call or a pause
-    // waits for the slice hook, and for as long as the stop latch is set (dbg::emu keeps a bit of it for
-    // that), so the latch is looked at only behind it
+    // waits for the slice hook, and for as long as the stop latch is set (ATTN_LATCHED), so the latch is
+    // looked at only behind it
     if (unlikely(dbg::g_attn.load(std::memory_order_relaxed)))
         return slice_end_attention();
 
