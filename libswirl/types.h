@@ -27,18 +27,8 @@
 #endif
 
 
-#if HOST_CPU == CPU_X86
-
-	#if BUILD_COMPILER==COMPILER_VC
-	#define DYNACALL  __fastcall
-	#else
-	//android defines fastcall as regparm(3), it doesn't work for us
-	#undef fastcall
-	#define DYNACALL __attribute__((fastcall))
-	#endif
-#else
-	#define DYNACALL
-#endif
+//What recompiled code calls: the calling convention of the host, on every host there is
+#define DYNACALL
 
 #if BUILD_COMPILER==COMPILER_VC
 #ifdef _CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES

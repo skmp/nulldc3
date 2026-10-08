@@ -88,7 +88,7 @@ void SetFloatStatusReg()
             _controlfp(_DN_SAVE, _MCW_DN);
 #else
 
-    #if HOST_CPU==CPU_X86 || HOST_CPU==CPU_X64
+    #if HOST_CPU==CPU_X64
 
             u32 temp=0x1f80;	//no flush to zero && round to nearest
 
@@ -99,27 +99,6 @@ void SetFloatStatusReg()
 			if (fpscr.DN)
 				temp|=(1<<15)|(1<<6);
 			asm("ldmxcsr %0" : : "m"(temp));
-    #elif HOST_CPU==CPU_ARM
-		static const unsigned int x = 0x04086060;
-		unsigned int y = 0x02000000;
-		if (FPSCR_RM_ZERO(fpscr))  //if round to 0 , set the flag
-			y|=3<<22;
-	
-		if (fpscr.DN)
-			y|=1<<24;
-
-
-		int raa;
-
-		asm volatile
-			(
-				"fmrx   %0, fpscr   \n\t"
-				"and    %0, %0, %1  \n\t"
-				"orr    %0, %0, %2  \n\t"
-				"fmxr   fpscr, %0   \n\t"
-				: "=r"(raa)
-				: "r"(x), "r"(y)
-			);
 	#elif HOST_CPU == CPU_ARM64
 		static const unsigned long off_mask = 0x04080000;
         unsigned long on_mask = 0x02000000;    // DN=1 Any operation involving one or more NaNs returns the Default NaN
