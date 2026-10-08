@@ -31,7 +31,7 @@
 #include <thread>
 #include <vector>
 
-#if HOST_CPU == CPU_X64 || HOST_CPU == CPU_X86
+#if HOST_CPU == CPU_X64
 #include <xmmintrin.h>
 #endif
 
@@ -104,7 +104,7 @@ static SuperH4* make_cpu()
 //false: not a host this file knows how to ask
 static bool host_fp_mode(bool& round_to_zero, bool& flush_to_zero)
 {
-#if HOST_CPU == CPU_X64 || HOST_CPU == CPU_X86
+#if HOST_CPU == CPU_X64
 	u32 mxcsr = _mm_getcsr();
 
 	round_to_zero = ((mxcsr >> 13) & 3) == 3;
