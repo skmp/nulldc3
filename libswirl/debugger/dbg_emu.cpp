@@ -1167,11 +1167,14 @@ void OnGuestStateReplaced()
 	g_intc_deferred = false;
 	g_sleep_cut = false;
 
-	sh4::OnStop(nullptr);
 	sh4::OnPcWritten();
 
 	if (OnEmuThread())
 	{
+		// temporary breakpoints and a step-out end with the state they were made for. Without an emulator
+		// thread there are none: the thread ended them on its way out
+		sh4::OnStop(nullptr);
+
 		// the park loop publishes the stop, if one is in force
 		e.resetSeen = true;
 		return;
