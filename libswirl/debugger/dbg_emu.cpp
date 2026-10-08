@@ -169,12 +169,14 @@ struct {
 	bool fallbackLoop;			// what Run() was last told to run
 } engine;
 
+// On the emulator thread, or under L while no emulator thread exists
 bool machineFirstPark;			// no thread of this machine has parked yet
 bool resumeOwed;				// the last thread of this machine ended in a debugger stop, with the guest as that
 								// stop left it: the first Park() of the next thread is the resume of that stop
 bool startPaused;				// Debugger:StartPaused
 bool forceFallback;				// Debugger:ForceFallback
 
+// On the emulator thread, or under L while no emulator thread exists
 u32 eventBp[EV_ID_COUNT];		// the lowest id of the enabled event breakpoints on an event, 0: none
 u32 activeMask;					// no category is active before the first SetActiveMask()
 
