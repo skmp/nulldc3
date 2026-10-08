@@ -2464,7 +2464,7 @@ struct {
 
 	// a host stop during a step
 	HostStop host;
-	std::atomic<bool> runningInStep { false }, runningAfterStop { true };
+	std::atomic<bool> runningInStep { false }, runningAfterStop { false }, runningInCallback { true };
 	double msToStopped;
 	emu::RunState stopped;
 
@@ -2636,8 +2636,10 @@ DBG_SELFTEST_GUEST(emu_step, "emu.step")
 			virtualDreamcast->Stop([] {
 				sp.host.callbacks++;
 				sp.host.onEmu = emu::OnEmuThread();
+				sp.runningInCallback = sh4_cpu->IsRunning();
 			});
 
+			// the step is still in its wait
 			sp.runningAfterStop = sh4_cpu->IsRunning();
 
 			if (!WaitLifetime(Lifetime::Stopped))
@@ -2661,7 +2663,8 @@ DBG_SELFTEST_GUEST(emu_step, "emu.step")
 
 		Check(!sp.otherFailed && sp.host.callbacks == 1 && sp.host.onEmu && sp.stopped.cause == StopCause::HostStopped,
 			"a host stop during a step ends the thread: the callback ran once, the state is Stopped, host-stopped");
-		Check(sp.runningInStep && !sp.runningAfterStop, "the machine counts as running while the step executes, and no longer once the stop is asked for");
+		Check(sp.runningInStep && sp.runningAfterStop && !sp.runningInCallback,
+			"the machine counts as running while the step executes, and asked to stop until its thread takes the stop callback: not when the callback looks");
 		Check(sp.msToStopped > 100, "the stop is taken when the step has returned: the SLEEP waited on (%.0f ms)", sp.msToStopped);
 
 		{
