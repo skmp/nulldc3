@@ -342,21 +342,27 @@ void free_pages(void* ptr) {
 #endif
 }
 
+// The FPCB table is the recompiler's: a build without one never reads it, has nothing to fill it with
+// (bm_vmem_pagefill) and takes no fault in it.
+
 // Resets the FPCB table (by either clearing it to the default val
 // or by flushing it and making it fault on access again.
 void _vmem_bm_reset() {
+#if FEAT_SHREC != DYNAREC_NONE
 	// If we allocated it via vmem:
 	if (virt_ram_base)
 		vmem_platform_reset_mem(p_sh4rcb->fpcb, sizeof(p_sh4rcb->fpcb));
 	else
 		// We allocated it via a regular malloc/new/whatever on the heap
 		bm_vmem_pagefill((void**)p_sh4rcb->fpcb, sizeof(p_sh4rcb->fpcb));
+#endif
 }
 
 // This gets called whenever there is a pagefault, it is possible that it lands
 // on the fpcb memory range, which is allocated on miss. Returning true tells the
 // fault handler this was us, and that the page is resolved and can continue the execution.
 bool _vmem_bm_LockedWrite(u8* address) {
+#if FEAT_SHREC != DYNAREC_NONE
 	if (!virt_ram_base)
 		return false;  // No vmem, therefore not us who caused this.
 
@@ -371,6 +377,7 @@ bool _vmem_bm_LockedWrite(u8* address) {
 		bm_vmem_pagefill((void**)aligned_addr, REI_PAGE_SIZE);
 		return true;
 	}
+#endif
 	return false;
 }
 
@@ -393,7 +400,9 @@ bool _vmem_reserve(VLockedMemory* mram, VLockedMemory* vram, VLockedMemory* aica
 
 		// Allocate it all and initialize it.
 		p_sh4rcb = (Sh4RCB*)malloc_pages(sizeof(Sh4RCB));
+#if FEAT_SHREC != DYNAREC_NONE
 		bm_vmem_pagefill((void**)p_sh4rcb->fpcb, sizeof(p_sh4rcb->fpcb));
+#endif
 
 		mram->size = RAM_SIZE;
 		mram->data = (u8*)malloc_pages(RAM_SIZE);

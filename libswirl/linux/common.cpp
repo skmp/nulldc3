@@ -59,7 +59,11 @@ void sigill_handler(int sn, siginfo_t * si, void *segfault_ctx) {
     context_from_segfault(&ctx);
     
 	unat pc = (unat)ctx.pc;
+#if FEAT_SHREC != DYNAREC_NONE
 	bool dyna_cde = (pc>(unat)CodeCache) && (pc<(unat)(CodeCache + CODE_SIZE));
+#else
+	bool dyna_cde = false;
+#endif
 	
 	printf("SIGILL @ %lx -> %p was not in vram, dynacode:%d\n", pc, si->si_addr, dyna_cde);
 	

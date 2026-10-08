@@ -188,8 +188,8 @@ endif()
 
 
 
-#option(TARGET_NO_REC  BOOL "")
-#option(TARGET_NO_AREC BOOL "")
+option(TARGET_NO_REC  "Interpreters only: no SH4, ARM7 or DSP recompiler, on any host" OFF)
+option(TARGET_NO_AREC "No ARM7 and no DSP recompiler" OFF)
 #option(TARGET_NO_JIT  BOOL "")
 
 

@@ -1413,7 +1413,9 @@ struct Dreamcast_impl : VirtualDreamcast {
 
         fault_printf("dc_handle_fault: %p from %p\n", (u8*)addr, (u8*)ctx->pc);
 
+#if FEAT_SHREC != DYNAREC_NONE
         bool dyna_cde = ((unat)CC_RX2RW(ctx->pc) > (unat)CodeCache) && ((unat)CC_RX2RW(ctx->pc) < (unat)(CodeCache + CODE_SIZE));
+#endif
 
         u8* address = (u8*)addr;
 
@@ -1429,6 +1431,8 @@ struct Dreamcast_impl : VirtualDreamcast {
 
             return true;
         }
+#if FEAT_SHREC != DYNAREC_NONE
+        // faults in the pages of compiled blocks and in the code cache: only a build with the recompiler has them
         else if (bm_LockedWrite(address))
         {
             fault_printf("dc_handle_fault: bm_LockedWrite!\n");
@@ -1439,6 +1443,7 @@ struct Dreamcast_impl : VirtualDreamcast {
             fault_printf("dc_handle_fault: rdv_ngen->Rewrite!\n");
             return true;
         }
+#endif
         else
         {
             fault_printf("dc_handle_fault: not handled!\n");
