@@ -26,6 +26,7 @@ set(nulldc_system_cases
   "exit.vblanks.interp:"
   "exit.seconds:"
   "rtc:"
+  "rtc.game:"
   "cfg.untouched:"
   "headless.no_program:"
   "headless.gl_renderer:"

@@ -59,8 +59,9 @@ public:
 	Server();
 	~Server();
 
-	// False when the address cannot be bound, when the port is not in 0..65535, without a handler and on a
-	// server that is already started; one line on stderr says which. Start and Stop are for one controlling
+	// False when the address cannot be resolved or bound, when the port is not in 0..65535, without a handler,
+	// on a server that is already started, and when the socket library, the wake-up socket or the network
+	// thread cannot be set up; one line on stderr says which. Start and Stop are for one controlling
 	// thread; everything else may be called from any thread at any time.
 	bool Start(const Options& options, Handler* handler);
 	void Stop();

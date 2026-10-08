@@ -32,7 +32,12 @@
 	power-on: a sound CPU that was created and not reset yet holds what its reset gives it, and a reset of the
 	machine leaves nothing of the interrupt controller (the comments at run_power_on() have why).
 
-	Checks: adc, sbc, rsc, ror, mul-rd-rm, mul-rd-rm-c, trap, fiq, scilv, reset, power-on. The test needs no data.
+	debug: what the sound CPU gives the debugger (SoundCPU::DebugGetReg, DebugGetInterrupt) against the registers
+	the guest has and against its reads of L, around a FIQ (the comments at debug_r8_r12(), debug_interrupt() and
+	debug_interrupt_two_levels()).
+
+	Checks: adc, sbc, rsc, ror, mul-rd-rm, mul-rd-rm-c, trap, fiq, scilv, reset, power-on, debug. The test needs
+	no data.
 */
 #include "arm7_machine.h"
 #include "arm7_suite.h"
@@ -588,6 +593,7 @@ static void run_traps()
 	"mov r0, r0" for the entry and "subs pc, lr, #4" for the return.
 */
 #define AICA_SCIEB 0x80289C
+#define AICA_SCIPD 0x8028A0
 #define AICA_SCIRE 0x8028A4
 #define AICA_SCILV0 0x8028A8
 #define AICA_MCIEB 0x8028B4
@@ -595,6 +601,8 @@ static void run_traps()
 #define AICA_M 0x802D04
 
 #define SAMPLE_INTERVAL 0x400
+//the request that a write of 1 to bit 5 of SCIPD raises
+#define SCPU_REQUEST 0x20
 
 #define MODE_FIQ 0x11
 
@@ -1417,6 +1425,244 @@ static const Scenario power_on_scenarios[] =
 	{ "reset of the machine with nFIQ pulled", &power_on_nfiq },
 };
 
+/*
+	The debugger's indices 21..25 are R8..R12 of the modes other than FIQ. Outside FIQ mode they are the registers
+	the program computes with; inside a FIQ handler the program has the five of the FIQ bank in their place, and the
+	debugger still shows the interrupted program's under 21..25, and the handler's under 8..12 and under
+	R8_FIQ..R12_FIQ. Reading changes nothing: the interrupted program gets its five back.
+*/
+#define DEBUG_R8 21
+
+static void debug_expect(std::string& text, const char* where, u32 reg, u32 expected)
+{
+	char number[128];
+	u32 value = ~expected;
+
+	if (!arm7m_debug_reg(reg, &value))
+	{
+		snprintf(number, sizeof(number), " the debugger gets no register %u %s;", reg, where);
+		text += number;
+	}
+	else if (value != expected)
+	{
+		snprintf(number, sizeof(number), " register %u reads %08X %s, has to be %08X;", reg, value, where, expected);
+		text += number;
+	}
+}
+
+static void debug_r8_r12(std::string& text)
+{
+	Arm7Context* ctx = arm7m_context();
+
+	fiq_setup(0x80, 0, 0);
+
+	for (u32 i = 0; i < 5; i++)
+		ctx->regs[8 + i].I = 0x11110000 + i;
+
+	for (u32 i = 0; i < 5; i++)
+		debug_expect(text, "in front of the FIQ", DEBUG_R8 + i, 0x11110000 + i);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	//the handler's own five
+	for (u32 i = 0; i < 5; i++)
+		ctx->regs[8 + i].I = 0x22220000 + i;
+
+	for (u32 i = 0; i < 5; i++)
+	{
+		debug_expect(text, "in the handler", DEBUG_R8 + i, 0x11110000 + i);
+		debug_expect(text, "in the handler", 8 + i, 0x22220000 + i);
+		debug_expect(text, "in the handler", R8_FIQ + i, 0x22220000 + i);
+	}
+
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	arm7m_read32(AICA_L);
+	arm7m_write32(AICA_M, 1);
+	fiq_return(text);
+
+	for (u32 i = 0; i < 5; i++)
+	{
+		debug_expect(text, "behind the FIQ", DEBUG_R8 + i, 0x11110000 + i);
+		debug_expect(text, "behind the FIQ", 8 + i, 0x11110000 + i);
+		debug_expect(text, "behind the FIQ", R8_FIQ + i, 0x22220000 + i);
+
+		if (ctx->regs[8 + i].I != 0x11110000 + i)
+			text += " the program does not get its register back;";
+	}
+}
+
+/*
+	The debugger reads L as the ARM does, and its read is not the acknowledge the ARM's read is: nFIQ stays pulled
+	however often the debugger looks, and a handler that returns without a read of L of its own is entered again.
+	The in-service flag is the debugger's alone, M reads 0 for the ARM (fiq_m_reads_0()): it is 1 from the latch of
+	the request to the handler's write of M.
+*/
+static void debug_expect_interrupt(std::string& text, const char* where, u32 level, u32 in_service)
+{
+	char number[160];
+	u32 l = ~level, m = ~in_service;
+
+	if (!arm7m_debug_interrupt(&l, &m))
+	{
+		snprintf(number, sizeof(number), " the debugger gets no L and M %s;", where);
+		text += number;
+	}
+	else if (l != level || m != in_service)
+	{
+		snprintf(number, sizeof(number), " the debugger reads L %X and in service %X %s, has to be %X and %X;", l, m, where, level, in_service);
+		text += number;
+	}
+}
+
+static void debug_interrupt(std::string& text, u32 scilv0, u32 scilv1, u32 scilv2, u32 level)
+{
+	char number[96];
+
+	fiq_setup(scilv0, scilv1, scilv2);
+	debug_expect_interrupt(text, "with nothing requested", 0, 0);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request does not interrupt;";
+		return;
+	}
+
+	for (u32 i = 0; i < 4; i++)
+		debug_expect_interrupt(text, "with nFIQ pulled", level, 1);
+
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	debug_expect_interrupt(text, "with the request cleared", level, 1);
+	arm7m_write32(AICA_M, 1);
+	debug_expect_interrupt(text, "behind the M write", level, 0);
+	fiq_return(text);
+
+	//no sample passes
+	arm7m_step();
+
+	if (!in_fiq())
+	{
+		text += " nFIQ is released though only the debugger has read L;";
+		return;
+	}
+
+	u32 l = arm7m_read32(AICA_L);
+
+	if (l != level)
+	{
+		snprintf(number, sizeof(number), " the ARM reads %X from L, the debugger read %X;", l, level);
+		text += number;
+	}
+
+	debug_expect_interrupt(text, "behind the L read of the ARM", level, 0);
+	fiq_return(text);
+	arm7m_step();
+
+	if (in_fiq())
+		text += " the handler is entered again though the ARM has read L;";
+}
+
+static void debug_interrupt_1(std::string& text)
+{
+	debug_interrupt(text, 0x80, 0, 0, 1);
+}
+
+static void debug_interrupt_7(std::string& text)
+{
+	debug_interrupt(text, 0xFF, 0xFF, 0xFF, 7);
+}
+
+//A request of level 0 behind a serviced one of level 7: it does not interrupt, is not in service, and L is its 0
+static void debug_interrupt_0(std::string& text)
+{
+	fiq_setup(0xFF, 0xFF, 0xFF);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request of level 7 does not interrupt;";
+		return;
+	}
+
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	arm7m_read32(AICA_L);
+	arm7m_write32(AICA_M, 1);
+	fiq_return(text);
+	debug_expect_interrupt(text, "behind the service of level 7", 7, 0);
+
+	arm7m_write32(AICA_SCILV0, 0);
+	arm7m_write32(AICA_SCILV0 + 4, 0);
+	arm7m_write32(AICA_SCILV0 + 8, 0);
+
+	if (sample_interrupts(text))
+	{
+		text += " a request of level 0 interrupts;";
+		return;
+	}
+
+	debug_expect_interrupt(text, "behind a request of level 0", 0, 0);
+
+	if (arm7m_read32(AICA_L) != 0)
+		text += " the ARM does not read 0 from L behind a request of level 0;";
+}
+
+/*
+	Two requests of two levels, one in service and one that waits behind it. L is latched when a request is let in:
+	while the first is in service the debugger reads its level, as the ARM does, and not the level that the waiting
+	request drives; the write of M lets the second in, and both read its level. The sample interval has level 1
+	(bit 7 of SCILV0, for the requests from bit 7 up) and the request of SCIPD bit 5 has level 6 (bit 5 of SCILV1
+	and of SCILV2). No capture is behind the two levels: they are what the ARM reads on the emulator.
+*/
+static void debug_interrupt_two_levels(std::string& text)
+{
+	char number[96];
+
+	fiq_setup(0x80, 0x20, 0x20);
+	arm7m_write32(AICA_SCIEB, SAMPLE_INTERVAL | SCPU_REQUEST);
+
+	if (!sample_interrupts(text))
+	{
+		text += " the request of level 1 does not interrupt;";
+		return;
+	}
+
+	debug_expect_interrupt(text, "with level 1 in service", 1, 1);
+	arm7m_write32(AICA_SCIPD, SCPU_REQUEST);
+	debug_expect_interrupt(text, "with level 1 in service and level 6 waiting", 1, 1);
+
+	u32 l = arm7m_read32(AICA_L);
+
+	if (l != 1)
+	{
+		snprintf(number, sizeof(number), " the ARM reads %X from L with level 6 waiting, has to be 1;", l);
+		text += number;
+	}
+
+	debug_expect_interrupt(text, "behind the L read of the ARM, with level 6 waiting", 1, 1);
+	arm7m_write32(AICA_SCIRE, SAMPLE_INTERVAL);
+	arm7m_write32(AICA_M, 1);
+	debug_expect_interrupt(text, "behind the M write, with level 6 let in", 6, 1);
+
+	l = arm7m_read32(AICA_L);
+
+	if (l != 6)
+	{
+		snprintf(number, sizeof(number), " the ARM reads %X from L behind the M write, has to be 6;", l);
+		text += number;
+	}
+}
+
+static const Scenario debug_scenarios[] =
+{
+	{ "R8..R12 of the modes other than FIQ, around a FIQ", &debug_r8_r12 },
+	{ "L and the in-service flag, level 1: the debugger's read is no acknowledge", &debug_interrupt_1 },
+	{ "L and the in-service flag, level 7: the debugger's read is no acknowledge", &debug_interrupt_7 },
+	{ "L and the in-service flag behind a request of level 0", &debug_interrupt_0 },
+	{ "L of the request in service, level 1, with a request of level 6 waiting", &debug_interrupt_two_levels },
+};
+
 static void run_scenario(void* arg)
 {
 	ScenarioRun* run = (ScenarioRun*)arg;
@@ -1540,6 +1786,9 @@ int main(int argc, char** argv)
 		run_power_on();
 		run_scenarios("power-on", power_on_scenarios, sizeof(power_on_scenarios) / sizeof(power_on_scenarios[0]));
 	}
+
+	if (arm7_selected("debug"))
+		run_scenarios("debug", debug_scenarios, sizeof(debug_scenarios) / sizeof(debug_scenarios[0]));
 
 	return arm7_suite_end();
 }

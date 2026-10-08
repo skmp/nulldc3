@@ -6,6 +6,7 @@
 
 #include "ta.h"
 #include "ta_ctx.h"
+#include "debugger/debugger.h"
 
 /*
 	Threaded TA Implementation
@@ -367,6 +368,9 @@ void fill_fsm()
 	fill_fsm(TAS_MLV64_H,-1,-1,TAS_MLV64); //64 MH -> expect M64
 }
 
+//by list type
+static const char* const ta_list_names[5] = { "opaque", "opaque modifier volume", "translucent", "translucent modifier volume", "punch-through" };
+
 const HollyInterruptID ListEndInterrupt[5]=
 {
 	holly_OPAQUE,
@@ -401,6 +405,7 @@ NOINLINE void DYNACALL ta_handle_cmd(u32 trans)
 			{
 				//ta_tad.early=os_GetSeconds();
 			}
+			DBG_EVENT(dbg::EV_TA_LIST_END, "%s list", ta_list_names[ta_fsm_cl]);
 			asic_RaiseInterrupt( ListEndInterrupt[ta_fsm_cl]);
 			ta_fsm_cl=7;
 			trans=TAS_NS;

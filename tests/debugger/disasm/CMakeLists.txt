@@ -9,6 +9,11 @@ project(dbg_disasm_tests CXX)
 #   -DSH_OBJDUMP=<sh-elf-objdump>
 #   -DARM_OBJDUMP=<arm-eabi-objdump>
 #   -DDEVTOOLS_DIR=<dreamcast-devtools checkout with node_modules installed>
+#
+# The tests project (tests/CMakeLists.txt) adds this directory as well. What it sets is all optional here:
+#   NULLDC_TEST_PREFIX          put in front of every test name (debugger.disasm.)
+#   NULLDC_DEVTOOLS_DIR         the dreamcast-devtools checkout, in place of DEVTOOLS_DIR
+#   NULLDC_TESTS_REQUIRE_DATA   a test whose tool is missing fails instead of being skipped
 
 # The golden test walks a few million encodings
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -41,18 +46,24 @@ endif()
 enable_testing()
 
 # Always runs: checked-in golden encodings and the invariants that need no external tool
-add_test(NAME golden COMMAND disasm_test golden)
+add_test(NAME ${NULLDC_TEST_PREFIX}golden COMMAND disasm_test golden)
 
 find_package(Python3 COMPONENTS Interpreter)
 
-# A skipped test prints "SKIP: <reason>"; the scripts also return 77 when their oracle is missing
+# A skipped test prints "SKIP: <reason>"; the scripts also return 77 when their oracle is missing.
+# With NULLDC_TESTS_REQUIRE_DATA either one is a failed test.
 function(disasm_oracle_test name available reason)
+  set(name "${NULLDC_TEST_PREFIX}${name}")
   if(available)
     add_test(NAME ${name} COMMAND ${ARGN})
   else()
     add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -E echo "SKIP: ${reason}")
   endif()
-  set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77 SKIP_REGULAR_EXPRESSION "SKIP: ")
+  if(NULLDC_TESTS_REQUIRE_DATA)
+    set_tests_properties(${name} PROPERTIES FAIL_REGULAR_EXPRESSION "SKIP: ")
+  else()
+    set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77 SKIP_REGULAR_EXPRESSION "SKIP: ")
+  endif()
 endfunction()
 
 find_program(SH_OBJDUMP
@@ -89,16 +100,22 @@ disasm_oracle_test(arm7_objdump_selftest "${Python3_Interpreter_FOUND}" "python3
   --objdump "${ARM_OBJDUMP}" --test-bin $<TARGET_FILE:disasm_test>
   --workdir "${CMAKE_CURRENT_BINARY_DIR}/oracle/selftest")
 
-set(DEVTOOLS_DIR "${DEVCAST_DIR}/../dreamcast-devtools" CACHE PATH "dreamcast-devtools checkout (DSP playground oracle)")
-set(TSX "${DEVTOOLS_DIR}/node_modules/.bin/tsx")
-set(DSP_UTILS "${DEVTOOLS_DIR}/src/app/dsp/dspUtils.ts")
+if(DEFINED NULLDC_DEVTOOLS_DIR)
+  set(devtools_option NULLDC_DEVTOOLS_DIR)
+else()
+  set(DEVTOOLS_DIR "${DEVCAST_DIR}/../dreamcast-devtools" CACHE PATH "dreamcast-devtools checkout (DSP playground oracle)")
+  set(devtools_option DEVTOOLS_DIR)
+endif()
+set(devtools_dir "${${devtools_option}}")
+set(TSX "${devtools_dir}/node_modules/.bin/tsx")
+set(DSP_UTILS "${devtools_dir}/src/app/dsp/dspUtils.ts")
 
-if(EXISTS "${TSX}" AND EXISTS "${DSP_UTILS}")
+if(devtools_dir AND EXISTS "${TSX}" AND EXISTS "${DSP_UTILS}")
   set(DSP_ORACLE_FOUND TRUE)
 else()
   set(DSP_ORACLE_FOUND FALSE)
 endif()
 disasm_oracle_test(dsp_playground "${DSP_ORACLE_FOUND}"
-  "no tsx / dspUtils.ts under ${DEVTOOLS_DIR}; set -DDEVTOOLS_DIR=<dreamcast-devtools checkout with node_modules>"
+  "no tsx / dspUtils.ts under \"${devtools_dir}\"; set -D${devtools_option}=<dreamcast-devtools checkout with node_modules>"
   "${TSX}" "${CMAKE_CURRENT_SOURCE_DIR}/dsp_playground.mts"
   --dsp-utils "${DSP_UTILS}" --test-bin $<TARGET_FILE:disasm_test>)

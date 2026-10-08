@@ -10,7 +10,7 @@ what is written to them, and a sample passes only when a test says so (`arm7_mac
 | test | what it runs | data |
 |---|---|---|
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast, from reset to their end marker: no error bit in r1 (`r1 & 0x3FFFFFFF == 0`) and the pinned r0-r14 and CPSR at the end | `tests/vendor/arm7di-tests-dreamcast` (submodule) |
-| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), the logical operations with a ROR by a register amount of 0, of 32 and around them, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2, the register behind them and M read back, what a reset writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
+| `arm7.directed` | hand-written cases: ADC, SBC and RSC on operands at the edges with the carry clear and set (63 single instructions), the logical operations with a ROR by a register amount of 0, of 32 and around them, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2, the register behind them and M read back, what a reset writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller, what the sound CPU gives the debugger | none |
 | `arm7.wren7.vendor` | the same programs as console jobs: r1 and CPSR against the console's | wren7-rtl |
 | `arm7.wren7.qemu_diff` | 4 x 1000 random instructions (data processing, MUL/MLA, LDR/STR, LDM/STM, SWP): registers, flags and memory of every case against the console's | wren7-rtl |
 | `arm7.wren7.mulsem` | 1024 multiplier inputs: MUL(S)/MLA(S) results and flags, and the Rd == Rm forms, against the console's | wren7-rtl |
@@ -93,6 +93,16 @@ The emulator resets the AICA in front of the sound CPU, and the reset of the AIC
 what its reset gives it, with the ARM held in reset (`arm7m_created_reset()`). Its other cases reset the machine
 in the middle of a FIQ handler, as a guest can with SB_SFRES: nothing of the interrupt controller is left
 (`arm7m_controller_idle()`), and the program that is started next gets the interrupts it asks for and no other.
+
+The check `debug` is about what the sound CPU gives the debugger (`SoundCPU::DebugGetReg`,
+`DebugGetInterrupt`) and no guest ever sees: under the indices 21 to 25 it shows R8 to R12 of the modes other
+than FIQ. In front of a FIQ and behind it those are the registers the program computes with; inside the handler,
+which has the five of the FIQ bank in their place, they are still the interrupted program's, and reading them
+changes nothing. L is for the debugger what the ARM reads, at level 1, at level 7 and behind a request of level
+0, and the debugger's read is not the acknowledge the ARM's is: a handler that leaves the L read to the debugger
+is entered again. L is the level that was latched with the request in service: while a request of another level
+waits behind it, the debugger and the ARM read the level of the one in service, and the level of the other once
+the write of M has let it in. The in-service flag is 1 from the latch of a request to the write of M.
 
 ## The wren7 console suites
 

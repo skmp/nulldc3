@@ -9,7 +9,7 @@
 #include "dbg_emu.h"
 
 /*
-	dbg::sh4: the state behind SH4 code breakpoints and steps (dbg_sh4.cpp) — the armed set and its page bitmap,
+	dbg::sh4: the state behind SH4 code breakpoints and steps (dbg_sh4.cpp): the armed set and its page bitmap,
 	the resume exemption, the owed remainder of an interrupted block, temporary breakpoints, step-over and
 	step-out. The SH4 backends reach it through the dbg_sh4_* functions of debugger.h; this header is what
 	run control (dbg::emu) and register writes call.
@@ -73,6 +73,7 @@ void SetBreakpoints(const u32* ids, const u32* addrs, u32 n);
 
 // The active mask (emu::SetActiveMask); only CategoryBit(Category::Sh4) matters here. Read by the check;
 // never changes the armed set and never discards. Also callable under L while no emulator thread exists.
+// Before the first call the mask is 0: no listed breakpoint and no event breakpoint stops.
 void SetActiveMask(u32 categories);
 
 // Park loop, inside a CC_EXEC call (emu::Step calls it for every kind of SH4 step). The preconditions of
@@ -83,12 +84,19 @@ void SetActiveMask(u32 categories);
 //   "undefined opcode"          the opcode at pc is not an instruction the interpreter table executes
 //   "illegal slot instruction"  pc holds a delayed branch whose slot word cannot be read, is undefined or
 //                               is an instruction that writes pc
+// A delay-slot word that the opcode table has no handler for (0x0000 included) is an illegal slot
+// instruction: the step is refused.
+// In builds with MMU the word is read without address translation (dbg::mem): for a pc outside P1 / P2 the
+// preconditions, and the has_slot test of PrepareResume() / PrepareStep(), look at the physical address
+// pc & 0x1FFFFFFF. Steps and slot breakpoints in translated code are not supported.
 int StepCheck(const char** why);
 
-// Park loop, when the park context is left for a resume, after the deferred interrupt acceptance and
-// sh4_host_fp_resync(). Arms the resume exemption iff Sh4cntx.pc has the key of the pc that the last
-// OnStop() recorded and dbg_sh4_WantsCheck is true for it (opcode read through dbg::mem). Keeps the owed
-// remainder if Sh4cntx.pc is exactly its pc, drops it otherwise.
+// Park loop, when the park context is left for a resume or at the first Park() of a thread that follows a
+// thread exit taken in a debugger stop, after the deferred interrupt acceptance and sh4_host_fp_resync().
+// Arms the resume exemption iff Sh4cntx.pc has the key of the pc that the last OnStop() recorded and
+// dbg_sh4_WantsCheck is true for it (opcode read through dbg::mem), and a check will be made by what runs
+// next: the active backend has SH4DBG_NATIVE or FallbackWanted() is true. Keeps the owed remainder if
+// Sh4cntx.pc is exactly its pc, drops it otherwise.
 void PrepareResume();
 
 // Park loop, at the same point, for a step of one instruction. Arms the exemption as PrepareResume() does
@@ -119,7 +127,8 @@ void PrepareStepOut();
 // SuperH4::Run() returned with a debugger stop decided, after every step (executed, or complete at a vector),
 // for the start park and for a reset made while paused. Never for a service excursion, which publishes
 // nothing: temporary breakpoints and a pending step-out survive it. Also called when temporary state must end
-// without a stop: for a guest reset and when the emulator thread exits.
+// without a stop: for a guest reset and when the emulator thread exits. Never called without an emulator
+// thread.
 // Writes to *out (out may be null) what stopped. *out repeats what the helpers passed to emu::LatchStop for
 // this stop; dbg::emu publishes LatchStop's record and may check it against *out. Then removes every
 // temporary breakpoint, cancels a pending step-out (dbg_sh4_stepout = 0, instrumented blocks discarded),

@@ -10,8 +10,8 @@
 #include "dbg_emu.h"
 
 /*
-	dbg::core: the wire protocol (dbg_core.cpp) — JSON-RPC dispatch, the breakpoint, watch and category
-	tables, the device tree, the tick builder and the event log — and the core thread (C) that serves it.
+	dbg::core: the wire protocol (dbg_core.cpp: JSON-RPC dispatch, the breakpoint, watch and category
+	tables, the device tree, the tick builder and the event log), and the core thread (C) that serves it.
 
 	(C) takes the requests that the network thread queued, validates them and reaches guest state and the
 	tables through dbg::emu::Call; it also owns the timers: the periodic tick, the capture timeout and the

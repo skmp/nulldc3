@@ -973,6 +973,15 @@ shil_compile
 )
 shil_opc_end()
 
+//shop_dbg_check
+//Debugger check in front of a guest instruction (debugger/debugger.h). rs1: address of the instruction,
+//rs2: cycles of the block that are given back when the check stops there.
+//It is a full flush for the register allocators and a reader of sr.T for the optimiser: the check hands the
+//complete context to the debugger and reloads every register behind it.
+shil_opc(dbg_check)
+shil_recimp()
+shil_opc_end()
+
 SHIL_END
 
 

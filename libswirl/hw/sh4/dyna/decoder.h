@@ -51,12 +51,31 @@ struct ngen_features
 	bool DebugChecks;         //if set the backend implements everything SH4DBG_NATIVE stands for (hw/sh4/sh4_if.h):
 	                          //only then do the blocks it compiles get debugger checks and flow reports (debugger/debugger.h)
 	bool CtxAtSlice;          //if set Sh4cntx is complete, pc included, whenever the generated code calls UpdateSystem (SH4DBG_CTX_AT_SLICE)
-	//A backend whose GetFeatures does not set the last two leaves them clear, because what it fills is the decoder's
+	u32  DebugCheckBudget;    //with DebugChecks: the most debugger checks that one compiled block holds, which bounds the host
+	                          //code they add to it. 0: no bound. Of a block with more the backend compiles the instructions in
+	                          //front of the check that is one too many, and the rest runs behind them outside the block cache
+	                          //(RuntimeBlockInfo::dbg_rest_pc)
+	//A backend whose GetFeatures does not set the last three leaves them clear, because what it fills is the decoder's
 	//state, which has static storage. An ngen_features of any other storage is zeroed in front of GetFeatures.
 };
 
+//Limits of a decode that is not the one of a cached block: a single step, the rest of a block that a debugger
+//check interrupted (both run once, outside the block cache) and the blocks of the interpreter fallback
+//(hw/sh4/sh4_dbg.h), which are decoded for their boundaries, cost and refunds and never compiled.
+//An idiom that folds several instructions into one unit is not matched under max_opcodes, nor across end_pc.
+struct DecodeLimits
+{
+	u32 max_opcodes;  //end the block behind this many instructions, a delay slot goes with its branch. 0: no limit
+	u32 end_pc;       //end the block in front of this address. 0: none
+	s32 cycles;       //the cost of the block, replacing the computed one. negative: computed as for any block
+	bool no_compile;  //the block is not compiled: it gets the debugger checks whatever ngen_features::DebugChecks says
+};
+
+//DbgSh4Flow (debugger/debugger.h) of a block end: a call, a return or DBG_SH4_FLOW_NONE
+u32 dec_BlockFlow(BlockEndType type);
+
 struct RuntimeBlockInfo;
-void dec_DecodeBlock(RuntimeBlockInfo* rbi,u32 max_cycles);
+void dec_DecodeBlock(RuntimeBlockInfo* rbi,u32 max_cycles,const DecodeLimits* limits=0);
 
 struct state_t
 {
@@ -84,5 +103,7 @@ struct state_t
 		bool has_writem;
 		bool has_fpu;
 	} info;
+
+	u32 dbg_checks; //shop_dbg_check ops in the block. They are not counted for the block size limits
 
 } ;
