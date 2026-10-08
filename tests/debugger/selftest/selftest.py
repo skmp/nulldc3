@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""A selftest session of the emulator, headless, and what it has to end with.
+
+    selftest.py --emulator <devcast> --work <dir> --selftest <filter> [--mode <mode>] [--engine jit|interp]
+                [--guest <image>] [--config <section:key=value>]... [--watchdog <seconds>]
+
+The emulator is run as tests/system runs it: an environment of its own with fresh HOME, XDG_CONFIG_HOME and
+XDG_DATA_HOME under the work directory, no display, a core file size limit of 1 byte, and a watchdog. The
+real-time clock is pinned. README.md has the modes:
+
+    session     -config Debugger:SelfTest=<filter>: exit code 0 and the summary line of the driver, nothing failed
+    guest-exit  a session whose guest returns to the BIOS: the run ends with its exit line, reason guest-exit
+    same-hash   a session that runs to the end an Exit.* key gives it, and the same run without a session:
+                the two exit lines have the same state hash, part for part
+    parked      the run stays parked: after --hold seconds the process is still there and has printed no exit
+                line. It is killed, and that is a pass
+"""
+
+import argparse
+import os
+import re
+import resource
+import shutil
+import subprocess
+import sys
+import time
+
+RTC_PIN = 946684800
+
+BAD = ('Fatal error', 'Verify Failed', 'fault_handler', 'AddressSanitizer', 'ThreadSanitizer', 'runtime error:')
+
+
+class Failed(Exception):
+    pass
+
+
+def check(ok, what, log=None):
+    if not ok:
+        tail = ''
+        if log is not None:
+            tail = '\n--- the end of the output ---\n' + '\n'.join(log.splitlines()[-40:])
+        raise Failed(what + tail)
+
+
+class Run:
+    def __init__(self, args, name):
+        self.args = args
+        self.dir = os.path.join(args.work, name)
+        shutil.rmtree(self.dir, ignore_errors=True)
+        # a state is saved into <data>/data, which the emulator does not make
+        for sub in ('home', 'cfg', os.path.join('data', 'reicast', 'data')):
+            os.makedirs(os.path.join(self.dir, sub))
+        self.log_path = os.path.join(self.dir, 'log.txt')
+        self.process = None
+        self.log = ''
+        self.code = None
+
+    def command(self, keys):
+        engine = 'yes' if self.args.engine == 'jit' else 'no'
+        items = ['config:Headless=yes', 'audio:backend=none', 'config:Debug.SerialConsoleEnabled=yes',
+                 'config:Dynarec.Enabled=' + engine, 'config:Dreamcast.RTC=%d' % RTC_PIN, 'config:pvr.backend=none']
+        items += keys + self.args.config
+        command = [self.args.emulator, '-config']
+        for i, item in enumerate(items):
+            if i:
+                command.append(',')
+            command.append(item)
+        command.append(self.args.guest)
+        return command
+
+    def start(self, keys):
+        env = {'HOME': os.path.join(self.dir, 'home'), 'XDG_CONFIG_HOME': os.path.join(self.dir, 'cfg'),
+               'XDG_DATA_HOME': os.path.join(self.dir, 'data')}
+        for name in ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'TSAN_OPTIONS', 'LSAN_OPTIONS'):
+            if name in os.environ:
+                env[name] = os.environ[name]
+
+        def limits():
+            # a crash is not piped to a core handler (WSL2 runs it for any other limit)
+            resource.setrlimit(resource.RLIMIT_CORE, (1, resource.getrlimit(resource.RLIMIT_CORE)[1]))
+
+        self.cmdline = self.command(keys)
+        self.out = open(self.log_path, 'wb')
+        self.process = subprocess.Popen(self.cmdline, cwd=self.dir, env=env, stdin=subprocess.DEVNULL,
+                                        stdout=self.out, stderr=subprocess.STDOUT, preexec_fn=limits)
+
+    def read(self):
+        with open(self.log_path, 'rb') as f:
+            self.log = f.read().decode('utf-8', 'replace')
+        return self.log
+
+    def wait(self, seconds):
+        """True when the process ended within that time."""
+        try:
+            self.code = self.process.wait(timeout=seconds)
+        except subprocess.TimeoutExpired:
+            return False
+        finally:
+            self.read()
+        self.out.close()
+        return True
+
+    def kill(self):
+        self.process.kill()
+        self.process.wait()
+        self.out.close()
+        self.read()
+
+    def run(self, keys):
+        self.start(keys)
+        if not self.wait(self.args.watchdog):
+            self.kill()
+            raise Failed('the run did not end within %d s: %s' % (self.args.watchdog, ' '.join(self.cmdline))
+                         + '\n--- the end of the output ---\n' + '\n'.join(self.log.splitlines()[-40:]))
+        for bad in BAD:
+            check(bad not in self.log, 'the output has "%s"' % bad, self.log)
+        return self
+
+
+def selftest_lines(log):
+    return [line for line in log.splitlines() if line.startswith('SelfTest: ')]
+
+
+def exit_line(log):
+    lines = [line for line in log.splitlines() if line.startswith('nulldc-exit: ')]
+    if not lines:
+        return None
+    return dict(pair.split('=', 1) for pair in lines[-1][len('nulldc-exit: '):].split(' ') if '=' in pair)
+
+
+def no_failures(run):
+    failed = [line for line in selftest_lines(run.log) if ': FAILED: ' in line or ': FAIL, ' in line]
+    check(not failed, 'checks failed:\n' + '\n'.join(failed[:20]), run.log)
+
+
+def mode_session(args):
+    run = Run(args, 'session').run(['Debugger:SelfTest=' + args.selftest])
+    no_failures(run)
+    lines = selftest_lines(run.log)
+    check(lines, 'the session printed nothing', run.log)
+    summary = re.match(r'SelfTest: (\d+) passed, (\d+) failed$', lines[-1])
+    check(summary is not None, 'the last line of the session is not its summary: ' + lines[-1], run.log)
+    check(int(summary.group(1)) > 0 and int(summary.group(2)) == 0, lines[-1], run.log)
+    check(run.code == 0, 'exit code %s' % run.code, run.log)
+    print(lines[-1])
+
+
+def mode_guest_exit(args):
+    run = Run(args, 'guest-exit').run(['Debugger:SelfTest=' + args.selftest])
+    no_failures(run)
+    check(any(': ok: ' in line for line in selftest_lines(run.log)), 'the test of the session did not run', run.log)
+    line = exit_line(run.log)
+    check(line is not None, 'the run printed no exit line', run.log)
+    check(line.get('reason') == 'guest-exit', 'the run ended with reason=%s' % line.get('reason'), run.log)
+    check(run.code == 0, 'exit code %s' % run.code, run.log)
+    print('the run ended at the guest exit: reason=guest-exit')
+
+
+HASH_FIELDS = ('reason', 'vblanks', 'hash', 'sh4', 'sched', 'ram', 'vram', 'aram', 'arm7')
+
+
+def mode_same_hash(args):
+    keys = ['config:Exit.AfterVblanks=%d' % args.vblanks, 'config:Exit.StateHash=yes']
+
+    plain = Run(args, 'plain').run(keys)
+    base = exit_line(plain.log)
+    check(base is not None and 'hash' in base, 'the run without a session printed no state hash', plain.log)
+
+    run = Run(args, 'session').run(keys + ['Debugger:SelfTest=' + args.selftest])
+    no_failures(run)
+    check(any(': ok: ' in line for line in selftest_lines(run.log)), 'the test of the session did not run', run.log)
+    for note in args.expect:
+        check(any(note in line for line in selftest_lines(run.log)), 'the session did not say "%s"' % note, run.log)
+
+    line = exit_line(run.log)
+    check(line is not None and 'hash' in line, 'the session printed no state hash', run.log)
+
+    different = [f for f in HASH_FIELDS if base.get(f) != line.get(f)]
+    check(not different, 'the run of the session differs from the run nobody touched in ' + ', '.join(
+        '%s (%s, not %s)' % (f, line.get(f), base.get(f)) for f in different), run.log)
+    check(run.code == 0 and plain.code == 0, 'exit codes %s and %s' % (plain.code, run.code), run.log)
+    print('both runs end in hash=%s after %s vblanks' % (line['hash'], line['vblanks']))
+
+
+def mode_parked(args):
+    keys = ['config:Exit.AfterVblanks=%d' % args.vblanks]
+    if args.selftest:
+        keys.append('Debugger:SelfTest=' + args.selftest)
+
+    run = Run(args, 'parked')
+    run.start(keys)
+    ended = run.wait(args.hold)
+    if not ended:
+        run.kill()
+
+    check(not ended, 'the run ended (exit code %s) where it had to stay parked' % run.code, run.log)
+    check(exit_line(run.log) is None, 'the run printed an exit line while it was parked', run.log)
+    for bad in BAD:
+        check(bad not in run.log, 'the output has "%s"' % bad, run.log)
+    no_failures(run)
+    for note in args.expect:
+        check(note in run.log, 'the run did not say "%s"' % note, run.log)
+    print('still parked after %.1f s, no exit line: the run was killed' % args.hold)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--emulator', required=True)
+    parser.add_argument('--work', required=True)
+    parser.add_argument('--selftest', default='')
+    parser.add_argument('--mode', default='session', choices=('session', 'guest-exit', 'same-hash', 'parked'))
+    parser.add_argument('--engine', default='jit', choices=('jit', 'interp'))
+    parser.add_argument('--guest', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'emu_guest.bin'))
+    parser.add_argument('--config', action='append', default=[], help='section:key=value, for every run')
+    parser.add_argument('--expect', action='append', default=[], help='text a line of the session has to have')
+    parser.add_argument('--vblanks', type=int, default=600, help='same-hash, parked: Exit.AfterVblanks of the runs')
+    parser.add_argument('--hold', type=float, default=4.0, help='parked: seconds the run has to stay')
+    parser.add_argument('--watchdog', type=int, default=300)
+    parser.add_argument('--keep', action='store_true', help='keep the work directory of a run that passed')
+    args = parser.parse_args()
+
+    args.emulator = os.path.abspath(args.emulator)
+    args.work = os.path.abspath(args.work)
+    args.guest = os.path.abspath(args.guest)
+
+    if not os.path.isfile(args.emulator):
+        print('FAIL: no emulator at ' + args.emulator)
+        return 1
+    if not os.path.isfile(args.guest):
+        print('FAIL: no guest at ' + args.guest)
+        return 1
+
+    modes = {'session': mode_session, 'guest-exit': mode_guest_exit, 'same-hash': mode_same_hash, 'parked': mode_parked}
+
+    try:
+        modes[args.mode](args)
+    except Failed as failure:
+        print('FAIL: %s' % failure)
+        print('the output of every run is in ' + args.work)
+        return 1
+
+    if not args.keep:
+        shutil.rmtree(args.work, ignore_errors=True)
+    print('PASS')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

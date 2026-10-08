@@ -290,6 +290,10 @@ bool g_in_sleep;
 bool g_sleep_cut;
 std::atomic<bool> g_parked(false);
 
+//no gate is ever open here: the events of the interrupt controller are a byte load each
+std::atomic<u8> g_event_on[EV_ID_COUNT];
+void EventSlow(EventId id, const char* fmt, ...) { }
+
 namespace emu {
 
 void SliceHook() { }

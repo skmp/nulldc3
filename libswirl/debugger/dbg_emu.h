@@ -249,8 +249,9 @@ enum CallClass {
 // the wait for L has the same limit and the same result.
 //
 // fn
-// - captures by value or by shared_ptr only, never a reference or pointer into the caller's stack: a
-//   cancelled call is destroyed later, on (E). Its results live in a captured object.
+// - captures by value or by shared_ptr only, never a reference or pointer into the caller's stack. A call
+//   that is given up has its closure destroyed by the caller at that moment. Its results live in a captured
+//   object.
 // - runs alone: (E) takes one call at a time and never inside another call. It must not call Call.
 // - must not let an exception escape, and must not wait for another thread: every other call waits behind it.
 // - does what its class says and no more. CC_READ: read guest state (dbg_regs, dbg_mem, dbg_callstack,

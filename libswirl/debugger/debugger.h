@@ -95,20 +95,24 @@ void Init();
 // (every client is closed), ends the core thread and joins both; a call the core thread is waiting for is
 // given up. Afterwards no listener is installed and no debugger thread exists; the hooks and helpers below
 // stay callable until the process ends, and a parked emulator thread is released by the stop request that
-// Dreamcast_impl::Term makes for any live thread.
+// the emulator's shutdown makes right behind this call (reicast_term).
 void Term();
 
 /*
 	Attention word, stop latch.
 */
 enum : u32 {
-	ATTN_CALL  = 1,		// at least one call is queued for (E)
-	ATTN_PAUSE = 2,		// a pause is wanted: a client asked, or an event or sound breakpoint fired
+	ATTN_CALL    = 1,		// at least one call is queued for (E)
+	ATTN_PAUSE   = 2,		// a pause is wanted: a client asked, or an event or sound breakpoint fired
+	ATTN_LATCHED = 4,		// (E) only: set exactly while g_stop_latched is; a slice end tests the word and finds
+							// the latch behind it
 };
 
-// UpdateSystem() tests it after the scheduler tick of every slice and calls emu::SliceHook() when it is not
-// zero; memory_order_relaxed is enough there (a bit that is missed is seen one slice later).
-// Bits are set by any thread and cleared by (E), only ever with fetch_or / fetch_and.
+// UpdateSystem() tests it at every slice end, and again behind a scheduler tick, and calls emu::SliceHook()
+// when it is not zero and the latch is clear; memory_order_relaxed is enough there (a bit that is missed is
+// seen one slice later).
+// Bits are set by any thread and cleared by (E), only ever with fetch_or / fetch_and; the emulator thread may
+// store 0 at its end, under the queue lock.
 extern std::atomic<u32> g_attn;
 
 // The stop latch: a debugger stop has been decided and (E) is on its way into the park context, or in it.
@@ -117,8 +121,8 @@ extern std::atomic<u32> g_attn;
 //   UpdateSystem()  returns 1 as its first statement: no emulated time passes, no scheduler callback runs,
 //                   the slice hook is not called
 //   UpdateINTC()    accepts nothing: sets g_intc_deferred and returns 0
-//   SLEEP handler   tests it before each UpdateSystem_INTC() of its wait; when set it sets g_sleep_cut,
-//                   leaves the wait and re-executes SLEEP (next_pc -= 2)
+//   SLEEP handler   tests it in a slice of its wait that reported something and accepted nothing; when set
+//                   it sets g_sleep_cut, leaves the wait and re-executes SLEEP (next_pc -= 2)
 extern bool g_stop_latched;
 
 // (E) only. UpdateINTC() was called under the latch: one interrupt acceptance is owed, and is made when the
@@ -136,9 +140,11 @@ extern bool g_in_sleep;
 extern bool g_sleep_cut;
 
 // (E) is in a debugger stop: latched, parked or executing a step. SuperH4_impl::IsRunning() is
-// CpuRunning || g_parked, so that a parked machine counts as running for the host UI.
-// Set by (E) before it clears CpuRunning for a debugger stop; cleared by (E) when it resumes, and by
-// SuperH4_impl::Stop() on any thread (a stop request ends the debugger stop).
+// CpuRunning || g_parked || (the cpu is stopped for a reset), so that a parked machine counts as running for
+// the host UI.
+// Set by (E) before it clears CpuRunning for a debugger stop. Cleared by (E) when it resumes, where the guest
+// stops the cpu for a reset, and at the end of the thread (where it takes its stop callback, and in
+// OnThreadExiting()); and by SuperH4_impl::Stop() on any thread (a stop request ends the debugger stop).
 extern std::atomic<bool> g_parked;
 
 namespace emu {
@@ -185,7 +191,7 @@ void Kick();
 	  SaveState   LifetimeLock; save
 	  Resume      join a previous thread; LifetimeLock; OnThreadStarting();           Stopped -> Running
 	              start the thread; wait for emu_started
-	  dc_run      OnThreadEntered(); select the backends; Start(); set emu_started;
+	  dc_run      OnThreadEntered(); select the backends; start the cpu; set emu_started;
 	              the loop of Park() below; stop callback; OnThreadExiting()          Running -> Stopped
 	  Term        stop and join a live thread; LifetimeLock; OnMachineDestroying();   Stopped -> NoMachine
 	              destroy the machine
@@ -244,18 +250,19 @@ void OnGuestStateReplaced();
 /*
 	The park context, called by dc_run on (E):
 
-	    OnThreadEntered(); ...; sh4_cpu->Start(); emu_started.Set();
+	    OnThreadEntered(); ...; start the cpu; emu_started.Set();
 	    for (;;) {
 	        if (Park() == PARK_RUN)
 	            sh4_cpu->Run();
 	        // the machine's own stop reasons, in this order:
-	        //   guest reset pending:              save ROM files, Reset(), sh4_host_fp_resync(), sh4_cpu->Start()
+	        //   guest reset pending:              save ROM files, Reset(), sh4_host_fp_resync(), start the cpu
 	        //   host stop or guest exit pending:  break
 	    }
 	    ...; stop callback; OnThreadExiting(guestExit);
 
-	dc_run sets CpuRunning (SuperH4::Start) at thread start and after a guest reset; everywhere else Park()
-	owns CpuRunning, g_parked and g_stop_latched.
+	dc_run starts the cpu at thread start and after a guest reset, through the machine's own start function,
+	which sets CpuRunning (SuperH4::Start) and leaves the cpu stopped when a stop has been requested; everywhere
+	else Park() owns CpuRunning, g_parked and g_stop_latched.
 */
 enum : u32 {
 	PARK_RUN      = 0,		// the park context has been left; CpuRunning is set: call SuperH4::Run()
@@ -271,7 +278,8 @@ enum : u32 {
 // - Parks while a debugger stop is in force: the stop that was latched before Run() returned; a guest
 //   reset made while a debugger stop was in force or a pause was wanted (reason reset); a start park (reason
 //   start): at the first Park() after OnMachineCreated() when Debugger:StartPaused is set, and at the first
-//   Park() of every emulator thread while a selftest session is active (dbg::selftest::Active()).
+//   Park() of every emulator thread while a selftest session is active (dbg::selftest::Active()), except for
+//   the threads that the selftest of dbg::emu starts itself.
 //   Entering a stop: g_parked is set, CpuRunning cleared, the SH4 breakpoint state drops its temporary
 //   breakpoints and a pending step-out, the listener is invoked, the window title becomes
 //   "nullDC 3.0.0 [paused by debugger]". The park loop then waits, without limit, for a call, for a

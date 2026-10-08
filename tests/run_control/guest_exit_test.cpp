@@ -75,7 +75,7 @@ struct TestGUIRenderer final : GUIRenderer
 	bool CreateContext() override { return true; }
 };
 
-unique_ptr<VirtualDreamcast> virtualDreamcast;
+MachinePtr virtualDreamcast;
 std::unique_ptr<GUIRenderer> g_GUIRenderer;
 
 // 1 emulated second into the run, which is before the limit of every case

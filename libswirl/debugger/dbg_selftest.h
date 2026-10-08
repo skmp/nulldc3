@@ -51,7 +51,8 @@
 	What the emulator thread does for a session (dbg_emu.cpp):
 	  - the first Park() of every emulator thread calls AtStart() before it decides whether to park;
 	  - that Park() makes the start park (reason start) when Active() is true, which is at every thread start
-	    during a session, or when it is the first Park() after OnMachineCreated() and Debugger:StartPaused is set;
+	    during a session, or when it is the first Park() after OnMachineCreated() and Debugger:StartPaused is set.
+	    It is not made for the threads that the selftest of dbg::emu starts itself;
 	  - the park loop calls OnStop() for every stop it publishes, after the listener, while Active() is true,
 	    and then executes the action the test armed, or waits as it does for a client.
 */

@@ -42,6 +42,9 @@
 #include "hw/aica/aica_hash.h"
 #include "hw/arm7/SoundCPU.h"
 #include "utils/run_control.h"
+#include "hw/sh4/sh4_dbg.h"
+#include "hw/sh4/SuperH4_impl.h"
+#include "debugger/debugger.h"
 
 #define fault_printf(...)
 
@@ -49,7 +52,7 @@
 #include "scripting/lua_bindings.h"
 #endif
 
-unique_ptr<VirtualDreamcast> virtualDreamcast;
+MachinePtr virtualDreamcast;
 unique_ptr<GDRomDisc> g_GDRDisc;
 
 
@@ -496,7 +499,8 @@ void LoadCustom()
     char* p = reios_id + strlen(reios_id) - 1;
     while (p >= reios_id && *p == ' ')
         * p-- = '\0';
-    if (*p == '\0')
+    // an id that is empty, or was nothing but blanks, has no byte to look at
+    if (p < reios_id || *p == '\0')
         return;
 #elif DC_PLATFORM == DC_PLATFORM_NAOMI || DC_PLATFORM == DC_PLATFORM_ATOMISWAVE
     char* reios_id = naomi_game_id;
@@ -613,10 +617,6 @@ void SaveSettings()
 #endif
 }
 
-static bool reset_requested;
-
-
-
 int reicast_init(int argc, char* argv[])
 {
 #ifdef _WIN32
@@ -659,6 +659,8 @@ int reicast_init(int argc, char* argv[])
     if (showOnboarding)
         g_GUI->OpenOnboarding();
 
+    dbg::Init();
+
     return 0;
 }
 
@@ -667,6 +669,14 @@ void reicast_ui_loop() {
 }
 
 void reicast_term() {
+    // before the GUI, and with it the machine, goes away
+    dbg::Term();
+
+    // An emulator thread that is still there goes through the renderer of the user interface on its way out:
+    // it has ended before the renderer goes
+    if (virtualDreamcast)
+        virtualDreamcast->StopAndWait();
+
     g_GUIRenderer.reset();
 
     g_GUI.reset();
@@ -688,8 +698,24 @@ struct Dreamcast_impl : VirtualDreamcast {
     unique_ptr<AicaContext> aica_ctx;
     unique_ptr<AudioStream> audio_stream;
 
+    // Why the CPU was stopped, as far as the machine knows. A bit is set under callback_lock by the thread
+    // that asks, before it stops the CPU; the emulator thread evaluates them once the CPU has stopped, the
+    // reset first. A stop that a debugger decided is not here: it is dbg::emu::Park()'s
+    enum : u32 {
+        HOST_STOP   = 1,    // Stop(): the host UI, the end of an automated run. The thread runs callback and ends
+        GUEST_RESET = 2,    // RequestReset(): the thread resets the machine and runs on
+        GUEST_EXIT  = 4,    // RequestExit(): the thread ends
+        HOST_WAITS  = 8,    // StopAndWait(), with HOST_STOP: the thread that draws the frames waits for this
+                            // one to end, so the thread ends without waiting for its frames to be drawn
+    };
+
     cMutex callback_lock;
     function<void()> callback;
+    u32 stop_reasons = 0;
+
+    // An emulator thread exists that can still take a stop request: from Resume() until that thread has
+    // taken its stop callback. Under callback_lock
+    bool thread_live = false;
     
     int aica_schid = -1;
     int ds_schid = -1;
@@ -702,6 +728,8 @@ struct Dreamcast_impl : VirtualDreamcast {
 #ifndef TARGET_DISPFRAME
     void* dc_run()
     {
+        dbg::emu::OnThreadEntered();
+
 #if FEAT_HAS_NIXPROF
         install_prof_handler(0);
 #endif
@@ -744,40 +772,89 @@ struct Dreamcast_impl : VirtualDreamcast {
             printf("Using DSP Interpreter\n");
         }
 
-        sh4_cpu->Start();
+        // Not when the machine was asked to stop while this thread started. The thread then goes to the reasons
+        // below with no park in front of them: a request that came in before the debugger heard of this thread
+        // woke no park loop, and a park made at the start of the thread would wait with the request pending
+        bool park = StartCpu(false);
 
         emu_started.Set();
 
-        do {
-            reset_requested = false;
+        u32 reasons;
 
-            sh4_cpu->Run();
+        for (;;)
+        {
+            // The debugger's park context: queued calls run here, and the thread waits here while a debugger
+            // stop is in force. PARK_EVALUATE: the CPU stays stopped, a reason below may be pending
+            if (park && dbg::emu::Park() == dbg::emu::PARK_RUN)
+                sh4_cpu->Run();
 
-            SaveRomFiles(get_writable_data_path(DATA_PATH));
-            if (reset_requested)
+            park = true;
+
+            callback_lock.Lock();
+            reasons = stop_reasons;
+            stop_reasons &= ~GUEST_RESET;
+            callback_lock.Unlock();
+
+            if (reasons & GUEST_RESET)
             {
-                virtualDreamcast->Reset();
-                sh4_cpu->Start();
+                SaveRomFiles(get_writable_data_path(DATA_PATH));
+
+                Reset();
+
+                // FPSCR is the reset's now, on this thread
+                sh4_host_fp_resync();
+
+                // not when the machine was asked to stop as well
+                StartCpu(false);
+
+                // the cpu runs again, or the machine is about to stop
+                static_cast<SuperH4_impl*>(sh4_cpu)->resetting = false;
 #ifdef SCRIPTING
                 luabindings_onreset();
 #endif
             }
-        } while (reset_requested);
+
+            if (reasons & (HOST_STOP | GUEST_EXIT))
+                break;
+        }
+
+        SaveRomFiles(get_writable_data_path(DATA_PATH));
 
 #ifdef SCRIPTING
-            luabindings_onstop();
+        luabindings_onstop();
 #endif
 
+        // The frames this thread queued are drawn before the stop callback runs, unless the thread that
+        // draws them is waiting for this one. It draws until then: the machine counts as running up to the
+        // callback below, so a host ends its user interface by a callback of Stop(), which runs behind this wait
+        callback_lock.Lock();
+        bool host_waits = (stop_reasons & HOST_WAITS) != 0;
+        callback_lock.Unlock();
+
+        if (!host_waits)
             g_GUIRenderer->WaitQueueEmpty();
 
-            callback_lock.Lock();
-            if (callback) {
-                callback();
-                callback = nullptr;
-            }
-            callback_lock.Unlock();
-            return NULL;
-        }
+        // From here on a stop request finds no thread to take it, and the machine does not count as running:
+        // a debugger stop that was decided in the slice of the request set g_parked again behind it
+        callback_lock.Lock();
+        function<void()> stopped = callback;
+        callback = nullptr;
+        stop_reasons = 0;
+        thread_live = false;
+        p_sh4rcb->cntx.CpuRunning = false;
+        dbg::g_parked = false;
+        static_cast<SuperH4_impl*>(sh4_cpu)->stopping = false;
+        callback_lock.Unlock();
+
+        if (stopped)
+            stopped();
+
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "emulator thread ended: %s", (reasons & GUEST_EXIT) ? "guest exit" : "host stop");
+
+        dbg::emu::OnThreadExiting((reasons & GUEST_EXIT) != 0);
+
+        return NULL;
+    }
 #endif
 
     ~Dreamcast_impl() {
@@ -819,8 +896,12 @@ struct Dreamcast_impl : VirtualDreamcast {
         return SH4_MAIN_CLOCK;
     }
 
+    // The thread of the user interface while no emulator thread exists; the emulator thread for a guest
+    // reset and for a reset by the debugger. The CPU is stopped
     void Reset()
     {
+        dbg::emu::LifetimeLock lifetime;
+
         plugins_Reset(false);
 
         mem_Reset(sh4_cpu, false);
@@ -829,10 +910,16 @@ struct Dreamcast_impl : VirtualDreamcast {
 
         sh4_cpu->vram.Zero();
         sh4_cpu->aica_ram.Zero();
+
+        DBG_EVENT(dbg::EV_SYSTEM_RESET, "machine reset");
+
+        dbg::emu::OnGuestStateReplaced();
     }
 
     int StartGame(const string& path)
     {
+        dbg::emu::LifetimeLock lifetime;
+
         cfgSetVirtual("config", "image", path.c_str());
 
         if (settings.bios.UseReios || !LoadRomFiles(get_readonly_data_path(DATA_PATH)))
@@ -888,6 +975,8 @@ struct Dreamcast_impl : VirtualDreamcast {
 
     bool Init()
     {
+        dbg::emu::LifetimeLock lifetime;
+
         audio_stream.reset(AudioStream::Create());
         audio_stream->InitAudio();
 
@@ -975,12 +1064,50 @@ struct Dreamcast_impl : VirtualDreamcast {
         ds_schid = sh4_sched_register(this, 0, STATIC_FORWARD(Dreamcast_impl, DreamcastSecond));
         sh4_sched_request(ds_schid, SH4_MAIN_CLOCK);
 
-        return sh4_cpu->Init();
+        if (!sh4_cpu->Init())
+            return false;
+
+        dbg::emu::OnMachineCreated();
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "machine created");
+
+        return true;
     }
 
 
+    // callback_lock held, an emulator thread is live: records why it ends. From here until that thread takes
+    // its stop callback the machine counts as running by this request (SuperH4_impl::stopping), whatever the
+    // cpu and a debugger stop say: the caller stops the cpu next
+    void Stopping(u32 reasons)
+    {
+        stop_reasons |= reasons;
+        static_cast<SuperH4_impl*>(sh4_cpu)->stopping = true;
+    }
+
+    // The wait is made without the lifetime lock, which the emulator thread takes on its way out
+    void StopAndWait()
+    {
+        callback_lock.Lock();
+        bool live = thread_live;
+        if (live)
+            Stopping(HOST_STOP | HOST_WAITS);
+        callback_lock.Unlock();
+
+        if (live)
+            sh4_cpu->Stop();
+
+        emu_thread.WaitToEnd();
+    }
+
     void Term()
     {
+        // The machine is never taken apart under its emulator thread
+        StopAndWait();
+
+        dbg::emu::LifetimeLock lifetime;
+
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "machine destroyed");
+        dbg::emu::OnMachineDestroying();
+
         sh4_cpu->Term();
         
 #if DC_PLATFORM != DC_PLATFORM_DREAMCAST
@@ -1004,25 +1131,124 @@ struct Dreamcast_impl : VirtualDreamcast {
 
     void Stop(function<void()> callback)
     {
-        verify(sh4_cpu->IsRunning());
-
         callback_lock.Lock();
-        verify(this->callback == nullptr);
-        this->callback = callback;
+
+        if (!thread_live)
+        {
+            // stopped already, or about to run the callback of the stop that ends it
+            callback_lock.Unlock();
+
+            if (callback)
+                callback();
+            return;
+        }
+
+        Stopping(HOST_STOP);
+
+        if (this->callback)
+        {
+            // a stop is on its way: this one's callback runs behind the one that is waiting
+            function<void()> first = this->callback;
+            this->callback = [first, callback] {
+                first();
+                if (callback)
+                    callback();
+            };
+        }
+        else
+        {
+            this->callback = callback;
+        }
+
         callback_lock.Unlock();
+
         sh4_cpu->Stop();
     }
 
     // Called on the emulator thread for soft reset
     void RequestReset()
     {
-        reset_requested = true;
-        sh4_cpu->Stop();
+        SuperH4_impl* cpu = static_cast<SuperH4_impl*>(sh4_cpu);
+
+        callback_lock.Lock();
+        stop_reasons |= GUEST_RESET;
+
+        // The machine goes on counting as running while its cpu is stopped for the reset: a host that takes
+        // it for stopped ends its user interface under this thread. Not when it has been asked to stop, and
+        // not behind the end of the thread, which makes no reset any more
+        if (thread_live && !(stop_reasons & (HOST_STOP | GUEST_EXIT)))
+            cpu->resetting = true;
+
+        callback_lock.Unlock();
+
+        cpu->StopForReset();
+    }
+
+    // Called on the emulator thread when the guest program has ended
+    bool RequestExit()
+    {
+        callback_lock.Lock();
+
+        // one exit per thread, and none behind a stop: the guest goes on executing to the end of its slice
+        bool first = thread_live && !(stop_reasons & (HOST_STOP | GUEST_EXIT));
+
+        if (first)
+            Stopping(GUEST_EXIT);
+
+        callback_lock.Unlock();
+
+        if (first)
+            sh4_cpu->Stop();
+
+        return first;
+    }
+
+    bool StartCpu(bool leavePark)
+    {
+        callback_lock.Lock();
+
+        bool start = stop_reasons == 0;
+
+        if (start)
+        {
+            sh4_cpu->Start();
+
+            if (leavePark)
+                dbg::g_parked = false;
+        }
+        else
+        {
+            // stopped it stays, also where the request came in between the start of the thread and here
+            p_sh4rcb->cntx.CpuRunning = false;
+        }
+
+        callback_lock.Unlock();
+
+        return start;
     }
 
     void Resume()
     {
+        callback_lock.Lock();
+        verify(!thread_live);
+        callback_lock.Unlock();
+
+        // The thread before this one has run its stop callback and is on its way out. It takes the lifetime
+        // lock for that, so it is waited for before the lock is taken here
+        emu_thread.WaitToEnd();
+
+        dbg::emu::LifetimeLock lifetime;
+
         verify(!sh4_cpu->IsRunning());
+
+        callback_lock.Lock();
+        stop_reasons = 0;
+        thread_live = true;
+        callback_lock.Unlock();
+
+        dbg::emu::OnThreadStarting();
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "emulator thread started");
+
         emu_thread.Start();
         emu_started.Wait();
     }
@@ -1053,6 +1279,8 @@ struct Dreamcast_impl : VirtualDreamcast {
         void* data = NULL;
         void* data_ptr = NULL;
         FILE* f;
+
+        dbg::emu::LifetimeLock lifetime;
 
         verify(!sh4_cpu->IsRunning());
 
@@ -1100,6 +1328,8 @@ struct Dreamcast_impl : VirtualDreamcast {
         cleanup_serialize(data);
         printf("Saved state to %s\n size %d", filename.c_str(), total_size);
         g_GUI->DisplayNotification("State saved", 1000);
+
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "state saved, %u bytes", total_size);
     }
 
     void LoadState()
@@ -1109,6 +1339,8 @@ struct Dreamcast_impl : VirtualDreamcast {
         void* data = NULL;
         void* data_ptr = NULL;
         FILE* f;
+
+        dbg::emu::LifetimeLock lifetime;
 
         verify(!sh4_cpu->IsRunning());
 
@@ -1148,6 +1380,9 @@ struct Dreamcast_impl : VirtualDreamcast {
             printf("Failed to load state - could not unserialize data\n");
             g_GUI->DisplayNotification("Invalid save state", 2000);
             cleanup_serialize(data);
+
+            // part of the old state is gone all the same
+            dbg::emu::OnGuestStateReplaced();
             return;
         }
 
@@ -1159,6 +1394,10 @@ struct Dreamcast_impl : VirtualDreamcast {
 
         cleanup_serialize(data);
         printf("Loaded state from %s size %d\n", filename.c_str(), total_size);
+
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "state loaded, %u bytes", total_size);
+
+        dbg::emu::OnGuestStateReplaced();
     }
 
 #if defined(TARGET_NO_EXCEPTIONS)
