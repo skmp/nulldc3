@@ -1,12 +1,8 @@
+# The compiler and linker flags of the Emscripten port: a generic host (no recompiler, no fault handler, no sampling
+# profiler) on the Linux platform sources, with EGL for the context and SDL for the audio.
+# There are no rules here: the list of sources is the one of the CMake build.
 
-LOCAL_PATH := $(call my-dir)
-PLATFORM_LINUX := 1
-SUPPORT_EGL := 1
-NO_REC := 1
-NO_NIXPROF := 1
 RZDCY_SRC_DIR = ../../libswirl
-
-include $(RZDCY_SRC_DIR)/core.mk
 
 CC_PREFIX ?= 
 
@@ -20,7 +16,8 @@ LD=${CC}
 MFLAGS := 
 ASFLAGS := 
 
-LDFLAGS	:= 
+# the BIOS, the flash, the disc and emu.cfg are packed into the page's file system
+LDFLAGS	:= --preload-file data/dc_boot.bin --preload-file data/dc_flash.bin  --preload-file roms/ct.chd --preload-file emu.cfg -s TOTAL_MEMORY=536870912 -O3 -s USE_PTHREADS=1 -s USE_SDL=2 #-g2 #for debug
 
 
 CXXONLYFLAGS := -std=c++14
@@ -37,33 +34,4 @@ INCS	:= -I$(RZDCY_SRC_DIR) -I$(RZDCY_SRC_DIR)/deps -I$(RZDCY_SRC_DIR)/khronos -I
 
 LIBS	:= #emscripten has all the basic libs, and egl, and sdl, built in
 
-OBJECTS=$(RZDCY_FILES:.cpp=.build.obj)
-OBJECTS:=$(OBJECTS:.c=.build.obj)
-OBJECTS:=$(OBJECTS:.S=.build.obj)
-OBJECTS:=$(patsubst $(RZDCY_SRC_DIR)/%,obj/%,$(OBJECTS))
-
-
 EXECUTABLE=reicast.html
-
-all: $(CPPFILES) $(EXECUTABLE)
-	
-$(EXECUTABLE): $(OBJECTS)
-	echo $(RZDCY_FILES)
-	$(CXX) $(MFLAGS) $(EXTRAFLAGS) $(LDFLAGS)  $(OBJECTS) $(LIBS) -o $@ --preload-file data/dc_boot.bin --preload-file data/dc_flash.bin  --preload-file roms/ct.chd --preload-file emu.cfg -s TOTAL_MEMORY=536870912 -O3 -s USE_PTHREADS=1 -s USE_SDL=2 #-g2 #for debug
-
-obj/%.build.obj : $(RZDCY_SRC_DIR)/%.cpp $(VERSION_HEADER)
-	mkdir -p $(dir $@)
-	$(CXX) $(EXTRAFLAGS) $(INCS) $(CXXFLAGS) $(CXXONLYFLAGS) $< -o $@
-	
-obj/%.build.obj : $(RZDCY_SRC_DIR)/%.c $(VERSION_HEADER)
-	mkdir -p $(dir $@)
-	$(CC) $(EXTRAFLAGS) $(INCS) $(CXXFLAGS) $< -o $@
-
-obj/%.build.obj : $(RZDCY_SRC_DIR)/%.S $(VERSION_HEADER)
-	mkdir -p $(dir $@)	
-	$(AS) $(ASFLAGS) $(INCS) $< -o $@
-
-
-clean:
-	rm $(OBJECTS) $(EXECUTABLE) -f
-
