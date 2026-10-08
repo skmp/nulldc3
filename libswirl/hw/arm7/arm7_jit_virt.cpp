@@ -11,7 +11,7 @@
 
 #include "arm7_jit_virt_backend.h"
 
-#include "jit/emitter/arm32/arm_coding.h"
+#include "arm_coding.h"
 
 
 using namespace ARM;
