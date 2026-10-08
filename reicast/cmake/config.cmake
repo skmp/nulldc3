@@ -212,7 +212,7 @@ else()
 endif()
 
 # Sound DSP dynarec
-if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_A64}))
+if(${HOST_CPU} EQUAL ${CPU_A64})
   message("DSP Dynarec Features Available")
   set(FEAT_DSPREC  ${DYNAREC_JIT})
 #
