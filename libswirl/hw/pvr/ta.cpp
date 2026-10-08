@@ -25,24 +25,10 @@ extern u32 SQW,DMAW;
 #define DMAWC(x)
 #endif
 
-#if HOST_CPU == CPU_X86
-#include <xmmintrin.h>
-struct simd256_t
-{
-	DECL_ALIGN(32) __m128 data[2];
-};
-#elif HOST_CPU == CPU_ARM && defined(__ARM_NEON__)
-#include <arm_neon.h>
-struct simd256_t
-{
-	DECL_ALIGN(32) uint64x2_t data[2];
-};
-#else
 struct simd256_t
 {
 DECL_ALIGN(32) u64 data[4];
 };
-#endif
 
 /*
 	Partial TA parsing for in emu-side handling. Properly tracks 32/64 byte state, and
