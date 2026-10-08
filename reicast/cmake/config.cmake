@@ -112,9 +112,13 @@ endfunction()
 ## strings are used to append to path/file names, and to filter multiple possibilities down to one 
 #		AMD64/x86_64:x64, ppc/powerpc[64][b|l]e:ppc[64] etc 
 #
-if(("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64") OR
-   ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64") OR
-   ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x64"))
+if(EMSCRIPTEN)	# its toolchain file calls the processor "x86": the host is WebAssembly
+  set(host_arch "wasm")
+  set(HOST_CPU ${CPU_GENERIC})
+#
+elseif(("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64") OR
+       ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64") OR
+       ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x64"))
   set(host_arch "x64")
   set(HOST_CPU ${CPU_X64}) 
 #
