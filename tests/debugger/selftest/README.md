@@ -73,16 +73,19 @@ mechanism on the park loop of the emulator. They boot `2ndmix.elf` of `NULLDC_EL
 
 ## With a window
 
-`window_checklist.sh <devcast> <work dir>` does at the window of the emulator what a person does there, once
+`window_checklist.sh <devcast> <work dir> [once]` does at the window of the emulator what a person does there, once
 with the emulator thread parked and once with a pause asked for all the time (the sessions `emuwin.parked` and
 `emuwin.pending`): the menu key and the buttons of the menu (Save State, Load State, Restart, Resume, Exit), the
 escape key, and the close button of the window. Then two actions that the window finds in one pass over its
 events, the second while the machine is on its way to the stop of the first: the close button twice, and the
 escape key with the close button behind it, with the guest running (`emuwin.running`), parked and with a pause
 asked for all the time; a guest that is stopped while it runs in these sessions has a frame queued for the
-window, as a program that draws has at most moments. Then it reads the title of the window at two stops of one
+window, as a program that draws has at most moments. Then the sessions `emu.reset` and `emu.step` with a window
+(a reset of the guest while parked, with a pause pending and in a step, a stop by the host while a step executes)
+and a guest that returns to the BIOS. Then it reads the title of the window at two stops of one
 thread, with the guest running in between (`emuwin.twice`), and has the window closed in the moment in which
 the guest resets the machine, ten times (`emuwin.closereset`, which does what the window does for its close
 button as soon as it finds the cpu stopped for the reset). It needs a display (`DISPLAY`, default `:0`) and `xsend`, which
 it builds from `xsend.c` (Xlib). Events are sent to the window of the run; nothing is typed or clicked on the
-desktop. It prints one line per item, `PASS` or `FAIL`, and is not a ctest test: it opens windows.
+desktop. It prints one line per item, `PASS` or `FAIL`, and is not a ctest test: it opens windows, one at a
+time, 53 of them; with `once` it does every item one time and none of the repetitions, in 18 windows.

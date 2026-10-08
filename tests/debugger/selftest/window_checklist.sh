@@ -1,5 +1,5 @@
 #!/bin/bash
-# window_checklist.sh <devcast> <work dir>
+# window_checklist.sh <devcast> <work dir> [once]
 #
 # Does at the window of the emulator what a person does there, with the emulator thread parked by the debugger
 # (session emuwin.parked) and again with a pause asked for all the time (session emuwin.pending):
@@ -14,9 +14,11 @@
 # while it runs has a frame queued for the window, as a program that draws has at most moments;
 #
 # then, with a window as well, the session emu.reset (a reset of the guest while parked and with a pause pending),
-# a guest that returns to the BIOS (sessions emuwin.exit, emuwin.exitpending): the thread ends, the window
-# stays; the title of the window at two stops of one thread (session emuwin.twice); and the close button in the
-# moment in which the guest resets the machine (session emuwin.closereset, ten runs).
+# the session emu.step (a reset of the guest and a stop by the host while a step executes), a guest that returns
+# to the BIOS (sessions emuwin.exit, emuwin.exitpending): the thread ends, the window stays; the title of the
+# window at two stops of one thread (session emuwin.twice); and the close button in the moment in which the
+# guest resets the machine (session emuwin.closereset, ten runs).
+# With "once" every item is done one time: a window for each, and none of the repetitions.
 # It says for each whether the machine did what it has to: one line "PASS <session>: <item>" or
 # "FAIL <session>: <item>". The output of every run is <work dir>/<session>.<run>/log.txt.
 #
@@ -25,11 +27,11 @@
 # after its start and was not before: run it where nothing else opens windows at that moment.
 # Exit code 0 when every item passed.
 
-bin=$(readlink -f "$1"); work=$2
+bin=$(readlink -f "$1"); work=$2; once=$3
 here=$(dirname "$(readlink -f "$0")")
 
-if [ ! -x "$bin" ] || [ -z "$work" ]; then
-	echo "usage: window_checklist.sh <devcast> <work dir>"
+if [ ! -x "$bin" ] || [ -z "$work" ] || { [ -n "$once" ] && [ "$once" != once ]; }; then
+	echo "usage: window_checklist.sh <devcast> <work dir> [once]"
 	exit 2
 fi
 
@@ -232,23 +234,31 @@ twice() {
 	done
 }
 
-# reset_and_exit: with a window, a reset of the guest and an exit of the guest
-reset_and_exit() {
-	# the session emu.reset: the reset register while parked, with a pause pending, resets by calls
-	session=emu.reset
-	dir="$work/emu.reset"; log="$dir/log.txt"
+# with_window <session> <item>: a session of the selftest emu that ends by itself, in a run with a window
+with_window() {
+	session=$1
+	dir="$work/$1"; log="$dir/log.txt"
 	rm -rf "$dir"; mkdir -p "$dir/home" "$dir/cfg" "$dir/data/reicast/data"
 
 	( cd "$dir" && ulimit -S -c 1 2>/dev/null
 	  exec env -i DISPLAY="$DISPLAY" HOME="$dir/home" XDG_CONFIG_HOME="$dir/cfg" XDG_DATA_HOME="$dir/data" \
 		timeout 120 "$bin" -config audio:backend=none , config:Dreamcast.RTC=946684800 , \
-		Debugger:SelfTest=emu.reset "$here/emu_guest.bin" > "$log" 2>&1 )
+		Debugger:SelfTest=$1 "$here/emu_guest.bin" > "$log" 2>&1 )
 
 	if [ $? -eq 0 ] && grep -a -q '^SelfTest: 1 passed, 0 failed' "$log"; then
-		pass "a guest reset while parked resets and stays parked; with a pause pending it parks with reason reset"
+		pass "$2"
 	else
-		bad "a guest reset while parked resets and stays parked; with a pause pending it parks with reason reset"
+		bad "$2"
 	fi
+}
+
+# reset_and_exit: with a window, a reset of the guest and an exit of the guest
+reset_and_exit() {
+	# the reset register while parked, with a pause pending, resets by calls
+	with_window emu.reset "a guest reset while parked resets and stays parked; with a pause pending it parks with reason reset"
+
+	# with a backend that steps: the reset register written in a step, the host stop while a step executes
+	with_window emu.step "a guest reset in a step is one stop, the reset's; a host stop during a step ends the thread when the step has returned"
 
 	# the guest returns to the BIOS: the thread ends, the window stays
 	local which
@@ -302,7 +312,7 @@ close_in_reset() {
 	local i
 
 	session=closereset
-	for i in 1 2 3 4 5 6 7 8 9 10; do
+	for i in $(seq 1 $1); do
 		if start $i; then
 			the_end "run $i: the close button while the guest resets the machine ends the process"
 		else
@@ -311,14 +321,17 @@ close_in_reset() {
 	done
 }
 
+# how often the items that race are done
+if [ -n "$once" ]; then few=1; many=1; else few=3; many=10; fi
+
 checklist parked
 checklist pending
-twice running 3
-twice parked 3
-twice pending 10
+twice running $few
+twice parked $few
+twice pending $many
 reset_and_exit
 title_twice
-close_in_reset
+close_in_reset $many
 
 [ $fail -eq 0 ] && echo "window checklist: every item passed" || echo "window checklist: FAILED"
 exit $fail
