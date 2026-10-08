@@ -772,8 +772,10 @@ struct Dreamcast_impl : VirtualDreamcast {
             printf("Using DSP Interpreter\n");
         }
 
-        // not when the machine was asked to stop while this thread started
-        StartCpu(false);
+        // Not when the machine was asked to stop while this thread started. The thread then goes to the reasons
+        // below with no park in front of them: a request that came in before the debugger heard of this thread
+        // woke no park loop, and a park made at the start of the thread would wait with the request pending
+        bool park = StartCpu(false);
 
         emu_started.Set();
 
@@ -783,8 +785,10 @@ struct Dreamcast_impl : VirtualDreamcast {
         {
             // The debugger's park context: queued calls run here, and the thread waits here while a debugger
             // stop is in force. PARK_EVALUATE: the CPU stays stopped, a reason below may be pending
-            if (dbg::emu::Park() == dbg::emu::PARK_RUN)
+            if (park && dbg::emu::Park() == dbg::emu::PARK_RUN)
                 sh4_cpu->Run();
+
+            park = true;
 
             callback_lock.Lock();
             reasons = stop_reasons;

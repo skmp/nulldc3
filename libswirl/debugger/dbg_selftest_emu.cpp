@@ -73,6 +73,9 @@ extern u32 pausedTitles;
 // dbg_emu.cpp: the threads of the session start without a start park
 extern bool plainStart;
 
+// dbg_emu.cpp: called by OnThreadStarting() as its first statement
+extern void (*threadStarting)();
+
 } } }
 
 // reios/reios.cpp: the hook a guest program returns to
@@ -2445,6 +2448,218 @@ DBG_SELFTEST_GUEST(emu_startstop, "emu.startstop")
 
 	TakeSeen();
 	st.phase = 0;
+	return true;
+}
+
+/*
+	emu.startpark: the host stops the machine while its emulator thread starts, from another thread than the one
+	that starts it, and the new thread has a park to make at its start: the start park of a session. The machine
+	takes a stop for the new thread before the debugger has heard of that thread, and a stop that comes in
+	between wakes no park loop. The thread finds its cpu left stopped, makes no park and ends.
+*/
+namespace {
+
+struct {
+	int phase;
+
+	// the thread that starts the emulator thread is in OnThreadStarting(), where it waits for the stop
+	std::atomic<bool> inGap { false }, stopMade { false };
+
+	std::atomic<u32> gapRounds { 0 }, rounds { 0 }, callbacks { 0 }, direct { 0 }, lost { 0 }, hung { 0 }, running { 0 };
+
+	// start parks of the threads that the other thread stops: counted by the emulator thread
+	std::atomic<u32> parks { 0 };
+
+	// the other thread has made its stops: the start park that follows is the next stop of the test
+	std::atomic<bool> done { false };
+
+	u32 gapParks, early;
+} sk;
+
+const u32 kGapStops = 20;
+const u32 kStartParkStops = 200;
+
+// a stop that has not ended the thread by then is one that was lost
+const int kStartParkLostMs = 3000;
+
+// On the thread that starts the emulator thread, in OnThreadStarting(): the other thread stops the machine now
+void StartParkGap()
+{
+	sk.inGap = true;
+
+	while (!sk.stopMade)
+		std::this_thread::yield();
+}
+
+// The other thread: the emulator thread that it stopped has ended. If not, the stop is made a second time, so
+// that the session goes on
+bool StartParkEnded()
+{
+	if (!WaitLifetime(Lifetime::Stopped, kStartParkLostMs))
+	{
+		sk.lost++;
+
+		virtualDreamcast->Stop(nullptr);
+
+		if (!WaitLifetime(Lifetime::Stopped))
+			sk.hung++;
+
+		return false;
+	}
+
+	if (sh4_cpu->IsRunning())
+	{
+		sk.running++;
+
+		// put right, for the next thread to start
+		sh4_cpu->Stop();
+	}
+
+	return true;
+}
+
+void StartParkStops()
+{
+	HostStop first;
+
+	if (!StopMachine(&first))
+	{
+		sk.hung++;
+		return;
+	}
+
+	// The stop comes in while the starting thread is between the two
+	emu::test::threadStarting = StartParkGap;
+
+	for (u32 i = 0; i < kGapStops; i++)
+	{
+		sk.inGap = false;
+		sk.stopMade = false;
+
+		std::thread starter([] { virtualDreamcast->Resume(); });
+
+		while (!sk.inGap)
+			std::this_thread::yield();
+
+		virtualDreamcast->Stop([] { sk.callbacks++; });
+		sk.stopMade = true;
+
+		starter.join();
+
+		if (!StartParkEnded())
+			break;
+
+		sk.gapRounds++;
+	}
+
+	emu::test::threadStarting = nullptr;
+
+	sk.gapParks = sk.parks;
+
+	// The stop comes in where the two threads happen to meet
+	std::thread::id me = std::this_thread::get_id();
+
+	for (u32 i = 0; i < kStartParkStops && sk.lost == 0 && sk.hung == 0; i++)
+	{
+		u32 parks = sk.parks;
+
+		std::thread starter([] { virtualDreamcast->Resume(); });
+
+		if (i % 2 == 0)
+		{
+			// As early as the machine takes a stop for the new thread: one stop after the other, each of which
+			// runs its callback here for as long as it finds no thread
+			for (;;)
+			{
+				u32 direct = sk.direct;
+
+				virtualDreamcast->Stop([me] {
+					if (std::this_thread::get_id() == me)
+						sk.direct++;
+					else
+						sk.callbacks++;
+				});
+
+				if (sk.direct == direct)
+					break;
+			}
+		}
+		else
+		{
+			// Behind the publication of Running, where the cpu of the new thread is about to be started, and
+			// behind that of its start park, where the thread is on its way into the wait of the park loop
+			bool parked = i % 4 == 3;
+
+			while (parked ? emu::GetRunState().lifetime != Lifetime::Parked : emu::GetRunState().lifetime == Lifetime::Stopped)
+			{
+			}
+
+			Spin(parked ? i % 32 : (i * 37) % 300);
+
+			virtualDreamcast->Stop([] { sk.callbacks++; });
+		}
+
+		starter.join();
+
+		if (!StartParkEnded())
+			break;
+
+		if (sk.parks == parks)
+			sk.early++;
+
+		sk.rounds++;
+	}
+
+	sk.done = true;
+
+	virtualDreamcast->Resume();
+}
+
+}
+
+DBG_SELFTEST_GUEST(emu_startpark, "emu.startpark")
+{
+	if (sk.phase == 0)
+	{
+		if (!Ready(stop))
+			return false;
+
+		Goto(EMU_G_spin);
+		TakeSeen();
+
+		sk.gapRounds = sk.rounds = sk.callbacks = sk.direct = sk.lost = sk.hung = sk.running = 0;
+		sk.parks = 0;
+		sk.done = false;
+		sk.gapParks = sk.early = 0;
+		sk.phase = 1;
+
+		OtherStart(StartParkStops);
+		return false;
+	}
+
+	// The start park of a thread that the other thread stops: the stop ends it
+	if (!sk.done)
+	{
+		sk.parks++;
+		return false;
+	}
+
+	OtherJoin();
+
+	Check(sk.hung == 0 && sk.lost == 0 && sk.gapRounds == kGapStops,
+		"%u times a host stop for a thread that parks at its start, made when the machine takes it for that thread and the debugger has not heard of the thread: the thread ended every time (%u; %u stops were not taken within %d ms)",
+		kGapStops, sk.gapRounds.load(), sk.lost.load(), kStartParkLostMs);
+	Check(sk.gapParks == 0, "a thread whose cpu the machine left stopped at its start makes no park (%u parks)", sk.gapParks);
+	Check(sk.hung == 0 && sk.lost == 0 && sk.rounds == kStartParkStops && stop.cause == StopCause::Start,
+		"%u times a host stop wherever it meets the start of such a thread: the thread ended every time (%u)", kStartParkStops, sk.rounds.load());
+	Check(sk.callbacks == sk.gapRounds + sk.rounds + sk.lost, "every stop that the machine took for a thread ran its callback, once (%u of %u)",
+		sk.callbacks.load(), sk.gapRounds + sk.rounds + sk.lost);
+	Check(sk.running == 0, "the stopped machine never counted as running (it did %u times)", sk.running.load());
+	Note("of those %u the stop came in before the cpu of the new thread was started in %u, and with the thread parked at its start or on its way there in %u; %u stops found no thread",
+		sk.rounds.load(), sk.early, sk.rounds - sk.early, sk.direct.load());
+
+	TakeSeen();
+	sk.phase = 0;
 	return true;
 }
 

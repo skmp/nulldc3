@@ -69,6 +69,11 @@ u32 pausedTitles;
 // start park. Read by the first Park() of a thread; written while no emulator thread exists, or by that thread
 bool plainStart;
 
+// For the selftest: called by OnThreadStarting() as its first statement, on the thread that starts the emulator
+// thread. The machine takes a stop request for the new thread there already, and Kick() finds no thread yet.
+// Written while no emulator thread exists
+void (*threadStarting)();
+
 }
 
 namespace {
@@ -1078,6 +1083,9 @@ void OnMachineDestroying()
 
 void OnThreadStarting()
 {
+	if (test::threadStarting)
+		test::threadStarting();
+
 	{
 		std::lock_guard<std::mutex> q(queue_lock);
 
