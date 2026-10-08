@@ -4,7 +4,4 @@
    <FileRef
       location = "group:emulator-osx/reicast-osx.xcodeproj">
    </FileRef>
-   <FileRef
-      location = "container:emulator-ios/reicast-ios.xcodeproj">
-   </FileRef>
 </Workspace>

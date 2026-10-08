@@ -31,8 +31,6 @@ endif()
 
 
 
-### option for ARM || ARM64 ?  HOST isn't useful it's a cross ...
-
 #set(CMAKE_SYSTEM_PROCESSOR aarch64)
 
 
@@ -41,14 +39,12 @@ set(CMAKE_SYSTEM_NAME Android)
 set(CMAKE_SYSTEM_VERSION 22) # API level
 
 set(CMAKE_ANDROID_NDK ${NDK})
-set(CMAKE_ANDROID_ARCH_ABI armeabi-v7a) #arm64-v8a , armeabi-v7a , armeabi
+set(CMAKE_ANDROID_ARCH_ABI arm64-v8a)   #arm64-v8a , x86_64
 set(CMAKE_ANDROID_STL_TYPE c++_static)  #gnustl_static    libc++ will allow C++17, if you use _shared you must include in apk !
 set(CMAKE_ANDROID_NDK_TOOLCHAIN_VERSION clang)
 
 
-#arm	$TOOLCHAIN/ arm-linux-androideabi	/lib/
 #arm64	$TOOLCHAIN/ aarch64-linux-android	/lib/
-#x86	$TOOLCHAIN/ i686-linux-android		/lib/
 #x86_64	$TOOLCHAIN/ x86_64-linux-android	/lib/
 
 

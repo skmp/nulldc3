@@ -49,6 +49,6 @@ the data sheet and on wren7's model only, and is not changed until a console cap
 | D12 | recompiler: LDM / STM of one register with P = 0 and W = 0 | the base stays | rewritten as a post-indexed LDR / STR, which writes the base back (`hw/arm7/arm7_jit_virt.cpp`) | the recompiler is not built on x86-64 and no test runs it |
 | D14 | CPSR in the handler of a SWI or of the undefined instruction trap that is taken in a privileged mode | N, Z, C, V and F as they were, I set (data sheet 3.4) | N, Z, C, V and F of the SPSR of the mode the trap leaves: `ARM7Backend::CPUSwitchMode` (`hw/arm7/arm7.cpp`) loads the CPSR from the SPSR on the way into the mode. The SPSR of the trap and the return are right, and so is the entry of a FIQ. A SWI in SVC mode with CPSR = 0xA00000D3 and SPSR = 0x00000053 has 0x000000D3 in its handler | pending console confirmation |
 
-What the recompilers (ARM hosts, 32 bit x86) do not have of their own goes through the code these tests run:
-MUL and MLA, SWI and everything else they hand to `ARM7Backend::singleOp`, the reset and the interrupt
-controller. Data processing with its shifter carry is their own code.
+What the recompiler (arm64 hosts) does not have of its own goes through the code these tests run:
+MUL and MLA, SWI and everything else it hands to `ARM7Backend::singleOp`, the reset and the interrupt
+controller. Data processing with its shifter carry is its own code.

@@ -11,9 +11,6 @@ set(TNAME devcast)
 
 project(${TNAME})
 
-enable_language(ASM)
-enable_language(ASM_MASM)
-
 set(DEBUG_CMAKE ON)
 
 set(CMAKE_VERBOSE_MAKEFILE ON)
@@ -110,32 +107,16 @@ endif()
 
 if(${FEAT_SHREC} EQUAL ${DYNAREC_JIT}) 
 
-  if(${HOST_CPU} EQUAL ${CPU_X86})
-    list(APPEND core_SRCS 
-      ${d_core}/jit/backend/x86/rec_x86_driver.cpp
-      ${d_core}/jit/backend/x86/rec_x86_asm.cpp	# change for linux , rec_lin86_asm.S
-	  ${d_core}/jit/backend/x86/rec_x86_ngen.h
-
-      ${d_core}/jit/emitter/x86/x86_emitter.cpp
-     )
-  elseif(${HOST_CPU} EQUAL ${CPU_ARM})
-    list(APPEND core_SRCS 
-      ${d_core}/rec-ARM/ngen_arm.S
-      ${d_core}/rec-ARM/rec_arm.cpp
-	)
-  elseif(${HOST_CPU} EQUAL ${CPU_X64})
+  if(${HOST_CPU} EQUAL ${CPU_X64})
 
     list(APPEND core_SRCS ${d_core}/jit/backend/x64/rec_x64.cpp ${d_core}/jit/backend/x64/x64_regalloc.h)
 
   elseif(${HOST_CPU} EQUAL ${CPU_A64})
     list(APPEND core_SRCS ${d_core}/jit/backend/arm64/rec_arm64.cpp ${d_core}/jit/backend/arm64/arm64_regalloc.h)
   else()
-    message(" FEAT_SHREC==DYNAREC_JIT && HOST_CPU Unknown Default add arch or disable rec if not avail.")
-	error()
+    message(FATAL_ERROR "FEAT_SHREC is DYNAREC_JIT and this host CPU has no SH4 recompiler: there is one for x86_64 and one for arm64")
   endif()
 
-elseif(${FEAT_SHREC} EQUAL ${DYNAREC_CPP})
-    list(APPEND core_SRCS ${d_core}/jit/backend/cpp/rec_cpp.cpp)
 endif()
 
 # add_definitions(/DFEAT_HAS_SOFTREND=1)

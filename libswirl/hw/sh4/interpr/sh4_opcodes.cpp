@@ -1291,12 +1291,6 @@ INLINE void DYNACALL do_sqw(u32 Dest)
 	}
 	else
 	{
-
-#if HOST_CPU ==CPU_X86
-		//sanity/optimisation check
-		verify(CCN_QACR_TR[0]==CCN_QACR_TR[1]);
-#endif
-
 		u32 QACR = CCN_QACR_TR[0];
 		/*
 		//sq1 ? if so use QACR1
@@ -1320,7 +1314,7 @@ INLINE void DYNACALL do_sqw(u32 Dest)
 }
 
 void DYNACALL do_sqw_mmu(u32 dst) { do_sqw<true>(dst); }
-#if HOST_CPU != CPU_ARM && HOST_CPU != CPU_ARM64
+#if HOST_CPU != CPU_ARM64
 //yes, this micro optimization makes a difference
 extern "C" void DYNACALL do_sqw_nommu_area_3(u32 dst,u8* sqb)
 {

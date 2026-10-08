@@ -96,9 +96,9 @@ static void* fault_thread(void* arg)
 	}
 	else
 	{
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__)
 		__asm__ volatile("ud2");
-#elif defined(__aarch64__) || defined(__arm__)
+#elif defined(__aarch64__)
 		__asm__ volatile(".inst 0");
 #else
 		raise(SIGILL);

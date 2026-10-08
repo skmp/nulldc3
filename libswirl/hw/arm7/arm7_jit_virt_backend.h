@@ -7,7 +7,7 @@
 #pragma once
 
 #include "types.h"
-#include "jit/emitter/arm32/arm_coding.h"
+#include "arm_coding.h"
 
 enum OpType
 {

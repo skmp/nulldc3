@@ -59,7 +59,11 @@ void sigill_handler(int sn, siginfo_t * si, void *segfault_ctx) {
     context_from_segfault(&ctx);
     
 	unat pc = (unat)ctx.pc;
+#if FEAT_SHREC != DYNAREC_NONE
 	bool dyna_cde = (pc>(unat)CodeCache) && (pc<(unat)(CodeCache + CODE_SIZE));
+#else
+	bool dyna_cde = false;
+#endif
 	
 	printf("SIGILL @ %lx -> %p was not in vram, dynacode:%d\n", pc, si->si_addr, dyna_cde);
 	
@@ -114,18 +118,10 @@ u8* generic_fault_handler ()
 naked void re_raise_fault()
 {
 	__asm__ __volatile__(
-		#if HOST_CPU == CPU_X86
-	        "movl %0, %%esp\n"
-	        "call *%1\n"
-	        "movb $0, (%%eax)"
-        #elif HOST_CPU == CPU_X64
+        #if HOST_CPU == CPU_X64
             "movq %0, %%rsp\n"
             "call *%1\n"
             "movb $0, (%%rax)"
-        #elif HOST_CPU == CPU_ARM
-			"mov sp, %0\n"
-	        "blx %1\n"
-	        "ldr r1, [r0]"
 	    #elif HOST_CPU == CPU_ARM64
 	        "mov sp, %0\n"
 	        "blr %1\n"
@@ -365,25 +361,6 @@ void os_DebugBreak()
 }
 #endif
 
-void enable_runfast()
-{
-	#if HOST_CPU==CPU_ARM && !defined(ARMCC)
-	static const unsigned int x = 0x04086060;
-	static const unsigned int y = 0x03000000;
-	int r;
-	asm volatile (
-		"fmrx	%0, fpscr			\n\t"	//r0 = FPSCR
-		"and	%0, %0, %1			\n\t"	//r0 = r0 & 0x04086060
-		"orr	%0, %0, %2			\n\t"	//r0 = r0 | 0x03000000
-		"fmxr	fpscr, %0			\n\t"	//FPSCR = r0
-		: "=r"(r)
-		: "r"(x), "r"(y)
-	);
-
-	printf("ARM VFP-Run Fast (NFP) enabled !\n");
-	#endif
-}
-
 void linux_fix_personality() {
     #if !defined(TARGET_BSD) && !defined(_ANDROID) && !defined(TARGET_OS_MAC) && !defined(TARGET_NACL32) && !defined(TARGET_EMSCRIPTEN)
         printf("Personality: %08X\n", personality(0xFFFFFFFF));
@@ -415,7 +392,6 @@ void common_linux_setup()
 	linux_fix_personality();
 	linux_rpi2_init();
 
-	enable_runfast();
 	install_fault_handler();
 	// signal(SIGINT, exit);
 	

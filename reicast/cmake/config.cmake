@@ -46,9 +46,7 @@ set(OS_PS4_BSD     0x80000002)
 
 
 
-set(CPU_X86        0x20000001)  # HOST_CPU
-set(CPU_X64        0x20000004)
-set(CPU_ARM        0x20000002)
+set(CPU_X64        0x20000004)  # HOST_CPU
 set(CPU_A64        0x20000008)
 set(CPU_MIPS       0x20000003)
 set(CPU_MIPS64     0x20000009)
@@ -58,7 +56,6 @@ set(CPU_GENERIC    0x20000005)  # used for pnacl, emscripten, etc
 
 set(DYNAREC_NONE   0x40000001)  # FEAT_SHREC, FEAT_AREC, FEAT_DSPREC
 set(DYNAREC_JIT    0x40000002)
-set(DYNAREC_CPP    0x40000003)
 
 set(COMPILER_VC    0x30000001)  # BUILD_COMPILER
 set(COMPILER_GCC   0x30000002)
@@ -104,13 +101,20 @@ endif()
 
 
 
-## strings are used to append to path/file names, and to filter multiple possibilities down to one 
-#		AMD64/x86_64:x64, i*86:x86, ppc/powerpc[64][b|l]e:ppc[64] etc 
+## Native builds are for x86_64 and arm64. A 32-bit x86 or arm host has no recompiler, no fault context and no FP mode
+#  code in this tree, and the configure stops instead of building what is left. Any other processor has no recompiler
+#  and runs the interpreters.
 #
-if(("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "i686") OR
-   ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "X86"))   # todo: check MATCHES "i.86" ?
-  set(host_arch "x86")
-  set(HOST_CPU ${CPU_X86})
+function(nulldc_no_32bit_host what)
+  message(FATAL_ERROR "32-bit x86 and arm hosts are not supported (${what}): nullDC builds for x86_64 and arm64.")
+endfunction()
+
+## strings are used to append to path/file names, and to filter multiple possibilities down to one 
+#		AMD64/x86_64:x64, ppc/powerpc[64][b|l]e:ppc[64] etc 
+#
+if(EMSCRIPTEN)	# its toolchain file calls the processor "x86": the host is WebAssembly
+  set(host_arch "wasm")
+  set(HOST_CPU ${CPU_GENERIC})
 #
 elseif(("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64") OR
        ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64") OR
@@ -125,9 +129,11 @@ elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "arm64")
   set(host_arch "arm64")
   set(HOST_CPU ${CPU_A64})
 #
-elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "arm")
-  set(host_arch "arm")
-  set(HOST_CPU ${CPU_ARM})
+elseif(("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^i[3-6]86$") OR
+       ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^[xX]86$") OR
+       ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "arm") OR			# has to be done after arm64
+       ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^ARM(V[0-9A-Z]+)?$"))	# the names MSVC has for it
+  nulldc_no_32bit_host("CMAKE_SYSTEM_PROCESSOR is \"${CMAKE_SYSTEM_PROCESSOR}\"")
 #
 elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "ppc64")
   set(host_arch "ppc64")
@@ -149,6 +155,11 @@ else()
   message("Warning: Unknown Host System Processor: \"${CMAKE_SYSTEM_PROCESSOR}\"")
   set(host_arch "${CMAKE_SYSTEM_PROCESSOR}")
   set(HOST_CPU ${CPU_GENERIC})
+endif()
+
+# The same host with a 32-bit compiler (-m32, a 32-bit userland on a 64-bit kernel)
+if(((${HOST_CPU} EQUAL ${CPU_X64}) OR (${HOST_CPU} EQUAL ${CPU_A64})) AND ("${CMAKE_SIZEOF_VOID_P}" STREQUAL "4"))
+  nulldc_no_32bit_host("the compiler has 4 byte pointers on \"${CMAKE_SYSTEM_PROCESSOR}\"")
 endif()
 
 string(TOLOWER ${CMAKE_SYSTEM_NAME} host_os)
@@ -188,24 +199,22 @@ endif()
 
 
 
-#option(TARGET_NO_REC  BOOL "")
-#option(TARGET_NO_AREC BOOL "")
-#option(TARGET_NO_JIT  BOOL "")
+option(TARGET_NO_REC  "Interpreters only: no SH4, ARM7 or DSP recompiler, on any host" OFF)
+option(TARGET_NO_AREC "No ARM7 and no DSP recompiler" OFF)
 
 
 
 ## Main CPU Dynarec
-if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_X64}) OR
-   (${HOST_CPU} EQUAL ${CPU_ARM}) OR (${HOST_CPU} EQUAL ${CPU_A64}))
+if((${HOST_CPU} EQUAL ${CPU_X64}) OR (${HOST_CPU} EQUAL ${CPU_A64}))
   message("SH4 Dynarec Features Available")
   set(FEAT_SHREC  ${DYNAREC_JIT})
 else()
   message("SH4 Dynarec Features Missing")
-  set(FEAT_SHREC  ${DYNAREC_CPP})
+  set(FEAT_SHREC  ${DYNAREC_NONE})
 endif()
 
 # Sound CPU dynarec
-if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_A64}))
+if(${HOST_CPU} EQUAL ${CPU_A64})
   message("ARM7 Dynarec Features Available")
   set(FEAT_AREC  ${DYNAREC_JIT})
 else()
@@ -214,7 +223,7 @@ else()
 endif()
 
 # Sound DSP dynarec
-if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_A64}))
+if(${HOST_CPU} EQUAL ${CPU_A64})
   message("DSP Dynarec Features Available")
   set(FEAT_DSPREC  ${DYNAREC_JIT})
 #
@@ -236,10 +245,11 @@ if(TARGET_NO_AREC)
   set(FEAT_DSPREC ${DYNAREC_NONE})
 endif()
 
-if(TARGET_NO_JIT)
-  set(FEAT_SHREC  ${DYNAREC_CPP})
-  set(FEAT_AREC   ${DYNAREC_NONE})
-  set(FEAT_DSPREC ${DYNAREC_NONE})
+## A generic host has no fault context (oslib/context.h) and no fault trampoline (linux/common.cpp): it is built without
+#  the fault handler, so without nvmem and without write protection of VRAM, and without the sampling profiler.
+#
+if(${HOST_CPU} EQUAL ${CPU_GENERIC})
+  add_definitions(-DTARGET_NO_EXCEPTIONS -DTARGET_NO_NIXPROF)
 endif()
 
 
@@ -313,13 +323,9 @@ if ((${BUILD_COMPILER} EQUAL ${COMPILER_VC}) OR
 elseif ((${BUILD_COMPILER} EQUAL ${COMPILER_GCC}) OR
 		(${BUILD_COMPILER} EQUAL ${COMPILER_CLANG})) # AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS}))
   
-  if(USE_32B OR TARGET_LINUX_X86)
-    set(_C_FLAGS "${_C_FLAGS} -m32")
-  endif()
-  
-  if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_X64}))
+  if(${HOST_CPU} EQUAL ${CPU_X64})
     set(_C_FLAGS "${_C_FLAGS} -msse4")
-  endif() # X86 family
+  endif()
   
     
   set(_CXX_FLAGS "${_CXX_FLAGS} -fno-operator-names -fpermissive -fno-strict-aliasing") # -fcxx-exceptions") ## xbyak needs exceptions
