@@ -2,7 +2,7 @@
 
 Specification for TRACK1-DESIGN.md v2 (replaces the "interpreter loop while breakpoints are armed" text of 2.3 / 2.4).
 It implements decision D1 ("what you debug is what runs"). Scope: SH4 code breakpoints, resume, single step, step over,
-step out; x64 JIT and the interpreter in full, the other JIT backends as requirements plus the fallback.
+step out; x64 JIT and the interpreter in full, the other JIT backend (arm64) as requirements plus the fallback.
 
 Code references are `devcast/libswirl/...` at `34a62ea8` (branch `skmp/nulldc3`), written relative to `libswirl/`.
 A prototype of everything in section 3 except 3.j exists (Appendix A); its measurements are in Appendix B; where this text
@@ -86,7 +86,7 @@ implementation required). `shop_ifb` is not reused: its flush is partial for mos
   Without it a T write in front of the check is deleted when a later instruction overwrites T, and the stop shows a stale T.
 - The DIV32 idiom matchers (`decoder.cpp:644-696`) decline when an address in `[pc + 2, pc + 130)` is armed, and in
   temporary blocks. (They are off by default: `settings.dynarec.safemode`.)
-- `AnalyseBlock`'s "last op sets flags" shortcut (`shil.cpp:935-951`, arm32 `rec_arm.cpp:346-366`) simply does not apply
+- `AnalyseBlock`'s "last op sets flags" shortcut (`shil.cpp:935-951`) simply does not apply
   when the check is the last op (a check in front of `bt`/`bf`, which emit no op): `enjcond` adds the `jcond`. Semantics
   are unchanged.
 
@@ -398,26 +398,27 @@ if (step-out pending) { report call / RTS; if (stop pending) return }
   `next_pc = newpc` and the interrupt check (`sh4_opcodes.cpp:905-921`), the same order as the JIT epilogue.
 - The cycle-accurate backend (PLAN track 4) follows this section.
 
-### 3.j Other JIT backends, and the fallback
+### 3.j The other JIT backend (arm64), and the fallback
 
-A backend states `ngen_features::DebugChecks` (new flag, `decoder.h:47-51`, filled in `GetFeatures`). It may set it when
-it implements all of:
+The recompiler backends are x64 and arm64; hosts without one run the interpreter of 3.i. A backend states
+`ngen_features::DebugChecks` (new flag, `decoder.h:47-51`, filled in `GetFeatures`). It may set it when it implements all
+of:
 
-| item | x64 (prototype) | arm64 | arm32 | x86 | cpp (cached SHIL) |
-|---|---|---|---|---|---|
-| `shop_dbg_check` | 3.a | same shape; flush comes from the shared `regalloc.h` | same | own register allocator: flush all | an `opcodeExec` that calls the helper |
-| leave without time advance | `jmp mainloop_exit` | store `next_pc`, branch to `.end_mainloop` (`rec_arm64.cpp:173-184`, needs a global label) | branch to `cleanup` (`ngen_arm.S`) | jump to the loop epilogue (`rec_lin86_asm.S`) | `longjmp` to a `setjmp` at `rec_mainloop` entry (`rec_cpp.cpp:823-841`); the op chain has no early exit (`:762-776`) |
-| refund | `add [cycle_counter]` | `add w27` in the stop path | `add r9` | `add [cycle_counter]` | `cycle_counter +=` |
-| counter survives | static init | `w27` loaded from / stored to the context at loop entry / exit (`:133`) | `r9` likewise (`ngen_arm.S:150`) | drop `mov cycle_counter, 448` (`rec_lin86_asm.S:106`) | drop `cycle_counter = 0` (`:827`), refill after the inner loop |
-| `RunBlock` | generated thunk | block must end by returning to the thunk, not by linking (`RelinkBlock`, `:868-952`; `rdv_LinkBlock` would chain it) | same | same | call `execute()` once |
-| step-out epilogue report | 3.h | in `RelinkBlock` for call / ret / intr ends, before the link or lookup | same | same | in the block-end op |
-| `Sh4cntx.pc` at a stop | helper writes it | same (the PC lives in `w29` between blocks, E-21) | same (`r4`) | same | same |
+| item | x64 (prototype) | arm64 |
+|---|---|---|
+| `shop_dbg_check` | 3.a | same shape; flush comes from the shared `regalloc.h` |
+| leave without time advance | `jmp mainloop_exit` | store `next_pc`, branch to `.end_mainloop` (`rec_arm64.cpp:173-184`, needs a global label) |
+| refund | `add [cycle_counter]` | `add w27` in the stop path |
+| counter survives | static init | `w27` loaded from / stored to the context at loop entry / exit (`:133`) |
+| `RunBlock` | generated thunk | block must end by returning to the thunk, not by linking (`RelinkBlock`, `:868-952`; `rdv_LinkBlock` would chain it) |
+| step-out epilogue report | 3.h | in `RelinkBlock` for call / ret / intr ends, before the link or lookup |
+| `Sh4cntx.pc` at a stop | helper writes it | same (the PC lives in `w29` between blocks, E-21) |
 
-arm32 / arm64 / x86 test the counter at block *entry* and restart the block after an interrupt
+arm64 tests the counter at block *entry* and restarts the block after an interrupt
 (`rdv_DoInterrupts`, `driver.cpp:328-352`); a check stop is independent of that path.
 
-**Fallback (only for a JIT backend with `DebugChecks == false`).** Selected by exactly that flag, read once after
-`setBackend`: SH4 breakpoints and steps then run in the interpreter debug loop of 3.i
+**Fallback (only for a JIT backend with `DebugChecks == false`: arm64, until it implements the items above).** Selected
+by exactly that flag, read once after `setBackend`: SH4 breakpoints and steps then run in the interpreter debug loop of 3.i
 (`SuperH4_impl::Run()` chooses it while the armed set is non-empty, a step-out is pending or a step is requested; arming /
 disarming while running uses the "apply" path of 3.e to switch loops; the JIT's block cache is kept). Time: the fallback
 charges **by the decoder's blocks**: at each block start it decodes the block at PC (`RuntimeBlockInfo::Setup`, no
@@ -475,7 +476,7 @@ One package ("E4b sh4-native-debug"), after E0; it must own or co-own:
 |---|---|
 | `hw/sh4/dyna/decoder.cpp`, `decoder.h` | query + `shop_dbg_check` emission, size limits without check ops, DIV32 rule, `DecodeLimits`, refund rewrite, `dbg_flow`, `ngen_features::DebugChecks` |
 | `hw/sh4/dyna/shil_canonical.h`, `shil.cpp` | the op; `srt_waw` T-reader rule |
-| `hw/sh4/dyna/regalloc.h` | flush rule (shared by x64, arm32, arm64) |
+| `hw/sh4/dyna/regalloc.h` | flush rule (shared by x64 and arm64) |
 | `hw/sh4/dyna/blockmanager.h/.cpp` | `bm_DiscardAddrPage`, `bm_DiscardFlowBlocks`, temporary-block pointer, `dbg_flow` (co-owned with E3, which adds its write helper there, E-14) |
 | `hw/sh4/dyna/driver.cpp`, `ngen.h` | `rdv_RunTempBlock`, `recSH4::Loop` remainder, `recSH4::Step`, `RunBlock`; banner prints move out of `Loop()` |
 | `jit/backend/x64/rec_x64.cpp` | check emission, `mainloop_exit`, `RunBlock` thunk, epilogue report, counter not reset at entry |
@@ -534,7 +535,7 @@ and at least two baseline runs must agree (B.6).
    dispatcher would; the mirror a stop reports (3.d) follows from the same lookup.
 8. **Host determinism.** One run in about 150 took a different guest path with identical inputs (B.6). Gates that
    compare state hashes need a retry policy.
-9. Not prototyped: MMU builds, arm / x86 / cpp backends, the fallback, the step preconditions, the park protocol
+9. Not prototyped: MMU builds, the arm64 backend, the fallback, the step preconditions, the park protocol
    (E-01, E-04) around the stop. The emitted x64 code was only run with the System V ABI; the Windows paths
    (`STACK_ALIGN` 40, argument registers) follow the existing `WIN32_ONLY` conventions of `rec_x64.cpp` but are untested.
 

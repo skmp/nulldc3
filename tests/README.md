@@ -72,6 +72,16 @@ The `aica.dsp.diff.*` and `aica.dsp.case.*` tests need `-DNULLDC_CAIQUE_DIR=<pat
 sits next to the repository; they compile its sample model and its DSP programs (C) from there and read its console
 captures.
 
+The emulator has an SH4 recompiler for x86-64 hosts and one for arm64 hosts, an ARM7 and a DSP recompiler for arm64
+hosts, and its interpreters on every host; it does not configure for 32-bit x86 and arm hosts. Of the recompilers the
+tests here run the x86-64 backend. `-DTARGET_NO_REC=ON` builds the emulator without a recompiler on any host. A
+generic host, one whose processor `reicast/cmake/config.cmake` has no name for, gets that build without the fault
+handler, so without nvmem; on an x86-64 machine `-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=<such a name>`
+configures it. The system tests take such a binary with `-DNULLDC_EMULATOR=`. On a `TARGET_NO_REC` build every case
+passes but `guest_exit.jit`, `boot.2ndmix.jit` and `boot.hello.jit`, which have to see the recompiler, and
+`fault.guest`, whose faults are the recompiler's; without the fault handler the `fault.*` cases have nothing to wait
+for either.
+
 Every test but `common.selftest`, `sh4.core`, the `debugger.sh4bp.*` tests, `cfg.overrides`, `runctl.guest_exit.*`,
 the system tests, `aica.dsp.capi` and the `aica.dsp.wasm` tests is gated on a baseline file, and ctest runs them
 with `--strict`: a count that is worse than its baseline fails, and so does one that is better, until the baseline
