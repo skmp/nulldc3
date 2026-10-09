@@ -353,9 +353,9 @@ namespace
 
 		Check(Find("dc.nothing") == nullptr && Find("") == nullptr && Find("DC") == nullptr, "Find() finds what is not there");
 
-		// events: an id is listed by the node the event table names for it, by that node only and at most once.
-		// A node lists what the build raises, so a row may be listed by none, and the row that nothing raises
-		// has to be: a server accepts a breakpoint on every event it lists
+		// events: an id is listed by the node the event table names for it, by that node only and exactly once.
+		// A node lists what the build raises: the one row that nothing raises is listed by none (a server accepts
+		// a breakpoint on every event it lists)
 		std::vector<int> listed(EV_ID_COUNT, 0);
 
 		for (uint32_t i = 0; i < count; i++)
@@ -378,11 +378,12 @@ namespace
 		for (int id = 0; id < EV_ID_COUNT; id++)
 		{
 			Check(Find(EventTable()[id].node) != nullptr, "event %s names the node %s, which is not in the tree", EventTable()[id].name, EventTable()[id].node);
-			Check(listed[(size_t)id] <= 1, "event %s is listed %d times", EventTable()[id].name, listed[(size_t)id]);
-		}
 
-		Check(listed[EV_DEBUGGER_DSP_FORCED] == 0, "event %s, which nothing raises, is listed %d times", EventTable()[EV_DEBUGGER_DSP_FORCED].name,
-			listed[EV_DEBUGGER_DSP_FORCED]);
+			if (id == EV_DEBUGGER_DSP_FORCED)
+				Check(listed[(size_t)id] == 0, "event %s, which nothing raises, is listed %d times", EventTable()[id].name, listed[(size_t)id]);
+			else
+				Check(listed[(size_t)id] == 1, "event %s is listed %d times", EventTable()[id].name, listed[(size_t)id]);
+		}
 
 		// the paths clients rely on
 		for (const Anchor* list : { anchors, added })
