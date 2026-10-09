@@ -353,7 +353,9 @@ namespace
 
 		Check(Find("dc.nothing") == nullptr && Find("") == nullptr && Find("DC") == nullptr, "Find() finds what is not there");
 
-		// events: an id is listed by the node the event table names for it, and by that node only
+		// events: an id is listed by the node the event table names for it, by that node only and at most once.
+		// A node lists what the build raises, so a row may be listed by none, and the row that nothing raises
+		// has to be: a server accepts a breakpoint on every event it lists
 		std::vector<int> listed(EV_ID_COUNT, 0);
 
 		for (uint32_t i = 0; i < count; i++)
@@ -376,8 +378,11 @@ namespace
 		for (int id = 0; id < EV_ID_COUNT; id++)
 		{
 			Check(Find(EventTable()[id].node) != nullptr, "event %s names the node %s, which is not in the tree", EventTable()[id].name, EventTable()[id].node);
-			Check(listed[(size_t)id] == 1, "event %s is listed %d times", EventTable()[id].name, listed[(size_t)id]);
+			Check(listed[(size_t)id] <= 1, "event %s is listed %d times", EventTable()[id].name, listed[(size_t)id]);
 		}
+
+		Check(listed[EV_DEBUGGER_DSP_FORCED] == 0, "event %s, which nothing raises, is listed %d times", EventTable()[EV_DEBUGGER_DSP_FORCED].name,
+			listed[EV_DEBUGGER_DSP_FORCED]);
 
 		// the paths clients rely on
 		for (const Anchor* list : { anchors, added })
@@ -412,7 +417,7 @@ namespace
 			{ "dc.sh4.cpu", "PC", 32 }, { "dc.sh4.cpu", "PR", 32 }, { "dc.sh4.cpu", "SR", 32 }, { "dc.sh4.cpu", "R15", 32 },
 			{ "dc.sh4.cpu", "FPSCR", 32 }, { "dc.sh4.cpu", "R7_BANK", 32 }, { "dc.sh4.cpu", "FR15", 32 }, { "dc.sh4.cpu", "XF15", 32 },
 			{ "dc.aica.arm7", "PC", 32 }, { "dc.aica.arm7", "R14", 32 }, { "dc.aica.arm7", "CPSR", 32 }, { "dc.aica.arm7", "SPSR_FIQ", 32 },
-			{ "dc.aica.dsp", "STEP", 16 }, { "dc.aica.dsp", "MDEC_CT", 32 }, { "dc.aica.dsp", "RBP", 12 }, { "dc.aica.dsp", "RBL", 2 },
+			{ "dc.aica.dsp", "STEP", 8 }, { "dc.aica.dsp", "MDEC_CT", 16 }, { "dc.aica.dsp", "RBP", 16 }, { "dc.aica.dsp", "RBL", 8 },
 			{ "dc.timing", "MODE", 0 }, { "dc.timing", "SH4_CYCLES", 64 }, { "dc.timing", "SCHED_NOW", 64 },
 			{ "dc.timing", "SH4_BACKEND", 0 }, { "dc.timing", "SH4_DEBUG_ENGINE", 0 },
 			{ "dc", "SYSCLK", 0 }, { "dc", "BUILD", 0 },

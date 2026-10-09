@@ -31,7 +31,7 @@ const u32 kScanWords = 1024;
 enum class FrameKind : u8 {
 	Pc,			// frame 0. No wire location
 	Link,		// wire location "pr" (SH4), "lr" (ARM7)
-	Stack,		// wire location "stack+0x<stackOffset in hex>"
+	Stack,		// wire location "stack+0x<stackOffset in lower-case hex>"
 };
 
 struct Frame {
@@ -41,8 +41,10 @@ struct Frame {
 	FrameKind kind;
 };
 
-// Writes at most maxFrames frames, innermost first, and returns their number: at least 1 for Sh4 and
-// Arm7 when maxFrames is not 0, and 0 for Dsp and when no machine exists. maxFrames <= kMaxCallstackFrames.
+// Writes at most maxFrames frames, innermost first, and returns their number: when maxFrames is not 0, at
+// least 1 for Sh4, and for Arm7 while the ARM7 runs (the program counter, and the link register as frame 1
+// when maxFrames allows it); 0 for Arm7 while the ARM7 is held in reset (SoundCPU::DebugEnabled() is
+// false), for Dsp and when no machine exists. maxFrames <= kMaxCallstackFrames.
 // On (E), or on a thread that holds L while no emulator thread exists. In the slice hook the SH4 context
 // must be complete (SH4DBG_CTX_AT_SLICE); callers do not unwind the SH4 there otherwise. No side effects.
 u32 Unwind(Target t, Frame* out, u32 maxFrames);

@@ -77,17 +77,32 @@ namespace dbg {
 	Process start and end (dbg_main.cpp).
 
 	Section Debugger of the configuration (on the command line: -config Debugger:Port=0), keys and defaults:
-	  read by Init()          Enabled yes, Bind 127.0.0.1, Port 55543, Required no, AllowedHosts (empty),
-	                          WebRoot (empty), TickMs 200, FullTickEvery 5
-	  read by dbg::emu        StartPaused no, ForceFallback no
+	  read by Init()          Enabled yes (no in an automated run: headless, or an Exit.* key that ends the
+	                          run; and no in a selftest session: Debugger:SelfTest set), Bind 127.0.0.1,
+	                          Port 55543, Required no, AllowedHosts (empty), WebRoot (empty), TickMs 200,
+	                          FullTickEvery 5
+	  read by dbg::emu        StartPaused no (Init() reads it as well, for its configuration check),
+	                          ForceFallback no
 	  read by dbg::selftest   SelfTest (empty)
 */
 
-// (U), once, at the end of reicast_init(); lifetime NoMachine. With Debugger:Enabled it starts the server
-// and the core thread and prints exactly "Debugger: http://<bind>:<port>/" with the bound port; it blocks
-// for the bind only. A bind that fails ends the process with exit code 2 when Debugger:Required is set;
-// otherwise it is logged and the emulator runs without a server. Without Debugger:Enabled nothing is
-// started; the hooks and helpers below work all the same. Does not change signal dispositions.
+// (U), once, at the end of reicast_init(); lifetime NoMachine. With Debugger:Enabled (in an automated run and
+// in a selftest session: only when the key is set explicitly, on the command line or in emu.cfg) it starts
+// the server and the core thread and prints exactly "Debugger: http://<bind>:<port>/" with the bound port, as
+// one line on stdout, flushed (a Bind that contains a colon is printed in brackets: http://[::1]:<port>/); it
+// blocks for the bind only. A server cannot be started when core::Start or net::Server::Start returns false
+// (a bind that fails, an address that does not resolve, a Port outside 0..65535, a thread or the socket
+// library that cannot be set up) and when Bind is not a loopback address while AllowedHosts is empty; a
+// loopback address is one of the texts 127.0.0.1, localhost, ::1, compared without regard to case, and
+// nothing is resolved for the comparison. The core thread, if it was started, is then ended again
+// (core::Stop): no core thread and no listener stay behind. With Debugger:Required, or with
+// Debugger:StartPaused outside a selftest session, the process ends: one line on stderr and exit(2), with no
+// nulldc-exit line; otherwise the failure is logged and the emulator runs without a server. TickMs and FullTickEvery below 1 are replaced by their defaults; both are handed to the
+// core before it is started. Without Debugger:Enabled nothing is started, and a key that needs the server is
+// a configuration error: with Debugger:Required set, or with Debugger:StartPaused set outside a selftest
+// session (whose test resumes the start park), the process ends the same way, one line on stderr that names
+// the key and exit(2), decided directly behind Enabled. The hooks and helpers below work all the same. Does
+// not change signal dispositions.
 void Init();
 
 // (U), once, at the start of reicast_term(), before the GUI and with it the machine are destroyed; any
@@ -118,8 +133,8 @@ extern std::atomic<u32> g_attn;
 // The stop latch: a debugger stop has been decided and (E) is on its way into the park context, or in it.
 // (E) only. Set by emu::LatchStop() and at the end of a step, cleared when the park context is left.
 // While it is set, emulator code obeys three rules:
-//   UpdateSystem()  returns 1 as its first statement: no emulated time passes, no scheduler callback runs,
-//                   the slice hook is not called
+//   UpdateSystem()  returns 1 behind its test of g_attn (ATTN_LATCHED): no emulated time passes, no scheduler
+//                   callback runs, the slice hook is not called
 //   UpdateINTC()    accepts nothing: sets g_intc_deferred and returns 0
 //   SLEEP handler   tests it in a slice of its wait that reported something and accepted nothing; when set
 //                   it sets g_sleep_cut, leaves the wait and re-executes SLEEP (next_pc -= 2)
@@ -140,8 +155,9 @@ extern bool g_in_sleep;
 extern bool g_sleep_cut;
 
 // (E) is in a debugger stop: latched, parked or executing a step. SuperH4_impl::IsRunning() is
-// CpuRunning || g_parked || (the cpu is stopped for a reset), so that a parked machine counts as running for
-// the host UI.
+// CpuRunning || g_parked || (the cpu is stopped for a reset) || (the machine has been asked to stop, or its
+// guest has exited, and the emulator thread has not taken its stop callback), so that a parked machine and one
+// on its way to a stop count as running for the host UI.
 // Set by (E) before it clears CpuRunning for a debugger stop. Cleared by (E) when it resumes, where the guest
 // stops the cpu for a reset, and at the end of the thread (where it takes its stop callback, and in
 // OnThreadExiting()); and by SuperH4_impl::Stop() on any thread (a stop request ends the debugger stop).
@@ -153,9 +169,12 @@ namespace emu {
 // tick of the slice. Never called from a signal handler. Does not wait for another thread.
 //
 // Lifetime Running:
-//   1. runs the queued CC_READ calls (dbg_emu.h), one at a time
+//   1. runs the queued CC_READ calls (dbg_emu.h), one at a time; a queued CC_EXEC call is completed with
+//      kErrNotPaused
 //   2. latches the stop (emu::LatchStop) if a freezing cause is recorded (event breakpoint, sound
-//      breakpoint), or if g_in_sleep is clear and a pause was requested or a call of another class is queued.
+//      breakpoint), or if g_in_sleep is clear, CpuRunning is set and a pause was requested or a call of
+//      another class is queued. (With CpuRunning clear the machine itself is about to leave Run(), and the
+//      park context that follows takes them.)
 //      A pause request or queued call met while g_in_sleep is set stays pending; once it has been pending
 //      for 250 ms of host time it is latched wherever the hook is called from.
 //      For a queued call alone the latch has no cause: Run() returns for a service excursion, which is no
@@ -177,7 +196,8 @@ bool UseFallbackLoop();
 // Any thread, any lifetime state; returns at once (it waits for nothing but the short mutex of the call
 // queue). Wakes the park loop, which then returns to dc_run for the evaluation of the machine's stop
 // reasons. SuperH4_impl::Stop() calls it after it cleared CpuRunning and g_parked. Without a parked thread
-// it does nothing.
+// it does nothing: a kick made before OnThreadStarting() is not kept, and dc_run evaluates the machine's stop
+// reasons itself when the cpu was left stopped at thread start.
 void Kick();
 
 /*
@@ -240,7 +260,8 @@ void OnThreadExiting(bool guestExit);
 // In Dreamcast_impl::Reset and LoadState, L held, after the new guest state is in place; any lifetime
 // state with a machine: (U) while Stopped, (E) for a guest reset or a reset by the debugger (park context).
 // The debugger drops what belonged to the old state: the owed remainder and resume exemption of the SH4
-// breakpoint mechanism, g_sleep_cut, temporary breakpoints, a pending step-out.
+// breakpoint mechanism, g_sleep_cut, a deferred interrupt acceptance (g_intc_deferred), temporary breakpoints,
+// a pending step-out, and the resume that a thread exit taken in a debugger stop left owed.
 // On (E) it calls dbg::sh4::OnPcWritten() and OnStop(nullptr). While Stopped it calls OnPcWritten() only: no
 // temporary breakpoint and no step-out exists then, because OnThreadExiting() ended them.
 // While Stopped it publishes a new stop (the stop counter advances) so that clients fetch again; on (E) the
@@ -250,10 +271,11 @@ void OnGuestStateReplaced();
 /*
 	The park context, called by dc_run on (E):
 
-	    OnThreadEntered(); ...; start the cpu; emu_started.Set();
+	    OnThreadEntered(); ...; park = start the cpu; emu_started.Set();
 	    for (;;) {
-	        if (Park() == PARK_RUN)
+	        if (park && Park() == PARK_RUN)
 	            sh4_cpu->Run();
+	        park = true;
 	        // the machine's own stop reasons, in this order:
 	        //   guest reset pending:              save ROM files, Reset(), sh4_host_fp_resync(), start the cpu
 	        //   host stop or guest exit pending:  break
@@ -262,7 +284,9 @@ void OnGuestStateReplaced();
 
 	dc_run starts the cpu at thread start and after a guest reset, through the machine's own start function,
 	which sets CpuRunning (SuperH4::Start) and leaves the cpu stopped when a stop has been requested; everywhere
-	else Park() owns CpuRunning, g_parked and g_stop_latched.
+	else Park() owns CpuRunning, g_parked and g_stop_latched. A thread whose cpu is left stopped at thread start
+	makes no Park() in front of its first evaluation: the request may have come in before OnThreadStarting(),
+	where Kick() finds no thread.
 */
 enum : u32 {
 	PARK_RUN      = 0,		// the park context has been left; CpuRunning is set: call SuperH4::Run()
@@ -270,8 +294,9 @@ enum : u32 {
 };
 
 // (E), dc_run only; lifetime Running or Parked; the caller holds no lock. Called before the first
-// SuperH4::Run() of a thread, after emu_started is set, and after every evaluation of the machine's stop
-// reasons that did not end the thread.
+// SuperH4::Run() of a thread, after emu_started is set, unless the machine's start function left the cpu
+// stopped there (dc_run then evaluates first), and after every evaluation of the machine's stop reasons that
+// did not end the thread.
 //
 // - Runs the queued calls of every class, one at a time. With no debugger stop in force this is a service
 //   excursion: no stop is published.
@@ -282,7 +307,9 @@ enum : u32 {
 //   the threads that the selftest of dbg::emu starts itself.
 //   Entering a stop: g_parked is set, CpuRunning cleared, the SH4 breakpoint state drops its temporary
 //   breakpoints and a pending step-out, the listener is invoked, the window title becomes
-//   "nullDC 3.0.0 [paused by debugger]". The park loop then waits, without limit, for a call, for a
+//   "nullDC 3.0.0 [paused by debugger]" (it is put where it is not on the window already and stays until the
+//   running machine writes its frame rate; the emulator thread makes no window call behind its stop
+//   callback). The park loop then waits, without limit, for a call, for a
 //   run-control action that a call armed, or for Kick(); armed steps are executed by the loop itself.
 // - Leaves the park context for a resume and at the end of a service excursion, in this order: clears
 //   g_stop_latched; makes the interrupt acceptance that the latch deferred; calls sh4_host_fp_resync(); for a
@@ -292,6 +319,8 @@ enum : u32 {
 //   machine while the thread before it was parked) is a resume of that stop: the debugger pause that was in
 //   force before the host stop is not applied again, and dbg::emu calls dbg::sh4::PrepareResume() there, so
 //   that the instruction of the stop executes and its breakpoint does not stop again at once.
+//   This holds when the guest is where that stop was published: no step has executed since and the pc was
+//   not written. Otherwise nothing is resumed and a breakpoint on the new pc stops.
 //
 // Returns PARK_RUN after leaving, with CpuRunning set and g_stop_latched clear.
 // Returns PARK_EVALUATE, with CpuRunning clear, whenever a stop reason of the machine may be pending: after
@@ -306,8 +335,13 @@ u32 Park();
 	Events. Ids and their table: dbg_events.h.
 */
 
-// One gate per event: 1 while a client is connected (net::Server::HasClients) and the event is EVR_LOW or an
-// event breakpoint on it exists, else 0. Written by the debugger core; read by any thread through DBG_EVENT.
+// One gate per event: 1 while a client is connected and the event is EVR_LOW or an event breakpoint on it
+// exists (enabled or not), else 0. "A client is connected" is the debugger core's own count of open clients,
+// kept from the OnOpen / OnClose of its net::Handler; net::Server::HasClients is not consulted. Written by
+// the debugger core; read by any thread through DBG_EVENT.
+// One entry is made with every gate closed: when the grace period expires (kClientGraceMs) the core appends
+// dc.debugger.note to the event log itself, not through DBG_EVENT and not through EventSlow: no client is
+// connected at that moment. The next client finds the entry in its first tick.
 // A selftest session has no client: a guest test that sets an event breakpoint (emu::SetEventBreakpoints)
 // stores 1 in the gate of that event itself, and 0 when it removes the breakpoint. The core rewrites the
 // gates only when a client connects or disconnects or the event breakpoints change through it.

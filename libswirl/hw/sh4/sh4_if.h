@@ -300,9 +300,9 @@ struct SuperH4 {
     // start. Null before Init() and after Term(), and from a SuperH4 that does not give its backend out (the
     // default): a caller takes null as a backend without capabilities.
     // For the debugger (run control: DebugCaps, Step, SliceCyclesLeft; the SH4 breakpoint state:
-    // DebugDiscardPage, DebugDiscardFlow) and for the sound regression harness (DebugCaps); it is there in builds
-    // without the debugger as well. Emulator thread, or the thread that holds the debugger's lifetime lock while
-    // no emulator thread exists.
+    // DebugDiscardPage, DebugDiscardFlow; the memory writer of dbg_mem: DebugDiscardPage) and for the sound
+    // regression harness (DebugCaps); it is there in builds without the debugger as well. Emulator thread, or
+    // the thread that holds the debugger's lifetime lock while no emulator thread exists.
     virtual SuperH4Backend* DebugBackend() { return nullptr; }
 
     virtual bool Init() = 0;
@@ -442,8 +442,8 @@ enum {
 	// Sh4cntx is complete, pc included, whenever the backend calls UpdateSystem(): at a slice end, and from the
 	// SLEEP handler inside a block (a JIT that sets the bit closes every span, the FP registers included, in
 	// front of the SLEEP fallback). Without it the context is complete only after Loop() returned.
-	// A backend states the bit itself when it meets all of this; none does by default, and the interpreter and
-	// the x64 JIT do once they implement the debugger support of this header. Whatever reads SH4 state inside
+	// A backend states the bit itself when it meets all of this; none does by default. The interpreter and the
+	// x64 JIT do; the arm64 JIT does not. Whatever reads SH4 state inside
 	// UpdateSystem() reads it only under the bit (the debugger's slice hook, the sound regression harness), so
 	// its output for a backend changes at the point where that backend starts to report the bit.
 	SH4DBG_CTX_AT_SLICE = 2,
@@ -499,7 +499,8 @@ struct SuperH4Backend {
 
     // Discards every compiled block that overlaps the 4 KiB page of the guest address, in every mirror of
     // that page, and nothing else: page protection and the marks of pages that hold data stay as they are.
-    // Called when the debugger arms or disarms the address.
+    // Called when the debugger arms or disarms the address, and when the debugger writes main memory on a
+    // host without the virtual memory layout.
     virtual void DebugDiscardPage(u32 addr)               { }
 
     // Step-out: false discards every compiled block that ends with a call or a return, so that they are

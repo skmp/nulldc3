@@ -10,9 +10,10 @@
 
 /*
 	dbg::mem: guest memory for the debugger (dbg_mem.cpp). Byte granular, any address, any length. It reads
-	the backing stores and register arrays directly and never calls a guest memory handler, so a read changes
-	nothing and cannot spin or end the process, whatever the address. There is no address translation: MMU
-	builds are read through the same fixed map.
+	the backing stores and register arrays directly. It never calls a guest memory handler, and it calls the
+	read function of a register for two bytes only (0x00802C00 and 0x00802C01 of the ARM7 target), where that
+	function copies a byte and changes nothing: a read changes nothing and cannot spin or end the process,
+	whatever the address. There is no address translation: MMU builds are read through the same fixed map.
 
 	Read is called on (E) or by a thread that holds L while no emulator thread exists, Write on (E) only. The
 	backing stores are looked up from the machine on every call; no pointer is kept. Video memory and the PVR
@@ -43,7 +44,10 @@
 	Target::Arm7
 
 	  0x00000000-0x007FFFFF  AicaRam      wave memory, mirrored by its size
-	  0x00800000-0x00807FFF  AicaRegs
+	  0x00800000-0x00807FFF  AicaRegs     as a read by the ARM7 delivers them: the register file, with the
+	                                      interrupt level L at 0x2D00 (without the acknowledge of that read),
+	                                      0 at 0x2D04, and at 0x2C00 / 0x2C01 the two bytes of the register
+	                                      file where the SH4 has ARMRST and VREG
 	  everything else        Unreadable
 
 	Target::Dsp has no memory: every address is Unreadable.
@@ -84,9 +88,10 @@ u32 Read(Target t, u32 addr, u32 len, u8* out, u8* readableBits);
 // Writes len bytes at addr. All or nothing: the whole range is checked before the first byte is stored.
 // (E) in the park context only (inside a CC_WRITE call).
 // Writable are main memory, video memory and wave memory. A write to main memory first discards the compiled
-// SH4 blocks of every page it touches and is refused when the build cannot do that (no virtual memory
-// layout); a write to video memory first unlocks pages the texture cache locked; a write to wave memory
-// discards the ARM7's compiled code.
+// SH4 blocks of every page it touches: through bm_LockedWrite where the virtual memory layout is in use,
+// through SuperH4Backend::DebugDiscardPage of the active backend where it is not (virt_ram_base is null); a
+// write to video memory first unlocks pages the texture cache locked; a write to wave memory discards the
+// ARM7's compiled code.
 // Returns 0, kErrNotWritable (-32013) when any byte of the range is not writable, or kErrNotSupported
 // (-32004) while the writer does not exist.
 int Write(Target t, u32 addr, u32 len, const u8* data);

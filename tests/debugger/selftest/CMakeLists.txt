@@ -98,6 +98,10 @@ endfunction()
 
 nulldc_debugger_selftest(emu)
 
+# The device tree's registers, guest memory and the device accessors against the live machine
+# (libswirl/debugger/dbg_selftest_regs.cpp): machine tests, on the machine of the booted program
+nulldc_debugger_selftest(regs ELF 2ndmix.elf)
+
 # SH4 breakpoints and steps on the park loop of the emulator (libswirl/debugger/dbg_selftest_sh4bp.cpp,
 # tests/debugger/sh4bp/README.md): the session of the gates, and the two that make gates on the booted guest
 nulldc_debugger_selftest(sh4bp     ELF 2ndmix.elf CONFIG Debugger:StartPaused=yes)
@@ -141,6 +145,8 @@ nulldc_debugger_selftest(emurun.pending MODE same-hash ELF 2ndmix.elf)
 nulldc_debugger_selftest(emurun.pauses  MODE same-hash ELF 2ndmix.elf ENGINES ${nulldc_selftest_exact_engines}
                          ARGS --expect "pauses were taken and resumed")
 
-# A parked run stays parked, whatever Exit.* key it has: by a session, and by Debugger:StartPaused
+# A parked run stays parked, whatever Exit.* key it has: by a session, and by Debugger:StartPaused. The second
+# is no session, so it has the server enabled (on a port of the system's choice) and no client: without a
+# server Debugger:StartPaused=yes is a configuration error
 nulldc_debugger_selftest(emuhang.parked MODE parked ENGINES jit ARGS --vblanks 5 --expect "nothing resumes this run")
-nulldc_debugger_selftest(startpaused    MODE parked ENGINES jit SELFTEST NONE CONFIG Debugger:StartPaused=yes ARGS --vblanks 5)
+nulldc_debugger_selftest(startpaused    MODE parked ENGINES jit SELFTEST NONE CONFIG Debugger:StartPaused=yes Debugger:Enabled=yes Debugger:Port=0 ARGS --vblanks 5)

@@ -198,10 +198,10 @@ What the numbers are made of:
 
 - **Compiled code and the dispatcher** are the same with and without the debugger, and with addresses armed
   that the code does not hold.
-- **Per slice** the build with the debugger tests the stop latch and the attention word in `UpdateSystem()`
-  and the latch in `UpdateINTC()`, and reports an accepted interrupt (`dbg_sh4_OnException`): the calls of
-  the table below, which here are the copies this directory compiles. They are the whole difference of the
-  second window; nothing of it is per block or per instruction executed.
+- **Per slice** the build with the debugger tests the attention word in `UpdateSystem()`, and the stop latch
+  behind it and the latch in `UpdateINTC()`, and reports an accepted interrupt (`dbg_sh4_OnException`): the
+  calls of the table below, which here are the copies this directory compiles. They are the whole difference
+  of the second window; nothing of it is per block or per instruction executed.
 - **Per decoded instruction** the decoder asks `dbg_sh4_WantsCheck`: a load and a branch while nothing is
   armed; a block adds the test for a pending step-out. With an address armed, the query looks up the page of
   the instruction, and searches the armed set when that page holds an armed address, as the page of this
@@ -243,12 +243,12 @@ declare it (`debugger/debugger.h`, `debugger/dbg_sh4.h`, `hw/sh4/sh4_if.h`, `hw/
 | | `Run()`, once per entry | `dbg::emu::UseFallbackLoop() ? sh4_fallback_loop() : backend->Loop()` |
 | | `Step()` | forwards to `backend->Step()` |
 | | `Reset()`, and after a `setBackend()` that follows a `Reset()` which no emulator thread has run since | `backend->ResetSlice()` |
-| | first statement of `UpdateSystem()` | `if (unlikely(dbg::g_stop_latched)) return 1;` |
+| | the slice end of `UpdateSystem()` | `dbg::g_attn` is tested first; behind it, `if (dbg::g_stop_latched) return 1;` (the latch has its bit in the word, `ATTN_LATCHED`) |
 | | `UpdateSystem()`, behind the scheduler tick | `dbg::emu::SliceHook()` when `dbg::g_attn` is not zero |
 | `hw/sh4/sh4_interrupts.cpp` | first statement of `UpdateINTC()` | `if (unlikely(dbg::g_stop_latched)) { dbg::g_intc_deferred = true; return 0; }` |
 | | `Do_Interrupt()` and `Do_Exception()`, on every call, in front of the first change of the context | `dbg_sh4_OnException();` |
 | `hw/sh4/interpr/sh4_opcodes.cpp` | the `rte` handler, between `next_pc = newpc;` and its `UpdateINTC();` | `if (unlikely(dbg_sh4_stepout != 0)) dbg_sh4_CheckFlow(DBG_SH4_FLOW_RTE);` |
-| | the wait loop of the `sleep` handler | `dbg::g_in_sleep` set around the loop; in front of each `UpdateSystem_INTC()`: `if (dbg::g_stop_latched) { dbg::g_sleep_cut = true; ` leave and re-execute `}` |
+| | the wait loop of the `sleep` handler | `dbg::g_in_sleep` set around the loop; in a slice of the wait that reported something and accepted nothing: `if (dbg::g_stop_latched) { dbg::g_sleep_cut = true; ` leave and re-execute `}` |
 | `debugger/dbg_emu.cpp` | `LatchStop()`, which the checks and flow reports call to stop | sets `g_stop_latched` and `g_parked`, clears `CpuRunning`, keeps the cause and id it is given |
 | | `OnEmuThread()` | true on the emulator thread: `dbg::sh4` discards compiled blocks only then |
 | | `SetSh4Breakpoints()`, in the park context, or under the lifetime lock without an emulator thread | `dbg::sh4::SetBreakpoints(ids, addrs, n)` |
