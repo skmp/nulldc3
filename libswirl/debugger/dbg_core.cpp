@@ -267,9 +267,11 @@ struct CategoryState {
 	bool soloed;
 };
 
-std::map<u32, Breakpoint> breakpoints;		// by id
+// Nothing of the core is destroyed when the process ends: a thread of the debugger may still be at work in
+// an exit that did not go through dbg::Term. What has a destructor is made once and stays
+std::map<u32, Breakpoint>& breakpoints = *new std::map<u32, Breakpoint>();		// by id
 u32 next_breakpoint_id = 1;					// ids are never used twice in a process
-std::vector<Watch> watches;					// in id order
+std::vector<Watch>& watches = *new std::vector<Watch>();						// in id order
 u32 next_watch_id = 1;
 CategoryState categories[kCategoryCount];
 
@@ -410,8 +412,8 @@ struct ClientEntry {
 	bool needsFull;		// a periodic tick was not queued for it: the next tick it is sent is a full one
 };
 
-std::mutex clients_lock;				// a leaf
-std::vector<ClientEntry> clients;		// the open clients, as (C) has heard of them
+std::mutex& clients_lock = *new std::mutex();									// a leaf
+std::vector<ClientEntry>& clients = *new std::vector<ClientEntry>();			// the open clients, as (C) has heard of them
 
 std::atomic<u32> tick_id { 0 };
 
@@ -2474,19 +2476,21 @@ struct Message {
 	std::string text;
 };
 
-struct {
+struct Queue {
 	std::mutex lock;
 	std::condition_variable wake;
 	std::deque<Message> messages;
 	bool accepting = false;		// between Start() and Stop()
 	bool quit = false;
-} queue;
+};
 
-std::thread thread;
+Queue& queue = *new Queue();
+
+std::thread* thread;					// (C), between Start() and Stop()
 std::atomic<bool> started { false };
 
 // (C)'s own
-struct {
+struct Own {
 	std::set<u32> named;				// the clients whose "client" text was printed
 	u32 periodic = 0;					// periodic ticks so far
 	Clock::time_point nextTick;
@@ -2496,7 +2500,9 @@ struct {
 
 	bool syncOwed = false;				// the emulator thread did not take the table call of a connect or
 	Clock::time_point syncAt;			// disconnect: it is made again
-} c;
+};
+
+Own& c = *new Own();
 
 void Enqueue(Message&& message)
 {
@@ -2839,12 +2845,12 @@ bool Start(net::Server* s)
 		queue.accepting = true;
 	}
 
-	c = { };
+	c = Own();
 	server.store(s);
 
 	try
 	{
-		thread = std::thread(ThreadMain);
+		thread = new std::thread(ThreadMain);
 	}
 	catch (...)
 	{
@@ -2881,7 +2887,10 @@ void Stop()
 
 	// A call the thread waits for ends, or is given up by its timeout: the thread comes back from it and finds
 	// the flag
-	thread.join();
+	thread->join();
+
+	delete thread;
+	thread = nullptr;
 
 	server.store(nullptr);
 
