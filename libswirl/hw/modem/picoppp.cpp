@@ -9,7 +9,7 @@
 
 #include "build.h"
 
-#if !defined(_MSC_VER) && !defined(TARGET_NO_THREADS)
+#if !defined(_MSC_VER)
 
 #ifdef __MINGW32__
 #define _POSIX_SOURCE

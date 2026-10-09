@@ -38,8 +38,6 @@ set(OS_LINUX       0x10000002)
 set(OS_DARWIN      0x10000003)
 
 set(OS_UWP         0x10000011)
-set(OS_NSW_HOS     0x80000001)
-set(OS_PS4_BSD     0x80000002)
 
 
 
@@ -357,40 +355,13 @@ set(CMAKE_CXX_FLAGS " ${_CXX_FLAGS}") # ${CMAKE_CXX_FLAGS}
 #endif
 
 
-if (TARGET_NSW) # -DCMAKE_TOOLCHAIN_FILE=./cmake/devkitA64.cmake -DTARGET_NSW=ON
-  set(HOST_OS ${OS_NSW_HOS}) 
-
-  message(" DEVKITA64: ${DEVKITA64} ")
-  message("HOST_OS ${HOST_OS}")
-
-  add_definitions(-D__SWITCH__ -DGLES -DMESA_EGL_NO_X11_HEADERS)
-  add_definitions(-DTARGET_NO_THREADS -DTARGET_NO_EXCEPTIONS -DTARGET_NO_NIXPROF)
-  add_definitions(-DTARGET_NO_COREIO_HTTP -DTARGET_NO_WEBUI -UTARGET_SOFTREND)
-  add_definitions(-D_GLIBCXX_USE_C99_MATH_TR1 -D_LDBL_EQ_DBL)
-
-endif()
-
-if (TARGET_PS4) # -DCMAKE_TOOLCHAIN_FILE=./cmake/{ps4sdk,clang_scei}.cmake -DTARGET_PS4=ON
-  set(HOST_OS ${OS_PS4_BSD})
-  message("HOST_OS ${HOST_OS}")
-  
-
-  add_definitions(-DPS4 -DTARGET_PS4 -DTARGET_BSD -D__ORBIS__ -DGLES -DMESA_EGL_NO_X11_HEADERS)  ## last needed for __unix__ on eglplatform.h
-  add_definitions(-DTARGET_NO_THREADS -DTARGET_NO_EXCEPTIONS -DTARGET_NO_NIXPROF)
-  add_definitions(-DTARGET_NO_COREIO_HTTP -DTARGET_NO_WEBUI -UTARGET_SOFTREND)
-
-
-  message("*******FIXME******** LARGE PAGES !!")
-endif()
-
 
 
 if(ZBUILD)
   set(DEBUG_CMAKE ON)
   add_definitions(-D_Z_)  # Get rid of some warnings and internal dev testing
   
-  if(NOT TARGET_PS4 AND NOT TARGET_NSW AND 
-     NOT TARGET_OSX)
+  if(NOT TARGET_OSX)
      set(USE_QT ON)
   endif()
 endif()

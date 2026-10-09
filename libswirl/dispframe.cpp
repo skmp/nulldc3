@@ -52,11 +52,7 @@ void dc_run()
 			frame_finished.Wait();
 		if (QueueRender(ctx))  {
 			palette_update();
-#if !defined(TARGET_NO_THREADS)
 			rs.Set();
-#else
-			rend_single_frame();
-#endif
 		}
 		else
 			SetREP(NULL);	// Sched end of render interrupt

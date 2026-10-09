@@ -142,8 +142,6 @@
 #define OS_DARWIN    0x10000003
 
 #define OS_UWP       0x10000011
-#define OS_NSW_HOS   0x80000001
-#define OS_PS4_BSD   0x80000002
 
 
 //HOST_CPU
