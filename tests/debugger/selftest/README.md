@@ -60,6 +60,25 @@ test starts. Headless, nothing else plays the host.
 | `debugger.selftest.emuhang.parked` | a session that stays parked at its start, with `Exit.AfterVblanks=5`: 4 s later the process is still there and has printed no exit line. Emulated time stands still while the thread is parked, so no `Exit.*` key ends such a run |
 | `debugger.selftest.startpaused` | the same for `Debugger:StartPaused=yes` without a session: the start park waits without limit |
 
+## The tests of dbg::regs and dbg::mem
+
+`libswirl/debugger/dbg_selftest_regs.cpp`: the registers of the device tree, guest memory for the debugger and
+the device accessors behind them. All eight are machine tests: they run once, before the guest has executed
+anything, on the machine that boots `2ndmix.elf` of `NULLDC_ELF_DIR`. They read, and where they compare with
+what the guest would read they put the machine back as it was.
+
+| test | what has to hold |
+|---|---|
+| `debugger.selftest.regs` `.interp` | the session `regs`, the eight tests below |
+| `regs.slots` | the tables against the register slots of the live machine: every on-chip row is a registered slot, every registered on-chip slot has a row, and a row and its slot agree about a read function; every system bus row is a register that can be read |
+| `regs.read` | every register of every node reads, or says that it cannot, as its flags say: values inside their width, texts not empty and cut to the buffer, the outputs untouched on failure; reads without outputs and outside a node |
+| `regs.values` | values against a second source: `dc.sh4.cpu` against the SH4 context, the on-chip registers and `dc.holly.intc` against a guest read where that read changes nothing, the timer counters, `SB_FFST` without counting as a read, the time, the texts |
+| `regs.devices` | the debug accessors of the devices against a second source: `dc.aica.arm7` and the interrupt controller of the sound CPU against its save state, in each of the seven modes; the AICA register file against byte reads by the SH4, and the state of its 64 channels; the RTC; the DSP (`dc.aica.dsp`: its four widths, `MDEC_CT` as the counter modulo 2^16, `RBP` and `RBL` as the fields of the common register, the program against its registers); the interrupt controller; the GD-ROM; boot ROM and flash, and the flash bytes as a guest read delivers them |
+| `regs.mem.map` | `Classify()` against the map of `dbg_mem.h`: the regions of the SH4 at both ends and in the middle of every run in every mirror, the regions of the ARM7 and the DSP |
+| `regs.mem.read` | what `Read()` delivers, against the stores and the register readers: main memory in its mirrors and across the end of one, video memory in both views, wave memory for both processors, boot ROM and flash, the system bus, PVR and AICA registers and the RTC, the store queues, the on-chip registers at both of their addresses; the GD-ROM block, the modem, the FIFO registers and what is not mapped read as nothing; the readable bits of the 64 KiB around every region boundary |
+| `regs.mem.arm7` | the register window of the AICA for the ARM7 target against loads by the ARM7 itself: the whole window, the two bytes behind `ARMRST` and `VREG`, and the bytes where the ARM7 has its interrupt controller, in states of it that are made up |
+| `regs.pure` | reading changes nothing: the machine, as a save state has it, is the same before and after every register, every device accessor and the memory around every boundary was read |
+
 ## The tests of the SH4 breakpoints and steps
 
 `libswirl/debugger/dbg_selftest_sh4bp.cpp`, which `tests/debugger/sh4bp/README.md` describes: the gates of that

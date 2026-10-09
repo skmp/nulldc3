@@ -98,6 +98,10 @@ endfunction()
 
 nulldc_debugger_selftest(emu)
 
+# The device tree's registers, guest memory and the device accessors against the live machine
+# (libswirl/debugger/dbg_selftest_regs.cpp): machine tests, on the machine of the booted program
+nulldc_debugger_selftest(regs ELF 2ndmix.elf)
+
 # SH4 breakpoints and steps on the park loop of the emulator (libswirl/debugger/dbg_selftest_sh4bp.cpp,
 # tests/debugger/sh4bp/README.md): the session of the gates, and the two that make gates on the booted guest
 nulldc_debugger_selftest(sh4bp     ELF 2ndmix.elf CONFIG Debugger:StartPaused=yes)
