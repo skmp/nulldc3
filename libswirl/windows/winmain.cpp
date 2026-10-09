@@ -425,7 +425,6 @@ void setup_seh() {
 
 
 
-#if BUILD_RETROARCH_CORE==0
 
 // DEF_CONSOLE allows you to override linker subsystem and therefore default console //
 //	: pragma isn't pretty but def's are configurable 
@@ -510,43 +509,6 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 
 	return 0;
 }
-#else
-void retro_reicast_entry_point() {
-
-	ReserveBottomMemory();
-	SetupPath();
-
-	AddVectoredExceptionHandler(1, ExeptionHandler);
-#ifndef __GNUC__
-	__try
-#endif
-	{
-		CoInitialize(nullptr);
-
-		if (reicast_init(0, nullptr) != 0)
-			die("Reicast initialization failed");
-
-		setup_seh();
-
-		reicast_ui_loop();
-
-		reicast_term();
-	}
-#ifndef __GNUC__
-	__except (ExeptionHandler(GetExceptionInformation()))
-	{
-		printf("Unhandled exception - Emulation thread halted...\n");
-	}
-#endif
-	SetUnhandledExceptionFilter(0);
-	cfgSaveBool("windows", "maximized", window_maximized);
-	if (!window_maximized && screen_width != 0 && screen_width != 0)
-	{
-		cfgSaveInt("windows", "width", screen_width);
-		cfgSaveInt("windows", "height", screen_height);
-	}
-}
-#endif
 
 int get_mic_data(u8* buffer) { return 0; }
 int push_vmu_screen(u8* buffer) { return 0; }

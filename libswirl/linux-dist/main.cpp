@@ -161,7 +161,6 @@ void UpdateInputState(u32 port)
 	#endif
 }
 
-#if BUILD_RETROARCH_CORE==0
 void os_DoEvents()
 {
 	#if defined(SUPPORT_X11)
@@ -169,7 +168,6 @@ void os_DoEvents()
 		event_x11_handle();
 	#endif
 }
-#endif
 
 void os_SetWindowText(const char * text)
 {
@@ -378,60 +376,6 @@ void common_linux_fault_block(bool block);
 bool common_serial_pty_setup();
 #endif
 
-#if BUILD_RETROARCH_CORE==1
-
-int libretro_prologue(int argc, char* argv[])
-{
-	#ifdef TARGET_PANDORA
-		signal(SIGSEGV, clean_exit);
-		signal(SIGKILL, clean_exit);
-	#endif
-
-	/* Set directories */
-	set_user_config_dir(find_user_config_dir());
-	set_user_data_dir(find_user_data_dir());
-	std::vector<string> dirs;
-	dirs = find_system_config_dirs();
-	for(unsigned int i = 0; i < dirs.size(); i++)
-	{
-		add_system_data_dir(dirs[i]);
-	}
-	dirs = find_system_data_dirs();
-	for(unsigned int i = 0; i < dirs.size(); i++)
-	{
-		add_system_data_dir(dirs[i]);
-	}
-	add_system_data_dir(find_user_data_dir());
- 
-
-	common_linux_setup();
-
-	settings.profile.run_counts=0;
-
-	if (reicast_init(argc, argv))
-		die("Reicast initialization failed\n");
-    
-    #if FEAT_HAS_SERIAL_TTY
-    //bool cleanup_pty_symlink = common_serial_pty_setup();
-    #endif
-
-	#if FEAT_HAS_NIXPROF
-	install_prof_handler(1);
-	#endif
-
-	return 0;
-}
-
-void libretro_body()
-{
-
-}
-
-void libretro_epilogue()
-{
-	reicast_term();
-}
-#else
 bool os_gl_init(void* hwnd, void* hdc)
 {
 	#if defined(SUPPORT_GLX)
@@ -552,7 +496,6 @@ int main(int argc, wchar* argv[])
 
 	return runctl_exit_code();
 }
-#endif
 #endif
  
 int get_mic_data(u8* buffer) { return 0; }

@@ -244,13 +244,6 @@ audiobackend_t* GetAudioBackend(std::string slug)
 	}
 	else if (audiobackends_num_registered > 0)
 	{
-		#if BUILD_RETROARCH_CORE==1
-			audiobackend_t* rv = SearchAudioBackend("libretro");
-			if (rv != nullptr) {
-				printf("Auto-selected audio backend \"%s\" (%s).\n", rv->slug.c_str(), rv->name.c_str());
-				return rv;
-			}
-		#endif
 		if (slug == "auto")
 		{
 			/* FIXME: At some point, one might want to insert some intelligent
