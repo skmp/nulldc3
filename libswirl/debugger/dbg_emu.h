@@ -92,7 +92,7 @@ enum class Lifetime : u8 {
 };
 
 // Why the state is "paused": the wire value of executionState.reason. When several causes meet in one stop
-// the one published is the first of Breakpoint, Event, Step, Pause.
+// the one published is the first of Reset, Start, Breakpoint, Event, Step, Pause.
 enum class StopCause : u8 {
 	NoCause,		// not paused: lifetime Running. Nothing on the wire
 	Pause,			// "pause"         control.pause honoured
@@ -100,10 +100,11 @@ enum class StopCause : u8 {
 					//                 return a step-out waited for
 	Breakpoint,		// "breakpoint"    a code breakpoint hit; breakpointId is set
 	Event,			// "event"         an event breakpoint hit; breakpointId is set
-	Reset,			// "reset"         a reset made while a debugger stop was in force
+	Reset,			// "reset"         a reset made while a debugger stop was in force or a pause was wanted
 	Start,			// "start"         the start park: Debugger:StartPaused, or a thread start of a selftest session
 	Capture,		// "capture"       an SGC capture started while paused finished and paused again
-	HostStopped,	// "host-stopped"  lifetime Stopped: the host UI stopped the machine
+	HostStopped,	// "host-stopped"  lifetime Stopped: the host stopped the machine, or the machine was created
+					//                 and no thread has started yet
 	GuestExit,		// "guest-exit"    lifetime Stopped: the guest ended the run
 	NoGame,			// "no-game"       lifetime NoMachine
 };
@@ -135,7 +136,8 @@ enum : u32 {
 										// sh4_fallback_loop() charges by the decoder's blocks, as hw/sh4/sh4_dbg.h
 										// requires
 	NOTICE_ARM7_FALLBACK       = 4,		// the ARM7 runs on the interpreter fallback: timing differs
-	NOTICE_DSP_FORCED          = 8,		// the per-sample DSP path is forced on by the debugger
+	NOTICE_DSP_FORCED          = 8,		// the per-sample DSP path is forced on by the debugger. Transitional: it can
+										// be set only while the AICA has a path without the DSP, and goes with it
 };
 const u32 kNoticeLineMax = 200;			// characters of one notice line
 
