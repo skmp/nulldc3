@@ -10,7 +10,8 @@ track.
 ## Ground rules
 
 - Repos: emulator `dreamster/devcast`, UI `dreamster/dreamcast-devtools`; work on local branch `skmp/nulldc3` in each;
-  commits are made as work lands, nothing is pushed. `~/projects/devcast` is a stale checkout — do not use it.
+  commits are made as work lands, nothing is pushed. A second, older checkout of `devcast` outside `dreamster` is stale — do not
+  use it.
 - New surfaces say "nullDC" / "3.0.0". The tree is not mass-renamed (config/data dirs stay `reicast` until the user renames).
 - Scratch, build dirs, reports: `dreamster/agents/nulldc3/` only; agents delete their clones and build trees before returning.
 - **Machine**: 15 GB RAM. One workflow at a time; `ninja -j8`, `ctest -j4`, at most 4 emulator processes; every emulator run
@@ -22,9 +23,37 @@ track.
   D3D12 on the RTX 2060) and check `glxinfo -B` first. Every figure states its renderer. Existing `none` baseline (2ndmix):
   JIT 557-819 %, interpreter ~350 %. The TA_HLE build needs the `refsw2_do_dump` link fix (definition is inside the TA_LLE
   guard) and `none` should register in the default build too — T2.0 items.
+- **Targets: desktop only — Linux, Windows, macOS — plus wasm later** (user, 2026-10-08). Processors: x86_64 and arm64 now;
+  later a wasm32 build with its own wasm32 JIT, and possibly riscv64. There are no 32-bit native builds, and no Android, iOS,
+  console (Switch, PS4), handheld (Pandora, GCW-Zero) or single-board (dispmanx) targets. Consequences for all new code: it stays clean for a 32-bit address space (no
+  assumption that pointers are 64 bits, no reliance on huge virtual mappings, on host signals or on RWX pages in portable
+  parts), and the interpreter-only generic host path stays buildable, because wasm32 and riscv64 start from it.
+  Package **B64** (right after E4a merges; it touches `jit/`, `hw/arm7`, `hw/aica` and the build files) removes 32-bit host
+  support: the SH4 backends `jit/backend/arm32` and `jit/backend/x86` with the emitters and assembly only they use
+  (`jit/emitter/arm32`, `jit/emitter/x86`), the ARM7 JIT variants `arm7_jit_virt_arm32.cpp` / `arm7_jit_virt_x86.cpp`, the
+  32-bit DSP JIT `dsp_x86.cpp`, the `CPU_X86` / `CPU_ARM` branches of CMake, `config.cmake` and `build.h`, and code that
+  exists only for 32-bit hosts; and the cached-SHIL `cpp` backend (`jit/backend/cpp`, `DYNAREC_CPP`, the `TARGET_NO_JIT`
+  option). What remains: the x64 and arm64 JITs and the interpreter (a future riscv64 build starts from the interpreter). New work targets x86_64 (built and tested here) and arm64 (kept source-consistent; it cannot be
+  built on this machine).
+  **B64 is done (merged 2026-10-08).** Its findings for the later ports: the interpreter-only build (`-DTARGET_NO_REC=ON`) and
+  the generic host path (any 64-bit processor name CMake does not know as x86_64 / arm64) now build and boot; the generic path
+  does not apply FPSCR.RM/DN to the host yet (`SetFloatStatusReg`: a BIOS boot ends in a different hash there), nothing in
+  the CMake build defines `TARGET_EMSCRIPTEN`, an emscripten configure stops at the OS layer, and the debugger defaults on
+  for generic hosts (sockets, threads). Also removed with it, because they only built 32-bit targets or the removed make
+  build: the Android ndk-build files, the armv7 iOS Xcode project, the make-based CI recipes and the snap recipe. Left in
+  place: unreachable `TARGET_PANDORA` switches in the window/input/renderer layer, a few helpers whose only callers were the
+  removed backends, `deps/vixl/aarch32`, platform sources no build lists (Android shell, dispmanx, emscripten.cpp). The full
+  audit list is in `agents/nulldc3/b64/final-verdict.json`.
+  Package **P-desktop** (queued; not before M1 unless asked): remove the non-desktop platform code — `libswirl/android`,
+  `reicast/android-studio`, the Android / iOS / Switch / PS4 / Pandora / GCW-Zero / dispmanx / NaCl switches (about 160
+  occurrences in 42 of the tree's own files), their CMake toolchain files and CI recipes — keeping Linux, Windows, macOS and the
+  emscripten scaffolding. **The libretro core is removed too** (user, 2026-10-08): `libswirl/libretro`, `libswirl/libretro-common`,
+  `libretro_data`, and the `LIBRETRO` switches in sources and build files.
 - Timing tiers are **run-time** settings, one per processor, in a new settings group:
-  `Timing.SH4`, `Timing.AICA`, `Timing.ARM7` = `fast` | `cycle-similar` | `cycle-accurate` (+ one preset selector in the GUI).
-  `fast` keeps today's speed tricks but with its functional bugs fixed. A tier change flushes the affected code caches.
+  `Timing.SH4`, `Timing.AICA`, `Timing.ARM7` = `fast` | `cycle-similar` | `cycle-accurate` (+ one preset selector in the UI).
+  `fast` keeps today's speed tricks but with its functional bugs fixed, and is the only tier with speed options (idle skip,
+  SMC check level, safe mode, unstable optimisations); the other tiers have none. The tier picks the engine; there is no
+  user-facing interpreter switch. A tier change flushes the affected code caches.
 - "Exact" behaviour (FPU values, AICA rules, ARM7 semantics) is tied to the tier: bug fixes go into every tier; behaviour that
   costs speed (bit-exact vector FPU, per-sample AICA with the measured rules) is on from `cycle-similar` up.
 
@@ -37,15 +66,26 @@ on one port, default `127.0.0.1:55543`, UI bundle embedded), all guest-state acc
 (v2 + target metadata, register merge, writes, tables, correlated binary frames), and a contract test runner that validates
 either server (mock or emulator) with the UI's own zod schemas.
 
-**Package status (PAUSED 2026-10-06; how to resume: `agents/nulldc3/resume/RESUME.md`).** Merged into devcast
-`skmp/nulldc3` (31d9fe30, 146 ctest targets green): E1 transport + UI embed, E2 disassemblers, E0 shared headers (frozen;
-header revision 2 applied), E3 registers / memory / device side with the sound regression harness, E4b SH4 breakpoints and
-steps native to the active backend (x64 JIT and interpreter; fallback loop for the other JIT backends). Not merged: E4a
-(emulator thread and run control — two verification rounds done, an exit deadlock and approved header notes open; its fix
-round was interrupted). Not started: E5 (core), which completes M1 and is gated by the contract runner. Until E4a is merged
-the debugger does nothing at run time. Devtools: F0 done; F1 (protocol v3, mock module, contract runner) committed with
-runner gaps open; F2 (M1 panels) committed, second verification pending. For E5: in automated runs (headless or an `Exit.*`
-key) the server stays off unless `Debugger:Enabled` is set explicitly.
+**Package status (2026-10-08).** Merged into devcast `skmp/nulldc3` (343c7bc8, 169 ctest targets green): E1 transport + UI
+embed, E2 disassemblers, E0 shared headers (frozen; revisions 2 and 3 applied), E3 registers / memory / device side with the
+sound regression harness, E4b SH4 breakpoints and steps native to the active backend, **E4a emulator thread and run
+control** (four verification rounds; pause/resume, calls and breakpoint stops are time-neutral — 10,000 of each leave the
+state hash unchanged; 7,382 exit runs with no hang; the in-emulator selftests run from ctest), and **B64** (no 32-bit hosts,
+no `cpp` backend: 59 files and 23,700 lines removed, emitted x64 code / baselines / hashes unchanged; integration head
+67b423e4). Devtools continuation done (`dreamcast-devtools` `skmp/nulldc3` = 2ea21ba, 322 unit tests, 218 e2e tests): the
+contract runner now catches 165 of 185 deliberately broken servers; what it misses, and one legal server it refuses, hinge on
+design decisions, which are made in `DESIGN-V3-DECISIONS.md`; the M1 panels have one test gap and four smaller items open.
+Design revision 3 is written (`TRACK1-DESIGN.md` v3, 2026-10-09: the 29 decisions, the verifiers' feedback, the headers as
+built, the 2026-10-08 direction; `DESIGN-V3-OPEN.md` keeps what is open — an arm64 host, the config section name, the
+submodule question — and the comment-only header revision 4). Running: the corrections revision 3 makes to merged emulator
+code (design 6.1.1 + header revision 4, branch `skmp/nulldc3-integ-v3`) and then the devtools round (design 4.2.1 runner and
+mock, 4.3.1 panels). Next: E5 (core), which completes M1. Devtools: F0 done; F1 committed with runner gaps open; F2 committed,
+second verification pending. For E5: in automated runs (headless or an `Exit.*` key) the server stays off unless
+`Debugger:Enabled` is set explicitly; and it must not be debugger-only (track 10).
+Known defects recorded by E4a's verifier, not caused by it: the x64 JIT keeps the code of earlier emulator threads, so after a
+few hundred host stop/start cycles in one process the 10 MB code cache is full and the guest crawls; `Sh4Context::CpuRunning`
+is a plain volatile written across threads (every ThreadSanitizer report); event breakpoints latched inside SLEEP waits and
+single steps on the JIT shift guest time (the documented skew class).
 
 | Milestone | Content | Gate |
 | --- | --- | --- |
@@ -119,8 +159,33 @@ Reports: `devcast-sh4-timing.md`, `shrike4-timing-model.md`, `devcast-fpu.md`, `
 - T3.2 Block-static ready-time scoreboard evaluated at block decode (pairing with the dependency rule, integer latencies,
   FPU/MAC columns; 99.96 % of the measured sweep points exact), exit costs per branch kind, a small run-time carry for long
   units (divider, multiplier, last load). The interpreter charges through the same model and is the reference for the JIT.
-- T3.3 Fixed costs outside the pipeline: exception/interrupt entry, uncached and device accesses, P4 classes. Caches are not
-  simulated in this tier (documented).
+- T3.3 Fixed costs outside the pipeline: exception/interrupt entry, uncached and device accesses, P4 classes.
+- T3.3b **Cycle-similar has real caches** (user, 2026-10-08; replaces the earlier "not simulated in this tier"):
+  - **Real contents, not only tags.** The instruction cache (8 KiB, direct mapped, 256 lines of 32 bytes) and the operand
+    cache (16 KiB, direct mapped, 512 lines) hold data. Fetches and operand accesses in cached areas with the cache enabled
+    are served from the lines; a miss fills a line from memory (writing a dirty victim back first), a store goes to the line
+    and to memory at once or at write-back according to the write-through / copy-back setting of its area, and the cache
+    instructions (PREF, OCBI, OCBP, OCBWB, MOVCA.L), the index modes, cache-as-RAM and the store queues do what the chip
+    does. Stale lines are therefore visible to the guest exactly as on the console, and devices and DMA see memory, not
+    the cache — so the write-back paths have to be exact. Reference: rtl/v1's cache specification and model
+    (`spec/caches-sq.md`, `tb/sh4_cache.h`) and the console measurements behind them; costs as measured (miss, write-back,
+    uncached access).
+  - **JIT blocks never cross a 32-byte line boundary** (at most 16 instructions; what a delayed branch in the last slot of
+    a line does with its delay slot in the next line is a design point: the slot's fetch is an access to that next line).
+  - **Translated code is validated when the instruction cache loads a line**: a block belongs to (line address, the 32
+    bytes it was translated from); on a line fill the loaded bytes are compared with what the cached translation was made
+    from, and it is reused or retranslated. Self-modifying code thus takes effect exactly when the chip would see it (after
+    the line is invalidated or evicted and loaded again), and this tier needs no page protection or host fault handling for
+    it — which is also what a wasm32 JIT needs. `fast` keeps today's scheme.
+  - **Code executed from uncached regions** (the P2 mirror, or any area while the instruction cache is disabled) has no line
+    load to validate at, so it gets **full SMC checking** — the bytes a translation was made from are compared on every
+    block entry — and **the cycles of its instruction fetches are charged**: every fetch is a bus access with the measured
+    uncached-read cost (rtl/v1 `spec/bsc-memmap.md`, `spec/caches-sq.md`; how many instructions one fetch access covers and
+    what the fetch queue does at a branch come from the same specification).
+  - Consequences to design for: more and shorter blocks (speed cost of the tier, to be measured early); the debugger's
+    cache table panels (track 1 M4) show real lines; the state hash and the test suites cover the cache arrays; breakpoints
+    keep working per block (the refund rule is per block already); cycle-accurate reuses the same cache model under the
+    pipeline model.
 - T3.4 **Exact FPU** from `cycle-similar` up: FIPR/FTRV/FSCA/FSRRA from the bit-exact header; scalar ops = host arithmetic
   with the SH4 fix-ups on the fast path (NaN pattern, DN=1 flush of operands and results, fused FMAC, FTRC saturation) and the
   soft-float reference on the slow path (DN=0, enabled traps); FPSCR cause/flag and traps. JIT blocks keyed on PR/SZ(/DN).
@@ -152,6 +217,7 @@ Reports: `devcast-aica-arm7.md`, `caique-for-devcast.md`.
   **devtools DSP playground, built from the same C++ with emscripten** — the Rust `crates/aica-dsp` and the wasm-pack
   dependency are removed (user, 2026-10-05). Gate: caique's DSP cases against their console outputs (dsp_basic, dsp_mem*,
   dsp_wslot, dsp_unpack, dsp_pack, dsp_coll), identical results native and under wasm.
+- The DSP is always on (user, 2026-10-08): no "Enable DSP" setting and no DSP-less batch path in any tier.
 - `fast` fixes (order from the report): DSP float pack/unpack; effective-rate formula; slot filter + filter envelope; pitch
   LFO / ALFO depth; ADPCM loop-start state; envelope shape and key-on; timers/interrupts not gated by the ARM, MCIPD bit 10,
   monitor values; noise LFSR; `SA` masked to the RAM size; DSP on by default once it is right.
@@ -203,6 +269,73 @@ to RAM, resident image at 0x8C000000, font table at ROM offset 0x100020). Prereq
 `_vmem_read_const` fix (the x64 JIT returns 0xDEADC0D3 for every PC-relative literal executed in place from ROM).
 Open scope questions: emulator only or real hardware too (SDRAM init, G1 verification, drive unlock); which font fills the
 536,496-byte table; what defines the retail menu's behaviour for acceptance.
+
+### Track 8 — wasm32 build with a wasm32 JIT (future; direction set by the user 2026-10-08)
+
+The emulator built for wasm32 (the devtools already have the matching transport: the `build:wasm` UI talks over a
+BroadcastChannel), first on the interpreter, then with a JIT that emits WebAssembly. Not started; nothing is scheduled.
+What it asks of today's work is in the ground rules (32-bit-clean code, the generic host path kept alive) and: the SH4
+timing model and the breakpoint mechanism are specified per backend through the `ngen` feature flags, so a wasm32 backend
+can join without changing the contract.
+
+### Track 9 — wgpu renderer (future; direction set by the user 2026-10-08)
+
+Rendering is eventually replaced by a wgpu backend whose compute shaders re-implement the reference rasteriser (refsw /
+the polly2 RTL pipeline) — one renderer for native and wasm. Not started. Until then: refsw2 stays the reference, the `none`
+renderer the benchmark path, and no work goes into the GL renderers beyond keeping them building. The debugger's Holly
+inspectors (track 1 M4) are built on the refsw log format, which that renderer is expected to keep producing.
+
+### Track 10 — one web UI; the imgui GUI goes (direction set by the user 2026-10-08)
+
+The emulator's own UI — configuration (general, video, audio, controls, advanced), loading a disc or ELF by path, start /
+stop / reset, notifications, about — moves into the web UI, merged with the devtools into one cohesive application. **Not
+carried over** (user, 2026-10-08): the **game list** (this is a developer tool; content is given on the command line or by
+path), and **save / load states**, which are removed for now and may come back later (their buttons go with imgui; no
+protocol method; the debugger's "guest state replaced" hook stays in the design for when they return). The store / social
+remnants of the old GUI (buy, stream, download, report a bug, send logs) are dropped without replacement; `libswirl/gui` (about 3,400 lines of imgui code), `deps/imgui` and the imgui hooks in the renderers and
+platform files are removed. The emulator window then only presents frames and takes input.
+What it needs:
+- **Protocol**: a settings model the server describes (sections, keys, types, ranges, current values, which need a restart)
+  with get / set / save; machine lifecycle (load by path, start, stop, reset, exit); input mapping with live capture;
+  notifications. These extend protocol v3 the same way the debugger methods are specified, and the
+  contract runner gates them.
+- **Emulator**: the server stops being debugger-only (it is the control surface, so it must work with no game loaded and be
+  enabled in normal use; the Host / Origin rules of the transport matter more once it can change settings and load files); the
+  host-UI role that the imgui thread plays today in the run-control design (menu, pause, exit, load state) is taken by
+  requests from the web UI — the lifetime states and stop reasons of track 1 already separate "host stop" from "debugger
+  pause", so this replaces callers, not the model.
+- **UI**: one application with the machine side (load, settings, controls) next to the debug workspaces, same docking and
+  theme; no page of it depends on the debugger being in use.
+- **Settings inventory of the old GUI** (what each page holds today; decide per item whether it survives):
+  General — language, broadcast, region, cable, content directories (go with the game list). Video — renderer choice and a
+  set of options that only the GL / HLE renderers honour (clipping, shadows, fog, widescreen, frame skipping, render-to-texture
+  copy and upscaling, texture upscaling, custom textures), FPS counter, VMU overlay, scaling. Audio — disable sound, enable DSP
+  (the per-sample AICA path), limit FPS, backend. Controls — Dreamcast device per port, physical device mapping, haptic, mouse
+  sensitivity. Advanced — SH4 dynarec or interpreter; dynarec options (safe mode = no optimised integer division, unstable
+  optimisations, idle skip, self-modifying-code check level); ARM7 dynarec or interpreter; DSP dynarec or interpreter; serial
+  console to stdout; virtual serial port (a PTY for dc-load); dump textures. In nullDC 3 the engine choices become the
+  per-processor engine + timing tier selectors of tracks 3-6.
+- **Decided (user, 2026-10-08):**
+  - **The DSP is always enabled.** The "Enable DSP" setting (`aica.NoBatch`) goes; so does the 32-sample batch path that
+    runs without the DSP — the AICA always runs per sample with the DSP (track 5: on the one DSP core). With the batch
+    path gone, the debugger's "per-sample forcing" (design 2.5.5) is no longer needed.
+  - **"Limit FPS" is renamed "Limit Speed" and moves to General.**
+  - **"Advanced" is split into "Accuracy" and "Developer".** Accuracy: the timing tier per processor (SH4, ARM7, AICA:
+    fast / cycle-similar / cycle-accurate). The speed-for-correctness JIT options — idle skip, self-modifying-code check
+    level, safe mode, unstable optimisations — exist **only in `fast`**; cycle-similar and cycle-accurate have no options
+    (no idle skip, full checks, fixed behaviour). **There is no interpreter option**: the tier picks the engine (the JIT
+    for fast and cycle-similar, the pipeline-model backend for cycle-accurate). The interpreter stays in the tree as the
+    reference of the test suites, as the breakpoint fallback of a JIT backend that has no native checks yet, and as the
+    starting point of new host ports; its config key remains for tests and is not shown.
+    Developer: serial console to stdout, virtual serial port (PTY for dc-load), the debugger / control server's own options
+    (port, bind address, start paused), and later the dump and trace switches of the debuggers.
+  - **The GL options are removed** (force GLES2 context, synchronous rendering, clipping, shadows, fog, widescreen, frame
+    skipping, render-to-texture copy and upscaling, texture upscaling and its limits, custom textures, texture dumping): no
+    settings, no UI; the renderers run with fixed defaults. Debugging and dumping of the graphics side will come from the
+    PVR TA and CORE debuggers, which are still to be planned (track 1 M4 is their placeholder).
+Order: after track 1 M1 (the server, core and run control exist), before or alongside M2-M4; the imgui removal is the last
+step, once every setting and action has its web counterpart (gate: a checklist of every imgui page and control mapped to
+its web counterpart, each exercised by an e2e test against a headless emulator).
 
 ## Order of work
 
