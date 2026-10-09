@@ -33,31 +33,6 @@
 #define MAP_JIT 0
 #endif
 
-#ifdef _ANDROID
-	#include <linux/ashmem.h>
-	#ifndef ASHMEM_DEVICE
-	#define ASHMEM_DEVICE "/dev/ashmem"
-	#undef REI_PAGE_MASK
-	#define REI_PAGE_MASK (REI_PAGE_SIZE-1)
-#else
-	#define REI_PAGE_SIZE 4096
-	#define REI_PAGE_MASK (REI_PAGE_SIZE-1)
-#endif
-
-// Android specific ashmem-device stuff for creating shared memory regions
-int ashmem_create_region(const char *name, size_t size) {
-	int fd = open(ASHMEM_DEVICE, O_RDWR);
-	if (fd < 0)
-		return -1;
-
-	if (ioctl(fd, ASHMEM_SET_SIZE, size) < 0) {
-		close(fd);
-		return -1;
-	}
-
-	return fd;
-}
-#endif  // #ifdef _ANDROID
 
 void VLockedMemory::LockRegion(unsigned offset, unsigned size_bytes) {
 	#ifndef TARGET_NO_EXCEPTIONS
@@ -81,10 +56,6 @@ void VLockedMemory::UnLockRegion(unsigned offset, unsigned size_bytes) {
 // Allocates memory via a fd on shmem/ahmem or even a file on disk
 static int allocate_shared_filemem(unsigned size) {
 	int fd = -1;
-	#if defined(_ANDROID)
-	// Use Android's specific shmem stuff.
-	fd = ashmem_create_region(0, size);
-	#else
 		#if HOST_OS != OS_DARWIN
 		fd = shm_open("/dcnzorz_mem", O_CREAT | O_EXCL | O_RDWR, S_IREAD | S_IWRITE);
 		shm_unlink("/dcnzorz_mem");
@@ -106,7 +77,6 @@ static int allocate_shared_filemem(unsigned size) {
 			close(fd);
 			return -1;
 		}
-	#endif
 
 	return fd;
 }

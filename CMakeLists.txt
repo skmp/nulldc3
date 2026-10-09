@@ -218,7 +218,7 @@ if (${HOST_OS} EQUAL ${OS_WINDOWS})
   list(APPEND osd_SRCS ${d_core}/oslib/windows/threading.cpp)
   list(APPEND osd_SRCS ${d_aout}/audiobackend_directsound.cpp)
   link_libraries(dsound.lib winmm.lib xinput.lib wsock32.lib opengl32.lib)
-elseif (${HOST_OS} EQUAL ${OS_LINUX} OR ${HOST_OS} EQUAL ${OS_ANDROID})
+elseif (${HOST_OS} EQUAL ${OS_LINUX})
 
     list(APPEND osd_SRCS
       ${d_core}/linux-dist/main.cpp

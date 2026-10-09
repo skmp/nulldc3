@@ -8,9 +8,6 @@
 
 #define fault_printf(...)
 
-#if defined(_ANDROID)
-	#include <asm/sigcontext.h>
-#else
 	#if HOST_OS == OS_DARWIN
 		#define _XOPEN_SOURCE 1
 		#define __USE_GNU 1
@@ -19,7 +16,6 @@
   #if !defined(TARGET_NO_EXCEPTIONS)
     #include <ucontext.h>
   #endif
-#endif
 
 
 //////

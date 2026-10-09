@@ -16,7 +16,6 @@
 #include "input/keyboard_device.h"
 #include "hw/maple/maple_if.h"
 
-#include "gui_android.h"
 
 const char *maple_device_types[] = { "None", "Sega Controller", "Light Gun", "Keyboard", "Mouse" };
 const char *maple_expansion_device_types[] = { "None", "Sega VMU", "Purupuru", "Microphone" };
@@ -349,18 +348,6 @@ void gui_settings_controls()
 
 				controller_mapping_popup(gamepad);
 
-#ifdef _ANDROID
-				if (gamepad->is_virtual_gamepad())
-				{
-					if (ImGui::Button("Edit"))
-					{
-						vjoy_start_editing();
-						gui_state = VJoyEdit;
-					}
-					ImGui::SameLine();
-					ImGui::SliderInt("Haptic", &settings.input.VirtualGamepadVibration, 0, 60);
-				}
-#endif
 				ImGui::NextColumn();
 				ImGui::PopID();
 			}

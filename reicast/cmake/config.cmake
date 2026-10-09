@@ -2,7 +2,6 @@
 #
 #	get luserx0 to doc this shit or something, vars in all caps are to be exported as defs if they aren't in build.h already
 #		handle options for FEAT per platform, so rec isn't built for targets w.o one...
-#		*TODO* fix Android for build system in emu too,  OS_LINUX is hardly fitting:  prob works better as PLATFORM_ANDROID_{S,N}DK or something
 #		*TODO* setup git version like it's done in VS/make and configure header so --version works still
 #		*TODO* lots of other shit to improve build, add enabling/disabling libs/features, setting 3rd party libs as either built in  static, dynamic  or shared/system
 #
@@ -38,7 +37,6 @@ set(OS_WINDOWS     0x10000001)  # HOST_OS
 set(OS_LINUX       0x10000002)
 set(OS_DARWIN      0x10000003)
 set(OS_IOS         0x10000004)  # todo: iOS != OS_DARWIN
-set(OS_ANDROID     0x10000005)  # todo: should be SYSTEM_ANDROID but ! OS_LINUX
 
 set(OS_UWP         0x10000011)
 set(OS_NSW_HOS     0x80000001)
@@ -168,10 +166,7 @@ string(TOLOWER ${CMAKE_SYSTEM_NAME} host_os)
 
 ## HOST_* is not TARGET_*  ;;  change ndc-e internal naming it's wrong , then change this  ;;
 
-if("android" STREQUAL "${host_os}"  OR ANDROID)
-  set(HOST_OS ${OS_LINUX}) 	# *FIXME* we might have to keep as OS_LINUX or add to full cleanup list :|
-
-elseif("windowsstore" STREQUAL "${host_os}")
+if("windowsstore" STREQUAL "${host_os}")
   set(HOST_OS ${OS_UWP}) 
   set(HOST_CPU ${CPU_X64})
 
@@ -194,7 +189,7 @@ elseif(CMAKE_HOST_APPLE)
   
 elseif(CMAKE_HOST_UNIX) # GP UNIX MUST BE AFTER OTHER UNIX'ish options such as APPLE , it matches both 
 
-    set(HOST_OS ${OS_LINUX})   # todo android check, just check android vars?
+    set(HOST_OS ${OS_LINUX})
 endif()
 
 
