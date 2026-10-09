@@ -58,8 +58,9 @@ differences that a client could see (design section in brackets):
 * A register that the debugger never writes (`dc.aica.arm7` `ENABLED`): the mock answers `state.setRegister`
   on it with `-32004` and every other read-only register with `-32013`; this server answers `-32004` for the
   whole method until milestone M2.
-* The hex digits of `symbol` and `location` in a callstack frame: lower case here (2.10), upper case in the
-  mock; a client accepts either.
+* `symbol` of a callstack frame: `name` at the start of a symbol and `name+0x<offset>` inside it here (2.10);
+  the mock writes `name+0x0` at the start. The hex digits of `symbol` and `location`: lower case here (2.10),
+  upper case in the mock; a client accepts either.
 * `sp` of a scanned callstack frame: the stack pointer of the processor here, the same in every frame (3.2); the
   mock gives the address the frame was found at.
 * Memory: the mock's ARM7 has the RTC at `0x00810000`; here the ARM7 sees wave memory and the AICA register
