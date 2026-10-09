@@ -232,6 +232,17 @@ namespace
 			break;
 
 		case kSrcArm7:
+			// one row is no register of the processor: dc.aica.arm7.ENABLED, whether the ARM7 is clocked. Its
+			// selector is no register index, it is one bit that a reader of its own gives, and nothing writes it
+			if (selector == kArm7Enabled)
+			{
+				Check(strcmp(path, "dc.aica.arm7") == 0 && strcmp(name, "ENABLED") == 0, "%s.%s: has the selector of dc.aica.arm7.ENABLED", path, name);
+				Check(reg.width == 1 && reg.addr == kNoAddr, "%s.%s: whether the ARM7 is clocked is 1 bit wide and has no address", path, name);
+				Check((reg.flags & (kRegWritable | kRegComputed | kRegNoReader)) == kRegComputed, "%s.%s: flags %02X, expected computed and read-only", path, name,
+					reg.flags);
+				break;
+			}
+
 			Check(selector <= 20 || (selector >= 26 && selector <= 44), "%s.%s: ARM7 register index %u", path, name, selector);
 			Check(reg.width == 32 && reg.addr == kNoAddr, "%s.%s: an ARM7 register is 32 bits wide and has no address", path, name);
 			break;
@@ -418,6 +429,7 @@ namespace
 			{ "dc.sh4.cpu", "PC", 32 }, { "dc.sh4.cpu", "PR", 32 }, { "dc.sh4.cpu", "SR", 32 }, { "dc.sh4.cpu", "R15", 32 },
 			{ "dc.sh4.cpu", "FPSCR", 32 }, { "dc.sh4.cpu", "R7_BANK", 32 }, { "dc.sh4.cpu", "FR15", 32 }, { "dc.sh4.cpu", "XF15", 32 },
 			{ "dc.aica.arm7", "PC", 32 }, { "dc.aica.arm7", "R14", 32 }, { "dc.aica.arm7", "CPSR", 32 }, { "dc.aica.arm7", "SPSR_FIQ", 32 },
+			{ "dc.aica.arm7", "ENABLED", 1 },
 			{ "dc.aica.dsp", "STEP", 8 }, { "dc.aica.dsp", "MDEC_CT", 16 }, { "dc.aica.dsp", "RBP", 16 }, { "dc.aica.dsp", "RBL", 8 },
 			{ "dc.timing", "MODE", 0 }, { "dc.timing", "SH4_CYCLES", 64 }, { "dc.timing", "SCHED_NOW", 64 },
 			{ "dc.timing", "SH4_BACKEND", 0 }, { "dc.timing", "SH4_DEBUG_ENGINE", 0 },
@@ -438,6 +450,31 @@ namespace
 		Check(Find("dc.aica.arm7") && strcmp(Find("dc.aica.arm7")->registers[0].name, "PC") == 0, "the first register of dc.aica.arm7 is PC");
 		Check(Find("dc.aica.dsp") && strcmp(Find("dc.aica.dsp")->registers[0].name, "STEP") == 0, "the first register of dc.aica.dsp is STEP");
 		Check(RegisterOf("dc.aica.arm7", "R15") == nullptr, "dc.aica.arm7 shows the next instruction as PC, not R15");
+
+		// what a client sees of the reset of the ARM7: ENABLED, the register behind the program counter, and the
+		// one row of the tree that is read as the clocked flag of the sound CPU. With it the node has 41 registers:
+		// PC, ENABLED, R0..R14, CPSR, SPSR, two of the user bank, eight of the FIQ bank and three of each of the
+		// four other banks
+		{
+			const Node* arm7 = Find("dc.aica.arm7");
+			const Register* enabled = RegisterOf("dc.aica.arm7", "ENABLED");
+			uint32_t clocked_rows = 0;
+
+			for (uint32_t i = 0; i < count; i++)
+			{
+				for (uint32_t r = 0; r < nodes[i].registerCount; r++)
+				{
+					if (nodes[i].registers[r].key == MakeKey(kSrcArm7, kArm7Enabled))
+						clocked_rows++;
+				}
+			}
+
+			Check(arm7 && arm7->registerCount == 1 + 1 + 15 + 2 + 2 + 8 + 4 * 3, "dc.aica.arm7 has %u registers, expected 41", arm7 ? arm7->registerCount : 0);
+			Check(arm7 && arm7->registerCount > 1 && strcmp(arm7->registers[1].name, "ENABLED") == 0, "the register behind PC of dc.aica.arm7 is ENABLED");
+			Check(enabled && enabled->key == MakeKey(kSrcArm7, kArm7Enabled) && clocked_rows == 1,
+				"dc.aica.arm7.ENABLED is read as the clocked flag of the sound CPU, and it alone (%u rows are)", clocked_rows);
+			Check(enabled && (enabled->flags & kRegWritable) == 0, "dc.aica.arm7.ENABLED is read-only");
+		}
 
 		// the nodes of a running tick
 		for (uint32_t i = 0; i < count; i++)
