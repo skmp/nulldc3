@@ -100,17 +100,13 @@ int64_t get_time_usec(void)
     if (!QueryPerformanceCounter(&count))
         return 0;
     return count.QuadPart * 1000000 / freq.QuadPart;
-#elif defined(_POSIX_MONOTONIC_CLOCK) || defined(__QNX__) || defined(__MACH__) || HOST_OS==OS_LINUX
+#elif defined(_POSIX_MONOTONIC_CLOCK) || defined(__MACH__) || HOST_OS==OS_LINUX
     struct timespec tv = { 0 };
     if (clock_gettime(CLOCK_MONOTONIC, &tv) < 0)
         return 0;
     return tv.tv_sec * INT64_C(1000000) + (tv.tv_nsec + 500) / 1000;
 #elif defined(EMSCRIPTEN)
     return emscripten_get_now() * 1000;
-#elif defined(DJGPP)
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (1000000 * tv.tv_sec + tv.tv_usec);
 #else
 #error "Your platform does not have a timer function implemented in cpu_features_get_time_usec(). Cannot continue."
 #endif

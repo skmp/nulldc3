@@ -67,11 +67,7 @@ void context_segfault_bicopy(rei_host_context_t* reictx, void* segfault_ctx, boo
 #if HOST_CPU == CPU_ARM64
 	bicopy(reictx->pc, MCTX(->__ss.__pc), to_segfault);
 #elif HOST_CPU == CPU_X64
-	#if defined(__FreeBSD__) || defined(__DragonFly__)
-		bicopy(reictx->pc, MCTX(.mc_rip), to_segfault);
-	#elif defined(__NetBSD__)
-		bicopy(reictx->pc, MCTX(.__gregs[_REG_RIP]), to_segfault);
-	#elif HOST_OS == OS_LINUX
+	#if HOST_OS == OS_LINUX
 		fault_printf("pc set: %d, value: %p %p\n", to_segfault, reictx->pc, MCTX(.gregs[REG_RIP]));
 		bicopy(reictx->pc, MCTX(.gregs[REG_RIP]), to_segfault);
 		fault_printf("pc set: %d, value: %p %p\n", to_segfault, reictx->pc, MCTX(.gregs[REG_RIP]));
