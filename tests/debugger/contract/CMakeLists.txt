@@ -12,6 +12,7 @@
 #	                                                    client that connects behind it
 #	    debugger.contract.config                        the configuration errors of the server's keys, and a
 #	                                                    server that cannot be started
+#	    debugger.contract.slow                          the slow-client rule of the periodic tick
 #	    debugger.contract.hash.off .noclient .idlebp    the state hash of a run with the server off, with the
 #	      each with .interp                             server on and no client, and with an idle breakpoint
 #
@@ -123,6 +124,10 @@ nulldc_debugger_contract(grace MODE grace IDLE_SYMBOL stars_one_frame)
 # Debugger:Required and Debugger:StartPaused without an enabled server: exit code 2 and a line on stderr. And
 # an enabled server whose port is taken: exit code 2 with either key, a run without the server with neither
 nulldc_debugger_contract(config MODE config TIMEOUT 300)
+
+# A client that has stopped reading is queued no periodic tick behind a megabyte of ticks, every tick that a
+# request caused, and a full tick next
+nulldc_debugger_contract(slow MODE slow)
 
 # No regression (design 5.7): 2ndmix for 600 vblanks, twice, with the same state hash, part for part.
 # hash.off is also the test of the default of an automated run: no server without a Debugger: key.

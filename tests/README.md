@@ -27,7 +27,7 @@ of a few instructions that are part of the suite, so a run without the option bo
 frame and compares no state hash between runs. The selftests of the debugger that boot `2ndmix.elf` are skipped
 with them, seventeen tests: `debugger.selftest.core`, `.regs`, `.sh4bp`, `.sh4bpboot`, `.sh4bpbase`,
 `.emurun.reads`, `.emurun.pending` and `.emurun.pauses`, each with its `.interp`, and
-`debugger.selftest.sh4bp.sessions`. And so are the eleven `debugger.contract.*` tests, which all boot it.
+`debugger.selftest.sh4bp.sessions`. And so are the twelve `debugger.contract.*` tests, which all boot it.
 
 A skipped test has not run and is not a pass: `ctest` exits with 0 when everything that did run passes, also
 when that is only the tests that need no data. With `-DNULLDC_TESTS_REQUIRE_DATA=ON` missing data fails its
@@ -79,6 +79,7 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `debugger.contract.m1` `.m1.interp` `.m1.fallback` | the gate of milestone M1 of the devtools integration: the emulator, headless, at its `StartPaused` stop with the server enabled, and the contract runner of the devtools UI against it (`npm run contract -- --url ... --profile emulator --elf 2ndmix.elf --milestone M1`): every selected scenario passed, no invariant violated. On the JIT, on the interpreter and on the JIT with the interpreter fallback forced (`debugger/contract/README.md` has every test of these rows) | `2ndmix.elf` of `NULLDC_ELF_DIR`, a dreamcast-devtools checkout with `node_modules`, npm |
 | `debugger.contract.grace` | a client leaves watches and a target behind that is stopped at a breakpoint 2ndmix reaches in every frame: inside the grace period another client finds that stop; 11 s after the last client left the target has run on through the breakpoint (the active mask is cleared), and a client that connects and asks for nothing is sent the next stop of it (breakpoints are active again); the tables are as they were, the event log has the note, and the event gates are open again | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.contract.config` | `Debugger:Required=yes` or `Debugger:StartPaused=yes` without an enabled server is a configuration error: exit code 2, a line on stderr that names the key, no port line and no exit line. And with an enabled server whose port is taken: the same exit code 2 with either key, one line on stderr and a run without the server with neither | `2ndmix.elf` of `NULLDC_ELF_DIR` |
+| `debugger.contract.slow` | the slow-client rule: a client that has stopped reading and is 10 MiB of ticks behind is queued none of the periodic ticks of 3 s, every tick that a request caused, and a full tick next | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.contract.hash.off` `.hash.noclient`, each with `.interp` | 2ndmix for 600 vblanks, twice: the same state hash with no `Debugger:` key and with `Debugger:Enabled=no` (and no server without the key: the default of an automated run); the same with the server on and no client and with the server off | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.contract.hash.idlebp` `.interp` | the same state hash with a client connected and a muted breakpoint on a function 2ndmix calls in every frame (the runner's `--idle-breakpoint`), and with the server off | `2ndmix.elf` of `NULLDC_ELF_DIR`, a dreamcast-devtools checkout with `node_modules`, npm |
 | `aica.dsp.api` | the AICA DSP core (`libswirl/hw/aica/dsp_core`) on itself: a sample in one go against its 128 steps from every step, state out and in, two cores in turns, its registers, fields that hold more than their registers' bits, a wave RAM of 4, 8 and 16 MB; and its known-answer programs: the shifter, the address of a memory step on 2 to 16 MB, the ring, the read latch rules, the MIXS banks | none |
@@ -127,8 +128,8 @@ More about the suites:
   registers its own; the tests of the session `core` are in the row of `debugger.selftest.core` above and at the
   head of `libswirl/debugger/dbg_selftest_core.cpp`,
 * `debugger/contract/README.md`: the server of the emulator against the contract runner of the devtools UI, the
-  grace period, the configuration errors and the state hashes, test by test; where the mock of the UI repository
-  and the emulator's server differ,
+  grace period, the configuration errors, the slow-client rule and the state hashes, test by test; where the mock
+  of the UI repository and the emulator's server differ,
 * `aica_dsp/README.md`: the AICA DSP core's tests, which of the console's captures are compared with the core
   directly and which through the caique model; `aica_dsp/KNOWN_FAILURES.md`: the three lines of a console report
   that depend on the console's timing.

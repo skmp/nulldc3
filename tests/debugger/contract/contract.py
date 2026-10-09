@@ -17,6 +17,8 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
     config         the configuration errors: three runs that end by themselves with exit code 2; and a server
                    that was enabled and cannot be started (its port is taken): exit code 2 with
                    Debugger:Required or Debugger:StartPaused, one line and a run without the server otherwise
+    slow           the slow-client rule: a client that has stopped reading is queued no periodic tick behind
+                   a megabyte of ticks, but every tick that a request caused, and a full tick next
     hash-off       the state hash of a run with no Debugger: key and of one with Debugger:Enabled=no; no port
                    line without the key, the port line with Debugger:Enabled=yes
     hash-noclient  the state hash with the server on and no client, and with the server off
@@ -467,6 +469,107 @@ def mode_config(args):
         taken.close()
 
 
+# What a client that reads nothing is left behind by: more than the megabyte of the rule also when the buffers
+# of the kernel have taken their part (a few megabytes at most, the receive buffer of that client is made
+# small), and less than the 16 MiB at which the transport ends a client
+SLOW_BEHIND = 10 << 20
+
+
+def tree_nodes(nodes):
+    for node in nodes:
+        yield node
+        yield from tree_nodes(node.get('children', []))
+
+
+def mode_slow(args):
+    """The slow-client rule: no periodic tick is queued behind more than a megabyte that a client has not read,
+    the next tick that client is sent is a full one, and no other tick is dropped."""
+    run = Run(args, 'emulator').start(['Debugger:Enabled=yes', 'Debugger:Port=0', 'Debugger:Required=yes'])
+    try:
+        port = run.port()
+        a = wsclient.Client('127.0.0.1', port)
+        a.describe()
+        a.wait_tick(lambda t: t['executionState']['state'] == 'running', 30, 'a running tick')
+        paths = len(a.describe()['registers'])
+
+        # Large ticks, before the other client is there: a watch on every register (as many as there may be),
+        # and breakpoints that stop nothing
+        registers = [(node['path'] + '.' + register['name']).lower() for node in tree_nodes(a.shape['deviceTree'])
+                     for register in node.get('registers', [])][:256]
+        for at in range(0, len(registers), 64):
+            a.call('state.watch', {'expressions': registers[at:at + 64]})
+        for _ in range(300):
+            a.call('breakpoints.add', {'event': 'dc.holly.core.vblank', 'kind': 'event', 'enabled': False})
+            # each of these is answered with a tick as well: not kept
+            a.pending = []
+
+        # The other client describes itself and reads nothing from here on
+        b = wsclient.Client('127.0.0.1', port, receive_buffer=1 << 16)
+        b.describe()
+
+        # Every change of a table is a tick to both clients, and the one that shows the change first is the
+        # tick the request caused: a periodic tick is built in a call of its own
+        muted = False
+
+        def change():
+            nonlocal muted
+            muted = not muted
+            wanted = muted
+            a.call('breakpoints.setCategoryStates', {'categories': {'dsp': {'muted': wanted, 'soloed': False}}})
+            return a.wait_tick(lambda t: t['categories']['dsp']['muted'] == wanted, 10, 'the tick of a change of the categories')
+
+        caused = []
+        start = a.received
+        while a.received - start < SLOW_BEHIND:
+            caused.append(change()['tickId'])
+        behind = a.received - start
+        check(run.alive(), 'the emulator ended (exit code %s) with a client that reads nothing' % run.process.poll(), run)
+
+        # Three seconds in which nobody asks for anything: every tick of these is a periodic one
+        idle = a.collect(3.0)
+        periodic = [t['tickId'] for t in idle]
+        check(len(periodic) >= 10 and all(t['executionState']['state'] == 'running' for t in idle),
+              'the client that reads got %d periodic ticks in 3 s, not about 15' % len(periodic), run)
+        base = min(len(t['registers']) for t in idle)
+        check(base < paths, 'a periodic tick that is not a full one has fewer register paths than a full one (%d, %d)' % (base, paths), run)
+
+        # One more change: its tick is the next one the other client is sent
+        last = change()
+        caused.append(last['tickId'])
+
+        # And now that client reads, up to this tick
+        got = {}
+
+        def read(tick):
+            got[tick['tickId']] = len(tick['registers'])
+            return tick['tickId'] >= last['tickId']
+
+        b.wait_tick(read, 120, 'the tick of the last change, at the client that had stopped reading')
+        order = list(got)
+        check(order == sorted(order), 'the ticks reached the client that had stopped reading in another order than they were built in', run)
+        queued = [tick for tick in periodic if tick in got]
+        check(not queued, 'the slow-client rule: %d of the %d periodic ticks of 3 s were queued for a client that had %.1f MiB of ticks to '
+              'read (tickId %s)' % (len(queued), len(periodic), behind / (1 << 20), ', '.join(str(tick) for tick in queued[:8])), run)
+        dropped = [tick for tick in caused if tick not in got]
+        check(not dropped, 'only periodic ticks are held back: %d of the %d ticks that a request caused did not reach the client that had '
+              'stopped reading (tickId %s)' % (len(dropped), len(caused), ', '.join(str(tick) for tick in dropped[:8])), run)
+        check(got[last['tickId']] == paths, 'the next tick sent to a client that periodic ticks were held back from is a full one: it has %d '
+              'of the %d register paths' % (got[last['tickId']], paths), run)
+        a.close()
+        b.close()
+        print('%d changes of a table, a tick of %d KiB each to both clients: %.1f MiB for a client that reads nothing; the %d periodic '
+              'ticks of the next 3 s were not queued for it; the tick of the next change was, with %d of %d register paths (a tick that '
+              'is not full has %d); it then read %d ticks, in order, every one of the %d that a request caused among them'
+              % (len(caused) - 1, behind // (len(caused) - 1) >> 10, behind / (1 << 20), len(periodic), got[last['tickId']], paths, base, len(order),
+                 len(caused)))
+    except wsclient.Error as error:
+        check(False, 'the client: %s' % error, run)
+    finally:
+        ended = run.terminate()
+    run.no_bad()
+    check(ended, 'the emulator did not end within 20 s of SIGTERM', run)
+
+
 def hash_run(args, name, keys, vblanks=None):
     keys = ['config:Exit.AfterVblanks=%d' % (vblanks or args.vblanks), 'config:Exit.StateHash=yes'] + keys
     run = Run(args, name).run(keys)
@@ -555,7 +658,7 @@ def main():
     parser.add_argument('--emulator', required=True)
     parser.add_argument('--work', required=True)
     parser.add_argument('--guest', required=True, help='2ndmix.elf')
-    parser.add_argument('--mode', required=True, choices=('m1', 'grace', 'config', 'hash-off', 'hash-noclient', 'hash-idlebp'))
+    parser.add_argument('--mode', required=True, choices=('m1', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp'))
     parser.add_argument('--engine', default='jit', choices=('jit', 'interp'))
     parser.add_argument('--fallback', action='store_true', help='Debugger:ForceFallback=yes')
     parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, hash-idlebp)')
@@ -590,8 +693,8 @@ def main():
         print('FAIL: --idle-symbol is missing')
         return 1
 
-    modes = {'m1': mode_m1, 'grace': mode_grace, 'config': mode_config, 'hash-off': mode_hash_off, 'hash-noclient': mode_hash_noclient,
-             'hash-idlebp': mode_hash_idlebp}
+    modes = {'m1': mode_m1, 'grace': mode_grace, 'config': mode_config, 'slow': mode_slow, 'hash-off': mode_hash_off,
+             'hash-noclient': mode_hash_noclient, 'hash-idlebp': mode_hash_idlebp}
 
     shutil.rmtree(args.work, ignore_errors=True)
     os.makedirs(args.work)
