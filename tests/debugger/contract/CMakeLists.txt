@@ -9,7 +9,8 @@
 #	                                                    ... --milestone M1), on the JIT, on the interpreter and on
 #	                                                    the JIT with Debugger:ForceFallback=yes
 #	    debugger.contract.grace                         the grace period after the last client left
-#	    debugger.contract.config                        the configuration errors of the server's keys
+#	    debugger.contract.config                        the configuration errors of the server's keys, and a
+#	                                                    server that cannot be started
 #	    debugger.contract.hash.off .noclient .idlebp    the state hash of a run with the server off, with the
 #	      each with .interp                             server on and no client, and with an idle breakpoint
 #
@@ -116,7 +117,8 @@ nulldc_debugger_contract(m1.fallback MODE m1 RUNNER FALLBACK)
 # keeps the tables
 nulldc_debugger_contract(grace MODE grace)
 
-# Debugger:Required and Debugger:StartPaused without an enabled server: exit code 2 and a line on stderr
+# Debugger:Required and Debugger:StartPaused without an enabled server: exit code 2 and a line on stderr. And
+# an enabled server whose port is taken: exit code 2 with either key, a run without the server with neither
 nulldc_debugger_contract(config MODE config TIMEOUT 300)
 
 # No regression (design 5.7): 2ndmix for 600 vblanks, twice, with the same state hash, part for part.

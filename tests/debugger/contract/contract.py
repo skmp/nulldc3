@@ -12,7 +12,9 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
                    devtools UI against it (npm run contract -- --url ... --profile emulator --elf ... --milestone M1)
     grace          a client leaves the target paused; 11 s later another one finds it running, with the tables
                    as they were and the note of the grace period in the event log
-    config         the configuration errors: three runs that end by themselves with exit code 2
+    config         the configuration errors: three runs that end by themselves with exit code 2; and a server
+                   that was enabled and cannot be started (its port is taken): exit code 2 with
+                   Debugger:Required or Debugger:StartPaused, one line and a run without the server otherwise
     hash-off       the state hash of a run with no Debugger: key and of one with Debugger:Enabled=no; no port
                    line without the key, the port line with Debugger:Enabled=yes
     hash-noclient  the state hash with the server on and no client, and with the server off
@@ -26,6 +28,7 @@ import re
 import resource
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -316,17 +319,22 @@ def mode_grace(args):
     check(ended, 'the emulator did not end within 20 s of SIGTERM', run)
 
 
+def config_run(args, name, keys, what=''):
+    """A run that has to end by itself, with no exit key that could end it: before any machine exists."""
+    run = Run(args, name).start(keys)
+    if not run.wait(args.config_watchdog):
+        run.kill()
+        check(False, '%s%s: the run did not end by itself within %d s' % (' , '.join(keys), what, args.config_watchdog), run)
+    return run
+
+
 def mode_config(args):
-    """Keys that need the server, without one: a configuration error."""
+    """Keys that need the server, without one: a configuration error. And a server that cannot be started."""
     cases = (('required', ['Debugger:Required=yes'], 'Debugger:Required'),
              ('startpaused', ['Debugger:StartPaused=yes'], 'Debugger:StartPaused'),
              ('required-off', ['Debugger:Required=yes', 'Debugger:Enabled=no'], 'Debugger:Required'))
     for name, keys, key in cases:
-        # no exit key: the run has to end by itself, before any machine exists
-        run = Run(args, name).start(keys)
-        if not run.wait(args.config_watchdog):
-            run.kill()
-            check(False, '%s: the run did not end by itself within %d s' % (' , '.join(keys), args.config_watchdog), run)
+        run = config_run(args, name, keys)
         what = ' , '.join(keys) + ': '
         check(run.code == 2, what + 'exit code %s, not 2' % run.code, run)
         lines = [line for line in run.err.splitlines() if key in line]
@@ -336,6 +344,40 @@ def mode_config(args):
         check(exit_line(run.out) is None and 'nulldc-exit' not in run.err, what + 'a nulldc-exit line was printed', run)
         run.no_bad()
         print('%s: exit code 2 after %.2f s; %s' % (' , '.join(keys), time.monotonic() - run.started, lines[0]))
+
+    # A server that was enabled and cannot be started: this test holds its port. Fatal with Required, and with
+    # StartPaused, whose start park nothing could resume; otherwise one line, and the emulator runs without it
+    taken = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        taken.bind(('127.0.0.1', 0))
+        taken.listen(1)
+        enabled = ['Debugger:Enabled=yes', 'Debugger:Port=%d' % taken.getsockname()[1]]
+
+        for name, key in (('taken-required', 'Debugger:Required'), ('taken-startpaused', 'Debugger:StartPaused')):
+            keys = enabled + [key + '=yes']
+            # a run that goes on without its server has no exit key, and with StartPaused it parks at its start
+            run = config_run(args, name, keys, ', with the port taken (the emulator went on without the server)')
+            what = ' , '.join(keys) + ', with the port taken: '
+            check(run.code == 2, what + 'exit code %s, not 2' % run.code, run)
+            lines = [line for line in run.err.splitlines() if line.startswith('Debugger: ') and key in line]
+            check(lines, what + 'no "Debugger: " line on stderr names ' + key, run)
+            check(not has_port_line(run.out) and not has_port_line(run.err), what + 'a "Debugger: http://" line was printed', run)
+            check(exit_line(run.out) is None and 'nulldc-exit' not in run.err, what + 'a nulldc-exit line was printed', run)
+            run.no_bad()
+            print('%s, with the port taken: exit code 2 after %.2f s; %s' % (' , '.join(keys), time.monotonic() - run.started, lines[0]))
+
+        keys = enabled + ['config:Exit.AfterVblanks=5']
+        run = Run(args, 'taken-plain').run(keys)
+        what = ' , '.join(keys) + ', with the port taken: '
+        check(run.code == 0, what + 'exit code %s, not 0' % run.code, run)
+        lines = [line for line in run.err.splitlines() if line.startswith('Debugger: ')]
+        check(len(lines) == 1, what + '%d "Debugger: " lines on stderr, not the one that says that the server is not there' % len(lines), run)
+        check(not has_port_line(run.out) and not has_port_line(run.err), what + 'a "Debugger: http://" line was printed', run)
+        line = exit_line(run.out)
+        check(line is not None and line.get('reason') == 'vblanks', what + 'the run did not go on to the end its exit key gives it (%r)' % (line,), run)
+        print('%s, with the port taken: runs without the server, reason=%s; %s' % (' , '.join(keys), line['reason'], lines[0]))
+    finally:
+        taken.close()
 
 
 def hash_run(args, name, keys, vblanks=None):
