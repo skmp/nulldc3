@@ -242,6 +242,11 @@ bool runctl_headless()
 	return runctl().headless;
 }
 
+bool runctl_automated()
+{
+	return runctl().automated();
+}
+
 void runctl_vblank()
 {
 	RunControl& rc = runctl();

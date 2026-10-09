@@ -19,6 +19,10 @@ void runctl_configure();
 // config:Headless. No window, no GL context, no host input
 bool runctl_headless();
 
+// A run that nobody watches: headless, or with one of the keys that end a run (config:Exit.AfterVblanks,
+// config:Exit.AfterSeconds, config:Exit.OnGuestExit). Any thread, after runctl_configure()
+bool runctl_automated();
+
 // Emulator thread, once per vblank, after the frame of the vblank is queued
 void runctl_vblank();
 
