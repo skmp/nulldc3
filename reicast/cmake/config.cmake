@@ -140,6 +140,24 @@ string(TOLOWER ${CMAKE_SYSTEM_NAME} host_os)
 
 #message(" - testing cmake host_os: \"${host_os}\"")
 
+## The targets are the desktops, Linux, Windows and macOS, on x86_64 and arm64; any other processor is the generic host,
+#  which runs the interpreters. Emscripten is let through as the scaffolding of the wasm build (it takes the Linux
+#  sources). Every other system stops the configure, and so does a switch of a target that is no longer in the tree.
+#
+function(nulldc_unsupported_target what)
+  message(FATAL_ERROR "Unsupported target (${what}): nullDC builds for Linux, Windows and macOS, on x86_64 and arm64, and on any other processor with the interpreters only.")
+endfunction()
+
+if(NOT EMSCRIPTEN AND NOT ("${host_os}" STREQUAL "linux" OR "${host_os}" STREQUAL "windows" OR "${host_os}" STREQUAL "darwin"))
+  nulldc_unsupported_target("CMAKE_SYSTEM_NAME is \"${CMAKE_SYSTEM_NAME}\"")
+endif()
+
+foreach(removed_switch LIBRETRO_CORE TARGET_NSW TARGET_PS4)
+  if(${removed_switch})
+    nulldc_unsupported_target("${removed_switch} is set")
+  endif()
+endforeach()
+
 ## HOST_* is not TARGET_*  ;;  change ndc-e internal naming it's wrong , then change this  ;;
 
 if(CMAKE_HOST_WIN32)
