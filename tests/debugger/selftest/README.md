@@ -58,7 +58,7 @@ test starts. Headless, nothing else plays the host.
 | `debugger.selftest.emurun.pending` (and `.interp`) | the same with a pause asked for in the very slice that ends the run: the run ends, with that hash |
 | `debugger.selftest.emurun.pauses` (x86-64 hosts) `.interp` | the same with 150 pauses, each resumed at once: that hash. On the interpreter and the x64 recompiler: a pause is exact on a backend whose slice counter is the same after its loop was left and entered again |
 | `debugger.selftest.emuhang.parked` | a session that stays parked at its start, with `Exit.AfterVblanks=5`: 4 s later the process is still there and has printed no exit line. Emulated time stands still while the thread is parked, so no `Exit.*` key ends such a run |
-| `debugger.selftest.startpaused` | the same for `Debugger:StartPaused=yes` without a session: the start park waits without limit |
+| `debugger.selftest.startpaused` | the same for `Debugger:StartPaused=yes` without a session, with the server enabled (`Debugger:Enabled=yes`, `Debugger:Port=0`: without it the key is a configuration error) and no client: the start park waits without limit |
 
 ## The tests of dbg::regs and dbg::mem
 
