@@ -326,8 +326,8 @@ def mode_grace(args):
         a.call('state.watch', {'expressions': ['dc.sh4.cpu.pc', 'dc.timing.sh4_cycles']})
         a.call('breakpoints.setCategoryStates', {'categories': {'arm7': {'muted': True, 'soloed': False}, 'dsp': {'muted': False, 'soloed': False}}})
         a.call('control.runUntil', {})
-        # (the boot and the set-up of the program are in front of it: a quarter of a second on the JIT, the better
-        # part of a minute on the interpreter of a build with a sanitizer)
+        # (the boot and the set-up of the program are in front of it: 0.25 s on the JIT, 0.85 s on the interpreter,
+        # 11 s on the interpreter of a ThreadSanitizer build, each with one emulator at work)
         stopped = a.wait_tick(lambda t: t['executionState']['state'] == 'paused' and t['executionState'].get('reason') == 'breakpoint', 120,
                               'the stop of the breakpoint on ' + where)
         stop = stopped['executionState']
