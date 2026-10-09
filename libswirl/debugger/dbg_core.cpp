@@ -2490,6 +2490,9 @@ struct Own {
 
 	bool syncOwed = false;				// the emulator thread did not take the table call of a connect or
 	Clock::time_point syncAt;			// disconnect: it is made again
+
+	bool releaseOwed = false;			// ... or the release of the stop when the grace period expired
+	Clock::time_point releaseAt;
 };
 
 Own& c = *new Own();
@@ -2543,8 +2546,9 @@ void ClientOpened(u32 client)
 		client_count.store((u32)clients.size());
 	}
 
-	// breakpoints are active again
+	// breakpoints are active again, and nothing is released behind a client's back
 	c.graceArmed = false;
+	c.releaseOwed = false;
 	grace_expired.store(false);
 
 	SyncPresence();
@@ -2592,35 +2596,54 @@ void GraceExpired()
 
 	grace_expired.store(true);
 
-	// breakpoints stay listed and armed; the categories of the tick are not changed
+	// Breakpoints stay listed and armed; the categories of the tick are not changed. With no client connected
+	// every gate is closed: the note is appended to the log itself, where the scheduler's time can be read,
+	// and the next client finds it in its first tick
 	const int table = RunCall(emu::CC_TABLE, [] {
 		try
 		{
 			PushPresence();
+
+			events::Append(EV_DEBUGGER_NOTE, "no client for 10 s: breakpoints are inactive until a client connects, and a stop that is in force is released");
 		}
 		catch (...)
 		{
 		}
 	});
 
-	auto job = std::make_shared<ExecJob>();
-	const int exec = RunCall(emu::CC_EXEC, [job] { job->rv = emu::Resume(); });
-
-	if (table == kErrBusy || exec == kErrBusy)
+	// the emulator thread did not take it within its time: once more, a little later
+	if (table != 0)
 	{
-		// the emulator thread took neither within its time: once more, a little later
 		c.graceArmed = true;
 		c.graceAt = Clock::now() + std::chrono::milliseconds(1000);
 		return;
 	}
 
-	const bool released = exec == 0 && job->rv == 0;
+	// a parked thread goes on; one that runs, and a machine without a thread, has nothing to release
+	auto job = std::make_shared<ExecJob>();
 
-	// With no client connected every gate is closed: the entry is appended to the log itself. The next client
-	// finds it in its first tick
-	events::Append(EV_DEBUGGER_NOTE, released
-		? "no client for 10 s: breakpoints are inactive until a client connects, and the stop that was in force was released"
-		: "no client for 10 s: breakpoints are inactive until a client connects");
+	if (RunCall(emu::CC_EXEC, [job] { job->rv = emu::Resume(); }) == kErrBusy)
+	{
+		c.releaseOwed = true;
+		c.releaseAt = Clock::now() + std::chrono::milliseconds(1000);
+	}
+}
+
+// The release of a stop that the emulator thread did not take in time, for as long as no client is connected
+void ReleaseAgain()
+{
+	c.releaseOwed = false;
+
+	if (client_count.load() != 0 || !grace_expired.load())
+		return;
+
+	auto job = std::make_shared<ExecJob>();
+
+	if (RunCall(emu::CC_EXEC, [job] { job->rv = emu::Resume(); }) == kErrBusy)
+	{
+		c.releaseOwed = true;
+		c.releaseAt = Clock::now() + std::chrono::milliseconds(1000);
+	}
 }
 
 // Every Debugger:TickMs while the machine runs and a client is connected. A read: (E) builds it in the slice
@@ -2742,6 +2765,8 @@ void ThreadMain()
 				until = c.graceAt;
 			if (c.syncOwed && c.syncAt < until)
 				until = c.syncAt;
+			if (c.releaseOwed && c.releaseAt < until)
+				until = c.releaseAt;
 
 			queue.wake.wait_until(lock, until, [] { return queue.quit || !queue.messages.empty(); });
 
@@ -2802,6 +2827,9 @@ void ThreadMain()
 
 		if (c.syncOwed && Clock::now() >= c.syncAt)
 			SyncPresence();
+
+		if (c.releaseOwed && Clock::now() >= c.releaseAt)
+			ReleaseAgain();
 	}
 }
 
