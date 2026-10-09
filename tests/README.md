@@ -25,8 +25,9 @@ configure says that the programs are missing, and eleven tests are skipped: `sys
 `system.frame.refsw2`, and the first five again as `system.hle.*`. The other system tests run on three programs
 of a few instructions that are part of the suite, so a run without the option boots no KallistiOS, renders no
 frame and compares no state hash between runs. The selftests of the debugger that boot `2ndmix.elf` are skipped
-with them, fifteen tests: `debugger.selftest.regs`, `.sh4bp`, `.sh4bpboot`, `.sh4bpbase`, `.emurun.reads`,
-`.emurun.pending` and `.emurun.pauses`, each with its `.interp`, and `debugger.selftest.sh4bp.sessions`.
+with them, seventeen tests: `debugger.selftest.core`, `.regs`, `.sh4bp`, `.sh4bpboot`, `.sh4bpbase`,
+`.emurun.reads`, `.emurun.pending` and `.emurun.pauses`, each with its `.interp`, and
+`debugger.selftest.sh4bp.sessions`. And so are the twelve `debugger.contract.*` tests, which all boot it.
 
 A skipped test has not run and is not a pass: `ctest` exits with 0 when everything that did run passes, also
 when that is only the tests that need no data. With `-DNULLDC_TESTS_REQUIRE_DATA=ON` missing data fails its
@@ -41,9 +42,11 @@ alike). CI should configure that way.
     ctest --test-dir <build dir> --output-on-failure
 
 `-DNULLDC_DEVTOOLS_DIR=` is for the tests that compare the debugger with the devtools UI (`debugger.net.interop_ws`,
-`debugger.disasm.dsp_playground`, `debugger.regs.panels`; "The debugger's suites" below). Its default is `devtools`
-in the repository or `../dreamcast-devtools` next to it, whichever is there; a checkout that sits elsewhere, as it
-does for a git worktree of this repository, has to be named, or those tests are skipped.
+`debugger.disasm.dsp_playground`, `debugger.regs.panels`; "The debugger's suites" below) and for those that run its
+contract runner against the emulator (`debugger.contract.m1`, `.m1.interp`, `.m1.fallback`, `.hash.idlebp`,
+`.hash.idlebp.interp`, which also need `npm`). Its default is `devtools` in the repository or
+`../dreamcast-devtools` next to it, whichever is there; a checkout that sits elsewhere, as it does for a git worktree
+of this repository, has to be named, or those tests are skipped.
 
 The build includes two builds of the emulator for the system tests, about a minute each the first time
 (`-DNULLDC_SYSTEM_TESTS=OFF` leaves them and the system tests out, `-DNULLDC_EMULATOR=` and
@@ -67,11 +70,18 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `system.*` | the emulator binary of the default build, headless: `-help`, the keys that end a run and the line it prints, the pinned RTC with its keys in section `config` and in the section of a game, `emu.cfg` left alone, what a fatal fault and a signal that is sent do and that the faults of the guest are still handled, programs that boot under reios on the JIT and on the interpreter with their serial output, the software renderer into a PNG, a run that is repeated and has to end in the same state hash every time, and the speed script of `tests/perf` on one of them (`system/README.md` has the list, and what a deterministic run takes) | none, or the programs of `NULLDC_ELF_DIR` |
 | `system.hle.*` | the same on the emulator built with `-DHAS_TA_LLE=OFF` | none, or the programs of `NULLDC_ELF_DIR` |
 | `debugger.selftest.emu` `.interp` | the selftest of the debugger in the emulator (`devcast -config Debugger:SelfTest=emu`, headless, on the emulator the system tests build; the SH4 on the JIT and, as `.interp`, on the interpreter): the emulator thread and run control, nineteen tests on a guest of the suite's own. Pauses, event breakpoints, calls of every class in every state, host stops against a parked thread, resets, guest exits, steps, the lifetime of the machine (`debugger/selftest/README.md` has every test of these rows) | none |
-| `debugger.selftest.regs` `.interp` | the session `regs`: the registers of the device tree, guest memory for the debugger and the device accessors against the live machine, and that reading changes nothing | `2ndmix.elf` of `NULLDC_ELF_DIR` |
+| `debugger.selftest.core` `.interp` | the session `core`: the core of the debugger (`libswirl/debugger/dbg_core.cpp`, `dbg_events.cpp`, `dbg_symbols.cpp`, `dbg_callstack.cpp`) against the live machine, in a session without a server. Six tests: `core.events` (the event log: 200 entries, ids that ascend and stay, the oldest dropped, a message cut to its bound, nothing logged and no argument evaluated with the gates closed, the direct append), `core.opcodes` (for all 65536 encodings the disassembler reports an instruction exactly where the opcode table executes one, but for the reios trap `0x085B`, whose line is `.word 0x085b ! reios trap`), `core.tables` (breakpoint and watch ids from 1 and never used twice, the bounds of 1024 breakpoints, 64 expressions and 256 characters, the order of the checks of `breakpoints.add`, watch resolution without regard to case, duplicates, all-or-nothing, the category of a breakpoint, the active mask for mute, solo and no client, the event gates), `core.tick` (the JSON of ticks and of describe: no `null`, the required keys, every register list that of describe, values in their wire form, a full tick and the four base paths, watches on paths a tick does not carry, a symbol name and an event message with bytes that are no ASCII as `?`, the envelope errors, memory that does not wrap), `core.guest` (on the booted program: a step on the reios trap runs the boot, the entry resolves to a symbol, the SH4 call stack, the ARM7 call stack against `dc.aica.arm7.ENABLED` held in reset and running, `breakpointId` in the ticks of a stop until its breakpoint is removed, an event and a code breakpoint under mute), `core.lifetime` (with a thread that plays the host and sends what a client sends: the machine stopped, its guest exited, the machine gone and made again: reason, a new `stopId` for each, `registers: {}` and a tree of `"n/a"` without a machine, bookkeeping in every state, -32001 and -32002) | `2ndmix.elf` of `NULLDC_ELF_DIR` |
+| `debugger.selftest.regs` `.interp` | the session `regs`: the registers of the device tree, guest memory for the debugger and the device accessors against the live machine, that reading changes nothing, and `dc.aica.arm7.ENABLED` (0 while the ARM7 is held in reset, 1 while it is clocked) where the booted program holds and releases the ARM7 | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.selftest.sh4bp` `.sh4bpboot` `.sh4bpbase`, each with `.interp`; `debugger.selftest.sh4bp.sessions` | the gates of the SH4 breakpoints and steps on the park loop of the emulator, on the booted guest and with its baselines; and that sessions on the JIT, on the interpreter and on the JIT with the interpreter fallback forced agree on registers, step traces and time (`debugger/sh4bp/README.md`) | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.selftest.emuexit.running` `.pending` `.parked`, each with `.interp` | a guest that returns to the BIOS while running, with a pause asked for and while parked ends a headless run, `reason=guest-exit` | none |
 | `debugger.selftest.emurun.reads` `.pending` `.pauses`, each with `.interp` | 2ndmix for 600 vblanks with the debugger at work (reads for the whole run, a pause pending at the end, 150 pauses): the state hash of the same run without a session | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.selftest.emuhang.parked` `debugger.selftest.startpaused` | a run that is parked at its start stays parked, whatever `Exit.*` key it has: a session that resumes nothing, and `Debugger:StartPaused=yes` with the server enabled and no client | none |
+| `debugger.contract.m1` `.m1.interp` `.m1.fallback` | the gate of milestone M1 of the devtools integration: the emulator, headless, at its `StartPaused` stop with the server enabled, and the contract runner of the devtools UI against it (`npm run contract -- --url ... --profile emulator --elf 2ndmix.elf --milestone M1`): every selected scenario passed, no invariant violated. On the JIT, on the interpreter and on the JIT with the interpreter fallback forced (`debugger/contract/README.md` has every test of these rows) | `2ndmix.elf` of `NULLDC_ELF_DIR`, a dreamcast-devtools checkout with `node_modules`, npm |
+| `debugger.contract.grace` | a client leaves watches and a target behind that is stopped at a breakpoint 2ndmix reaches in every frame: inside the grace period another client finds that stop; 11 s after the last client left the target has run on through the breakpoint (the active mask is cleared), and a client that connects and asks for nothing is sent the next stop of it (breakpoints are active again); the tables are as they were, the event log has the note, and the event gates are open again | `2ndmix.elf` of `NULLDC_ELF_DIR` |
+| `debugger.contract.config` | `Debugger:Required=yes` or `Debugger:StartPaused=yes` without an enabled server is a configuration error: exit code 2, a line on stderr that names the key, no port line and no exit line. And with an enabled server whose port is taken: the same exit code 2 with either key, one line on stderr and a run without the server with neither | `2ndmix.elf` of `NULLDC_ELF_DIR` |
+| `debugger.contract.slow` | the slow-client rule: a client that has stopped reading and is 10 MiB of ticks behind is queued none of the periodic ticks of 3 s, every tick that a request caused, and a full tick next | `2ndmix.elf` of `NULLDC_ELF_DIR` |
+| `debugger.contract.hash.off` `.hash.noclient`, each with `.interp` | 2ndmix for 600 vblanks, twice: the same state hash with no `Debugger:` key and with `Debugger:Enabled=no` (and no server without the key: the default of an automated run); the same with the server on and no client and with the server off | `2ndmix.elf` of `NULLDC_ELF_DIR` |
+| `debugger.contract.hash.idlebp` `.interp` | the same state hash with a client connected and a muted breakpoint on a function 2ndmix calls in every frame (the runner's `--idle-breakpoint`), and with the server off | `2ndmix.elf` of `NULLDC_ELF_DIR`, a dreamcast-devtools checkout with `node_modules`, npm |
 | `aica.dsp.api` | the AICA DSP core (`libswirl/hw/aica/dsp_core`) on itself: a sample in one go against its 128 steps from every step, state out and in, two cores in turns, its registers, fields that hold more than their registers' bits, a wave RAM of 4, 8 and 16 MB; and its known-answer programs: the shifter, the address of a memory step on 2 to 16 MB, the ring, the read latch rules, the MIXS banks | none |
 | `aica.dsp.diff.random` `aica.dsp.diff.sparse` `aica.dsp.diff.directed` | the AICA DSP core against the DSP of the caique sample model on generated programs, compared behind every step | a caique-rtl checkout |
 | `aica.dsp.case.dsp_basic` `.dsp_mem` `.dsp_mem2` `.dsp_mem3` `.dsp_wslot` `.dsp_unpack` `.dsp_pack` `.dsp_temp` `.dsp_coll` `.sh4_latch` `.mdec_hold` | the DSP programs caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
@@ -81,8 +91,8 @@ The build includes two builds of the emulator for the system tests, about a minu
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
-and the `debugger.selftest.*` tests run on Linux hosts with python3; the latter are skipped where there is no
-emulator to run (`-DNULLDC_SYSTEM_TESTS=OFF` without `-DNULLDC_EMULATOR=`).
+and the `debugger.selftest.*` and `debugger.contract.*` tests run on Linux hosts with python3; the latter two are
+skipped where there is no emulator to run (`-DNULLDC_SYSTEM_TESTS=OFF` without `-DNULLDC_EMULATOR=`).
 The `aica.dsp.diff.*` and `aica.dsp.case.*` tests need `-DNULLDC_CAIQUE_DIR=<path to caique-rtl>` unless caique-rtl
 sits next to the repository; they compile its sample model and its DSP programs (C) from there and read its console
 captures.
@@ -97,11 +107,12 @@ passes but `guest_exit.jit`, `boot.2ndmix.jit` and `boot.hello.jit`, which have 
 `fault.guest`, whose faults are the recompiler's; without the fault handler the `fault.*` cases have nothing to wait
 for either.
 
-Every test of this table but `common.selftest`, `sh4.core`, the `debugger.sh4bp.*` and `debugger.selftest.*`
-tests, `cfg.overrides`, `runctl.guest_exit.*`, the system tests, `aica.dsp.capi` and the `aica.dsp.wasm` tests is
+Every test of this table but `common.selftest`, `sh4.core`, the `debugger.sh4bp.*`, `debugger.selftest.*` and
+`debugger.contract.*` tests, `cfg.overrides`, `runctl.guest_exit.*`, the system tests, `aica.dsp.capi` and the `aica.dsp.wasm` tests is
 gated on a baseline file, and ctest runs them with `--strict`: a count that is worse than its baseline fails, and
 so does one that is better, until the baseline is updated and committed. `common.selftest`, `sh4.core`, each
-`debugger.sh4bp.*` test, each `debugger.selftest.*` test, `cfg.overrides`, each `runctl.guest_exit.*` test, each
+`debugger.sh4bp.*` test, each `debugger.selftest.*` test, each `debugger.contract.*` test, `cfg.overrides`, each
+`runctl.guest_exit.*` test, each
 system test, `aica.dsp.capi` and `aica.dsp.wasm` are lists of checks that all have to hold;
 `aica.dsp.wasm.emsdk` and `aica.dsp.wasm.noemcc` are what the build script returns and prints.
 
@@ -114,7 +125,11 @@ More about the suites:
   ARM7 baseline are below their number of cases, and what else is known to be wrong in the ARM7,
 * `system/README.md`: the system tests, which emulator they run and how, their guest programs,
 * `debugger/selftest/README.md`: the selftests of the debugger in the emulator, test by test, and how a package
-  registers its own,
+  registers its own; the tests of the session `core` are in the row of `debugger.selftest.core` above and at the
+  head of `libswirl/debugger/dbg_selftest_core.cpp`,
+* `debugger/contract/README.md`: the server of the emulator against the contract runner of the devtools UI, the
+  grace period, the configuration errors, the slow-client rule and the state hashes, test by test; where the mock
+  of the UI repository and the emulator's server differ,
 * `aica_dsp/README.md`: the AICA DSP core's tests, which of the console's captures are compared with the core
   directly and which through the caique model; `aica_dsp/KNOWN_FAILURES.md`: the three lines of a console report
   that depend on the console's timing.
@@ -144,10 +159,12 @@ More about the suites:
     files/             fixtures
     debugger/          the debugger's modules that link without the emulator, one CMake project per directory:
                        net/ (transport, embedded UI), disasm/ (disassemblers, README.md), regs/ (device tree
-                       tables, and device state that has a test without the machine, README.md); sh4bp/,
+                       tables, and device state that has a test without the machine, README.md);
+                       symbols/ (the symbol table of the loaded ELF, README.md); sh4bp/,
                        a suite of this project: SH4 breakpoints and steps in the SH4 backends (README.md);
-                       and selftest/, the selftests of the debugger run in the emulator the system tests
-                       build (README.md)
+                       selftest/, the selftests of the debugger run in the emulator the system tests
+                       build (README.md); and contract/, the server of that emulator against the contract
+                       runner of the devtools UI (README.md)
 
 ## The single-step vectors
 
@@ -392,6 +409,7 @@ itself only.
 | `debugger.regs.tables` `debugger.regs.sources` | `dbg_regs_tables.cpp`, the device tree behind `debugger.describe`: the tables by themselves, and their on-chip and system bus rows against `hw/sh4/sh4_mmr.h` and `hw/holly/sb_regs.h` | nothing |
 | `debugger.regs.panels` | the panel ids of the tables against the list of the devtools UI | a dreamcast-devtools checkout |
 | `debugger.regs.aica.channels` `debugger.regs.aica.rtc` | the sound generator (`hw/aica/sgc_if.cpp`) and the settings of the sound regression harness (`hw/aica/aica_hash.cpp`), compiled as the emulator compiles them: the state of a channel that no register write sets, for the guest, for the debugger and in the samples; the two keys that pin the real-time clock | nothing |
+| `debugger.symbols.table` `debugger.symbols.damaged` | `dbg_symbols.cpp`, the symbols of the ELF that reios loaded: the `.symtab` walk on images the test builds byte for byte, lookup by address and by name, `name` and `name+0x<offset>`, a symbol without a size, names with bytes above `0x7F` and control characters; and images that are cut, that are no ELF, or that name offsets outside of themselves, each in memory that ends where the image ends | nothing |
 
 What the tests of the last column look for, and the option that says where it is:
 
@@ -411,6 +429,7 @@ without its data.
   difference that is accepted,
 * `debugger/regs/README.md`: what the table tests check, and the tests of `regs/aica`, the one directory of these
   suites that takes the emulator's definitions and flags (`reicast/cmake/config.cmake`, for itself only),
+* `debugger/symbols/README.md`: the fixture images of the symbol table's tests and what each test breaks in them,
 * the head of `debugger/net/CMakeLists.txt`: the sanitizer builds and the bundle of the net suite,
 * `debugger/sh4bp/README.md`: the suite of `tests/debugger` that compiles libswirl translation units as the
   emulator does and is added with the suites that do the same (the last paragraph of this section): its gates,

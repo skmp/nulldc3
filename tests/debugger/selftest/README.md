@@ -63,21 +63,23 @@ test starts. Headless, nothing else plays the host.
 ## The tests of dbg::regs and dbg::mem
 
 `libswirl/debugger/dbg_selftest_regs.cpp`: the registers of the device tree, guest memory for the debugger and
-the device accessors behind them. All eight are machine tests: they run once, before the guest has executed
+the device accessors behind them. The first eight are machine tests: they run once, before the guest has executed
 anything, on the machine that boots `2ndmix.elf` of `NULLDC_ELF_DIR`. They read, and where they compare with
-what the guest would read they put the machine back as it was.
+what the guest would read they put the machine back as it was. The ninth, `regs.enabled`, is a guest test: it
+runs that program for a second of emulated time and reads at stops of it.
 
 | test | what has to hold |
 |---|---|
-| `debugger.selftest.regs` `.interp` | the session `regs`, the eight tests below |
+| `debugger.selftest.regs` `.interp` | the session `regs`, the nine tests below |
 | `regs.slots` | the tables against the register slots of the live machine: every on-chip row is a registered slot, every registered on-chip slot has a row, and a row and its slot agree about a read function; every system bus row is a register that can be read |
 | `regs.read` | every register of every node reads, or says that it cannot, as its flags say: values inside their width, texts not empty and cut to the buffer, the outputs untouched on failure; reads without outputs and outside a node |
 | `regs.values` | values against a second source: `dc.sh4.cpu` against the SH4 context, the on-chip registers and `dc.holly.intc` against a guest read where that read changes nothing, the timer counters, `SB_FFST` without counting as a read, the time, the texts |
-| `regs.devices` | the debug accessors of the devices against a second source: `dc.aica.arm7` and the interrupt controller of the sound CPU against its save state, in each of the seven modes; the AICA register file against byte reads by the SH4, and the state of its 64 channels; the RTC; the DSP (`dc.aica.dsp`: its four widths, `MDEC_CT` as the counter modulo 2^16, `RBP` and `RBL` as the fields of the common register, the program against its registers); the interrupt controller; the GD-ROM; boot ROM and flash, and the flash bytes as a guest read delivers them |
+| `regs.devices` | the debug accessors of the devices against a second source: `dc.aica.arm7` and the interrupt controller of the sound CPU against its save state, in each of the seven modes; `ENABLED` of that node, one bit that reads 0 before the guest has executed anything, and 1 and 0 for a sound CPU that is clocked and one that is held in reset, as `SoundCPU::DebugEnabled()` says; the AICA register file against byte reads by the SH4, and the state of its 64 channels; the RTC; the DSP (`dc.aica.dsp`: its four widths, `MDEC_CT` as the counter modulo 2^16, `RBP` and `RBL` as the fields of the common register, the program against its registers); the interrupt controller; the GD-ROM; boot ROM and flash, and the flash bytes as a guest read delivers them |
 | `regs.mem.map` | `Classify()` against the map of `dbg_mem.h`: the regions of the SH4 at both ends and in the middle of every run in every mirror, the regions of the ARM7 and the DSP |
 | `regs.mem.read` | what `Read()` delivers, against the stores and the register readers: main memory in its mirrors and across the end of one, video memory in both views, wave memory for both processors, boot ROM and flash, the system bus, PVR and AICA registers and the RTC, the store queues, the on-chip registers at both of their addresses; the GD-ROM block, the modem, the FIFO registers and what is not mapped read as nothing; the readable bits of the 64 KiB around every region boundary |
 | `regs.mem.arm7` | the register window of the AICA for the ARM7 target against loads by the ARM7 itself: the whole window, the two bytes behind `ARMRST` and `VREG`, and the bytes where the ARM7 has its interrupt controller, in states of it that are made up |
 | `regs.pure` | reading changes nothing: the machine, as a save state has it, is the same before and after every register, every device accessor and the memory around every boundary was read |
+| `regs.enabled` | `dc.aica.arm7.ENABLED` where the booted program holds and releases the ARM7. The program runs from its start for 200,000,000 cycles of the scheduler and is stopped wherever it has written another value to `ARMRST` (a scheduler callback of the test looks at the byte in every slice and asks for a pause): at the start, with nothing executed, the register reads 0; at the stop behind a write of 1 it reads 0, behind a write of 0 it reads 1; at every stop it is the flag in the save state of the sound CPU and what `SoundCPU::DebugEnabled()` says, which is what the unwinder of the ARM7 call stack asks; and the program releases the ARM7 on the way. 2ndmix makes four such writes: `spu_init()` holds the ARM7 and releases it, `play_s3m()` does so again |
 
 ## The tests of the SH4 breakpoints and steps
 

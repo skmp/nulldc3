@@ -23,7 +23,7 @@ enum Source : uint32_t {
 	kSrcSh4,		// selector: Sh4Reg, a register of the SH4 context
 	kSrcSh4Mmr,		// an on-chip module register, Register::addr is its P4 address. selector: MmrReader
 	kSrcSb,			// a system bus register, Register::addr is its area 0 address. selector: not used
-	kSrcArm7,		// selector: the index SoundCPU::DebugGetReg takes
+	kSrcArm7,		// selector: Arm7Reg. The index SoundCPU::DebugGetReg takes, or kArm7Enabled
 	kSrcDsp,		// selector: DspReg
 	kSrcTiming,		// selector: TimingReg
 	kSrcCount
@@ -81,7 +81,8 @@ enum TimingReg : uint32_t {
 };
 
 // The selectors of kSrcArm7 are register indices of hw/arm7/arm7_context.h, which the tables cannot include.
-// dbg_regs.cpp checks them against that header
+// dbg_regs.cpp checks them against that header. kArm7Enabled is the one that is none: it is above every index
+// of that header, and is not handed to SoundCPU::DebugGetReg
 enum Arm7Reg : uint32_t {
 	kArm7R0 = 0,		// R0..R14 are 0..14
 	kArm7Pc = 15,		// the address of the next instruction
@@ -94,6 +95,8 @@ enum Arm7Reg : uint32_t {
 	kArm7R13Und = 34, kArm7R14Und = 35, kArm7SpsrUnd = 36,
 	kArm7R8Fiq = 37,	// R8_FIQ..R14_FIQ are 37..43
 	kArm7SpsrFiq = 44,
+	kArm7Enabled = 0x100,	// no register of the processor: 1 while it is clocked, 0 while it is held in reset
+							// (SoundCPU::DebugEnabled). One bit wide
 };
 
 /*

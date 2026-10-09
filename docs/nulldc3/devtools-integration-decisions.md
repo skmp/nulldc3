@@ -88,3 +88,60 @@ Where a decision changes what a package already implemented, the package is name
 29. **Verification section**: every emulator run is headless; the integration recipe uses `config:Headless=yes`, the pinned RTC
     and `Debugger:Port=0 / Required=yes / StartPaused=yes`; the sound harness needs a sounding guest before the AICA tiers are
     touched; machine limits for agent runs (one workflow, `ninja -j8`, `ctest -j4`).
+
+## C. After the devtools round (2026-10-10)
+
+The round (runner and mock: design 4.2.1; panels: 4.3.1) and the corrections of 6.1.1 with header revision 4 were verified
+and passed. Their verifiers left these points for the design owner; the answers are final.
+
+30. **S04, a step that ends at an exception vector.** One step may end at a vector (a deferred interrupt is accepted before
+    an instruction runs, 2.3.2). The step after it starts at the handler's first instruction with `SR.BL` set and cannot be
+    interrupted: **a second step in a row that ends at a vector fails S04.** The "four times at most, then passed with a
+    note" rule goes. The `control.stepOut` of S04 follows completed steps, so nothing is deferred there and the running
+    tick within 1 s holds as the row says.
+31. **S11, the ARM7 held in reset has an observable** (revised the same day): the register `ENABLED` of `dc.aica.arm7`
+    (width 1; 1 = the ARM7 is clocked, 0 = it is held in reset — what `SoundCPU::DebugEnabled()` says, the same source the
+    unwinder and the step preconditions use). It is one of the anchor registers of 2.8 for a server that lists `arm7`, and
+    it is in every tick, so the pairing is checked inside one tick: `callstacks.arm7` is `[]` exactly when `ENABLED` reads 0
+    in a paused tick, and has at least two frames when it reads 1; `state.getCallstack {arm7}` agrees. The guest-visible
+    register ARMRST (the byte the SH4 reads at `0xA0702C00`) is NOT the observable: as merged, a machine reset leaves it
+    reading 0 while the ARM7 is not clocked until the guest first writes it (the reset order of the AICA and of the sound
+    CPU), which is a question for the AICA / ARM7 tier work and a console measurement, not for the debugger. The emulator
+    gains the register as an integrator's correction before E5 (`dbg_regs_tables.cpp`, `dbg_regs.cpp` and their tests);
+    the mock gains it with the runner follow-up.
+32. **The widths of `dc.aica.dsp`** (`STEP` 8, `MDEC_CT` 16, `RBP` 16, `RBL` 8; decision 22) are normative for every server
+    that lists those registers: 2.8's list of what is normative gains them, and S01 checks the width of each one it finds.
+33. **Second-level nodes without registers** (`dc.sh4`, `dc.holly`, `dc.aica`, `dc.system`) is the emulator's choice, not
+    contract; the runner does not check it.
+34. **The gates are run with the default `TickMs` and `FullTickEvery`**; the contract's time bounds are written for them.
+    "Only running ticks for 600 ms" (S06, S07) asks for no paused tick in the window and nothing else: the runner's demand
+    for two ticks inside it goes.
+35. **S17 and `state.getMemoryBinary`**: package F4 gives the mock the method together with the scenario part, so the mock
+    keeps passing S17 without `--milestone` (5.5.3 stays as written; 4.5 says so).
+36. **S18**: the `icache` / `ocache` tables have rows, or no rows and a note (3.3: a tier with a cache model has rows).
+    **S16**: an ARM7 step asserts `stopId`, `reason` and no running tick; the PC is compared only on a line that is not
+    control flow, as S04 does.
+37. **A server that stops answering** (several request timeouts in a row): the runner fails the remaining scenarios as
+    "not run" instead of sending each request into its timeout.
+38. **Disassembly, narrow panels**: the instruction column keeps a minimum of 12 characters; a listing narrower than its
+    columns scrolls sideways (wheel or scroll bar) and cuts nothing. That holds for any panel width, also for a layout made
+    in a wider window and narrowed. The memory view gets the same rule in package F3 (as built it cuts its hex and text
+    columns in a narrowed side-by-side layout).
+39. **Disconnected UI, what "frame" is** (decision 19): text typed into a box and not sent is frame and is kept; an address
+    box is rewritten only when its view moves or the target's address format changes.
+40. **Focus over a reconnect**: a row control gets the focus back only while the focus is on the page body; a focus the
+    user moved during the outage stays where they put it.
+41. **Toolbar alignment is not contract.**
+42. **`tests/debugger/regs`, the event listing**: every row of `dbg_events.h` is listed by exactly one node, except
+    `EV_DEBUGGER_DSP_FORCED`, which is listed by none (replaces "at most once" of 6.1.1 item 2, which no longer noticed an
+    event dropped from its node).
+43. **`tests/debugger/sh4bp`, the "Per slice" paragraph**: the two stand-ins of that directory keep the latch test in front
+    of the attention word (the B11 cost was measured on that form); the README says so instead of claiming the order of
+    `slice_end()`.
+44. **For E5**: the 1 MiB bound is answered with close code 1009, and the close frame is on the wire before the socket is
+    closed, also while the client is still sending (S12 sees 1006 otherwise). If the transport of E1 does not do that, E5
+    may fix it in `dbg_net.cpp` in a commit of its own, with a test in `tests/debugger/net`: the one exception to its
+    "must not touch" list.
+45. **Header revision 4 is applied** (branch `skmp/nulldc3-integ-v3`, merged). The one comment line it left at 180 columns
+    (`debugger.h`, the `Init()` comment) is re-wrapped; the docs copies beside the design (`devtools-integration-open.md`,
+    `-decisions.md`, `PLAN.md`) are part of 6.1.1 item 5.

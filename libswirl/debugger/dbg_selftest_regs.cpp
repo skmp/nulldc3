@@ -39,8 +39,9 @@
 #include <vector>
 
 /*
-	Selftests of dbg::regs, dbg::mem and the device accessors behind them. All of them are machine tests: they
-	read, and where they compare with what the guest would read they put the machine back as it was.
+	Selftests of dbg::regs, dbg::mem and the device accessors behind them. All but the last are machine tests:
+	they read, and where they compare with what the guest would read they put the machine back as it was. The
+	last, regs.enabled, is a guest test: it runs the booted program and reads at stops of it.
 
 	Where a value has a second source that is not the debugger's (the SH4 context, a save state of a device, a
 	guest read that is known to have no side effect) the two are compared. Guest reads are made by this file
@@ -937,6 +938,19 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 				{
 					const regs::Register& reg = arm7->registers[r];
 					u32 index = regs::KeySelector(reg.key);
+					u64 value = ~(u64)0;
+
+					regs::Read(*arm7, r, &value, nullptr, 0);
+
+					// the one row that is no register of the core: whether it is clocked, the last byte of the state
+					if (index == regs::kArm7Enabled)
+					{
+						u32 clocked = bytes[scpu_tail_at + 6] != 0;
+
+						tally->Add(value == clocked, "dc.aica.arm7.%s in mode %02X: %llX, the save state gives %X", reg.name, mode, (unsigned long long)value, clocked);
+						continue;
+					}
+
 					u32 want = raw[index];
 
 					if (index == 15)
@@ -949,9 +963,6 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 						if (bank.mode == mode && index >= bank.first && index <= bank.last)
 							want = raw[bank.live + index - bank.first];
 					}
-
-					u64 value = ~(u64)0;
-					regs::Read(*arm7, r, &value, nullptr, 0);
 
 					tally->Add(value == want, "dc.aica.arm7.%s in mode %02X: %llX, the save state gives %X", reg.name, mode, (unsigned long long)value, want);
 				}
@@ -984,8 +995,20 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 			Check(ok && pc == next, "dc.aica.arm7.PC is the next instruction, %08llX (R15 is %08X), mode %02X", (unsigned long long)pc, r15, mode);
 			Check(scpu->DebugEnabled() == enabled, "the ARM7 is %s, and DebugEnabled() says so", enabled ? "running" : "held in reset");
 
+			// ENABLED is that flag, one bit of it: what a client sees of the reset of the ARM7. No guest has run
+			// yet, so the machine's own reset holds the ARM7
+			int flag = arm7 != nullptr ? regs::FindRegister(*arm7, "ENABLED") : -1;
+			u32 width = flag >= 0 ? arm7->registers[flag].width : 0;
+			u64 clocked = ~(u64)0;
+
+			ok = ReadRegister("dc.aica.arm7", "ENABLED", &clocked);
+
+			Check(ok && width == 1 && clocked == 0 && !enabled,
+				"dc.aica.arm7.ENABLED has %u bit and reads %llX before the guest has executed anything: the ARM7 is held in reset", width,
+				(unsigned long long)clocked);
+
 			// the same in every mode: a state with a value of its own in every register is put into the sound
-			// CPU, read, and taken out again
+			// CPU, read, and taken out again. Two of the states are of a core that is clocked
 			Tally modes;
 
 			for (u32 other : { 0x10u, 0x11u, 0x12u, 0x13u, 0x17u, 0x1Bu, 0x1Fu })
@@ -1001,6 +1024,7 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 				made[scpu_tail_at] = (other & 1) != 0;
 				made[scpu_tail_at + 1] = (other & 2) != 0;
 				memcpy(&made[scpu_tail_at + 2], &other, 4);
+				made[scpu_tail_at + 6] = (other & 8) != 0;
 
 				RestoreDevice(scpu, made);
 				compare(made, &modes);
@@ -1008,6 +1032,26 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 
 			RestoreDevice(scpu, state);
 			modes.Report("dc.aica.arm7 in each of the seven modes");
+
+			// ENABLED in both of its states, with every other byte of the sound CPU as the machine has it: the
+			// register is the flag of the save state, and DebugEnabled(), which is what the unwinder of the ARM7
+			// call stack asks (dbg_callstack.h), says the same
+			for (bool made_clocked : { true, false })
+			{
+				std::vector<u8> made = state;
+
+				made[scpu_tail_at + 6] = made_clocked;
+				RestoreDevice(scpu, made);
+
+				clocked = ~(u64)0;
+				ok = ReadRegister("dc.aica.arm7", "ENABLED", &clocked);
+
+				Check(ok && clocked == (made_clocked ? 1u : 0u) && scpu->DebugEnabled() == made_clocked,
+					"a sound CPU that is %s: dc.aica.arm7.ENABLED reads %llX, and DebugEnabled() is %d", made_clocked ? "clocked" : "held in reset",
+					(unsigned long long)clocked, (int)scpu->DebugEnabled());
+			}
+
+			RestoreDevice(scpu, state);
 		}
 
 		// the interrupt controller in front of nFIQ: L and the in-service flag against the save state, and the
@@ -2013,4 +2057,175 @@ DBG_SELFTEST(regs_pure, "regs.pure")
 		Check(false, "the save state differs at byte %zu of %zu (%02X, then %02X)%s", at, before.size(), at < before.size() ? before[at] : 0,
 			at < after.size() ? after[at] : 0, control == after ? "" : "; it moves without reads as well: run again");
 	}
+}
+
+/*
+	regs.enabled: dc.aica.arm7.ENABLED where the booted program holds and releases the ARM7. The register is
+	1 while the ARM7 is clocked and 0 while it is held in reset: from a machine reset on, and whenever the guest
+	holds it with ARMRST.
+
+	The guest test of this file. It runs the booted program from its start for kEnabledCycles and stops it
+	wherever the program has written another value to ARMRST: a scheduler callback of the test looks at that
+	byte, as the SH4 reads it, in every slice and asks for a pause when it is no longer what it was at the last
+	stop. A stop is therefore the slice end behind such a write, a slice of the SH4 behind the store at most;
+	where the guest goes into a SLEEP wait in that slice, it is the end of the wait.
+
+	At the stop of the start, with nothing executed, the register has to read 0. At every stop behind a write it
+	has to be what the guest wrote: 0 behind a write of 1 to ARMRST, 1 behind a write of 0. At every stop it has
+	to be what two other sources say as well: the flag in the save state of the sound CPU, and
+	SoundCPU::DebugEnabled(), which is what the unwinder of the ARM7 call stack and an ARM7 step ask
+	(dbg_callstack.h, dbg_emu.h). And the program has to release the ARM7 on the way, with the register reading
+	1 behind it.
+
+	ARMRST is the witness of what the guest did and no more. It is not what the debugger shows of the reset:
+	from a machine reset until the guest first writes it, it reads 0 with the ARM7 held, as the start of every
+	run has it.
+
+	The program is 2ndmix of the KallistiOS examples, which writes ARMRST four times with a value that is not
+	the one before: spu_init() holds the ARM7, clears the wave memory and releases it; play_s3m() holds it,
+	loads the player and releases it.
+*/
+namespace {
+
+const u64 kEnabledCycles = 200 * 1000 * 1000;		// of the scheduler: a second of the guest
+
+// How the ARM7 stands, by every source
+struct Arm7Clock {
+	bool read;			// dc.aica.arm7.ENABLED gave a value
+	u64 enabled;		// that value
+	bool accessor;		// SoundCPU::DebugEnabled()
+	bool state;			// the flag in the save state of the sound CPU
+	u8 armrst;			// the byte at 0x00702C00 as the SH4 reads it
+	bool agree;			// the register is the flag of the save state, and the accessor says the same
+};
+
+u8 ReadArmrst()
+{
+	u8 byte = 0xEE;
+
+	sh4_cpu->GetA0H<AICA>(A0H_AICA)->DebugReadRegs(0x2C00, 1, &byte);
+	return byte;
+}
+
+Arm7Clock ReadArm7Clock()
+{
+	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+	std::vector<u8> state = DeviceState(scpu);
+	Arm7Clock c = { };
+
+	c.enabled = ~(u64)0;
+	c.read = ReadRegister("dc.aica.arm7", "ENABLED", &c.enabled);
+	c.accessor = scpu->DebugEnabled();
+	c.state = state.size() == scpu_state_size && state[scpu_tail_at + 6] != 0;
+	c.armrst = ReadArmrst();
+	c.agree = c.read && state.size() == scpu_state_size && c.enabled == (c.state ? 1u : 0u) && c.accessor == c.state;
+
+	return c;
+}
+
+struct {
+	int id = -1;		// of the scheduler callback
+	bool on;
+	bool asked;			// a pause, for the stop that comes
+	bool at_end;		// that pause is for the end of the walk
+	u8 armrst;			// ARMRST at the last stop
+	u64 end;			// the scheduler's time the walk ends at
+	u32 phase;
+	u32 held, released;	// the stops behind a write of 1, and of 0
+	u32 zeros, ones;	// those of them at which the register read 0, and 1, with the other sources
+} en;
+
+// In every slice of the walk, on the emulator thread: a pause is asked for in the slice in which the guest wrote
+// another value to ARMRST, and at the end of the walk
+int EnabledTick(void*, int, int, int)
+{
+	if (!en.on)
+		return 0;
+
+	if (!en.asked)
+	{
+		en.at_end = sh4_sched_now64() >= en.end;
+
+		if (en.at_end || ReadArmrst() != en.armrst)
+		{
+			en.asked = true;
+			emu::RequestPause();
+		}
+	}
+
+	// again in the next slice
+	return 1;
+}
+
+}
+
+DBG_SELFTEST_GUEST(regs_enabled, "regs.enabled")
+{
+	const Arm7Clock now = ReadArm7Clock();
+	const u32 pc = p_sh4rcb->cntx.pc;
+	const unsigned long long time = sh4_sched_now64();
+
+	if (en.phase == 0)
+	{
+		en.phase = 1;
+
+		Check(stop.cause == StopCause::Start && now.agree && now.enabled == 0,
+			"the start of the booted program, nothing executed (SH4 pc %08X, time %llu): the ARM7 is held in reset, dc.aica.arm7.ENABLED reads %llX, "
+			"DebugEnabled() is %d, the save state has %d", pc, time, (unsigned long long)now.enabled, now.accessor, now.state);
+		Note("ARMRST reads %02X for the SH4 there: the guest has not written it", now.armrst);
+
+		en.armrst = now.armrst;
+		en.end = time + kEnabledCycles;
+		en.asked = false;
+		en.on = true;
+
+		if (en.id < 0)
+			en.id = sh4_sched_register(nullptr, 0, EnabledTick);
+		sh4_sched_request(en.id, 1);
+
+		emu::Resume();
+		return false;
+	}
+
+	const bool wrote = now.armrst != en.armrst;
+
+	if (stop.cause != StopCause::Pause || stop.lifetime != Lifetime::Parked || !en.asked || (!wrote && !en.at_end))
+	{
+		Check(false, "the booted program runs for %llu cycles and is stopped by the test only (a stop with \"%s\" at SH4 pc %08X, time %llu)",
+			(unsigned long long)kEnabledCycles, StopCauseName(stop.cause), pc, time);
+		en.on = false;
+		return true;
+	}
+
+	if (wrote)
+	{
+		const bool hold = (now.armrst & 1) != 0;
+
+		(hold ? en.held : en.released)++;
+
+		if (now.agree && now.enabled == (hold ? 0u : 1u))
+			(hold ? en.zeros : en.ones)++;
+
+		Check(now.agree && now.enabled == (hold ? 0u : 1u),
+			"the guest wrote %02X to ARMRST and %s the ARM7 (the stop behind it: SH4 pc %08X, time %llu): dc.aica.arm7.ENABLED reads %llX, "
+			"DebugEnabled() is %d, the save state has %d", now.armrst, hold ? "holds" : "released", pc, time, (unsigned long long)now.enabled, now.accessor,
+			now.state);
+
+		en.armrst = now.armrst;
+		en.asked = false;
+
+		emu::Resume();
+		return false;
+	}
+
+	en.on = false;
+
+	Check(now.agree && now.enabled == ((now.armrst & 1) ? 0u : 1u),
+		"the end of the walk (SH4 pc %08X, time %llu), with ARMRST at %02X: dc.aica.arm7.ENABLED reads %llX, DebugEnabled() is %d, the save state has %d", pc,
+		time, now.armrst, (unsigned long long)now.enabled, now.accessor, now.state);
+	Check(en.ones != 0 && en.ones == en.released && en.zeros == en.held,
+		"the guest released the ARM7 on the way: dc.aica.arm7.ENABLED read 1 at %u of %u stops behind a write that released it, and 0 at %u of %u stops "
+		"behind a write that holds it", en.ones, en.released, en.zeros, en.held);
+
+	return true;
 }

@@ -291,11 +291,16 @@ static const char* const holly_core_actions[] = { "holly-core" };
 /*
 	dc.aica.arm7. PC is the address of the next instruction. Rn_<mode> and SPSR_<mode> are the banked registers
 	of a mode; for the mode the processor is in they show what R8..R14 and SPSR show.
+	ENABLED is no register of the processor: 1 while the ARM7 is clocked, 0 while it is held in reset, as it is
+	from a machine reset until the guest releases it and whenever the guest holds it again. It is what a client
+	sees of the reset (the ARM7 call stack is empty exactly while it reads 0), and nothing writes it. It stands
+	behind PC: the program counter is the first register of the node of every processor.
 */
 #define ARM7(sel) MakeKey(kSrcArm7, sel)
 
 static const Register arm7_regs[] = {
 	{ "PC",       32, 0, kNoAddr, ARM7(kArm7Pc) },
+	{ "ENABLED",  1,  kRegComputed, kNoAddr, ARM7(kArm7Enabled) },
 	{ "R0",       32, 0, kNoAddr, ARM7(kArm7R0 + 0) },
 	{ "R1",       32, 0, kNoAddr, ARM7(kArm7R0 + 1) },
 	{ "R2",       32, 0, kNoAddr, ARM7(kArm7R0 + 2) },

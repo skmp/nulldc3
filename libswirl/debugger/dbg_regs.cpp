@@ -49,6 +49,9 @@ static_assert(SAME(kArm7R13Und, R13_UND) && SAME(kArm7R14Und, R14_UND) && SAME(k
 static_assert(SAME(kArm7R8Fiq, R8_FIQ) && SAME(kArm7R8Fiq + 6, R14_FIQ) && SAME(kArm7SpsrFiq, SPSR_FIQ), "ARM7 selectors");
 #undef SAME
 
+// ... but for the one that is no register of the processor
+static_assert((u32)kArm7Enabled >= (u32)RN_ARM_REG_COUNT, "kArm7Enabled is an index of arm7_context.h");
+
 static u64 WidthMask(u32 width)
 {
 	return width >= 64 ? ~(u64)0 : ((u64)1 << width) - 1;
@@ -206,7 +209,18 @@ static bool ReadArm7(u32 selector, u64* value)
 	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
 	u32 word;
 
-	if (scpu == nullptr || !scpu->DebugGetReg(selector, &word))
+	if (scpu == nullptr)
+		return false;
+
+	// Is the ARM7 clocked, or held in reset? What the unwinder of the ARM7 call stack asks as well. It reads
+	// wherever the registers of the processor read: the sound CPU keeps them while it is held in reset too
+	if (selector == kArm7Enabled)
+	{
+		*value = scpu->DebugEnabled() ? 1 : 0;
+		return true;
+	}
+
+	if (!scpu->DebugGetReg(selector, &word))
 		return false;
 
 	*value = word;
