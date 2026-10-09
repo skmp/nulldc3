@@ -8,7 +8,8 @@
 #	                                                    UI (npm run contract -- --url ... --profile emulator --elf
 #	                                                    ... --milestone M1), on the JIT, on the interpreter and on
 #	                                                    the JIT with Debugger:ForceFallback=yes
-#	    debugger.contract.grace                         the grace period after the last client left
+#	    debugger.contract.grace                         the grace period after the last client left, and the
+#	                                                    client that connects behind it
 #	    debugger.contract.config                        the configuration errors of the server's keys, and a
 #	                                                    server that cannot be started
 #	    debugger.contract.hash.off .noclient .idlebp    the state hash of a run with the server off, with the
@@ -113,9 +114,11 @@ endfunction()
 nulldc_debugger_contract(m1          MODE m1 RUNNER ENGINES jit interp)
 nulldc_debugger_contract(m1.fallback MODE m1 RUNNER FALLBACK)
 
-# A client leaves a breakpoint, a watch and a paused target behind: the grace period releases the stop and
-# keeps the tables
-nulldc_debugger_contract(grace MODE grace)
+# A client leaves watches and a target behind that is stopped at a breakpoint on a function 2ndmix calls once
+# in every frame (the one of hash.idlebp, below): the grace period releases the stop, keeps the tables and
+# clears the active mask, so the target runs on through that breakpoint; a client that connects makes
+# breakpoints active again and opens the event gates
+nulldc_debugger_contract(grace MODE grace IDLE_SYMBOL stars_one_frame)
 
 # Debugger:Required and Debugger:StartPaused without an enabled server: exit code 2 and a line on stderr. And
 # an enabled server whose port is taken: exit code 2 with either key, a run without the server with neither

@@ -10,8 +10,10 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
 
     m1             the gate of milestone M1: the emulator at its StartPaused stop, and the contract runner of the
                    devtools UI against it (npm run contract -- --url ... --profile emulator --elf ... --milestone M1)
-    grace          a client leaves the target paused; 11 s later another one finds it running, with the tables
-                   as they were and the note of the grace period in the event log
+    grace          a client leaves the target stopped at a breakpoint that is reached in every frame; 11 s later
+                   the target has run on without stopping there, and the breakpoint stops it again, unasked,
+                   in front of the next client; the tables as they were, the note of the grace period in the
+                   event log, and the event gates open again
     config         the configuration errors: three runs that end by themselves with exit code 2; and a server
                    that was enabled and cannot be started (its port is taken): exit code 2 with
                    Debugger:Required or Debugger:StartPaused, one line and a run without the server otherwise
@@ -29,6 +31,7 @@ import resource
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -199,6 +202,53 @@ def has_port_line(log):
     return any(line.startswith('Debugger: http://') for line in log.splitlines())
 
 
+def symbol_address(path, name):
+    """The address of a symbol of an ELF32 file, from its .symtab: `name`, or `_name` as a C compiler for the SH4
+    writes it. The contract runner resolves --idle-breakpoint the same way (scripts/contract/elfSymbols.ts)."""
+    with open(path, 'rb') as f:
+        image = f.read()
+    check(len(image) >= 52 and image[:4] == b'\x7fELF' and image[4] == 1 and image[5] in (1, 2), path + ' is not an ELF32 file')
+    order = '<' if image[5] == 1 else '>'
+    section_offset, = struct.unpack_from(order + 'I', image, 32)
+    section_size, section_count = struct.unpack_from(order + 'HH', image, 46)
+
+    def section(index):
+        kind, _, _, offset, size, link, _, _, entry_size = struct.unpack_from(order + '9I', image, section_offset + index * section_size + 4)
+        return kind, offset, size, link, entry_size
+
+    found = {}
+    try:
+        for index in range(section_count):
+            kind, offset, size, link, entry_size = section(index)
+            if kind != 2 or link >= section_count:      # SHT_SYMTAB
+                continue
+            strings = section(link)
+            for at in range(offset, offset + size - 15, entry_size or 16):
+                name_at, value, _, info, _, defined_in = struct.unpack_from(order + 'IIIBBH', image, at)
+                # defined functions, objects and labels
+                if name_at == 0 or defined_in == 0 or (info & 0x0F) > 2:
+                    continue
+                start = strings[1] + name_at
+                found.setdefault(image[start:image.index(b'\0', start)].decode('latin-1'), value)
+    except (struct.error, ValueError):
+        raise Failed('the section headers or the symbol table of %s reach outside of the file' % path)
+    address = found.get(name, found.get('_' + name))
+    check(address is not None, '%s has no symbol "%s"' % (path, name))
+    return address
+
+
+def register_value(tick, path, name):
+    """A register of a tick that carries its path, as a number."""
+    for register in tick['registers'].get(path, []):
+        if register['name'] == name:
+            return int(register['value'], 16)
+    raise Failed('the tick %s has no register %s of %s' % (tick.get('tickId'), name, path))
+
+
+def notes(tick):
+    return [entry for entry in tick['eventLog'] if entry['metadata']['event'] == 'dc.debugger.note']
+
+
 def runner_command(args, port, more):
     """npm run contract -- --url ... in the devtools checkout: the command of the design."""
     return [args.npm, 'run', '--silent', 'contract', '--', '--url', 'ws://127.0.0.1:%d/ws' % port, '--profile', 'emulator',
@@ -251,8 +301,16 @@ def mode_m1(args):
     print('the gate of M1: ' + summary[-1])
 
 
+# One frame of 59.94 Hz in SH4 cycles, about (README.md: a breakpoint on the function of --idle-symbol stops
+# 3,335,817 to 3,337,097 cycles behind the stop before it)
+FRAME_CYCLES = 3336670
+
+
 def mode_grace(args):
-    """The grace period: a stop that a client left behind is released, the tables stay."""
+    """The grace period: a stop that a client left behind is released and no breakpoint stops any more, the
+    tables stay; a client that connects makes the breakpoints active again and opens the event gates."""
+    address = symbol_address(args.guest, args.idle_symbol)
+    where = '%s (0x%08X)' % (args.idle_symbol, address)
     run = Run(args, 'emulator').start(STARTPAUSED)
     try:
         port = run.port()
@@ -260,57 +318,86 @@ def mode_grace(args):
         first = a.describe()
         check(first['executionState'].get('reason') == 'start', 'the emulator is not at its StartPaused stop: %r' % (first['executionState'],), run)
 
-        # past the boot: the entry of the program has been executed, a breakpoint on it is listed and never hit
-        a.call('control.runUntil', {})
-        a.wait_tick(lambda t: t['executionState']['state'] == 'running', 10, 'a running tick')
-        time.sleep(0.5)
-
-        a.call('breakpoints.add', {'event': 'dc.sh4.cpu.pc', 'address': 0x8C010000, 'kind': 'code', 'enabled': True})
+        # an enabled breakpoint on a function the program calls in every frame, and the target left stopped at it
+        a.call('breakpoints.add', {'event': 'dc.sh4.cpu.pc', 'address': address, 'kind': 'code', 'enabled': True})
         a.call('breakpoints.add', {'event': 'dc.holly.core.vblank', 'kind': 'event', 'enabled': False})
         a.call('state.watch', {'expressions': ['dc.sh4.cpu.pc', 'dc.timing.sh4_cycles']})
         a.call('breakpoints.setCategoryStates', {'categories': {'arm7': {'muted': True, 'soloed': False}, 'dsp': {'muted': False, 'soloed': False}}})
-        a.call('control.pause', {'target': 'sh4'})
-        paused = a.wait_tick(lambda t: t['executionState']['state'] == 'paused' and t['executionState'].get('reason') == 'pause'
-                             and len(t['breakpoints']) == 2 and len(t['watches']) == 2 and t['categories']['arm7']['muted'],
-                             10, 'a paused tick with reason "pause" that lists two breakpoints and two watches')
+        a.call('control.runUntil', {})
+        stopped = a.wait_tick(lambda t: t['executionState']['state'] == 'paused' and t['executionState'].get('reason') == 'breakpoint', 30,
+                              'the stop of the breakpoint on ' + where)
+        stop = stopped['executionState']
+        check(len(stopped['breakpoints']) == 2 and len(stopped['watches']) == 2 and stopped['categories']['arm7']['muted'],
+              'the tick of the stop does not list two breakpoints, two watches and the muted category', run)
+        check(register_value(stopped, 'dc.sh4.cpu', 'PC') == address and stop.get('breakpointId') is not None,
+              'the stop is not at the breakpoint on %s: %r' % (where, stop), run)
         a.close()
         left = time.monotonic()
 
-        # still paused a while into the grace period: a client that comes back finds its stop
+        # still stopped a while into the grace period: a client that comes back finds its stop
         time.sleep(3.0)
         b = wsclient.Client('127.0.0.1', port)
         again = b.describe()
-        check(again['executionState']['state'] == 'paused' and again['executionState']['stopId'] == paused['executionState']['stopId'],
-              'a client that reconnects inside the grace period finds the stop it left: %r' % (again['executionState'],), run)
+        check(again['executionState'] == stop, 'a client that reconnects inside the grace period finds the stop it left: %r, not %r'
+              % (again['executionState'], stop), run)
         b.close()
 
         # the period starts again at this disconnect: 11 s without a client
         time.sleep(11.0)
         check(run.alive(), 'the emulator ended (exit code %s) during the grace period' % run.process.poll(), run)
 
+        # This client asks for nothing. The breakpoint is active again because it connected, and the stop comes to
+        # it as the tick of a state change. A stop that the target had made on its own, with no client, would
+        # not: nothing is sent to a client for a stop that was there before it
         c = wsclient.Client('127.0.0.1', port)
-        tick = c.describe()
-        state = tick['executionState']
-        check(state['state'] == 'running', 'the grace period released the stop: the new client finds the target running (%r)' % (state,), run)
-        check(state['stopId'] == paused['executionState']['stopId'], 'a resume leaves the stop counter alone (%r, was %r)'
-              % (state['stopId'], paused['executionState']['stopId']), run)
+        try:
+            hit = c.wait_tick(lambda t: t['executionState']['state'] == 'paused', 2.0, 'a paused tick')
+        except wsclient.Timeout:
+            hit = None
+        if hit is None:
+            now = c.describe()
+            state = now['executionState']
+            check(state != stop, 'the grace period did not release the stop: 11 s after the last client left, the next one finds the stop '
+                  'that was left (%r)' % (state,), run)
+            if state['state'] == 'paused':
+                check(False, 'the grace period did not clear the active mask: with no client connected the released target was stopped '
+                      'again by its breakpoint on %s, %d SH4 cycles behind the stop that was released (a frame has %d); the new client '
+                      'finds %r, was %r' % (where, register_value(now, 'dc.timing', 'SH4_CYCLES') - register_value(stopped, 'dc.timing', 'SH4_CYCLES'),
+                                            FRAME_CYCLES, state, stop), run)
+            check(False, 'breakpoints are not active again when a client connects: the target runs, a client is connected, and the '
+                  'enabled breakpoint on %s, which is reached in every frame, has not stopped it within 2 s (%r)' % (where, state), run)
+
+        state = hit['executionState']
+        check(state.get('reason') == 'breakpoint' and state.get('breakpointId') == stop['breakpointId'] and state['stopId'] == stop['stopId'] + 1,
+              'the first stop in front of the new client is the next stop of the breakpoint on %s: %r, the stop that was released was %r'
+              % (where, state, stop), run)
+
+        # It was released, and it ran with the breakpoint listed and enabled: the function is reached in every
+        # frame, so with breakpoints active the target would not have got further than one
+        ran = register_value(hit, 'dc.timing', 'SH4_CYCLES') - register_value(stopped, 'dc.timing', 'SH4_CYCLES')
+        check(ran >= 3 * FRAME_CYCLES, 'between the stop that the grace period released and the stop in front of the new client the SH4 ran '
+              '%d cycles, which is not three frames (%d): the target was not released a second before, or it did not run on' % (ran, 3 * FRAME_CYCLES), run)
 
         def tables(t):
             return (sorted((k, sorted(v.items())) for k, v in t['breakpoints'].items()), [(w['id'], w['expression']) for w in t['watches']],
                     sorted((k, sorted(v.items())) for k, v in t['categories'].items()))
 
-        check(tables(tick) == tables(paused), 'breakpoints, watches and categories are as the first client left them:\n%r\nnot\n%r'
-              % (tables(tick), tables(paused)), run)
-        notes = [e for e in tick['eventLog'] if e['metadata']['event'] == 'dc.debugger.note']
-        check(len(notes) == 1, 'the event log has the note of the grace period, once (%d dc.debugger.note entries of %d)'
-              % (len(notes), len(tick['eventLog'])), run)
+        check(tables(hit) == tables(stopped), 'breakpoints, watches and categories are as the first client left them:\n%r\nnot\n%r'
+              % (tables(hit), tables(stopped)), run)
+        noted = notes(hit)
+        check(len(noted) == 1, 'the event log has the note of the grace period, once (%d dc.debugger.note entries of %d)'
+              % (len(noted), len(hit['eventLog'])), run)
 
-        # and the target goes on running, with the client connected: its breakpoint is not reached
-        more = c.wait_tick(lambda t: t['tickId'] != tick['tickId'] and t['executionState']['state'] == 'running', 5, 'a running tick behind the first')
-        check(more['executionState']['state'] == 'running', 'the target runs on', run)
+        # The event gates were rewritten at the connect as well: a low-rate event is logged again. The one a
+        # client can raise is the note for a describe that names another protocol number
+        described = c.describe(protocol=2)
+        check(described['executionState'] == state, 'a describe changes nothing of the stop: %r, was %r' % (described['executionState'], state), run)
+        check(len(notes(described)) == 2, 'the event gates are open again for the new client: its describe with protocol 2 is noted in the event '
+              'log (%d dc.debugger.note entries, 2 with the note of the grace period)' % len(notes(described)), run)
         c.close()
-        print('paused at stop %d, left alone for %.1f s: running, 2 breakpoints, 2 watches and the categories as they were; note: %s'
-              % (paused['executionState']['stopId'], time.monotonic() - left, notes[0]['message']))
+        print('stopped at %s (stop %d), left alone for %.1f s: released, %.1f frames without a stop there, then stop %d in front of the next '
+              'client, unasked; 2 breakpoints, 2 watches and the categories as they were; note: %s'
+              % (where, stop['stopId'], time.monotonic() - left, ran / FRAME_CYCLES, state['stopId'], noted[0]['message']))
     except wsclient.Error as error:
         check(False, 'the client: %s' % error, run)
     finally:
@@ -473,7 +560,7 @@ def main():
     parser.add_argument('--fallback', action='store_true', help='Debugger:ForceFallback=yes')
     parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, hash-idlebp)')
     parser.add_argument('--npm', default='npm')
-    parser.add_argument('--idle-symbol', default='', help='hash-idlebp: a symbol of the guest that is reached in every frame')
+    parser.add_argument('--idle-symbol', default='', help='hash-idlebp, grace: a symbol of the guest that is reached in every frame')
     parser.add_argument('--vblanks', type=int, default=600, help='Exit.AfterVblanks of the hash runs')
     parser.add_argument('--watchdog', type=int, default=600, help='seconds a run, or the runner, may take')
     parser.add_argument('--config-watchdog', type=int, default=60, help='config: seconds a run may take to end by itself')
@@ -499,7 +586,7 @@ def main():
             print('FAIL: no npm to run the contract runner with (%s)' % args.npm)
             return 1
         args.npm = npm
-    if args.mode == 'hash-idlebp' and not args.idle_symbol:
+    if args.mode in ('hash-idlebp', 'grace') and not args.idle_symbol:
         print('FAIL: --idle-symbol is missing')
         return 1
 
