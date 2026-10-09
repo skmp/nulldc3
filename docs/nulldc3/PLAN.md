@@ -80,11 +80,18 @@ feedback, the headers as built, the 2026-10-08 direction; `DESIGN-V3-OPEN.md` ke
 section name, the submodule question). Done and verified 2026-10-10: the corrections revision 3 makes to merged emulator code
 with the comment-only header revision 4 (merged, 171 ctest targets), and the devtools round (`dreamcast-devtools`
 `skmp/nulldc3` = 17f3bff: 382 unit tests, 246 e2e tests; the runner's M1 gate requires every scenario to pass and judged 278
-broken or legal servers correctly; panels readable at 1366x768). Running next as one workflow (`resume/e5.workflow.js`): a
-small runner follow-up (design 4.2.2), then E5 (core), which completes M1. Devtools: F0 done; F1 committed with runner gaps open; F2 committed,
-second verification pending. For E5: in automated runs (headless or an `Exit.*` key) the server stays off unless
-`Debugger:Enabled` is set explicitly; and it must not be debugger-only (track 10).
-Known defects recorded by E4a's verifier, not caused by it: the x64 JIT keeps the code of earlier emulator threads, so after a
+broken or legal servers correctly; panels readable at 1366x768).
+**M1 IS COMPLETE (2026-10-10):** the debugger core (E5) is verified and merged — devcast `skmp/nulldc3` = ceac25db, 187 ctest
+targets; devtools `skmp/nulldc3` = 22b358e. The web UI attaches to the running emulator: the runner's M1 gate passes against a
+headless emulator on the JIT, the interpreter and the forced fallback (18 scenarios each), state hashes are identical with the
+server off / on without a client / with an idle breakpoint / compiled out. Also merged with it: the register `ENABLED` of
+`dc.aica.arm7` and the runner follow-up (design 4.2.2). Known and recorded: after a machine reset ARMRST reads "released" while
+the ARM7 is not clocked until the guest first writes it (AICA / ARM7 tier work, needs a console measurement); the grace test
+does not pin that a connect ends the expired grace state; no real MSVC build yet (package W64).
+Next, one workflow at a time, in this order unless the user reorders: P-desktop (desktop-only cleanup, libretro out), J1
+(`CpuRunning` atomic, x64 code cache over thread starts), then M2-M4 (E6-E9, F3-F5, the DSP core wired in), track 10 (one web
+UI), track 3 (cycle-similar). Devtools: F0, F1, F2 and the round after design revision 3 are done and verified.
+Known defects recorded by E4a's verifier, not caused by it (package J1): the x64 JIT keeps the code of earlier emulator threads, so after a
 few hundred host stop/start cycles in one process the 10 MB code cache is full and the guest crawls; `Sh4Context::CpuRunning`
 is a plain volatile written across threads (every ThreadSanitizer report); event breakpoints latched inside SLEEP waits and
 single steps on the JIT shift guest time (the documented skew class).

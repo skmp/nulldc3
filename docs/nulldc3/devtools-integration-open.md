@@ -1,8 +1,8 @@
 # Track 1 design, revision 3 — what is open, and header revision 4
 
 Companion of `TRACK1-DESIGN.md` v3. Part 1: the questions that are still open, each with its options and a
-recommendation, and the list of the questions that were answered on 2026-10-09. None of the open ones blocks the core
-package (E5). Part 2: "header revision 4", the comment-only changes that brought the frozen headers to what the
+recommendation, and the list of the questions that were answered on 2026-10-09. None of the open ones blocked the core
+package (E5), which is done: milestone M1 is complete. Part 2: "header revision 4", the comment-only changes that brought the frozen headers to what the
 document says: it is applied, and its list is kept as the record. Part 3: the list of header revision 5, which is
 empty for now. No declaration changes.
 
@@ -16,7 +16,9 @@ the same day (1.2). Questions keep
 their numbers. Until a question is answered the design holds as written. On 2026-10-10, after the devtools round,
 decisions 30 to 45 (`DESIGN-V3-DECISIONS.md`, section C) were folded into the design (its Appendix A.3 has the
 sections). They answer what the verifiers of the round and of the corrections left, open no question, and record
-header revision 4 as applied (part 2).
+header revision 4 as applied (part 2). After that the core (E5) was built, verified and merged, and the design was
+brought to what was built (its 6.1, "As built", and Appendix A.3, "E5 as built"): that opened no question and put
+no item on the list of header revision 5 (part 3).
 
 ## 1. Open questions
 
@@ -33,8 +35,10 @@ settings model of track 10; nothing in track 1 depends on it.
 **Q14. Whether `dreamcast-devtools` becomes a submodule of the emulator repository** (project owner; PLAN, "Needs the
 user"). Today the UI bundle is found as a sibling directory or by `NULLDC_DEVTOOLS_DIST`, and the tests that need the
 UI repository (`debugger.net.interop_ws`, `debugger.disasm.dsp_playground`, `debugger.regs.panels`, and E5's
-`debugger.contract.m1*`, `.grace` and `.hash.idlebp`) are skipped without `NULLDC_DEVTOOLS_DIR`. A submodule would
-make the contract gate part of every checkout. It is decided when M1 is merged.
+`debugger.contract.m1*` and `.hash.idlebp*`, five targets that run the contract runner) are tests without their data
+when `NULLDC_DEVTOOLS_DIR` is not given; the other contract tests (`.grace`, `.config`, `.slow`, `.hash.off`,
+`.hash.noclient`) need only the test program. A submodule would make the contract gate part of every checkout. It is
+decided when M1 is merged, which it now is: the question is due.
 
 ### 1.2 Answered on 2026-10-09
 
@@ -618,7 +622,18 @@ New:
 
 ## 3. Header revision 5 (comment-only, pending)
 
-The next comment-only revision of the frozen headers. **Its list is empty for now.**
+The next comment-only revision of the frozen headers. **Its list is empty for now.** The points in which the core
+(E5) was built differently from the design, or where the design was silent (design 6.1, "As built"), were held
+against the comments of the frozen headers, and none needs a change:
+
+- `debugger.h`, `Init()`: "one line on stderr and exit(2)" is the line of `dbg::Init`. Where the transport failed,
+  its own line stands in front of it, and that one is `dbg_net.h`'s ("one line on stderr says why"). The two
+  comments together say what happens.
+- `dbg_callstack.h`: "at most kScanWords words" covers a scan that ends at the end of the memory the stack pointer
+  is in.
+- `dbg_symbols.h`: "named, defined symbols" covers an absolute symbol, and says nothing about the order of several
+  symbols at one address, which the design now states (2.10).
+- `debugger.h`, `g_event_on`, and `dbg_core.h`: the grace note and the order of ticks are as the comments have them.
 
 - Not pending: the re-wrap of the 180-column line that H8 left in the `Init()` comment of
   `libswirl/debugger/debugger.h`. It is done, on the integration branch behind the merge of revision 4 (commit
