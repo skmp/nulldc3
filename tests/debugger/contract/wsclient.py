@@ -17,12 +17,28 @@ class Error(Exception):
     pass
 
 
+class Timeout(Error):
+    """Nothing came in time. What had come of a message is kept: the next read goes on with it."""
+
+
 class Client:
-    def __init__(self, host, port, timeout=10.0):
+    def __init__(self, host, port, timeout=10.0, receive_buffer=None):
+        """receive_buffer: SO_RCVBUF, set before the connect, for a client that is going to stop reading: what
+        the server sends it then stays in the queue of the server, and not in a buffer of the kernel."""
         self.next_id = 1
         self.pending = []       # ticks that came in and that nobody has looked at
         self.buffer = b''
-        self.sock = socket.create_connection((host, port), timeout=timeout)
+        self.parts = []         # the frames of a message that is not complete
+        self.received = 0       # the bytes of every text message that came in
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if receive_buffer is not None:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer)
+        self.sock.settimeout(timeout)
+        try:
+            self.sock.connect((host, port))
+        except OSError as error:
+            self.sock.close()
+            raise Error('no connection to %s port %d: %s' % (host, port, error))
 
         key = base64.b64encode(os.urandom(16)).decode('ascii')
         request = ('GET /ws HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n'
@@ -40,32 +56,42 @@ class Client:
     def _recv(self, deadline):
         left = deadline - time.monotonic()
         if left <= 0:
-            raise Error('timeout')
+            raise Timeout('timeout')
         self.sock.settimeout(left)
         try:
-            data = self.sock.recv(65536)
+            data = self.sock.recv(1 << 18)
         except socket.timeout:
-            raise Error('timeout')
+            raise Timeout('timeout')
+        except OSError as error:
+            raise Error('the connection is gone: %s' % error)
         if not data:
             raise Error('the server closed the connection')
         return data
 
-    def _take(self, n, deadline):
-        while len(self.buffer) < n:
-            self.buffer += self._recv(deadline)
-        data, self.buffer = self.buffer[:n], self.buffer[n:]
-        return data
-
     def _frame(self, deadline):
-        first, second = self._take(2, deadline)
-        length = second & 0x7F
-        if length == 126:
-            length = struct.unpack('>H', self._take(2, deadline))[0]
-        elif length == 127:
-            length = struct.unpack('>Q', self._take(8, deadline))[0]
-        if second & 0x80:
-            raise Error('a frame of the server is masked')
-        return first & 0x80 != 0, first & 0x0F, self._take(length, deadline)
+        """The next frame. Nothing is taken from the buffer before the whole frame is in it, so that a timeout
+        in the middle of one loses nothing."""
+        while True:
+            have = len(self.buffer)
+            if have >= 2:
+                second = self.buffer[1]
+                if second & 0x80:
+                    raise Error('a frame of the server is masked')
+                length, head = second & 0x7F, 2
+                if length == 126:
+                    head = 4
+                    if have >= head:
+                        length = struct.unpack('>H', self.buffer[2:4])[0]
+                elif length == 127:
+                    head = 10
+                    if have >= head:
+                        length = struct.unpack('>Q', self.buffer[2:10])[0]
+                if have >= head and have >= head + length:
+                    first = self.buffer[0]
+                    payload = self.buffer[head:head + length]
+                    self.buffer = self.buffer[head + length:]
+                    return first & 0x80 != 0, first & 0x0F, payload
+            self.buffer += self._recv(deadline)
 
     def _send(self, opcode, payload):
         mask = os.urandom(4)
@@ -81,7 +107,6 @@ class Client:
 
     def _message(self, deadline):
         """The next text message, as the object its JSON is."""
-        parts = []
         while True:
             fin, opcode, payload = self._frame(deadline)
             if opcode == 9:
@@ -96,9 +121,11 @@ class Client:
                 # binary: nothing of milestone M1 sends one
                 if fin:
                     continue
-            parts.append(payload)
+            self.parts.append(payload)
             if fin:
-                return json.loads(b''.join(parts).decode('utf-8'))
+                text, self.parts = b''.join(self.parts), []
+                self.received += len(text)
+                return json.loads(text.decode('utf-8'))
 
     def _next(self, deadline):
         """Reads one message. A tick goes to the pending ones; anything else is returned."""
@@ -118,7 +145,7 @@ class Client:
             try:
                 message = self._next(deadline)
             except Error as error:
-                raise Error('%s: %s' % (method, error))
+                raise type(error)('%s: %s' % (method, error))
             if message is None or message.get('id') != request_id:
                 continue
             if 'error' in message:
@@ -128,9 +155,9 @@ class Client:
                 raise Error('%s: error %s' % (method, result['error']))
             return result
 
-    def describe(self, timeout=15.0):
+    def describe(self, timeout=15.0, protocol=3):
         """debugger.describe; returns the full tick that follows its response."""
-        self.shape = self.call('debugger.describe', {'protocol': 3, 'client': 'tests/debugger/contract'}, timeout)
+        self.shape = self.call('debugger.describe', {'protocol': protocol, 'client': 'tests/debugger/contract'}, timeout)
         # the tick of the describe is the first one behind its response
         self.pending = []
         return self.wait_tick(lambda tick: True, timeout, 'the tick behind debugger.describe')
@@ -146,7 +173,18 @@ class Client:
             try:
                 self._next(deadline)
             except Error as error:
-                raise Error('waiting for %s: %s' % (what, error))
+                raise type(error)('waiting for %s: %s' % (what, error))
+
+    def collect(self, seconds):
+        """Every tick that nobody has looked at, and every one that comes within that time."""
+        deadline = time.monotonic() + seconds
+        while True:
+            try:
+                self._next(deadline)
+            except Timeout:
+                break
+        ticks, self.pending = self.pending, []
+        return ticks
 
     def close(self):
         try:
