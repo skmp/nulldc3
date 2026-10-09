@@ -103,6 +103,10 @@ nulldc_debugger_selftest(emu)
 # test that runs the program to where it holds and releases the ARM7
 nulldc_debugger_selftest(regs ELF 2ndmix.elf)
 
+# The core: the wire protocol, the tables, the tick builder and the event log, on the booted program and with a
+# thread that plays the host (libswirl/debugger/dbg_selftest_core.cpp). The session has no server
+nulldc_debugger_selftest(core ELF 2ndmix.elf)
+
 # SH4 breakpoints and steps on the park loop of the emulator (libswirl/debugger/dbg_selftest_sh4bp.cpp,
 # tests/debugger/sh4bp/README.md): the session of the gates, and the two that make gates on the booted guest
 nulldc_debugger_selftest(sh4bp     ELF 2ndmix.elf CONFIG Debugger:StartPaused=yes)
