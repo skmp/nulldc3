@@ -326,7 +326,9 @@ def mode_grace(args):
         a.call('state.watch', {'expressions': ['dc.sh4.cpu.pc', 'dc.timing.sh4_cycles']})
         a.call('breakpoints.setCategoryStates', {'categories': {'arm7': {'muted': True, 'soloed': False}, 'dsp': {'muted': False, 'soloed': False}}})
         a.call('control.runUntil', {})
-        stopped = a.wait_tick(lambda t: t['executionState']['state'] == 'paused' and t['executionState'].get('reason') == 'breakpoint', 30,
+        # (the boot and the set-up of the program are in front of it: a quarter of a second on the JIT, the better
+        # part of a minute on the interpreter of a build with a sanitizer)
+        stopped = a.wait_tick(lambda t: t['executionState']['state'] == 'paused' and t['executionState'].get('reason') == 'breakpoint', 120,
                               'the stop of the breakpoint on ' + where)
         stop = stopped['executionState']
         check(len(stopped['breakpoints']) == 2 and len(stopped['watches']) == 2 and stopped['categories']['arm7']['muted'],
@@ -375,10 +377,11 @@ def mode_grace(args):
               % (where, state, stop), run)
 
         # It was released, and it ran with the breakpoint listed and enabled: the function is reached in every
-        # frame, so with breakpoints active the target would not have got further than one
+        # frame, so with breakpoints active the target would not have got further than one. (Hundreds of frames
+        # on the JIT, in the second it has; two are asked for, which the slowest build makes too)
         ran = register_value(hit, 'dc.timing', 'SH4_CYCLES') - register_value(stopped, 'dc.timing', 'SH4_CYCLES')
-        check(ran >= 3 * FRAME_CYCLES, 'between the stop that the grace period released and the stop in front of the new client the SH4 ran '
-              '%d cycles, which is not three frames (%d): the target was not released a second before, or it did not run on' % (ran, 3 * FRAME_CYCLES), run)
+        check(ran >= 2 * FRAME_CYCLES, 'between the stop that the grace period released and the stop in front of the new client the SH4 ran '
+              '%d cycles, which is not two frames (%d): the target was not released a second before, or it did not run on' % (ran, 2 * FRAME_CYCLES), run)
 
         def tables(t):
             return (sorted((k, sorted(v.items())) for k, v in t['breakpoints'].items()), [(w['id'], w['expression']) for w in t['watches']],
