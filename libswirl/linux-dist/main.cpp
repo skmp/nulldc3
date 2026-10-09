@@ -52,11 +52,6 @@
 	#include "linux-dist/joystick.h"
 #endif
 
-#ifdef TARGET_PANDORA
-	#include <signal.h>
-	#include <execinfo.h>
-	#include <sys/soundcard.h>
-#endif
 
 #if FEAT_HAS_NIXPROF
 #include "profiler/profiler.h"
@@ -202,41 +197,6 @@ void os_CreateWindow()
 	#endif
 }
 
-#ifdef TARGET_PANDORA
-
-	void clean_exit(int sig_num)
-	{
-		void* array[10];
-		size_t size;
-
-		if (joystick_fd >= 0) { close(joystick_fd); }
-		for (int port = 0; port < 4 ; port++)
-		{
-			if (evdev_controllers[port]->fd >= 0)
-			{
-				close(evdev_controllers[port]->fd);
-			}
-		}
-
-		// Close EGL context ???
-		if (sig_num!=0)
-		{
-			os_gl_term();
-		}
-
-		x11_window_destroy():
-
-		// finish cleaning
-		if (sig_num!=0)
-		{
-			write(2, "\nSignal received\n", sizeof("\nSignal received\n"));
-
-			size = backtrace(array, 10);
-			backtrace_symbols_fd(array, size, STDERR_FILENO);
-			exit(1);
-		}
-	}
-#endif
 
 string find_user_config_dir()
 {
@@ -423,10 +383,6 @@ int main(int argc, wchar* argv[])
 	// that would be the lines right before the fault
 	setvbuf(stdout, nullptr, _IOLBF, 0);
 
-	#ifdef TARGET_PANDORA
-		signal(SIGSEGV, clean_exit);
-		signal(SIGKILL, clean_exit);
-	#endif
 
 	/* Set directories */
 	set_user_config_dir(find_user_config_dir());
@@ -482,9 +438,6 @@ int main(int argc, wchar* argv[])
 #endif
 	reicast_term();
 
-	#ifdef TARGET_PANDORA
-		clean_exit(0);
-	#endif
 
 	#if defined(USE_EVDEV)
 		input_evdev_close();

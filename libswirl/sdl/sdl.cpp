@@ -28,23 +28,13 @@
 
 static SDL_Window* window = NULL;
 
-#ifdef TARGET_PANDORA
-	#define WINDOW_WIDTH  800
-#else
 	#define WINDOW_WIDTH  640
-#endif
 #define WINDOW_HEIGHT  480
 
 static std::shared_ptr<SDLMouseGamepadDevice> sdl_mouse_gamepad;
 static std::shared_ptr<SDLKbGamepadDevice> sdl_kb_gamepad;
 static SDLKeyboardDevice* sdl_keyboard = NULL;
 
-#ifdef TARGET_PANDORA
-	extern char OSD_Info[128];
-	extern int OSD_Delay;
-	extern char OSD_Counters[256];
-	extern int OSD_Counter;
-#endif
 
 extern u32 mo_buttons;
 extern s32 mo_x_abs;
@@ -216,14 +206,10 @@ void input_sdl_handle(u32 port)
 
 void sdl_window_set_text(const char* text)
 {
-	#ifdef TARGET_PANDORA
-		strncpy(OSD_Counters, text, 256);
-	#else
 		if(window)
 		{
 			SDL_SetWindowTitle(window, text);    // *TODO*  Set Icon also...
 		}
-	#endif
 }
 
 bool sdl_window_create(void** wind, void** disp) {
@@ -241,11 +227,7 @@ bool sdl_window_create(void** wind, void** disp) {
 	int window_height = cfgLoadInt("x11","height", WINDOW_HEIGHT);
 
 	int flags = 0;
-	#ifdef TARGET_PANDORA
-		flags |= SDL_FULLSCREEN;
-	#else
 		flags |= SDL_SWSURFACE | SDL_WINDOW_RESIZABLE;
-	#endif
 
 	// try full GL first
 	if (!sdlgl_CreateWindow(false, flags, window_width, window_height, wind, disp)) {

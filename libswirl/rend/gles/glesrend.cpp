@@ -10,17 +10,6 @@
 #include "cfg/cfg.h"
 #include "gui/gui.h"
 
-#ifdef TARGET_PANDORA
-	#include <unistd.h>
-	#include <fcntl.h>
-	#include <sys/ioctl.h>
-	#include <linux/fb.h>
-
-		#ifndef FBIO_WAITFORVSYNC
-			#define FBIO_WAITFORVSYNC _IOW('F', 0x20, __u32)
-		#endif
-	int fbdev = -1;
-#endif
 
 
 /*
@@ -669,11 +658,7 @@ bool gles_init()
 		return false;
 
 #ifdef USE_EGL
-	#ifdef TARGET_PANDORA
-	fbdev=open("/dev/fb0", O_RDONLY);
-	#else
 	eglSwapInterval(gl.setup.display,1);
-	#endif
 #endif
 
 	//    glEnable(GL_DEBUG_OUTPUT);

@@ -350,7 +350,7 @@ void InitSettings()
     settings.dispmanx.Keep_Aspect = true;
 #endif
 
-#if (HOST_OS != OS_LINUX || defined(TARGET_PANDORA))
+#if (HOST_OS != OS_LINUX)
     settings.aica.BufferSize = 2048;
 #else
     settings.aica.BufferSize = 1024;
@@ -455,7 +455,7 @@ void LoadSettings(bool game_specific)
     settings.dispmanx.Keep_Aspect = cfgLoadBool(game_specific ? cfgGetGameId() : "dispmanx", "maintain_aspect", settings.dispmanx.Keep_Aspect);
 #endif
 
-#if (HOST_OS != OS_LINUX || defined(TARGET_PANDORA))
+#if (HOST_OS != OS_LINUX)
     settings.aica.BufferSize = 2048;
 #else
     settings.aica.BufferSize = 1024;

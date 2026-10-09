@@ -184,13 +184,6 @@ bool egl_Init(void* wind, void* disp)
 //swap buffers
 bool egl_Swap()
 {
-#ifdef TARGET_PANDORA0
-	if (fbdev >= 0)
-	{
-		int arg = 0;
-		ioctl(fbdev, FBIO_WAITFORVSYNC, &arg);
-	}
-#endif
 	auto status = eglSwapBuffers(egl_setup.display, egl_setup.surface);
 
 	bool rv = true;
@@ -221,13 +214,6 @@ void egl_Term()
 			eglDestroyContext(egl_setup.display, egl_setup.context);
 		if (egl_setup.surface != NULL)
 			eglDestroySurface(egl_setup.display, egl_setup.surface);
-#ifdef TARGET_PANDORA
-        if (egl_setup.display)
-            eglTerminate(egl_setup.display);
-        if (fbdev >= 0)
-            close(fbdev);
-        fbdev = -1;
-#endif
 #endif    // !OS_WINDOWS
 		eglTerminate(egl_setup.display);
 
