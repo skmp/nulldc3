@@ -141,7 +141,6 @@
 #define OS_LINUX     0x10000002
 #define OS_DARWIN    0x10000003
 
-#define OS_UWP       0x10000011
 
 
 //HOST_CPU

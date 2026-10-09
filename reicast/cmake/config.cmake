@@ -37,7 +37,6 @@ set(OS_WINDOWS     0x10000001)  # HOST_OS
 set(OS_LINUX       0x10000002)
 set(OS_DARWIN      0x10000003)
 
-set(OS_UWP         0x10000011)
 
 
 
@@ -143,11 +142,7 @@ string(TOLOWER ${CMAKE_SYSTEM_NAME} host_os)
 
 ## HOST_* is not TARGET_*  ;;  change ndc-e internal naming it's wrong , then change this  ;;
 
-if("windowsstore" STREQUAL "${host_os}")
-  set(HOST_OS ${OS_UWP}) 
-  set(HOST_CPU ${CPU_X64})
-
-elseif(CMAKE_HOST_WIN32)
+if(CMAKE_HOST_WIN32)
   set(HOST_OS ${OS_WINDOWS}) 
 
 elseif(CMAKE_HOST_APPLE)
@@ -254,10 +249,6 @@ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
   
   add_definitions(/D_CRT_SECURE_NO_WARNINGS /D_CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES=1)
 
-  if("${HOST_OS}" STREQUAL "${OS_UWP}")
-    set(_CXX_FLAGS "/ZW ")
-	set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /AppContainer")
-  endif()
 #
 elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU") 
   set(BUILD_COMPILER ${COMPILER_GCC})
