@@ -145,13 +145,9 @@
 
 
 //HOST_CPU
-#define CPU_MIPS     0x20000003
 #define CPU_X64      0x20000004
 #define CPU_GENERIC  0x20000005 //used for pnacl, emscripten, etc
-#define CPU_PPC      0x20000006
-#define CPU_PPC64    0x20000007
 #define CPU_ARM64    0x20000008
-#define CPU_MIPS64   0x20000009
 
 //BUILD_COMPILER
 #define COMPILER_VC    0x30000001
@@ -212,10 +208,7 @@
 #elif defined(TARGET_LINUX_x64)
 	#define HOST_OS OS_LINUX
 	#define HOST_CPU CPU_X64
-#elif defined(TARGET_LINUX_MIPS)
-	#define HOST_OS OS_LINUX
-	#define HOST_CPU CPU_MIPS
-#elif defined(TARGET_NACL32) || defined(TARGET_EMSCRIPTEN)
+#elif defined(TARGET_EMSCRIPTEN)
 	#define HOST_OS OS_LINUX
 	#define HOST_CPU CPU_GENERIC
 #elif defined(TARGET_OSX_X64)

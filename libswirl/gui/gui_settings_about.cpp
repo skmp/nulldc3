@@ -39,9 +39,7 @@ void gui_settings_about()
 	    if (ImGui::CollapsingHeader("Platform", ImGuiTreeNodeFlags_DefaultOpen))
 	    {
 	    	ImGui::Text("CPU: %s",
-#if HOST_CPU == CPU_MIPS
-				"MIPS"
-#elif HOST_CPU == CPU_X64
+#if HOST_CPU == CPU_X64
 				"x86/64"
 #elif HOST_CPU == CPU_GENERIC
 				"Generic"

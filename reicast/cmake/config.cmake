@@ -43,11 +43,7 @@ set(OS_UWP         0x10000011)
 
 set(CPU_X64        0x20000004)  # HOST_CPU
 set(CPU_A64        0x20000008)
-set(CPU_MIPS       0x20000003)
-set(CPU_MIPS64     0x20000009)
-set(CPU_PPC        0x20000006)
-set(CPU_PPC64      0x20000007)
-set(CPU_GENERIC    0x20000005)  # used for pnacl, emscripten, etc
+set(CPU_GENERIC    0x20000005)  # used for emscripten, etc
 
 set(DYNAREC_NONE   0x40000001)  # FEAT_SHREC, FEAT_AREC, FEAT_DSPREC
 set(DYNAREC_JIT    0x40000002)
@@ -105,7 +101,7 @@ function(nulldc_no_32bit_host what)
 endfunction()
 
 ## strings are used to append to path/file names, and to filter multiple possibilities down to one 
-#		AMD64/x86_64:x64, ppc/powerpc[64][b|l]e:ppc[64] etc 
+#		AMD64/x86_64:x64 etc 
 #
 if(EMSCRIPTEN)	# its toolchain file calls the processor "x86": the host is WebAssembly
   set(host_arch "wasm")
@@ -129,22 +125,6 @@ elseif(("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^i[3-6]86$") OR
        ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "arm") OR			# has to be done after arm64
        ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^ARM(V[0-9A-Z]+)?$"))	# the names MSVC has for it
   nulldc_no_32bit_host("CMAKE_SYSTEM_PROCESSOR is \"${CMAKE_SYSTEM_PROCESSOR}\"")
-#
-elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "ppc64")
-  set(host_arch "ppc64")
-  set(HOST_CPU ${CPU_PPC64})
-#
-elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "ppc")	 # has to be done after ppc64 obv
-  set(host_arch "ppc")
-  set(HOST_CPU ${CPU_PPC})
-#
-elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "mips64") # todo: check , r* names?
-  set(host_arch "mips64")
-  set(HOST_CPU ${CPU_MIPS64})
-#
-elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "mips")   # todo: check , r* names?
-  set(host_arch "mips")
-  set(HOST_CPU ${CPU_MIPS})
 #
 else()
   message("Warning: Unknown Host System Processor: \"${CMAKE_SYSTEM_PROCESSOR}\"")

@@ -33,7 +33,7 @@
 #include <sys/param.h>
 #include <sys/mman.h>
 #include <sys/time.h>
-#if !defined(TARGET_NACL32) && !defined(TARGET_EMSCRIPTEN) && !defined(TARGET_OSX) && !defined(TARGET_OSX_X64)
+#if !defined(TARGET_EMSCRIPTEN) && !defined(TARGET_OSX) && !defined(TARGET_OSX_X64)
   #include <sys/personality.h>
   #include <dlfcn.h>
 #endif
@@ -358,7 +358,7 @@ void os_DebugBreak()
 #endif
 
 void linux_fix_personality() {
-    #if !defined(TARGET_OS_MAC) && !defined(TARGET_NACL32) && !defined(TARGET_EMSCRIPTEN)
+    #if !defined(TARGET_OS_MAC) && !defined(TARGET_EMSCRIPTEN)
         printf("Personality: %08X\n", personality(0xFFFFFFFF));
         personality(~READ_IMPLIES_EXEC & personality(0xFFFFFFFF));
         printf("Updated personality: %08X\n", personality(0xFFFFFFFF));

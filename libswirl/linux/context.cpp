@@ -80,8 +80,6 @@ void context_segfault_bicopy(rei_host_context_t* reictx, void* segfault_ctx, boo
     #else
 	    #error HOST_OS
 	#endif
-#elif HOST_CPU == CPU_MIPS
-	bicopy(reictx->pc, MCTX(.pc), to_segfault);
 #elif HOST_CPU == CPU_GENERIC
     //nothing!
 #else
