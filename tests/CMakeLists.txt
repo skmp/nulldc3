@@ -141,7 +141,7 @@ endfunction()
 #	down, with the suites that do the same.
 #
 
-foreach(suite net disasm regs)
+foreach(suite net disasm regs symbols)
   if(EXISTS "${nulldc_tests_path}/debugger/${suite}/CMakeLists.txt")
     set(NULLDC_TEST_PREFIX "debugger.${suite}.")
     add_subdirectory(debugger/${suite})
