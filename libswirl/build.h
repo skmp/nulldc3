@@ -140,7 +140,6 @@
 #define OS_WINDOWS   0x10000001
 #define OS_LINUX     0x10000002
 #define OS_DARWIN    0x10000003
-#define OS_IOS       0x10000004
 
 #define OS_UWP       0x10000011
 #define OS_NSW_HOS   0x80000001
@@ -312,7 +311,7 @@
 
 
 #ifndef FEAT_HAS_SERIAL_TTY
-    #if (HOST_OS == OS_LINUX) || (HOST_OS == OS_DARWIN && !TARGET_OS_IPHONE && !TARGET_IPHONE_SIMULATOR)
+    #if (HOST_OS == OS_LINUX) || (HOST_OS == OS_DARWIN)
         #define FEAT_HAS_SERIAL_TTY 1
     #else
         #define FEAT_HAS_SERIAL_TTY 0

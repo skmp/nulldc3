@@ -36,7 +36,6 @@ set(DC_PLATFORM_AURORA      6)  # /* Needs to be done, Uses newer 300 mhz sh4 + 
 set(OS_WINDOWS     0x10000001)  # HOST_OS
 set(OS_LINUX       0x10000002)
 set(OS_DARWIN      0x10000003)
-set(OS_IOS         0x10000004)  # todo: iOS != OS_DARWIN
 
 set(OS_UWP         0x10000011)
 set(OS_NSW_HOS     0x80000001)
@@ -177,12 +176,10 @@ elseif(CMAKE_HOST_APPLE)
 
   if("${host_arch}" MATCHES "arm")
     set(HOST_OS ${OS_DARWIN})
-    # set(TARGET_IOS On)
-    # add_definitions(-DTARGET_IPHONE -DTARGET_IOS)
     set(TARGET_OSX On)
     add_definitions(-DTARGET_OSX)
   else()
-    set(HOST_OS ${OS_DARWIN})  # todo ios check, check compiler/arch?
+    set(HOST_OS ${OS_DARWIN})
     set(TARGET_OSX On)
     add_definitions(-DTARGET_OSX)
   endif()
@@ -393,7 +390,7 @@ if(ZBUILD)
   add_definitions(-D_Z_)  # Get rid of some warnings and internal dev testing
   
   if(NOT TARGET_PS4 AND NOT TARGET_NSW AND 
-     NOT TARGET_OSX AND NOT TARGET_IOS )
+     NOT TARGET_OSX)
      set(USE_QT ON)
   endif()
 endif()

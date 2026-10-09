@@ -55,11 +55,7 @@ void gui_settings_about()
 #if HOST_OS == OS_LINUX
 				"Linux"
 #elif HOST_OS == OS_DARWIN
-#if TARGET_IPHONE
-	    		"iOS"
-#else
 				"OSX"
-#endif
 #elif HOST_OS == OS_WINDOWS
 				"Windows"
 #else
