@@ -19,8 +19,8 @@ track.
 - Console access: none in this work unless the user asks; unmeasured behaviour is listed under "Needs the console".
 - **Performance numbers** are taken with the hardware-accelerated renderers or the `none` renderer, never the reference
   software renderers (those make the run render-bound: 34-44 % of real time with refsw2). Both live in the
-  `-DHAS_TA_LLE=OFF` build. For GL on this WSL2 machine run with `GALLIUM_DRIVER=d3d12` (default GLX is llvmpipe; with it:
-  D3D12 on the RTX 2060) and check `glxinfo -B` first. Every figure states its renderer. Existing `none` baseline (2ndmix):
+  `-DHAS_TA_LLE=OFF` build. For GL under WSLg run with `GALLIUM_DRIVER=d3d12` (the default GLX there is llvmpipe) and
+  check `glxinfo -B` first. Every figure states its renderer. Existing `none` baseline (2ndmix):
   JIT 557-819 %, interpreter ~350 %. The TA_HLE build needs the `refsw2_do_dump` link fix (definition is inside the TA_LLE
   guard) and `none` should register in the default build too — T2.0 items.
 - **Targets: desktop only — Linux, Windows, macOS — plus wasm later** (user, 2026-10-08). Processors: x86_64 and arm64 now;
@@ -75,11 +75,13 @@ no `cpp` backend: 59 files and 23,700 lines removed, emitted x64 code / baseline
 67b423e4). Devtools continuation done (`dreamcast-devtools` `skmp/nulldc3` = 2ea21ba, 322 unit tests, 218 e2e tests): the
 contract runner now catches 165 of 185 deliberately broken servers; what it misses, and one legal server it refuses, hinge on
 design decisions, which are made in `DESIGN-V3-DECISIONS.md`; the M1 panels have one test gap and four smaller items open.
-Design revision 3 is written (`TRACK1-DESIGN.md` v3, 2026-10-09: the 29 decisions, the verifiers' feedback, the headers as
-built, the 2026-10-08 direction; `DESIGN-V3-OPEN.md` keeps what is open — an arm64 host, the config section name, the
-submodule question — and the comment-only header revision 4). Running: the corrections revision 3 makes to merged emulator
-code (design 6.1.1 + header revision 4, branch `skmp/nulldc3-integ-v3`) and then the devtools round (design 4.2.1 runner and
-mock, 4.3.1 panels). Next: E5 (core), which completes M1. Devtools: F0 done; F1 committed with runner gaps open; F2 committed,
+Design revision 3 is written (`TRACK1-DESIGN.md` v3, 2026-10-09/10: 45 decisions in `DESIGN-V3-DECISIONS.md`, the verifiers'
+feedback, the headers as built, the 2026-10-08 direction; `DESIGN-V3-OPEN.md` keeps what is open — an arm64 host, the config
+section name, the submodule question). Done and verified 2026-10-10: the corrections revision 3 makes to merged emulator code
+with the comment-only header revision 4 (merged, 171 ctest targets), and the devtools round (`dreamcast-devtools`
+`skmp/nulldc3` = 17f3bff: 382 unit tests, 246 e2e tests; the runner's M1 gate requires every scenario to pass and judged 278
+broken or legal servers correctly; panels readable at 1366x768). Running next as one workflow (`resume/e5.workflow.js`): a
+small runner follow-up (design 4.2.2), then E5 (core), which completes M1. Devtools: F0 done; F1 committed with runner gaps open; F2 committed,
 second verification pending. For E5: in automated runs (headless or an `Exit.*` key) the server stays off unless
 `Debugger:Enabled` is set explicitly; and it must not be debugger-only (track 10).
 Known defects recorded by E4a's verifier, not caused by it: the x64 JIT keeps the code of earlier emulator threads, so after a

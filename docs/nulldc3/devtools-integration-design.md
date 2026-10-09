@@ -15,16 +15,17 @@
 > `TRACK1-DESIGN.v1.md` (the draft) and `design-v3-check-r3.json` were never part of this repository. Other paths of
 > the form `agents/nulldc3/...` point into the working area outside it (`docs/nulldc3/README.md`).
 
-Status: v3 — decisions of 2026-10-09 folded in; implementation contract. Supersedes v2 (`TRACK1-DESIGN.v2.md`), which
-superseded DRAFT v1 (`TRACK1-DESIGN.v1.md`). Owner of this file: the orchestrator.
+Status: v3 — decisions of 2026-10-09 and 2026-10-10 folded in; implementation contract. Supersedes v2
+(`TRACK1-DESIGN.v2.md`), which superseded DRAFT v1 (`TRACK1-DESIGN.v1.md`). Owner of this file: the orchestrator.
 
 What revision 3 is. Since v2 most of this design was implemented and independently verified. Revision 3 brings the text
-to what was built where the two differed, folds in the 29 decisions of `DESIGN-V3-DECISIONS.md` and the direction the
-project owner set on 2026-10-08 (`PLAN.md`), and disposes of the verifiers' feedback. Section numbers are those of v2;
-new subsections are added behind the existing ones. Appendix A.3 says which section each decision changed, where a
-decision was applied with a difference, which feedback was not adopted, what the independent check of the revision
-changed, and which sections the answers to the open questions changed. What is still open is in `DESIGN-V3-OPEN.md`,
-with the answered questions and the comment-only header revision 4.
+to what was built where the two differed, folds in the decisions of `DESIGN-V3-DECISIONS.md` — the 29 of 2026-10-09 and
+the 16 that followed the devtools round on 2026-10-10 (decisions 30 to 45) — and the direction the project owner set on
+2026-10-08 (`PLAN.md`), and disposes of the verifiers' feedback. Section numbers are those of v2; new subsections are
+added behind the existing ones. Appendix A.3 says which section each decision changed, where a decision was applied
+with a difference, which feedback was not adopted, what the independent check of the revision changed, and which
+sections the answers to the open questions changed. What is still open is in `DESIGN-V3-OPEN.md`, with the answered
+questions and the comment-only header revision 4, which is applied and kept there as the record.
 
 Inputs: the reader reports in `agents/nulldc3/understand/` (cited, not re-derived): `devtools-protocol.md` (wire spec of
 protocol v2), `devtools-mock.md`, `devtools-panels-debugger.md`, `devtools-panels-tools.md`, `devtools-build.md`,
@@ -35,7 +36,8 @@ Appendix C); for revision 3: `agents/nulldc3/DESIGN-V3-DECISIONS.md`, the code a
 `libswirl/debugger/`, `hw/sh4/sh4_dbg.h`, `hw/sh4/sh4_if.h`, `hw/sh4/dyna/decoder.h`, the READMEs under
 `tests/debugger/`, `docs/nulldc3/automated-runs.md`; in the UI repository `src/lib/debuggerSchema.ts`,
 `src/lib/binaryFrame.ts`, `scripts/contract/`, `server/mockDebugger.ts`, `README.md`), and the verifiers' reports under
-`agents/nulldc3/resume/`, `e0/`, `integ-1d/` and `b64/`.
+`agents/nulldc3/resume/`, `e0/`, `integ-1d/` and `b64/`; for decisions 30 to 45 the verdicts of the devtools round
+and of the corrections of 6.1.1 (`agents/nulldc3/resume/round3.final-result.json`).
 
 Repositories and branches (local only, never pushed; commits are made as work lands):
 - emulator: repository `devcast`, integration branch `skmp/nulldc3`. One git worktree per work package under
@@ -58,9 +60,9 @@ Decisions in force (project owner and design owner; everything below is written 
   `reicast`, existing identifiers stay).
 - **D5 — commits** are made as work lands, on local branches.
 - **D6 — the shared interfaces are frozen**: the API of E1 and E2, which started first (Appendix B), and the headers E0
-  delivered. Header revisions 2 and 3 are part of the contract (Appendix B). Revision 4 is comment-only and changes no
-  declaration; its list is in `DESIGN-V3-OPEN.md`. A declaration changes only by an explicit, listed approval of the
-  integrator.
+  delivered. Header revisions 2 and 3 are part of the contract (Appendix B). Revision 4 is comment-only, changed no
+  declaration and is applied; its list is kept as the record in `DESIGN-V3-OPEN.md`. A declaration changes only by an
+  explicit, listed approval of the integrator.
 - **D7 — targets.** Desktop only (Linux, Windows, macOS), plus wasm later. Processors: x86_64 and arm64 now; later a
   wasm32 build with its own JIT, possibly riscv64. There are no 32-bit native builds, no cached-SHIL `cpp` backend and no
   libretro core. What exists: the x64 and arm64 JITs and the interpreter. New code stays clean for a 32-bit address space
@@ -91,8 +93,8 @@ The web UI talks to a server inside the emulator and every panel shows real stat
 
 | Milestone | Content | Gate | State |
 | --- | --- | --- | --- |
-| M0 | devtools hygiene: lint/typecheck/test/build green, real scripts, versions, docs; a fresh clone builds without Rust; the wasm-transport build keeps building | `npm run check` = lint + typecheck + test:run + contract (mock, `--milestone M1`) + build:native + build:wasm | done, except that `check` does not run `build:wasm` yet and runs the contract without `--milestone` (4.1) |
-| M1 | protocol v3 (schema, client, mock module) and the contract runner. Emulator: transport and embedded UI, lifetime states and park loop, SH4 debugging (registers, memory, disassembly, run / pause / step / over / out, native code breakpoints, event breakpoints, watches, callstack, event log), the reduced M1 device tree (2.8), all three targets listed. Frontend: endpoint selection and reconnect; disassembly follows the PC and memory refetches when `stopId` changes; per-target defaults from `targets`; results of `control.*` shown; `reason` and `notice` in the toolbar; error boundary per dock panel; device-tree panel rework; notices for unsupported targets | the contract gate M1 (5.5.3) passes against the mock and against the emulator: scenarios S01-S14, S19, S20 on the mock, S00-S15, S19, S20 on the emulator; pure-module tests; the in-emulator selftests in ctest (`debugger.selftest.*`, the session `regs` among them once 6.1.1 item 6 is applied), which include the breakpoint and step gates of 2.3.6 (B11 is `debugger.sh4bp.b11` in the pure suite); Windows gate (5.8) | everything but the core (E5, 6.1) and one devtools round (6.2) is merged |
+| M0 | devtools hygiene: lint/typecheck/test/build green, real scripts, versions, docs; a fresh clone builds without Rust; the wasm-transport build keeps building | `npm run check` = lint + typecheck + test:run + contract (mock, `--milestone M1`) + build:native + build:wasm | done (`check` runs `build:wasm` and the contract as the M1 gate since the devtools round, 4.1) |
+| M1 | protocol v3 (schema, client, mock module) and the contract runner. Emulator: transport and embedded UI, lifetime states and park loop, SH4 debugging (registers, memory, disassembly, run / pause / step / over / out, native code breakpoints, event breakpoints, watches, callstack, event log), the reduced M1 device tree (2.8), all three targets listed. Frontend: endpoint selection and reconnect; disassembly follows the PC and memory refetches when `stopId` changes; per-target defaults from `targets`; results of `control.*` shown; `reason` and `notice` in the toolbar; error boundary per dock panel; device-tree panel rework; notices for unsupported targets | the contract gate M1 (5.5.3) passes against the mock and against the emulator: scenarios S01-S14, S19, S20 on the mock, S00-S15, S19, S20 on the emulator; pure-module tests; the in-emulator selftests in ctest (`debugger.selftest.*`, the session `regs` among them), which include the breakpoint and step gates of 2.3.6 (B11 is `debugger.sh4bp.b11` in the pure suite); Windows gate (5.8) | everything but the core (E5, 6.1) is merged or committed. The devtools round is done (4.2.1, 4.3.1): the mock passes its gate, 16 scenarios passed, none partial, none not applicable. Before the gate is used against the core: the runner follow-up of 4.2.2 and, in the emulator, item 8 of 6.1.1 |
 | M2 | ARM7 step / breakpoints (resumable sound burst); memory and register writes; reset; full register tables (SB, PVR, AICA common and channels, GD-ROM, maple) with the generic register panel and the panel ids `sh4-registers`, `arm7-registers`; toolbar run control with hotkeys | contract gate M2 (adds S16); sound regression hashes identical before/after (5.6); UI unit tests | to do |
 | M3 (after the T5.0 core is wired into the AICA) | SGC capture; DSP single-step / breakpoints / disassembly on the one C++ DSP core; playground runs the emscripten build of the same core and loads its program from the live emulator | contract gate M3 (adds S17, and S21 in a second run with the DSP test program); sound regression hashes with the DSP test ELF; playground results equal native results | to do |
 | M4 | Holly: CORE inspector fed by an emulator capture, TA inspector, table panels (TLB / SQ / OC-RAM, caches), TA / CORE event-breakpoint controls in the inspectors | contract gate M4 (adds S18) | to do |
@@ -719,6 +721,11 @@ the whole HLE call. In `WITH_MMU` builds the words are read without address tran
 - Time: a step is charged as a block of that one instruction (2.4).
 - If leaving the park context accepts a deferred interrupt (2.2.4 c), the step ends at the vector without executing an
   instruction. This holds for a step of every kind: a step over or out asked for there is complete at the vector too.
+  Only one step in a row can end that way: the step after it starts at the handler's first instruction with `SR.BL`
+  set and cannot be interrupted. The contract holds a server to it (5.5 S04: a second step in a row that ends at a
+  vector fails). Behind a step that completed with `reason: "step"` nothing is deferred (a step accepts its
+  interrupts itself, next item), so a step out asked for there resumes and its `running` tick comes, which is what
+  S04 waits for.
 - When the step uses up the slice, `UpdateSystem()` runs (scheduler callbacks fire) and a pending interrupt is accepted:
   the step ends at `VBR + 0x600`.
 - `RTE`: its end calls `UpdateINTC`, so the step can end in the next handler.
@@ -1299,7 +1306,10 @@ The gates exist in two places and both run in ctest (5.2, 5.3).
   its main loop and block manager, the interpreter, the fallback) around a small machine of the suite's own, with a
   stand-in for run control whose park context is the test itself. Tests `debugger.sh4bp.<gate>`, on three engines, each
   on those it applies to: `jit`, `interpreter`, `fallback` (the x64 backend with the fallback forced). x86-64 hosts
-  only. Its README has every gate, the measured costs and the call-site table.
+  only. Its README has every gate, the measured costs and the call-site table. The two stand-ins of that directory
+  for the emulator's slice end (`machine.cpp`, `cost.cpp`) keep the latch test in front of the attention word: the
+  cost of B11 was measured on that form. The emulator tests the attention word first (2.2.3), and the README's
+  "Per slice" paragraph says that the stand-ins differ in this, instead of claiming the emulator's order for them.
 - `libswirl/debugger/dbg_selftest_sh4bp.cpp` — the same tests on the real park loop and the real machine: sessions
   `sh4bp` (B1 to B14, none for B11, which compares two builds), `sh4bpboot` and `sh4bpbase` (B3, B6 and B7 on the booted
   guest and their baselines), as `debugger.selftest.sh4bp[.interp]`, `.sh4bpboot[.interp]`, `.sh4bpbase[.interp]` and
@@ -1382,6 +1392,12 @@ every entry) the booted-guest tests of the engines that the rule belongs to fail
     whole time (E) takes from the end of a guest reset to the park that follows it could read a live parked machine as
     not running; never observed in over a million reads. If the run flag is reworked, `IsRunning()` is derived from one
     word.
+13. **ARMRST against the ARM7's clock after a machine reset.** As merged, a machine reset leaves the guest-visible
+    register ARMRST reading 0 while the ARM7 is not clocked, until the guest first writes the register: the devices
+    are reset in their order, `AicaDevice::Reset` releases the reset, and `SoundCPU_impl::Reset`, behind it, disables
+    the core. A defect of the tree outside the debugger, and a question for the AICA / ARM7 tier work (PLAN tracks
+    5, 6) and a console measurement; it is not E5's and not the debugger's. The debugger does not depend on it: its
+    observable for the reset is the register `ENABLED` of `dc.aica.arm7`, not ARMRST (2.7, 2.10).
 
 ### 2.4 Time while debugging
 
@@ -1489,7 +1505,9 @@ today). Suspension points: before an ARM instruction, before a DSP step, nowhere
   (heuristic, documented in the UI: correct for leaf code and before `LR` is saved or overwritten).
 - With the ARM held in reset (`SoundCPU::DebugEnabled()` false) nothing is clocked: `control.step / stepOver / stepOut
   {arm7}` and `breakpoints.add` for `dc.aica.arm7.pc` return the in-band error `-32012` (the emulator's text:
-  `arm7 held in reset`), and the ARM7 callstack is empty (2.10).
+  `arm7 held in reset`), and the ARM7 callstack is empty (2.10). What a client can see of the reset is the register
+  `ENABLED` of `dc.aica.arm7`, which shows that same flag: 1 = the ARM7 is clocked, 0 = it is held in reset (2.8,
+  2.10). The guest-visible register ARMRST is not that observable (2.7).
 
 #### 2.5.4 DSP steps and breakpoints (M3, on the T5.0 core)
 
@@ -1626,6 +1644,15 @@ Target `sh4`. An address below `0xE0000000` is first reduced to its low 29 bits.
 A register region delivers the bytes of the register values in little-endian order; a byte that belongs to no register,
 or to one without a side-effect-free reader, is not readable.
 
+**ARMRST.** The byte at `0x00702C00` of the AICA register window (`0xA0702C00` as the SH4 addresses it) is the AICA
+register ARMRST, and the SH4 view of it goes through the register file like the rest of the window:
+`AICA::DebugReadRegs` copies the file and puts ARMRST, and VREG behind it, at their offsets, as a read by the SH4
+delivers them. **ARMRST is not the debugger's observable for "the ARM7 is held in reset".** As merged, a machine reset
+leaves ARMRST reading 0 while the ARM7 is not clocked, until the guest first writes the register: `AicaDevice::Reset`
+releases the reset, and `SoundCPU_impl::Reset`, which runs behind it, then disables the core. The byte is what the
+guest reads and no more. The observable is the register `ENABLED` of `dc.aica.arm7` (2.8, 2.10), and the reset order
+itself is a known limit of the tree (2.3.7 item 13).
+
 Target `arm7`: wave memory at `0x00000000-0x007FFFFF` (mirrored by its size), the AICA registers at
 `0x00800000-0x00807FFF`, anything else not readable. The ARM7 sees the register file as the SH4 does, with three
 differences: `0x00802D00` is the interrupt level register L as a read by the ARM7 delivers it, without the acknowledge
@@ -1660,8 +1687,8 @@ anything else is refused with `-32013`, and the range is checked as a whole befo
   virtual memory layout (`virt_ram_base == 0`: a host without the large mapping) the writer discards the blocks of each
   touched page through the backend's `DebugDiscardPage` (2.3.4 l) and stores the bytes; nothing in it needs the mapping
   or page protection (D7), and no host is left without RAM writes. (The comment of `Write()` in the frozen `dbg_mem.h`
-  still has v2's rule — such a build refuses the write — and `sh4_if.h` names arming as the only caller of
-  `DebugDiscardPage`; header revision 4 brings both to this paragraph: `DESIGN-V3-OPEN.md` H20.) If the page holds
+  had v2's rule — such a build refuses the write — and `sh4_if.h` named arming as the only caller of
+  `DebugDiscardPage`; header revision 4 brought both to this paragraph: `DESIGN-V3-OPEN.md` H20.) If the page holds
   SH4 breakpoints, nothing else is needed: the decoder asks again at every decode, and an owed remainder is decoded
   from the memory as it is at the resume (2.3.4 g, h).
 - VRAM pages can be locked by the texture cache: call `VramLockedWrite(vram.data, ptr)` first.
@@ -1682,14 +1709,18 @@ the client; register names are upper case and unique within a node. The tree is 
 - their nesting, as the "parent" of each row gives it — not by the dots of the path (`dc.gdrom`, `dc.maple` and
   `dc.timing` are under `dc.system`; the SH4 modules under `dc.sh4.pbus`);
 - the `actions` of each row;
-- the three anchor registers: `dc.sh4.cpu` `PC`, `dc.aica.arm7` `PC`, `dc.aica.dsp` `STEP`;
+- the anchor registers: `dc.sh4.cpu` `PC`, `dc.aica.arm7` `PC`, `dc.aica.dsp` `STEP`, and, for a server that lists
+  the target `arm7`, `dc.aica.arm7` `ENABLED` with width 1 (1 = the ARM7 is clocked, 0 = it is held in reset; 2.10);
 - the register list of `dc.sh4.cpu`;
+- the widths of the registers of `dc.aica.dsp`, for every server that lists them: `STEP` 8, `MDEC_CT` 16, `RBP` 16,
+  `RBL` 8 (S01 checks the width of each one it finds; only `STEP`, the anchor, has to be there);
 - for events: a server lists in `events` exactly the events it can raise, and accepts a breakpoint on every event it
   lists. `dc.holly.core.vblank` is listed by every server (2.6).
 
 Every other register list is the server's: the emulator's lists are below, the mock's can differ, and an M1 tree may
-hold fewer than 256 registers. Labels and descriptions are the server's too. Second-level nodes (`dc.sh4`, `dc.holly`,
-`dc.aica`, `dc.system`) carry no registers, because the panel expands the first two levels by default.
+hold fewer than 256 registers. Labels and descriptions are the server's too. In the emulator the second-level nodes
+(`dc.sh4`, `dc.holly`, `dc.aica`, `dc.system`) carry no registers, because the panel expands the first two levels by
+default; that is the emulator's choice, not contract, and the runner does not check it.
 
 | Path (parent) | Registers (emulator) | Events | Actions | From |
 | --- | --- | --- | --- | --- |
@@ -1707,7 +1738,7 @@ hold fewer than 256 registers. Labels and descriptions are the server's too. Sec
 | `dc.holly.spg` (`dc.holly`) | PVR sync / timing registers | — | — | M2 |
 | `dc.aica` (`dc`) | — | `dc.aica.interrupt`, `dc.aica.timer` | — | M1 |
 | `dc.aica.common`, `dc.aica.rtc` (`dc.aica`) | common registers (the `0x2800` block); RTC | — | — | M2 |
-| `dc.aica.arm7` (`dc.aica`) | `PC`, `R0..R14`, `CPSR`, `SPSR`, `R13_USR R14_USR`, `R8_FIQ..R14_FIQ SPSR_FIQ`, `R13_IRQ R14_IRQ SPSR_IRQ`, and the same three for `SVC`, `ABT`, `UND`; all width 32 | — | `arm7-disassembly`, `arm7-memory`; `arm7-registers` from M2 | M1 |
+| `dc.aica.arm7` (`dc.aica`) | `PC` (first), `ENABLED` (width 1, **normative**: 1 = clocked, 0 = held in reset), `R0..R14`, `CPSR`, `SPSR`, `R13_USR R14_USR`, `R8_FIQ..R14_FIQ SPSR_FIQ`, `R13_IRQ R14_IRQ SPSR_IRQ`, and the same three for `SVC`, `ABT`, `UND`; all but `ENABLED` width 32 | — | `arm7-disassembly`, `arm7-memory`; `arm7-registers` from M2 | M1 |
 | `dc.aica.sgc` (`dc.aica`) | — | `dc.aica.channels.key_on`, `.key_off`, `.loop` | `sgc` | M1 |
 | `dc.aica.sgc.0 .. .63` (`dc.aica.sgc`) | per-channel register fields | — | — | `.0`, `.1` as nodes without registers in M1; all 64 with registers in M2 |
 | `dc.aica.dsp` (`dc.aica`) | `STEP` (width 8), `MDEC_CT` (16), `RBP` (16), `RBL` (8); the core's datapath registers from M3 | — | `dsp-disassembly` | M1 (`STEP` reads 0 until M3) |
@@ -1734,7 +1765,12 @@ during an instruction and stale between them; `R15` is not shown). `CPSR` is com
 enables and the mode. `Rn_<mode>` and `SPSR_<mode>` are the banked registers of a mode; for the mode the processor is in
 they show what `R8..R14` and `SPSR` show (the banked slot of the active mode is stale until the next mode switch, so the
 reader substitutes the live values). Writes (M2): `CPSR` through `CPUSwitchMode` + `CPUUpdateFlags`, `PC` into
-`R15_ARM_NEXT`.
+`R15_ARM_NEXT`. `ENABLED` stands behind `PC`, which stays the first register of the node. It reads
+`SoundCPU::DebugEnabled()`: 0 from a machine reset until the guest releases the ARM7, 1 while the ARM7 is clocked
+(`0x0` and `0x1` on the wire).
+It is the observable of the reset (2.10), and it is read-only in every milestone: `state.setRegister` on it answers
+`-32004` (the guest holds or releases the ARM7 through ARMRST; the debugger does not). The emulator gains the register
+with the correction of 6.1.1 item 8.
 
 `dc.aica.dsp`: `MDEC_CT` has width 16 from M1 on, the register's width on the hardware and in the T5.0 core. The DSP
 that runs until that core is wired in keeps the counter as a 32-bit value that is reloaded with the ring length, which
@@ -1832,7 +1868,14 @@ exists.
   memory with `BL` at `v - 4`. **The ARM7 callstack has at least these two frames whenever the ARM7 is running, and
   more when the stack scan finds them**: the scan of the frozen `dbg_callstack.h` is part of the rule, and every
   statement of it — here, 4.2.1, 5.3, S11 — says "at least two". While the ARM7 is held in reset `callstacks.arm7`
-  is `[]` and `state.getCallstack {arm7}` answers `frames: []`.
+  is `[]` and `state.getCallstack {arm7}` answers `frames: []`. **The reset has an observable**: the register
+  `ENABLED` of `dc.aica.arm7` (width 1; 1 = the ARM7 is clocked, 0 = it is held in reset). Its source is
+  `SoundCPU::DebugEnabled()`, the same one the unwinder and the step preconditions (2.5.3) use, so the three cannot
+  disagree. In a paused tick `callstacks.arm7` is `[]` exactly when `ENABLED` reads 0 and has at least two frames
+  when it reads 1, and `state.getCallstack {arm7}` agrees. The pairing is checked inside one tick: `dc.aica.arm7` is
+  one of the four base paths (2.8), so every tick of a machine carries the register (a `no-game` tick has no
+  registers and no frames, 2.3.1). In running ticks `callstacks.arm7` stays `[]` whatever `ENABLED` reads. The
+  contract checks the pair (5.5 S11). The guest-visible register ARMRST is not the observable (2.7).
 - Sent in paused ticks (`callstacks.sh4`, `callstacks.arm7`) and through `state.getCallstack` (`maxFrames` default 32,
   at most 64). Running ticks carry empty arrays. `state.getCallstack` works while running: it unwinds at the slice hook,
   the SH4 only on a backend with `SH4DBG_CTX_AT_SLICE` (otherwise `frames: []`, 2.2.8).
@@ -1852,7 +1895,7 @@ although the server is the control surface (D8); a rename, if there is one, come
 | `AllowedHosts` | empty | `dbg::Init` | comma-separated extra host names accepted in `Host` and `Origin` |
 | `WebRoot` | empty | `dbg::Init` | directory served instead of the embedded bundle |
 | `StartPaused` | `no` | `dbg::emu` (at `OnMachineCreated()`); `dbg::Init`, for the check below | 2.2.9. **`StartPaused=yes` while the server is not enabled is a configuration error, and with a server that cannot be started it is fatal as `Required=yes` is** (below), except in a selftest session, whose test resumes the start park |
-| `TickMs` | `200` | `dbg::Init` | period of the running tick, in milliseconds; a value below 1 is replaced by the default. `dbg::Init` hands the value to the core, which owns the periodic tick, before it starts it: `core::Configure(tickMs, fullTickEvery)` of E5's private header (6.1); a core that was never configured has the defaults |
+| `TickMs` | `200` | `dbg::Init` | period of the running tick, in milliseconds; a value below 1 is replaced by the default. `dbg::Init` hands the value to the core, which owns the periodic tick, before it starts it: `core::Configure(tickMs, fullTickEvery)` of E5's private header (6.1); a core that was never configured has the defaults. The contract gates are run with the defaults of this key and the next (5.5.3) |
 | `FullTickEvery` | `5` | `dbg::Init` | every n-th periodic tick is full; a value below 1 is replaced by the default (1 makes every periodic tick full). Handed to the core with `TickMs`, in the same call |
 | `SelfTest` | empty | `dbg::selftest` | run the in-emulator selftest (5.3) and exit. While it is set the default of `Enabled` is `no` (above) |
 | `ForceFallback` | `no` | `dbg::emu` (at `OnMachineCreated()`) | testing only: treat the active SH4 JIT backend as one without native breakpoints (2.3.5, gate B12); no effect on the interpreter |
@@ -1906,8 +1949,11 @@ HTTP and WebSocket rules (implemented by E1):
   `max-age=31536000, immutable`. MIME table: html, js, css, json, wasm (`application/wasm`), png, svg, ico, ttf, woff2,
   map. Every response carries `X-Content-Type-Options: nosniff`. Embedded files are stored gzip-compressed and sent with
   `Content-Encoding: gzip`.
-- Limits: 1 MiB per inbound message (a larger one closes the connection); 16 clients (a further upgrade gets 503); a
-  client that lets more than 16 MiB of outbound data queue up is disconnected. Request parameters are bounded as in 3.6.
+- Limits: 1 MiB per inbound message. A larger one is answered with a close, code 1009, and the close frame is on the
+  wire before the socket is closed, also while the client is still sending (a client that finds the socket cut
+  before it has read the frame sees 1006; 3.6, and 6.1 for what E5 may correct here). 16 clients (a further upgrade
+  gets 503); a client that lets more than 16 MiB of outbound data queue up is disconnected. Request parameters are
+  bounded as in 3.6.
 - All socket writes use `MSG_NOSIGNAL` (Linux) / `SO_NOSIGPIPE` (macOS). On Windows the listening socket uses
   `SO_EXCLUSIVEADDRUSE`, never `SO_REUSEADDR`.
 
@@ -2266,13 +2312,16 @@ most 256 watches; at most 1024 breakpoints; a tick carries at most 200 event-log
 target; inbound message at most 1 MiB. The constants are in `dbg_emu.h` (`kMax...`) and `PROTOCOL_BOUNDS` of the schema.
 
 Above 1 MiB the transport closes the connection (WebSocket close code 1009); a server may instead answer the oversized
-message with an error. Either way the request is not executed and the server stays up. The 16-client limit (2.11) is
-the transport's and is tested with it (5.2), not by the contract.
+message with an error. Either way the request is not executed and the server stays up. **The emulator answers with
+the close, code 1009, and its close frame is on the wire before the socket is closed, also while the client is still
+sending**: a client that finds the socket cut before it has read the frame sees 1006, and S12 fails on that (5.5).
+The 16-client limit (2.11) is the transport's and is tested with it (5.2), not by the contract.
 
 ## 4. Frontend work (dreamcast-devtools)
 
-Packages are sequential on `skmp/nulldc3`: F0, F1 and F2 are committed; one devtools round (4.2.1, 4.3.1) closes what
-their verifications left and what revision 3 changes; then one package per milestone. PLAN track 10 later merges the
+Packages are sequential on `skmp/nulldc3`: F0, F1 and F2 are committed, and so is the devtools round (4.2.1, 4.3.1),
+which closed what their verifications left and what revision 3 changed; a small runner follow-up comes next (4.2.2:
+what the decisions made after the round change); then one package per milestone. PLAN track 10 later merges the
 machine side (load, settings, controls) into the same application: no page built by F3..F6 may depend on a debugging
 session being in use, and the store keeps working with no game loaded.
 
@@ -2290,9 +2339,9 @@ build and a mock per test, a scripted server for exact ticks and protocol v2; no
 around every dock panel and every route; Monaco bundled locally (no CDN) and route-level code splitting (both were M2
 items of v2).
 
-Remaining (devtools round): `check` runs `lint`, `typecheck`, `test:run`, `contract`, `build:native`; it is to run
-`build:wasm` as well (no v3 message breaks the wasm transport build; the risk is silent rot) and the contract as the M1
-gate, `npm run contract -- --milestone M1` (5.5.3).
+Closed by the devtools round: `check` runs `lint`, `typecheck`, `test:run`, the contract as the M1 gate
+(`npm run contract -- --milestone M1`, 5.5.3), `build:native` and `build:wasm` (no v3 message breaks the wasm
+transport build; the risk was silent rot).
 
 ### 4.2 F1 — protocol v3, mock module, contract runner (M1; done)
 
@@ -2334,9 +2383,14 @@ gate, `npm run contract -- --milestone M1` (5.5.3).
   runner itself against conforming and broken variants of the mock (`scripts/contract/run.test.ts`).
 - Gate: `npm run check`.
 
-#### 4.2.1 Devtools round: the runner and the mock after revision 3
+#### 4.2.1 Devtools round: the runner and the mock after revision 3 (done)
 
-The runner is the gate of the emulator's server, so this round is closed before the core package (E5) is verified.
+**Done.** Delivered at `11d4136` of branch `skmp/nulldc3` of `dreamcast-devtools`: all thirteen runner items and every
+mock sentence below; 382 unit tests; the M1 gate on the mock ends with 16 scenarios passed, 0 partial, 0 not
+applicable; the runner judged 278 broken or legal servers correctly. What follows is the record of the round. Its
+verification left points that decisions 30 to 37 settled; what they change in the runner and the mock is 4.2.2.
+
+The runner is the gate of the emulator's server, so this round was closed before the core package (E5) is verified.
 Every item is a decision of revision 3 or a finding of its check; none changes the shapes of the client schemas.
 
 Runner (`scripts/`):
@@ -2348,12 +2402,15 @@ Runner (`scripts/`):
    of the schema check codes.
 3. S01: the normative columns of the target table only (not `label` and the default addresses); under a milestone gate
    all three targets and the milestone's capabilities; of the tree: the M1 paths, their parents, their actions, the
-   three anchor registers, the register list of `dc.sh4.cpu`, and `dc.holly.core.vblank` among the events (2.8).
+   three anchor registers, the register list of `dc.sh4.cpu`, and `dc.holly.core.vblank` among the events (2.8). (The
+   widths of `dc.aica.dsp`, and `ENABLED` of `dc.aica.arm7` as a fourth anchor, were added to what is normative
+   afterwards: 4.2.2.)
 4. S02: the repeated pause once per target id, listed or not, and one other string (`-32602`).
 5. S07: the re-enable construction at the interrupt entry (5.5), with `VBR` read at a stop the scenario makes after the
    target has run, never at the anchor of S00; S20 reads it the same way.
 6. S11: `callstacks.arm7` is `[]` (ARM7 held in reset) or at least two frames, frame 0 the PC and frame 1 `R14` with
-   location `lr`.
+   location `lr`. (Which of the two it has to be is told by the register `ENABLED` of `dc.aica.arm7` since decision
+   31: 4.2.2.)
 7. S12: the `-32600` probes with the `id` rule of 3.0 (a malformed message without an `id` is answered, with
    `id: null`); a well-formed notification gets no answer; a request with an unknown
    top-level member and an unknown `params` key is answered as without them (sent raw, since the client's own request
@@ -2386,6 +2443,34 @@ a handler with an `rte`, which the UI tests can use.
 
 `package.json`: `check` runs the contract as `contract -- --milestone M1`, and `build:wasm`.
 
+#### 4.2.2 Runner follow-up
+
+What the decisions made after the round (30 to 37) change in the runner and the mock. It is one small piece of work
+on `skmp/nulldc3` of the UI repository, and it is done before the gate is used against the core (E5).
+
+Runner (`scripts/contract/`):
+1. S04 (decision 30): a second step in a row that ends at an exception vector fails the scenario. The four attempts
+   and the result "passed with a note" go.
+2. The register `ENABLED` of `dc.aica.arm7` (decision 31), when `arm7` is listed. S01: the register is there and
+   has width 1. S11: the pairing inside one paused tick, in both directions — `ENABLED` reads 0: `callstacks.arm7`
+   is `[]`; `ENABLED` reads 1: at least two frames, frame 0 the PC and frame 1 `R14` with location `lr` — and the
+   answer of `state.getCallstack {arm7}` at that stop agrees with the register in the same way.
+3. S01 (decision 32): the width of each of `STEP` (8), `MDEC_CT` (16), `RBP` (16), `RBL` (8) that `dc.aica.dsp`
+   lists.
+4. S06, S07 (decision 34): the helper behind "only running ticks for 600 ms" (`expectToKeepRunning`) requires that no
+   paused tick comes in the window and nothing else; its demand for two ticks inside the window goes.
+5. S18 and S16 (decision 36). S18: the `icache` and `ocache` tables have rows, or no rows and a `note`. S16: an ARM7
+   step asserts the new `stopId`, the `reason` and that no running tick came in between; the PC is compared only on
+   a line that is not control flow, as S04 does.
+6. A server that stops answering (decision 37): after several request timeouts in a row the runner fails the
+   remaining scenarios as "not run" instead of sending each of their requests into its timeout.
+
+Mock (`server/mockDebugger.ts`; decision 31): `dc.aica.arm7` gains the register `ENABLED`, width 1; it reads 1 while
+the mock's ARM7 runs.
+
+No runner change comes from decision 33 (the runner does not look at the registers of second-level nodes) nor from
+decision 35 (the `state.getMemoryBinary` part of S17 and the mock's method are F4's, 4.5).
+
 ### 4.3 F2 — client behaviour and panels (M1; done)
 
 What the UI does, as built and verified against the mock and scripted servers; it is the contract for later packages.
@@ -2416,13 +2501,20 @@ What the UI does, as built and verified against the mock and scripted servers; i
   announced itself after the loss, else it keeps waiting; an announcement from before the loss does not count. A
   refusal by the Origin / Host check is not visible to script; the error text lists what a failed connection can be,
   that check among it.
+- **Without a connection** the panels keep their frame — search boxes, toolbars, the focus in them — and show
+  "Not connected" in place of data; only data is cleared. **Text typed into a box and not sent is frame and is kept;
+  an address box is rewritten only when its view moves or the target's address format changes.** Over a reconnect
+  the focus is kept in static controls, in tree nodes and in list rows (the enable switch and the Remove button of
+  a breakpoint row, the Remove button of a watch row). **A row control gets the focus back only while the focus is
+  on the page body: a focus the user moved during the outage stays where they put it.**
 - **Toolbar**: next to the run controls, `Running`, or `Paused` with the `reason` and the `stopId`, and below it the
   `notice`; the line wraps where the toolbar has little room, and a window narrower than 1280 px shows both in lines of
   their own under the toolbar. The results of all `control.*` calls are checked and a refusal is shown; **a refusal
   that repeats while its notice is on screen is counted in that notice (`×n`), not shown again** (the count stays five
   seconds from the last repeat). In the stops of the emulator's own window (`host-stopped`, `guest-exit`, `no-game`) Run
   and the step buttons are off, because the server refuses them there; Pause stays. A run control that cannot be used
-  keeps the keyboard focus (`aria-disabled`, not `disabled`).
+  keeps the keyboard focus (`aria-disabled`, not `disabled`). How the controls of a toolbar are aligned is not
+  contract.
 - **Disassembly**: follows the PC and refetches when `stopId` changes (and after the panel's own breakpoint edits,
   without moving). "Follows" means: after every stop — the one a client connects into included — the PC line is on
   screen, with up to ten instructions of context above it, fewer when they do not fit; a view whose PC line is already
@@ -2432,10 +2524,17 @@ What the UI does, as built and verified against the mock and scripted servers; i
   endpoint switch the views keep their place unless the new connection starts in a stop. Target metadata
   (`instructionSize`, `addressMax`, radix, digits, defaults) comes from `targets`; nothing is requested beyond
   `addressMax`. The gutter adds and removes breakpoints; the server keeps two breakpoints for two adds on one address
-  (2.3.3), so the client is the one that guards against a double click (4.3.1).
+  (2.3.3), so the client is the one that guards against a double click (4.3.1). **Narrow panels: the instruction
+  column keeps a minimum of 12 characters; a listing narrower than its columns scrolls sideways (wheel or scroll
+  bar) and cuts nothing.** That holds for any panel width, also for a layout made in a wider window and narrowed.
+  The view's toolbar wraps instead of cutting its controls off.
 - **Memory**: refetches when `stopId` changes; opens at `defaultMemoryAddress` of the first server that reads that
   memory; unreadable bytes shown as `??`, and a window in which nothing is readable (`-32010`) as all `??`, so that the
-  view can be scrolled out of it.
+  view can be scrolled out of it. The rule for narrow panels is the disassembly's: a listing narrower than its
+  columns scrolls sideways and cuts nothing. As built the memory view cuts its hex and text columns in a
+  side-by-side layout that was narrowed; it gets the rule in package F3 (4.4).
+- **Default layouts** are readable in a 1366x768 window: no panel of a default layout loses a column there, and e2e
+  runs at that window size pin it (4.3.1 item 7).
 - **Unsupported targets**: a panel whose target is missing from `targets`, or whose `stepping` / `memory` is false, shows
   a notice instead of the corresponding controls; so do the SGC panel without `"sgc-capture"`, the callstack panels
   without `"callstack"` and the breakpoint panels of a target without `stepping` or without `"event-breakpoints"`. No
@@ -2461,7 +2560,13 @@ What the UI does, as built and verified against the mock and scripted servers; i
   a conforming server.
 - Gate: `npm run check`; the e2e suite; the contract gate M1 against the mock and against the emulator.
 
-#### 4.3.1 Devtools round: the panels after revision 3
+#### 4.3.1 Devtools round: the panels after revision 3 (done)
+
+**Done.** Delivered at `17f3bff` of branch `skmp/nulldc3` of `dreamcast-devtools`: all seven items, item 7 in this
+round and not in F3; 246 e2e tests and 382 unit tests pass. What follows is the record of the round ("as built" in it
+is the state before the round); what the UI does now is 4.3. Decisions 38 to 41 answered what the verification of the
+round left: the width rule of the disassembly, and that the memory view gets it in F3 (38); what "frame" is (39);
+a focus the user moved during an outage (40); toolbar alignment (41).
 
 1. **Without a connection the panels keep their frame** — search boxes, toolbars, the focus in them — and show "not
    connected" in place of data; only data is cleared. (As built the whole store is emptied and every panel says
@@ -2481,7 +2586,8 @@ What the UI does, as built and verified against the mock and scripted servers; i
    Required: at 1366x768 the disassembly keeps a minimum width for its instruction column, the toolbar wraps instead
    of cutting its controls off, and no panel of a default layout loses a column; one e2e run at that window size pins
    it (the instruction text of the PC line and every run control are visible). Placement: this item is part of this
-   round if it fits; if it does not, it is F3's (4.4), and the round's hand-over says which.
+   round if it fits; if it does not, it is F3's (4.4), and the round's hand-over says which. (It fitted: the round
+   delivered it, with a minimum of 12 characters and a sideways scroll: 4.3.)
 
 ### 4.4 F3 — M2 panels
 
@@ -2502,8 +2608,10 @@ What the UI does, as built and verified against the mock and scripted servers; i
   target and capability, the event-log row without `metadata` (4.3), the branches of the panels that serve them, and
   the v2 schema samples and e2e tests — but for one test, against a scripted server without `protocol`, that pins the
   banner. Until this package the M1 client keeps all of it.
-- The minimum window of 4.3.1 item 7 (default layouts readable at 1366x768, one e2e run at that size), if the devtools
-  round did not take it.
+- The memory view gets the rule the disassembly has for narrow panels (4.3): a listing narrower than its columns
+  scrolls sideways (wheel or scroll bar) and cuts nothing, at any panel width, also in a layout made in a wider
+  window and narrowed. As built it cuts its hex and text columns in a side-by-side layout that was narrowed. (The
+  minimum window of 4.3.1 item 7 itself was delivered by the devtools round.)
 - The contract runner's S16 checks the M2 rows of the device tree (2.8) as S01 checks the M1 rows.
 - The embedded bundle is about 5 to 6 MB, about 1.4 MB gzip-compressed, which is how it is embedded.
 
@@ -2523,8 +2631,11 @@ What the UI does, as built and verified against the mock and scripted servers; i
   "Load from emulator" reads the AICA register file and DSP RAM through `state.getMemoryBinary`; the playground shows a
   banner naming the snapshot's source and time. Because the core is the same, the playground's result is what the
   emulator plays.
-- The contract runner's S17 gains `state.getMemoryBinary` (header `kind` 2, `payloadBytes == totalBytes == length`);
-  its DSP part becomes S21, selected by `--milestone M3 --dsp-program` in the gate's second run (5.5.3).
+- The contract runner's S17 gains `state.getMemoryBinary` (header `kind` 2, `payloadBytes == totalBytes == length`),
+  **and the mock gains the method, with the capability `memory-binary`, in the same package**: a part whose
+  capability is not advertised makes a scenario partial, and the mock keeps passing S17 without `--milestone`
+  (5.5.3). The DSP part of S17 becomes S21, selected by `--milestone M3 --dsp-program` in the gate's second run
+  (5.5.3).
 - The capability string `"dsp-forced"` leaves the schema (2.5.5).
 
 ### 4.6 F5 — M4 Holly, and F6 — M5
@@ -2550,8 +2661,9 @@ window checklist of E4a (`tests/debugger/selftest/window_checklist.sh`, not a ct
 
 ### 5.1 devtools
 
-`npm run check` (lint, typecheck, vitest, the contract gate M1 on the mock, both builds — the last two as 4.1 says they
-are to be), and `npm run test:e2e` (Playwright, headless Chromium; with at most 2 workers on the development machine).
+`npm run check` (lint, typecheck, vitest, the contract gate M1 on the mock, both builds: 4.1), and `npm run test:e2e`
+(Playwright, headless Chromium; with at most 2 workers on the development machine). At the end of the devtools round:
+382 unit tests, 246 e2e tests, and the gate on the mock with 16 scenarios passed, 0 partial, 0 not applicable.
 
 ### 5.2 Pure-module tests (emulator)
 
@@ -2565,7 +2677,7 @@ around a machine of its own.
 | --- | --- | --- | --- |
 | `tests/debugger/net/` | E1 | WebSocket framing and handshake vectors (RFC 6455 examples), fragmentation, the 1 MiB limit, the 16-client limit; HTTP path sanitising; Host / Origin rules of 2.11 including `null` and `localhost.evil.example`; MIME and cache headers; fallback and 404 rules; a send to a closed socket does not raise `SIGPIPE`; embedded-bundle lookup with a fixture bundle and the embed check; a fuzz test; interoperation with the UI's `ws` client | done |
 | `tests/debugger/disasm/` | E2 | SH4 and ARM7: comparison with GNU objdump, PC-relative targets, the SH4 opcode table; DSP steps against the devtools playground's disassembler and assembler | done |
-| `tests/debugger/regs/` | E3 | register-table sanity: unique names per node, unique paths, parents, addresses inside the module ranges, widths, events against `dbg_events.h`; the panel ids against `PANEL_IDS` of the UI; the AICA channel state the debugger shows | done |
+| `tests/debugger/regs/` | E3 | register-table sanity: unique names per node, unique paths, parents, addresses inside the module ranges, widths, events against `dbg_events.h` (every row is listed by exactly one node, the one it names, except `EV_DEBUGGER_DSP_FORCED`, which no node lists); the panel ids against `PANEL_IDS` of the UI; the AICA channel state the debugger shows | done |
 | `tests/debugger/sh4bp/` | E4b | the gates of 2.3.6 on three engines; the selftest file on that machine; the cost gate B11 | done |
 | `tests/debugger/symbols/` | E5 | `.symtab` walk on a fixture ELF, lookup by address, `name` / `name+0x<offset>`, a symbol without a size, a symbol name with bytes above `0x7F` and with control characters (the table keeps the bytes; the wire form of 3.0 item 9 is tested by `core.tick`), damaged images (every offset checked against the size) | to do |
 
@@ -2580,6 +2692,10 @@ ninja -C <build> -j8 && ctest --test-dir <build> -j4
 
 Without `NULLDC_DEVTOOLS_DIR` three debugger tests have no data (`debugger.net.interop_ws`,
 `debugger.disasm.dsp_playground`, `debugger.regs.panels`).
+
+`tests/debugger/net` may get one more test, from E5: that the close frame with code 1009 for an oversized message
+reaches a client that is still sending. It comes with the correction of `dbg_net.cpp` that 6.1 allows E5, if the
+transport needs one.
 
 ### 5.3 In-emulator selftest
 
@@ -2605,7 +2721,7 @@ In ctest: `nulldc_debugger_selftest(<name>)` in `tests/debugger/selftest/CMakeLi
 session with the filter `<name>` that has to end with exit code 0 and the summary of the driver. They run on the
 emulator the system tests build.
 
-- E3, `dbg_selftest_regs.cpp` (session `regs`, done; as built it is not a ctest target — it is registered by 6.1.1
+- E3, `dbg_selftest_regs.cpp` (session `regs`, done; a ctest target, `debugger.selftest.regs[.interp]`, since 6.1.1
   item 6): every register row of `dbg_regs_tables` maps to a registered slot of the live `sh4mmr` / SB arrays and every
   registered slot has a row; `dbg_mem` region boundaries, mirrors, the GD-ROM and modem holes, a read across
   `0x0021FFF0`, and that no read changes `SB_FFST`'s counter, the SCIF FIFO or the AICA common registers.
@@ -2651,7 +2767,8 @@ emulator the system tests build.
     each; the machine made again parks at its start.
   - `core.guest` (guest test, on the booted ELF): after the boot the symbol table has the ELF's symbols (the entry
     resolves); the SH4 callstack has frame 0 = PC and frame 1 = PR; the ARM7 callstack is `[]` while the ARM7 is held in
-    reset and at least two frames (frame 0 = PC, frame 1 = R14 with location `lr`) once it runs; a tick at a breakpoint
+    reset and at least two frames (frame 0 = PC, frame 1 = R14 with location `lr`) once it runs, and in each of the two
+    ticks the register `ENABLED` of `dc.aica.arm7` reads 0 and 1 respectively (the pairing of 2.10); a tick at a breakpoint
     stop carries the `breakpointId` and stops carrying it when the breakpoint is removed.
 
   The session has no server: `Debugger:SelfTest` keeps it off unless `Debugger:Enabled` is set explicitly (2.11). So
@@ -2685,7 +2802,9 @@ emulator the system tests build.
   `Port=0` avoids collisions between runs in
   parallel; `Required=yes` makes a failed bind fatal instead of a test against somebody else's emulator, or a start
   park that no client can reach; `StartPaused=yes` gives the runner its anchor. The harness parses the `Debugger: http://127.0.0.1:<port>/` line,
-  which is on stdout and flushed when it is printed (2.11).
+  which is on stdout and flushed when it is printed (2.11). The recipe sets neither `Debugger:TickMs` nor
+  `Debugger:FullTickEvery`: the gates are run with the defaults, for which the contract's time bounds are written
+  (5.5.3).
 - One emulator process serves a whole contract run. Emulated time stands still at the start park, so no exit key ends
   the process: the harness ends it by pid with SIGTERM when the runner has returned, and has a watchdog.
 - The gate: `npm run contract -- --url ws://127.0.0.1:<port>/ws --profile emulator --elf <path> --milestone M1` (5.5.3).
@@ -2733,29 +2852,30 @@ Applied to every tick of every connection in every scenario:
   comes back for another breakpoint or watch.
 
 Scenarios, both profiles unless marked. "A tick within 1 s" means a tick that shows the effect within that time (times
-the profile's factor); the server may send other ticks in between.
+the profile's factor); the server may send other ticks in between. The time bounds are written for the default
+`TickMs` and `FullTickEvery`, with which the gates are run (5.5.3).
 
 | Id | Scenario | Assertion |
 | --- | --- | --- |
 | S00 | anchor (emulator) | from the `StartPaused` stop: add a code breakpoint at the ELF entry (from `--elf`; `0x8C010000` without it); resume; within 10 s a paused tick with that `breakpointId`, `reason: "breakpoint"`, PC = the entry; `dc.timing.SH4_DEBUG_ENGINE` is `native` and the tick has no `notice`, or it is `interpreter-fallback` (arm64, `Debugger:ForceFallback=yes`) and the `notice` is present; `debugger.describe`, asked again at this stop, lists the `sh4-debug-` capability of that engine and not the other; remove the breakpoint. All later emulator scenarios start from here; later breakpoints use addresses constructed as in S05 or S07, or ELF symbols resolved by the runner, never the PC of an arbitrary pause |
-| S01 | describe | result valid, every issue reported; `protocol == 3`; `targets` present; the first notification after the response is a full tick; the same for a describe with `{}` and with `{protocol: 2}`; paths unique and lower case; register names unique per node and upper case; the values of the tree formatted as I4; `actions` within `PanelId`; no empty arrays; every target's `pcPath` / `pcRegister` is in the tree; the normative columns of 3.1 for every listed target; of 2.8: the M1 paths, their parents, their actions, the three anchor registers, the register list of `dc.sh4.cpu`, `dc.holly.core.vblank` among the events. Under a milestone gate also: `sh4`, `arm7` and `dsp` are listed, and the capabilities of the milestone are advertised (M1: `event-breakpoints`, `callstack`) |
+| S01 | describe | result valid, every issue reported; `protocol == 3`; `targets` present; the first notification after the response is a full tick; the same for a describe with `{}` and with `{protocol: 2}`; paths unique and lower case; register names unique per node and upper case; the values of the tree formatted as I4; `actions` within `PanelId`; no empty arrays; every target's `pcPath` / `pcRegister` is in the tree; the normative columns of 3.1 for every listed target; of 2.8: the M1 paths, their parents, their actions, the anchor registers (the three of the targets, and `dc.aica.arm7` `ENABLED` with width 1 when `arm7` is listed), the register list of `dc.sh4.cpu`, `dc.holly.core.vblank` among the events, and the width of each of `STEP` (8), `MDEC_CT` (16), `RBP` (16), `RBL` (8) that `dc.aica.dsp` lists. Under a milestone gate also: `sh4`, `arm7` and `dsp` are listed, and the capabilities of the milestone are advertised (M1: `event-breakpoints`, `callstack`) |
 | S02 | pause | `control.pause {target: "sh4"}` (what the UI sends) returns `{}`; a paused tick within 2 s with `reason: "pause"`, a new `stopId` and no `breakpointId`; a further pause for each of `sh4`, `arm7`, `dsp` — listed by the server or not — returns `{}` and changes nothing; a pause with another string as target is in-band `-32602` |
-| S03 | resume | `control.runUntil` returns `{}`; running tick within 1 s, `stopId` unchanged; at least 2 more running ticks within 1.5 s; `dc.timing.SH4_CYCLES` differs between them; a full running tick within 2 s of the resume (the default `TickMs` and `FullTickEvery`); three watches kept through the running phase are listed in every running tick: on `dc.timing.sh4_cycles` (its value moves), on the SH4 PC (`"n/a"` under `registersStale`), and on a register of a path outside the base paths that has a value at the stop before the resume — some registers are `"n/a"` always, 2.8 — (a value, not `"n/a"`, in every running tick); a second `runUntil` returns `{}` and changes nothing |
-| S04 | step | paused; step to a line that is not control flow and does not follow a delayed branch (at most 64 steps; none found fails). `control.step {sh4}`: a paused tick with a new `stopId` and `reason: "step"`, and no running tick in between; `dc.timing.SH4_CYCLES` does not decrease, and increases unless PC1 is an exception vector (a deferred interrupt can end the step before an instruction runs, 2.3.2); PC1 == PC0+2 or PC1 is an exception vector (a step that ends at a vector is tried again from the next plain line, four times at most, then passed with a note). `control.stepOver` on a line that is not a call behaves as a step. `control.stepOut`: `{}`, a running tick within 1 s; a stop within 5 s has reason `step` or carries a `breakpointId`; otherwise the runner pauses. `control.step {sh4}` while running: in-band `-32003`. Mock: PC1 is the next address of its loop |
+| S03 | resume | `control.runUntil` returns `{}`; running tick within 1 s, `stopId` unchanged; at least 2 more running ticks within 1.5 s; `dc.timing.SH4_CYCLES` differs between them; a full running tick within 2 s of the resume (the default `TickMs` and `FullTickEvery`, with which the gates are run: 5.5.3); three watches kept through the running phase are listed in every running tick: on `dc.timing.sh4_cycles` (its value moves), on the SH4 PC (`"n/a"` under `registersStale`), and on a register of a path outside the base paths that has a value at the stop before the resume — some registers are `"n/a"` always, 2.8 — (a value, not `"n/a"`, in every running tick); a second `runUntil` returns `{}` and changes nothing |
+| S04 | step | paused; step to a line that is not control flow and does not follow a delayed branch (at most 64 steps; none found fails). `control.step {sh4}`: a paused tick with a new `stopId` and `reason: "step"`, and no running tick in between; `dc.timing.SH4_CYCLES` does not decrease, and increases unless PC1 is an exception vector (a deferred interrupt can end the step before an instruction runs, 2.3.2); PC1 == PC0+2 or PC1 is an exception vector. One step may end at a vector. The step after it starts at the handler's first instruction with `SR.BL` set and cannot be interrupted: **a second step in a row that ends at a vector fails S04**, and the step the runner then makes from the next plain line has to show PC1 == PC0+2. `control.stepOver` on a line that is not a call behaves as a step. `control.stepOut`: `{}`, a running tick within 1 s (the step out follows completed steps, so nothing is deferred there and it is not complete at a vector, 2.3.2); a stop within 5 s has reason `step` or carries a `breakpointId`; otherwise the runner pauses. `control.step {sh4}` while running: in-band `-32003`. Mock: PC1 is the next address of its loop |
 | S05 | breakpoint hit | paused; step until the lines at PC and PC+2 are both not control flow (at most 64 steps); add a code breakpoint at PC+2 with `kind` and `enabled` given; a tick within 1 s lists it with a new id N; the same request again gives a second id; resume; within 2 s a paused tick with `breakpointId == N` (the lower id), `reason: "breakpoint"`, PC == PC+2; a later paused tick of the same stop (provoked by adding a watch) repeats `breakpointId`, `reason` and `stopId`; after `breakpoints.remove {N}` the paused ticks of that stop carry no `breakpointId` |
-| S06 | mute | same construction; set `sh4.muted`; a tick echoes it in `categories`; resume; only running ticks for 600 ms; pause; unmute. Repeat with `arm7.soloed` (not hit), and with `sh4.soloed` (hit). Two requests of one key each leave the other keys alone; a request with an unknown key returns `{}` and changes nothing |
-| S07 | toggle, remove, event breakpoints | a disabled breakpoint is not hit (as S06). **Re-enabling:** at a stop taken after the target has run past its start-up (the pause that ends the first part of this scenario; not the anchor of S00, where the program has not installed its vector base), read `VBR` from `dc.sh4.cpu`; add a code breakpoint at the interrupt entry `VBR + 0x600`, which every program with interrupts enabled reaches at each vblank; resume and see it hit; disable it; resume and see the target run through at least two further vblank events (a disabled event breakpoint on `dc.holly.core.vblank` puts them in the event log); enable it; require the hit within 2 s. A target that takes no interrupt in the window (the first hit does not come) makes the scenario **partial**. Remove deletes; removing again and toggling an unknown id return in-band `-32602`. Event breakpoints: every event the tree lists accepts a breakpoint (added disabled, with `kind`, listed, removed); none stops while disabled; an enabled one on `dc.holly.core.vblank` (added without `kind` and `enabled`) gives a paused tick with `reason: "event"` and its id within 2 s. The table takes 1024 breakpoints (filled with disabled event breakpoints) and refuses the next one with in-band `-32602` |
+| S06 | mute | same construction; set `sh4.muted`; a tick echoes it in `categories`; resume; only running ticks for 600 ms — no paused tick in the window, and nothing else is asked of it: no number of ticks —; pause; unmute. Repeat with `arm7.soloed` (not hit), and with `sh4.soloed` (hit). Two requests of one key each leave the other keys alone; a request with an unknown key returns `{}` and changes nothing |
+| S07 | toggle, remove, event breakpoints | a disabled breakpoint is not hit (as S06: no paused tick for 600 ms). **Re-enabling:** at a stop taken after the target has run past its start-up (the pause that ends the first part of this scenario; not the anchor of S00, where the program has not installed its vector base), read `VBR` from `dc.sh4.cpu`; add a code breakpoint at the interrupt entry `VBR + 0x600`, which every program with interrupts enabled reaches at each vblank; resume and see it hit; disable it; resume and see the target run through at least two further vblank events (a disabled event breakpoint on `dc.holly.core.vblank` puts them in the event log); enable it; require the hit within 2 s. A target that takes no interrupt in the window (the first hit does not come) makes the scenario **partial**. Remove deletes; removing again and toggling an unknown id return in-band `-32602`. Event breakpoints: every event the tree lists accepts a breakpoint (added disabled, with `kind`, listed, removed); none stops while disabled; an enabled one on `dc.holly.core.vblank` (added without `kind` and `enabled`) gives a paused tick with `reason: "event"` and its id within 2 s. The table takes 1024 breakpoints (filled with disabled event breakpoints) and refuses the next one with in-band `-32602` |
 | S08 | watches | add `dc.sh4.cpu.pc`: listed with an id and a value equal to the PC register in the same paused tick; rename to `dc.sh4.cpu.PR`: same id, value equals PR; unknown path: in-band `-32602`; unwatch: gone; unwatch of an unknown id returns `{}`; 64 expressions in one call are accepted, 65 refused; a 257-character expression is refused (the length bound cannot be told from "unresolvable": both are `-32602`, and no resolvable expression has 256 characters); the 256-watch bound is probed up to what the tree has (a tree with fewer registers is noted, not failed). The initial list is not assumed empty |
 | S09 | memory | paused; 64 bytes at PC: `baseAddress` echoed, 64 bytes, equal to the `bytes` of the disassembly lines; a read across `0x0021FFF0` length 32 returns 32 bytes with `unreadable: [[16,16]]`; a fully unreadable range (`0x10000000`, 16) returns `-32010`; every other target with memory is read for 16 bytes at its `defaultMemoryAddress`; a length of 65536 is accepted, 65537 refused |
 | S10 | disassembly | for every listed target: 16 lines at its PC / step; addresses step by `instructionSize`; `bytes` format (`instructionSize` pairs; for `dsp` 8 pairs); non-empty text; `context` ignored; the default target; from the second-to-last address 2 lines; an address above `addressMax` is `-32602`; an unreadable word (`sh4`, `0x10000000`) is `??` / `<unreadable>`; a count of 1024 is accepted, 1025 refused |
-| S11 | callstack | the capability `callstack` is required. Paused tick: `sh4` frame 0 `pc` == PC, frame 1 `pc` == PR with location `pr`, later frames `stack+0x..`; `arm7`, when listed: either two or more frames with frame 0 == PC and frame 1 == `R14` with location `lr`, or `[]` (the ARM7 is held in reset). `state.getCallstack {maxFrames: 8}` returns at most 8 frames with indices from 0, for `sh4` and for `arm7`; without `maxFrames` it works; 64 is accepted, 65 refused. Running tick: both arrays empty |
-| S12 | errors | unknown method gives `-32601` with the request id; `state.getMemorySlice` with a string `address` gives JSON-RPC `-32602`; `control.step` with a numeric `target` gives in-band `-32602`; malformed JSON gives `-32700` with id `null`; a batch, a bare number, an object without `jsonrpc` (with a numeric `id`, and without any `id`: answered with `id: null`), a request with a string id give `-32600` with the `id` of 3.0; a well-formed notification gets no answer; a request with an unknown top-level member and an unknown `params` key is answered as without them (3.0, Framing: a valid result, not `-32600` or `-32602`); `-32004` on the method's own channel for every method whose capability is not advertised (one of these probes is sent a second time with a required parameter missing: still `-32004`, not `-32602`; 3.0), for the steps and code breakpoints of a target without `stepping`, for `stepOver` / `stepOut` of `dsp`, and for `state.editWatch` before M2; a text message of 1 MiB + 1 byte closes the connection (1009) or is answered with an error, is not executed, and the server answers a new connection afterwards; a message just under 1 MiB is answered; every error has a non-empty `message` and no `data` member |
+| S11 | callstack | the capability `callstack` is required. Paused tick: `sh4` frame 0 `pc` == PC, frame 1 `pc` == PR with location `pr`, later frames `stack+0x..`; `arm7`, when listed: the pairing with the register `ENABLED` of `dc.aica.arm7` in the same paused tick (1 = the ARM7 is clocked, 0 = it is held in reset; 2.10), in both directions. `ENABLED` reads 1: two or more frames with frame 0 == PC and frame 1 == `R14` with location `lr`. `ENABLED` reads 0: `[]`. `state.getCallstack {arm7}` agrees with the register in the same way. `state.getCallstack {maxFrames: 8}` returns at most 8 frames with indices from 0, for `sh4` and for `arm7`; without `maxFrames` it works; 64 is accepted, 65 refused. Running tick: both arrays empty |
+| S12 | errors | unknown method gives `-32601` with the request id; `state.getMemorySlice` with a string `address` gives JSON-RPC `-32602`; `control.step` with a numeric `target` gives in-band `-32602`; malformed JSON gives `-32700` with id `null`; a batch, a bare number, an object without `jsonrpc` (with a numeric `id`, and without any `id`: answered with `id: null`), a request with a string id give `-32600` with the `id` of 3.0; a well-formed notification gets no answer; a request with an unknown top-level member and an unknown `params` key is answered as without them (3.0, Framing: a valid result, not `-32600` or `-32602`); `-32004` on the method's own channel for every method whose capability is not advertised (one of these probes is sent a second time with a required parameter missing: still `-32004`, not `-32602`; 3.0), for the steps and code breakpoints of a target without `stepping`, for `stepOver` / `stepOut` of `dsp`, and for `state.editWatch` before M2; a text message of 1 MiB + 1 byte closes the connection with close code 1009 (a close the client sees as 1006, the socket cut before the close frame arrived, fails) or is answered with an error, is not executed, and the server answers a new connection afterwards; a message just under 1 MiB is answered; every error has a non-empty `message` and no `data` member |
 | S13 | two clients | a breakpoint added and removed, a watch added and removed and a category change by A appear in a tick received by B within 1 s |
 | S14 | reconnect | the runner closes its connection, waits until the server has finished the close (at most 3 s) and has no client left, and reopens within the grace period: the first tick is paused with the same `stopId`, and breakpoints, watches and categories are unchanged |
 | S15 | HTTP, Host and Origin (emulator) | `GET /` is HTML; `GET /?ws=x` is HTML; a missing asset is 404; `POST /` is 405; `GET /` with `Host: evil.example:<port>` is 403; upgrade with `Origin: http://evil.example` is 403; with `Origin: null` is 403; with `Origin: http://localhost:5173` is 101 |
-| S16 | M2, per part | ARM7 step and breakpoint (`arm7.stepping`); `writeMemory` then read back then restore (`memory-write`); `setRegister` R0 round trip (`register-write`); reset stays paused with `reason: "reset"` (`reset`); the M2 rows of 2.8 are in the tree |
-| S17 | M3, per part | `recordSgcFrames {frames: 64}` completes, from paused with a running tick and then a paused tick with `reason: "capture"`; the JSON response of `getSgcFrameData` comes before its binary frame; header magic, `kind`, `binaryId`, `payloadBytes == 64 * 8192`; an error result is followed by no binary frame (`sgc-capture`); `state.getMemoryBinary`: header, `kind` 2, `payloadBytes == totalBytes == length` (`memory-binary`) |
-| S18 | M4, per part | `state.getTable` for each id: every row has `columns.length` cells (`tables`); `state.captureHolly {ta}`: header, `kind` 4, payload starts with `TAFRAME4` (`holly-capture`) |
+| S16 | M2, per part | ARM7 step and breakpoint (`arm7.stepping`): a step gives a paused tick with a new `stopId` and `reason: "step"`, and no running tick in between; the PC is compared only on a line that is not control flow, as S04 does; `writeMemory` then read back then restore (`memory-write`); `setRegister` R0 round trip (`register-write`); reset stays paused with `reason: "reset"` (`reset`); the M2 rows of 2.8 are in the tree (checked from F3 on, 4.4) |
+| S17 | M3, per part | `recordSgcFrames {frames: 64}` completes, from paused with a running tick and then a paused tick with `reason: "capture"`; the JSON response of `getSgcFrameData` comes before its binary frame; header magic, `kind`, `binaryId`, `payloadBytes == 64 * 8192`; an error result is followed by no binary frame (`sgc-capture`); `state.getMemoryBinary`: header, `kind` 2, `payloadBytes == totalBytes == length` (`memory-binary`; this part comes with F4, on the runner and on the mock together, 4.5) |
+| S18 | M4, per part | `state.getTable` for each id: every row has `columns.length` cells; the `icache` and `ocache` tables have rows, or no rows and a `note` (3.3: a tier with a cache model has rows) (`tables`); `state.captureHolly {ta}`: header, `kind` 4, payload starts with `TAFRAME4` (`holly-capture`) |
 | S19 | running target: reads (M1) | with the target running: `debugger.describe` (valid, followed by a full tick; the target still runs), `state.getMemorySlice` and `state.getDisassembly` for `sh4` and for `arm7`, `state.getCallstack` for both: valid answers, none of them `-32003` or `-32000` |
 | S20 | running target: bookkeeping (M1) | with the target running, each answered `{}` and followed by a tick within 1 s that shows the effect, the target still running: `breakpoints.add` (a code breakpoint and an event breakpoint, both disabled), `breakpoints.toggle`, `breakpoints.remove`, `breakpoints.setCategoryStates`, `state.watch`, `state.modifyWatchExpression`, `state.unwatch`; none answers `-32003`. Then: a code breakpoint added enabled while running at the interrupt entry (`VBR + 0x600`, read at a pause the scenario makes itself, and resumes from, after a `dc.holly.core.vblank` entry was seen in the event log — a disabled event breakpoint on that event puts the entries there, as in S07; not at the anchor, where the program has not installed its vector base) is hit — a paused tick with its id and `reason: "breakpoint"` within 2 s (no interrupt in the window: **partial**); and an event breakpoint on `dc.holly.core.vblank` added enabled while running stops the target with `reason: "event"` within 2 s |
 | S21 | M3: DSP (the second run of the gate, with the DSP test program) | `control.step {dsp}` from a stop: a paused tick with `reason: "step"` and `STEP` advanced by one (127 wraps to 0); a code breakpoint on a step of the loaded program is hit with `reason: "breakpoint"` and `STEP` equal to its address; `stepOver` / `stepOut` for `dsp` are `-32004`; 16 lines of DSP disassembly at `STEP` show the program the test ELF loaded |
@@ -2777,7 +2897,8 @@ Each scenario ends as **passed**, **failed**, **not applicable** (the server doe
 the scenario needs, or the scenario belongs to the other profile) or **partial** (some of its parts passed and the rest
 could not be shown: a capability that is not advertised, a program that takes no interrupt). Only passed is a pass.
 A `debugger.describe` that cannot be used is S01 failed, and the scenarios that could not run are failed as "not run";
-it is not an aborted run.
+it is not an aborted run. The same holds for a server that stops answering: after several request timeouts in a row
+the runner fails the remaining scenarios as "not run" instead of sending each of their requests into its timeout.
 
 #### 5.5.2 Clean-up
 
@@ -2808,15 +2929,23 @@ back, which fails the run. When its connection is gone it cleans up on a new one
   M1 test program, which selects everything of M3 but S21, and a second one against an emulator started with the DSP
   test program, `--elf <dsptest.elf> --milestone M3 --dsp-program`, which selects S00 and S21 alone. The mock's gate
   is `npm run contract -- --milestone M1` (in-process, profile mock), which `npm run check` runs; the mock is
-  "M1 plus", so without `--milestone` its S16 is partial and its S17 passes.
+  "M1 plus", so without `--milestone` its S16 is partial and its S17 passes. (It keeps passing when S17 gains its
+  `state.getMemoryBinary` part: F4 gives the mock the method with it, 4.5.)
+- **The gates are run with the default `TickMs` and `FullTickEvery`** (200 ms, every fifth periodic tick full: 2.11);
+  the contract's time bounds are written for them. A window in which "only running ticks" may come (S06, S07) asks
+  for no paused tick in it and for nothing else.
 - The mock has to pass its gate as a real program would: its fabricated SH4 takes an interrupt at every vblank and
-  goes through a handler at `VBR + 0x600`, so that S07 and S20 pass on it (4.2.1).
+  goes through a handler at `VBR + 0x600`, so that S07 and S20 pass on it (4.2.1); and its `dc.aica.arm7` has the
+  register `ENABLED`, which reads 1 while its ARM7 runs, so that S01 and S11 pass on it (4.2.2).
 
 #### 5.5.4 What the contract does not assert
 
 - Not assertable against a real emulator, and therefore not in the scenarios: the absolute PC after a pause; that a
   breakpoint at an arbitrary address is hit; event-log contents beyond the events the runner provokes; the exact tick
   period; callstack depth beyond frame 1; completion of `stepOver` on a call and of `stepOut`.
+- Not contract, and not looked at by the runner: whether the second-level nodes (`dc.sh4`, `dc.holly`, `dc.aica`,
+  `dc.system`) carry registers (2.8: the emulator's choice), and how many running ticks come in a window in which
+  no paused tick may come (S06, S07).
 - The lifetime states `host-stopped`, `guest-exit` and `no-game` have no scenario: a client cannot bring them about, and
   a headless run ends at a guest exit. They are pinned by the selftest `core.lifetime` (5.3), by `emu.lifetime` and
   `emu.hoststop` of E4a, and for the UI by the e2e suite against the mock's `setLifetime`. A whole run made in one of
@@ -2938,10 +3067,15 @@ Rules:
 - Every package is verified independently (a verifier that did not write it), with fix rounds until it passes.
 - D10 applies to every package and verifier: headless runs, one workflow at a time, `ninja -j8`, `ctest -j4`, at most 4
   emulator processes.
-- State on 2026-10-09: the emulator's integration branch has E1, E2, E0 (header revisions 2 and 3), E3, E4b, E4a and B64
-  merged (169 ctest targets green). The UI repository has F0, F1 and F2 committed. Next: header revision 4 and the
-  corrections of 6.1.1 (integrator), the devtools round (4.2.1, 4.3.1), then E5, which completes M1; directly behind
-  M1 the small package J1 (the run flag as an atomic, the x64 code cache over thread starts: 6.3).
+- State on 2026-10-10: the emulator's integration branch has E1, E2, E0 (header revisions 2 and 3), E3, E4b, E4a and B64
+  merged, and with branch `skmp/nulldc3-integ-v3` header revision 4 and items 1 to 7 of 6.1.1; on the head behind
+  that merge (`ecc4652c`, with the rewordings of decisions 42, 43 and 45) the whole tests project passes, 171 of 171
+  ctest targets. The UI repository has F0, F1, F2 and the devtools round committed on `skmp/nulldc3` (4.2.1: the
+  runner and the mock, at `11d4136`; 4.3.1: the panels, at `17f3bff`, the head; 382 unit tests, 246 e2e tests, the
+  M1 gate on the mock with 16 scenarios passed, 0 partial, 0 not applicable). Next: item 8 of 6.1.1 (the
+  integrator's: the register `ENABLED` of `dc.aica.arm7`) and the runner follow-up of 4.2.2, then E5, which
+  completes M1; directly behind M1 the small package J1 (the run flag as an atomic, the x64 code cache over thread
+  starts: 6.3).
 
 ### 6.1 Emulator, round 1 (M1)
 
@@ -2961,8 +3095,8 @@ Rules:
 | | |
 | --- | --- |
 | Owns | `libswirl/debugger/dbg_core.cpp`, `dbg_main.cpp`, `dbg_events.cpp`, `dbg_symbols.cpp`, `dbg_callstack.cpp`, `dbg_selftest_core.cpp`; a private header `libswirl/debugger/dbg_core_private.h` (new, not frozen, no JSON types; included by `dbg_core.cpp`, `dbg_main.cpp`, `dbg_events.cpp` and `dbg_selftest_core.cpp` only): the tick period and the full-tick count that `dbg::Init` read, handed over before `core::Start` (`void core::Configure(u32 tickMs, u32 fullTickEvery)`, on (U); a core that was never configured has the defaults of 2.11); the snapshot of the event ring that `dbg_events.cpp` gives the tick builder and the direct append of the grace note (2.6); and what the selftest calls — handing one request text to the dispatcher and getting the response text (in place on (E), and through `dbg::emu::Call` from a thread the test started: 5.3), the describe text, whether the core thread was started (the first check of every `core` test: it must not be), and setting the number of connected clients for a session without a server; `tests/debugger/symbols/`, `tests/debugger/contract/`; its lines in `tests/CMakeLists.txt`, `tests/debugger/selftest/CMakeLists.txt` (`nulldc_debugger_selftest(core ...)`) and `tests/README.md`; in `libswirl/utils/run_control.h/.cpp` the one accessor `bool runctl_automated()` and nothing else |
-| Must not touch | `hw/`, `jit/`, `reios/`, `libswirl.cpp`, the frozen headers (header revision 4 is the integrator's), the files of E1 to E4b |
-| Depends on | E0-E4b and B64 merged (they are); header revision 4 and 6.1.1 applied; the runner of the devtools round (4.2.1) for its gate. No open question stands in front of it: of what `DESIGN-V3-OPEN.md` still lists, the host for arm64, the name of the config section and the submodule are not E5's, and `StartPaused` with a server that was enabled and cannot be started is fatal as under `Required` (2.11) |
+| Must not touch | `hw/`, `jit/`, `reios/`, `libswirl.cpp`, the frozen headers (header revision 4 was the integrator's and is applied), the files of E1 to E4b. **One exception:** the 1 MiB bound has to be answered with close code 1009, the close frame on the wire before the socket is closed, also while the client is still sending (3.6); if the transport of E1 does not do that, E5 may fix it in `dbg_net.cpp`, in a commit of its own, with a test in `tests/debugger/net` |
+| Depends on | E0-E4b and B64 merged, header revision 4 and items 1 to 7 of 6.1.1 applied (they are); item 8 of 6.1.1 applied (the register `ENABLED` of `dc.aica.arm7`: the integrator's, before E5 starts); for its gate the runner of the devtools round (4.2.1, done) with the follow-up of 4.2.2. No open question stands in front of it: of what `DESIGN-V3-OPEN.md` still lists, the host for arm64, the name of the config section and the submodule are not E5's, and `StartPaused` with a server that was enabled and cannot be started is fatal as under `Required` (2.11) |
 | The control-surface rule (D8) | the server is the control surface, not only a debugger: it works with no game loaded (every request has its answer in `NoMachine` and `Stopped`, 2.2.1); nothing in the core assumes that a client is a debugging session (2: connecting a client stops nothing; what depends on a client is the list of 2.9); the config keys stay under `Debugger:`; no method, table or message is shaped so that settings, lifecycle and input methods (track 10) could not be added beside it (3.0, extensions) |
 | The automated-run default | in an automated run (`runctl_automated()`: headless, or one of the three `Exit.*` keys that end a run) and in a selftest session (`dbg::selftest::Requested()`) the server is off unless `Debugger:Enabled` is set explicitly (2.11). Nothing of track 1 writes a config key (2). The automated-run half is pinned by `debugger.contract.hash.off` (5.7: the port line is absent without a `Debugger:` key and present with `Enabled=yes`); the selftest half shows only with a window (5.3) and is reviewed, not gated |
 | Keys that need a server | `Debugger:Required=yes` or `Debugger:StartPaused=yes` while the server is not enabled is a configuration error: one line on stderr and exit code 2, decided in `dbg::Init` directly behind `Enabled`; a selftest session is excepted for `StartPaused` (2.11, 2.2.9). Pinned by `debugger.contract.config` (5.4); `debugger.selftest.startpaused` sets `Enabled=yes` for it (6.1.1 item 7) and the sessions `sh4bp*`, which set `StartPaused=yes` without a server, keep passing as they are |
@@ -3016,23 +3150,42 @@ What E5 implements, by where it is specified:
   closed. The core rewrites the gates when a client connects or disconnects and when event breakpoints change; "a
   client is connected", here and for the active mask, the periodic tick and the grace period, is the core's own
   count of open clients from `OnOpen` / `OnClose`, never `net::Server::HasClients()` (2.6).
-- `dbg_symbols.cpp`, `dbg_callstack.cpp`: 2.10, to the contracts of their headers.
+- `dbg_symbols.cpp`, `dbg_callstack.cpp`: 2.10, to the contracts of their headers. The ARM7's `[]` goes with the
+  register `ENABLED` of `dc.aica.arm7` in the same tick (2.10, S11); both read `SoundCPU::DebugEnabled()`, and the
+  register itself is there before E5 starts (6.1.1 item 8).
+- The 1 MiB bound of an inbound message (3.6, 2.11): it is answered with close code 1009, and the close frame is on
+  the wire before the socket is closed, also while the client is still sending; S12 sees 1006 otherwise. The
+  transport is E1's. E5 shows the behaviour with its gate and, where the transport does not have it, corrects
+  `dbg_net.cpp` under the one exception of its "Must not touch" row: a commit of its own, with a test in
+  `tests/debugger/net`.
 
-**6.1.1 Corrections revision 3 makes to merged code** (small; applied by the integrator before E5 starts, together with
-header revision 4, which is comment-only and listed in `DESIGN-V3-OPEN.md`):
+**6.1.1 Corrections revision 3 makes to merged code** — items 1 to 7 are **applied**, together with header revision 4
+(comment-only; its list is kept in `DESIGN-V3-OPEN.md`), on branch `skmp/nulldc3-integ-v3`, which is merged into the
+integration branch. Items 2 and 3 are worded as decisions 42 and 43 settled them, item 5 as decision 45 did. The
+branch had applied items 2 and 3 in their first wording; the rewordings were made on the integration branch, behind
+the merge: the rule of the regs test in commit `fbb01dc1`, and the README sentence together with the re-wrap of the
+one comment line that header revision 4 left at 180 columns (`debugger.h`, the `Init()` comment; decision 45) in
+commit `ecc4652c`. The whole tests project was run again on that head: 171 of 171 ctest targets passed (the 169 of
+before and `debugger.selftest.regs[.interp]`). Item 8 came with decision 31 and is the one correction still to
+apply; the integrator applies it before E5 starts.
 1. `dbg_regs_tables.cpp`: the widths of `dc.aica.dsp` become `STEP` 8, `MDEC_CT` 16, `RBP` 16, `RBL` 8 (as built: 16,
    32, 12, 2), with the expectations of `tests/debugger/regs` and of the selftest `regs`.
 2. `dbg_regs_tables.cpp`: the `dc` node does not list `dc.debugger.dsp_forced` (nothing raises it, 2.5.5), with the
-   expectation of `tests/debugger/regs` (`regs_test.cpp`, test `debugger.regs.tables`, requires every row of
-   `dbg_events.h` to be listed by exactly one node; it becomes: by the node the row names and at most once, and
-   `EV_DEBUGGER_DSP_FORCED` by none). Without that the correction turns a green ctest target red.
+   expectation of `tests/debugger/regs` (`regs_test.cpp`, test `debugger.regs.tables`): **every row of
+   `dbg_events.h` is listed by exactly one node, the node the row names, except `EV_DEBUGGER_DSP_FORCED`, which is
+   listed by none.** The README of that directory says the same. (The first wording, "at most once", no longer
+   noticed an event dropped from its node; decision 42 replaced it.)
 3. `tests/debugger/sh4bp/README.md`: the two call-site rows that predate header revision 3 (the latch test of
-   `UpdateSystem()`, the SLEEP test) say what 2.2.3 says.
+   `UpdateSystem()`, the SLEEP test) say what 2.2.3 says. Its "Per slice" paragraph says that the two stand-ins of
+   that directory keep the latch test in front of the attention word — the B11 cost was measured on that form —
+   instead of claiming the order of `slice_end()` for them (decision 43). The stand-ins do not change.
 4. `tests/README.md`: rows for `debugger.selftest.*`; the documented configure line names `-DNULLDC_DEVTOOLS_DIR=`.
 5. `docs/nulldc3/devtools-integration-design.md` in the emulator repository, the tree's copy of this design, is
-   replaced by revision 3 (it still names the removed backends and `core.mk`).
+   replaced by revision 3 (it still named the removed backends and `core.mk`). The docs copies beside it are part
+   of this item (decision 45): `devtools-integration-open.md` (`DESIGN-V3-OPEN.md`),
+   `devtools-integration-decisions.md` (`DESIGN-V3-DECISIONS.md`) and `PLAN.md`.
 6. `tests/debugger/selftest/CMakeLists.txt`: `nulldc_debugger_selftest(regs ELF 2ndmix.elf)`, which makes
-   `debugger.selftest.regs[.interp]`. The session `regs` of E3 is not a ctest target as built (the file registers
+   `debugger.selftest.regs[.interp]`. The session `regs` of E3 was not a ctest target as built (the file registered
    `emu`, `sh4bp*`, `emuexit.*`, `emurun.*`, `emuhang.parked` and `startpaused`), and item 1 changes what it expects.
 7. `tests/debugger/selftest/CMakeLists.txt`, the line of `debugger.selftest.startpaused`, and its row in
    `tests/debugger/selftest/README.md`. As built the test is a headless run without a session
@@ -3045,6 +3198,11 @@ header revision 4, which is comment-only and listed in `DESIGN-V3-OPEN.md`):
    after E5. Nothing else of that file changes: `debugger.selftest.emuhang.parked` is a selftest session
    (`Debugger:SelfTest=emuhang.parked`) that sets no `StartPaused` key, and `sh4bp`, `sh4bpboot` and `sh4bpbase` are
    sessions that set `Debugger:StartPaused=yes` without a server, which the rule excepts.
+8. The register `ENABLED` of `dc.aica.arm7` (decision 31; 2.8, 2.10): an integrator's correction, applied before E5
+   starts. `dbg_regs_tables.cpp`: the row `ENABLED`, width 1, in `arm7_regs`, behind `PC`, so that `PC` stays the
+   first register of the node. `dbg_regs_private.h` / `dbg_regs.cpp`: a selector that reads
+   `SoundCPU::DebugEnabled()`. With the expectations of `tests/debugger/regs` and of the selftest `regs`: the
+   register reads 0 before the guest releases the ARM7 and 1 afterwards, and the count of registers rises by one.
 
 Where each part of the mechanism is implemented (all merged):
 
@@ -3099,7 +3257,7 @@ blocking behaviour, and are the contract):
 4. *`dbg::net`* — Appendix B: sends are callable from (E) and never block. `HasClients()` is lock-free and stays in the
    API, but it is not what the core follows: `g_event_on`, the active mask, the periodic tick and the grace period
    follow the core's own count of open clients, kept from `OnOpen` / `OnClose` (2.6; the comment of `g_event_on` in
-   `debugger.h` is brought to this by header revision 4, H9).
+   `debugger.h` was brought to this by header revision 4, H9).
 5. *Events* — `DBG_EVENT`, `EventSlow`, `g_event_on`, the `EventId` constants and table: 2.6.
 6. *`dbg_mem` / `dbg_regs`* — thread requirement "(E), or under L"; no guest register or memory handler is called (the
    one stated exception is in 2.7):
@@ -3150,12 +3308,13 @@ DebugGetInterrupt`, `DSP::DebugGetState / DebugGetProgramStep`, `gdrom_DebugGetS
 
 | Pkg | State | Owns | Depends on | Gate; what was delivered |
 | --- | --- | --- | --- | --- |
-| **F0** hygiene (M0) | done | scripts, lint / tsconfig, README and docs, Dockerfile, CI, committed wasm glue | — | `npm run check` on a fresh clone without Rust. Delivered with it, beyond v2's plan: the Playwright e2e suite, error boundaries, offline Monaco and code splitting. Open: `build:wasm` in `check` (4.1) |
-| **F1** protocol v3, mock module, contract runner | done | `src/lib/debuggerSchema.ts`, `protocolVersion.ts`, `binaryFrame.ts`, `src/lib/jsonRpc.ts`, `src/services/jsonRpcClient.ts`, `transport.ts`, `debuggerClient.ts`, `server/mockDebugger.ts`, `mockWebSocket.ts`, `mockServer.ts`, `scripts/`, the bundle-info Vite plugin, their tests | F0 | 4.2. Differs from v2: the strict copy is built from the same definition as the client schemas; the mock is "M1 plus" with options down to M1; the runner has `--milestone` / `--require` / `--only`, a fourth result `partial`, per-part gating of S16-S18 and far more probes than v2's rows. Its last verification left gaps that are now decisions (4.2.1) |
-| **F2** M1 client behaviour and panels | done | `src/state/*`, `src/app/**`, `e2e/` | F1 | 4.3. Differs from v2: the store is reset as a whole on disconnect (changed back by 4.3.1); a failed describe is retried; the endpoint order is a priority; refusals fold into one notice; stops are coalesced. Its last verification left one test gap and four should-fix items (4.3.1) |
-| **F2r** devtools round after revision 3 | to do | as F1 and F2 | this document | 4.2.1 and 4.3.1 (item 7, the 1366x768 window, if it fits; else it goes to F3 and the hand-over says so); `npm run check` (with the M1 gate on the mock and `build:wasm`); the e2e suite; the runner's own tests with a mutation for every new rule |
-| **F3** M2 panels | to do | as F2, plus the new panel ids in the schema | F2r; emulator M2 | 4.4, with the end of protocol v2 compatibility (3.0) and, if F2r left it, the 1366x768 window of 4.3.1 item 7; `npm run check`; the e2e suite; contract gate M2 |
-| **F4** M3 audio | to do | SGC and DSP panels, playground, `src/lib/aicaDsp.ts`, the emscripten artefact; removes `crates/aica-dsp` | F3; the T5.0 core wired in; emulator M3 | `npm run check`; contract gate M3 (both runs); playground results equal the native core's |
+| **F0** hygiene (M0) | done | scripts, lint / tsconfig, README and docs, Dockerfile, CI, committed wasm glue | — | `npm run check` on a fresh clone without Rust. Delivered with it, beyond v2's plan: the Playwright e2e suite, error boundaries, offline Monaco and code splitting. `build:wasm` and the M1 gate in `check` came with the devtools round (4.1) |
+| **F1** protocol v3, mock module, contract runner | done | `src/lib/debuggerSchema.ts`, `protocolVersion.ts`, `binaryFrame.ts`, `src/lib/jsonRpc.ts`, `src/services/jsonRpcClient.ts`, `transport.ts`, `debuggerClient.ts`, `server/mockDebugger.ts`, `mockWebSocket.ts`, `mockServer.ts`, `scripts/`, the bundle-info Vite plugin, their tests | F0 | 4.2. Differs from v2: the strict copy is built from the same definition as the client schemas; the mock is "M1 plus" with options down to M1; the runner has `--milestone` / `--require` / `--only`, a fourth result `partial`, per-part gating of S16-S18 and far more probes than v2's rows. Its last verification left gaps that became decisions and were closed by the devtools round (4.2.1) |
+| **F2** M1 client behaviour and panels | done | `src/state/*`, `src/app/**`, `e2e/` | F1 | 4.3. Differs from v2: the store is reset as a whole on disconnect (changed back by 4.3.1); a failed describe is retried; the endpoint order is a priority; refusals fold into one notice; stops are coalesced. Its last verification left one test gap and four should-fix items, closed by the devtools round (4.3.1) |
+| **F2r** devtools round after revision 3 | done | as F1 and F2 | this document | 4.2.1 and 4.3.1, every item, item 7 (the 1366x768 window) included. Delivered on `skmp/nulldc3`: the runner and the mock at `11d4136`, the panels at `17f3bff` (the head). `npm run check` passes (382 unit tests; the M1 gate on the mock with 16 scenarios passed, 0 partial, 0 not applicable; `build:wasm`); the e2e suite passes (246 tests); the runner judged 278 broken or legal servers correctly; a mutation for every new rule, none survived. Its verification left the points that decisions 30 to 41 settle |
+| **F2r, follow-up** the runner after decisions 30 to 37 | to do | `scripts/contract/`, `server/mockDebugger.ts`, their tests | F2r | 4.2.2: six runner changes and one mock change; `npm run check`; the e2e suite; the runner's own tests with a mutation for every changed rule. Done before the gate of E5 is used |
+| **F3** M2 panels | to do | as F2, plus the new panel ids in the schema | F2r and its follow-up; emulator M2 | 4.4, with the end of protocol v2 compatibility (3.0) and the rule for narrow panels in the memory view (4.3, decision 38); `npm run check`; the e2e suite; contract gate M2 |
+| **F4** M3 audio | to do | SGC and DSP panels, playground, `src/lib/aicaDsp.ts`, the emscripten artefact; the `state.getMemoryBinary` part of S17 in the runner and the method in the mock; removes `crates/aica-dsp` | F3; the T5.0 core wired in; emulator M3 | 4.5; `npm run check`; contract gate M3 (both runs); the mock still passes S17 without `--milestone`; playground results equal the native core's |
 | **F5** M4 Holly | to do | CORE / TA inspectors, table panels | F4; emulator M4 | `npm run check`; contract gate M4 |
 | **F6** M5 | to do | SH4 simulator panel | tracks 3/4 | fixture gate |
 
@@ -3309,7 +3468,7 @@ prototype's behaviour is what this document specifies.
 | 16 | a client may skip queued stops and ends on the latest | 3.2, 4.3 |
 | 17 | `breakpointId` leaves the ticks of a stop when its breakpoint is removed | 2.3.1, 3.2, 5.5 (I7, S05), 4.2.1 |
 | 18 | reconnect delays; an explicit endpoint is retried and not replaced | 4.3 |
-| 19 | without a connection the panels keep their frame | 4.3.1 |
+| 19 | without a connection the panels keep their frame | 4.3.1; 4.3 since the devtools round |
 | 20 | repeated refusals are shown once with a count | 4.3, 3.5 |
 | 21 | `Target.memory: false` is pinned with a scripted server | 4.3 |
 | 22 | DSP disassembly `bytes`; the widths of the `dc.aica.dsp` registers | 3.3, 2.8, 5.5 (S10), 6.1.1, 4.2.1 |
@@ -3339,8 +3498,9 @@ the question; the answers are listed below and in `DESIGN-V3-OPEN.md`); the othe
 | 26 | the three forcing names (`NOTICE_DSP_FORCED`, `EV_DEBUGGER_DSP_FORCED`, the capability string `dsp-forced` of the schema) stay declared until the header revision of the M3 work; nothing sets, raises or lists them (2.5.5, 6.1.1 item 2, 4.2.1) | removing them is a declaration change of frozen headers (decision 23: none now) | — |
 | 27 | an automated run is headless, or has one of `Exit.AfterVblanks`, `Exit.AfterSeconds`, `Exit.OnGuestExit` — not "any `Exit.*` key": `Exit.StateHash`, `Exit.FrameHash` or `Exit.FramePng` alone do not make a run automated (Terms, 2.11). And the server is off by default in one more case, a selftest session (`Debugger:SelfTest` set), with a window as well as headless (2.11, 5.3) | one definition, `RunControl::automated()` as built: the keys that end a run. A session's tests stand in place of a client: they set the event gates and the active mask themselves (`dbg_selftest.h`), and the tests of `core` need a session without a core thread | Q16 (the keys); the selftest case was not a question |
 
-Where a decision reaches code that is merged, the change is listed where it will be made: 6.1.1 (the emulator), 4.2.1
-(the runner and the mock), 4.3.1 (the panels).
+Where a decision reaches code that is merged, the change is listed where it is made: 6.1.1 (the emulator), 4.2.1
+(the runner and the mock), 4.3.1 (the panels) — all three applied since, but for item 8 of 6.1.1, which decision 31
+added — and 4.2.2 (the runner and the mock after decisions 30 to 37, still to do).
 
 **The independent check of revision 3** found two contradictions and eighteen gaps; all twenty are settled in the
 text. The contradictions: the grace note is appended to the event ring by the core itself, with every gate closed
@@ -3372,7 +3532,7 @@ should be closed before E5 and six notes; all twelve are settled in the text, on
 
 | # | What was missing or wrong | Settled in |
 | --- | --- | --- |
-| 1 | removing `dc.debugger.dsp_forced` from the `dc` node turns `debugger.regs.tables` red: the test wants every event row listed by exactly one node | 6.1.1 item 2 (the expectation changes with the table: at most once, by the node the row names, and `EV_DEBUGGER_DSP_FORCED` by none) |
+| 1 | removing `dc.debugger.dsp_forced` from the `dc` node turns `debugger.regs.tables` red: the test wants every event row listed by exactly one node | 6.1.1 item 2 (the expectation changes with the table: exactly once, by the node the row names, except `EV_DEBUGGER_DSP_FORCED`, by none; this pass first wrote "at most once", which decision 42 replaced) |
 | 2 | the mock answers the `-32004` of a capability it was configured without only behind `-32602` and the lifetime errors, against 3.0 | 4.2.1 (the mock is corrected; runner item 7 probes it with a missing parameter), 3.0 (which error wins), 5.5 (S12), "What was built" below |
 | 3 | two runner changes were not listed: the invariant that wants a `breakpointId` with every `breakpoint` / `event` reason, and the pair count of a `dsp` line | 4.2.1 (runner item 9 rewritten, item 13 new) |
 | 4 | the Windows item of E5's gate named a compiler the development machine does not have, and neither the command nor what counts as passed | 5.8, 6.1 (the gate row of E5): the MinGW-w64 compiler that is there, as the header review of E0 used it; a file a tree header stops is reviewed |
@@ -3406,6 +3566,30 @@ the same day: fatal, as under `Required` (2.11, 6.1).
 | Q15 | DSP `bytes` are 8 space-separated upper-case pairs, each word high byte first | 3.3, 5.5 (S10), 4.2.1 (runner item 13); row 22 above confirmed |
 | Q16 | "automated" is `RunControl::automated()`: headless, or one of `Exit.AfterVblanks`, `Exit.AfterSeconds`, `Exit.OnGuestExit` | Terms, 2.11; row 27 above confirmed |
 
+**After the devtools round (decisions 30-45).** The round (4.2.1, 4.3.1) and the corrections of 6.1.1 with header
+revision 4 were verified and passed; that they are done is in 1 (the M0 and M1 rows), 4 (its first paragraph), 4.1,
+4.2.1, 4.3.1, 5.1, 6 (state) and 6.2. Their verifiers left sixteen points, which `DESIGN-V3-DECISIONS.md` (section C,
+2026-10-10) answers; the answers are final and are in the text as design.
+
+| # | Decision | Sections |
+| --- | --- | --- |
+| 30 | S04: one step may end at an exception vector; a second step in a row that does fails; the step out of S04 follows completed steps | 2.3.2, 5.5 (S04), 4.2.2 (item 1) |
+| 31 | S11: the ARM7 held in reset has an observable, the register `ENABLED` of `dc.aica.arm7` (width 1, an anchor register; 1 = clocked, 0 = held in reset); in a paused tick `callstacks.arm7` is `[]` exactly when it reads 0. ARMRST is not the observable (the decision was revised the same day, after the reset order of the tree was found) | 2.10, 2.8 (the normative list, the row and the paragraph of `dc.aica.arm7`), 2.7 (ARMRST), 2.5.3, 2.3.7 (item 13), 5.5 (S01, S11), 5.5.3, 4.2.1 (items 3 and 6), 4.2.2 (item 2, the mock), 6.1 (E5: "Depends on", what E5 implements), 6.1.1 (item 8), 6 (state), 1 (M1) |
+| 32 | the widths of the `dc.aica.dsp` registers are normative for every server that lists them | 2.8, 5.5 (S01), 4.2.1 (item 3), 4.2.2 (item 3) |
+| 33 | second-level nodes without registers is the emulator's choice, not contract | 2.8, 5.5.4, 4.2.2 |
+| 34 | the gates are run with the default `TickMs` and `FullTickEvery`; "only running ticks for 600 ms" asks for no paused tick and nothing else | 5.5.3, 5.5 (its first paragraph, S03, S06, S07), 5.5.4, 5.4, 2.11, 4.2.2 (item 4) |
+| 35 | F4 gives the mock `state.getMemoryBinary` with the S17 part, so the mock keeps passing S17 without `--milestone` | 4.5, 5.5 (S17), 5.5.3, 6.2 (F4), 4.2.2 |
+| 36 | S18: `icache` / `ocache` have rows, or no rows and a note. S16: what an ARM7 step asserts | 5.5 (S16, S18), 4.2.2 (item 5) |
+| 37 | a server that stops answering: the remaining scenarios fail as "not run" | 5.5.1, 4.2.2 (item 6) |
+| 38 | disassembly in narrow panels: 12 characters at least for the instruction column, a sideways scroll, nothing cut; the memory view gets the rule in F3 | 4.3 (Disassembly, Memory, Default layouts), 4.3.1, 4.4, 6.2 (F3) |
+| 39 | what "frame" is without a connection: text typed and not sent is kept; when an address box is rewritten | 4.3 (Without a connection), 4.3.1 |
+| 40 | focus over a reconnect: a row control gets it back only while the focus is on the page body | 4.3 (Without a connection), 4.3.1 |
+| 41 | toolbar alignment is not contract | 4.3 (Toolbar), 4.3.1 |
+| 42 | `debugger.regs.tables`: every event row is listed by exactly one node, except `EV_DEBUGGER_DSP_FORCED`, by none | 6.1.1 item 2, 5.2, the third pass above (row 1) |
+| 43 | the sh4bp README: the two stand-ins keep the latch test in front of the attention word, and the "Per slice" paragraph says so | 6.1.1 item 3, 2.3.6 |
+| 44 | the 1 MiB bound is answered with close code 1009, the close frame on the wire before the socket is closed; E5 may fix the transport for it | 3.6, 2.11, 5.5 (S12), 5.2, 6.1 (E5: "Must not touch", what E5 implements) |
+| 45 | header revision 4 is applied; the 180-column line is re-wrapped; the docs copies are part of 6.1.1 item 5 | the status line and the first paragraph, D6, 1 (M1), 2.7, 5.3, 6 (state), 6.1 (E5: "Must not touch", "Depends on"; contract 4), 6.1.1 (its first paragraph, item 5), Appendix B, `DESIGN-V3-OPEN.md` (section 2, and section 3 for revision 5) |
+
 **The direction of 2026-10-08** (`PLAN.md`) changed: D7 to D10; 1 and 1.1 (track 10, caches, wasm, backends); the build
 paragraph of 2; 2.2.5 (who calls a host stop); 2.3.5 (two JITs); 2.5 (the DSP is always on); 2.7 and 3.3 (cache tables,
 no page protection in `cycle-similar`, the wgpu renderer's log); 2.8 (`MODE` is the tier); 3.0 (extensions).
@@ -3414,7 +3598,7 @@ no page protection in `cycle-similar`, the wgpu renderer's log); 2.8 (`MODE` is 
 `IsRunning()`), 2.3.4 to 2.3.6, 2.5.4 (the interface of the DSP core), 2.6 (where events are raised), 2.7 (the memory
 map as `dbg_mem.h` has it), 2.8 (the register lists), 2.9 (order, no-op requests, extra ticks), 2.10, 2.11
 (`bundle-info.json`), 3.0 (params, error precedence — built on both servers but for one case: the mock answers the
-`-32004` of a capability it was configured without behind `-32602` and the lifetime errors, which 4.2.1 corrects),
+`-32004` of a capability it was configured without behind `-32602` and the lifetime errors, which 4.2.1 corrected),
 4.1 to 4.3, 5.2, 5.3, 5.6, 5.7, 6, Appendix B.
 
 **Verifier feedback that was not adopted**, with the reason (everything else in the verifiers' lists is settled by a
@@ -3443,6 +3627,8 @@ decision above or by the implementation, or is not a design matter):
 | a rule for the event-log row format and for the toolbar's layout | panels verifier | presentation is the UI's; 4.3 records what was built |
 | a statement on Chromium's local-network check for a page from another origin | panels verifier | browser policy, not protocol; the client's error text lists it among the causes |
 | the leftovers package B64 listed (unreachable `TARGET_PANDORA` switches, the Android CI recipe, helpers without callers, sources no build lists) | B64 verifier | not this design: PLAN package P-desktop |
+| a file of pinned determinism hashes that a test reads, so that "the hashes equal the baseline" is a gate | verifier of the corrections of 6.1.1 | the suite compares runs with each other on purpose: a deliberate fix of behaviour then needs no baseline edit (5.7: no hash is stored in the tree) |
+| the tests project generates `libswirl/version.h` in the build directory (as built it writes the ignored file into the source tree, so a worktree that must not change cannot be built from) | verifier of the corrections of 6.1.1 | not a design matter; noted for the build work |
 
 ## Appendix B. APIs of the started packages, and the header revisions (frozen)
 
@@ -3514,7 +3700,10 @@ contract. Revisions since the freeze:
 | --- | --- | --- |
 | 2 | the integration of E3 and E4b | comment-only: where three events are raised (`dbg_events.h`); the flash store against what a guest reads (`sh4_mem_area0.h`); no remainder for a check that stopped a step, and an exception clears the exemption (`debugger.h`); the exemption needs a check behind it, an unhandled slot word refuses a step (`dbg_sh4.h`); which slice counter the fallback charges and `SliceCyclesLeft()` reports (`sh4_dbg.h`, `sh4_if.h`); the first `Park()` after an exit taken in a debugger stop is a resume (`debugger.h`, `dbg_sh4.h`); the SH4 on-chip registers behind a read function (`dbg_regs.h`); the ARM7 register indices 21..25 (`SoundCPU.h`). Declarations: `area0_DebugNvmemByte`, `SoundCPU::DebugGetInterrupt`, `dbg_sh4_SlotRuns`, and `NoWord::operator u32` / `NoFlag::exchange` of the stand-ins |
 | 3 | E4a | `ATTN_LATCHED`; the slice end tests `g_attn` first and looks at the latch behind it; the SLEEP handler tests the latch in a slice that reported something and accepted nothing; `g_attn` may be stored 0 at the thread's end; `IsRunning()` counts a cpu stopped for a reset; the cpu is started through the machine's own start function; a parked thread is released by the stop request behind `dbg::Term`; the start park of a selftest session; a call that is given up has its closure destroyed by the caller (`debugger.h`, `dbg_emu.h`, `dbg_selftest.h`) |
-| 4 | before E5 | comment-only; the list, with current and new text, is in `DESIGN-V3-OPEN.md` |
+| 4 | the corrections of 6.1.1, before E5 (branch `skmp/nulldc3-integ-v3`, merged) | comment-only, applied: the 22 items H1 to H22 in seven headers (`debugger.h`, `dbg_emu.h`, `dbg_events.h`, `dbg_mem.h`, `dbg_core.h`, `dbg_callstack.h`, `hw/sh4/sh4_if.h`); no declaration changed. The list, with the text before and after, is kept as the record in `DESIGN-V3-OPEN.md`. The one comment line it left at 180 columns (`debugger.h`, the `Init()` comment) is re-wrapped, line breaks only |
+
+No further revision is pending: revision 5, the next comment-only one, has no item yet (`DESIGN-V3-OPEN.md`,
+section 3).
 
 ## Appendix C. The SH4 mechanism: prototype and results
 

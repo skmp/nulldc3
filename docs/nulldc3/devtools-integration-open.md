@@ -2,8 +2,9 @@
 
 Companion of `TRACK1-DESIGN.md` v3. Part 1: the questions that are still open, each with its options and a
 recommendation, and the list of the questions that were answered on 2026-10-09. None of the open ones blocks the core
-package (E5). Part 2: "header revision 4", the comment-only changes the frozen headers need so that they say what the
-document now says. No declaration changes.
+package (E5). Part 2: "header revision 4", the comment-only changes that brought the frozen headers to what the
+document says: it is applied, and its list is kept as the record. Part 3: the list of header revision 5, which is
+empty for now. No declaration changes.
 
 History. The independent check of revision 3 added Q15 and Q16, widened Q4, added H17 to H19 and extended H8, H9 and
 one row of H10. Its second pass added H20 and H21 and rewrote H8; it added no question. On 2026-10-09 thirteen of the
@@ -12,7 +13,10 @@ the check (`design-v3-check-r3.json`, twelve items, all applied: design Appendix
 (the configuration error of Q4, the port line of an IPv6 `Bind`) and H9 (which count "a client is connected" is),
 added H22 and the `tests/debugger/selftest` texts behind the headers, and left one new question, Q17, which was answered
 the same day (1.2). Questions keep
-their numbers. Until a question is answered the design holds as written.
+their numbers. Until a question is answered the design holds as written. On 2026-10-10, after the devtools round,
+decisions 30 to 45 (`DESIGN-V3-DECISIONS.md`, section C) were folded into the design (its Appendix A.3 has the
+sections). They answer what the verifiers of the round and of the corrections left, open no question, and record
+header revision 4 as applied (part 2).
 
 ## 1. Open questions
 
@@ -57,14 +61,37 @@ the "Open" column of Appendix A.3).
 
 ## 2. Header revision 4 (comment-only)
 
-For the integrator, to apply before E5 starts. "Current" is the text at the integration head (the merge of package
-B64); every item changes comments only, so every object file stays byte for byte what it is. Items H1 to H7 are the
+**Applied.** Header revision 4 is in the tree (decision 45): it was applied on branch `skmp/nulldc3-integ-v3`, in a
+commit of its own, together with the corrections of design 6.1.1 (its items 1 to 7) on the same branch, and that
+branch is merged into the integration branch `skmp/nulldc3`. All 22 items, H1 to H22, are in the seven headers they
+name, and no declaration changed. **The list below is kept as the record** of what the revision changed; it is no
+longer a list of work. "Current" in it is the text before the revision, which the tree no longer has, and "New" is
+what the tree has, with two differences that came behind the list, in commit `ecc4652c` on the integration branch,
+behind the merge:
+
+- H8: the new `Init()` comment had one line of 180 columns ("... runs without a server. TickMs and FullTickEvery
+  below 1 ..."), and the revision was applied with it. The line is re-wrapped, line breaks only; the words are those
+  of the list.
+- "Not a header": the "Per slice" sentence of `tests/debugger/sh4bp/README.md` was applied as written below and then
+  changed by decision 43. The two stand-ins of that directory keep the latch test in front of the attention word (the
+  B11 cost was measured on that form), and the README says so instead of claiming the order of `slice_end()` for
+  them.
+
+One of the corrections of design 6.1.1 that went with the revision was reworded as well (it is not in this list; see
+"What revision 4 does not contain"): the expectation of `debugger.regs.tables` is, by decision 42, that every row of
+`dbg_events.h` is listed by exactly one node, except `EV_DEBUGGER_DSP_FORCED`, which is listed by none (commit
+`fbb01dc1`, behind the merge as well). The whole tests project was run again on the head that has both commits: 171
+of 171 ctest targets passed. What comes after revision 4 is section 3.
+
+The list was written for the integrator, to apply before E5 starts. "Current" is the text at the integration head of
+that time (the merge of package B64); every item changes comments only, so every object file stays byte for byte what
+it is. Items H1 to H7 are the
 requests of the run-control verifiers that revision 3 of the headers left open; H8 to H16 bring the headers to
 decisions of design revision 3; H17 to H19 are three comments that the independent check of the revision found still
 to disagree with the design and with the code; H20 and H21 are two that its second pass found to disagree with the
 design (a write to main memory on a host without the virtual memory layout; who calls `core::Stop()`); H22 is one that
 its third pass left (the case of the hex in a frame's location). H8 and H9 carry what the answers of 2026-10-09 and
-that third pass changed. The same commit can carry the corrections of design 6.1.1.
+that third pass changed. The corrections of design 6.1.1 were made on the same branch, in commits of their own.
 
 ### H1. `libswirl/debugger/debugger.h`, comment of `g_parked`: the terms of `IsRunning()`
 
@@ -588,3 +615,21 @@ New:
   2^32, as its comment says; the core cuts the length it hands over (design 2.7).
 - A declaration for `state.recordSgcFrames`: none is needed. The method is an exec call when the target is paused
   and a table call when it runs, and the core answers the lifetime errors itself (design 3.3).
+
+## 3. Header revision 5 (comment-only, pending)
+
+The next comment-only revision of the frozen headers. **Its list is empty for now.**
+
+- Not pending: the re-wrap of the 180-column line that H8 left in the `Init()` comment of
+  `libswirl/debugger/debugger.h`. It is done, on the integration branch behind the merge of revision 4 (commit
+  `ecc4652c`), with line breaks only (decision 45; section 2, first paragraph).
+- Not for this list, because they are declarations: `Sh4Context::CpuRunning` as an atomic (package J1's own numbered
+  revision) and the removal of the three forcing names (the revision of the M3 work); see "What revision 4 does not
+  contain".
+- Not for this list, because no frozen header is touched: the register `ENABLED` of `dc.aica.arm7` (decision 31,
+  design 6.1.1 item 8). It is a row of `dbg_regs_tables.cpp` and a selector in `dbg_regs.cpp` with E3's private
+  header `dbg_regs_private.h`; the comment of `Unwind()` in `dbg_callstack.h` (H14) already names the same source,
+  `SoundCPU::DebugEnabled()`.
+
+An item is added here in the form of section 2 — the header, the comment, the current and the new text — when one is
+found, and the revision is applied by the integrator, as revision 4 was.
