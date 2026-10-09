@@ -200,8 +200,10 @@ What the numbers are made of:
   that the code does not hold.
 - **Per slice** the build with the debugger tests the attention word in `UpdateSystem()`, and the stop latch
   behind it and the latch in `UpdateINTC()`, and reports an accepted interrupt (`dbg_sh4_OnException`): the
-  calls of the table below, which here are the copies this directory compiles. They are the whole difference
-  of the second window; nothing of it is per block or per instruction executed.
+  calls of the table below, which here are the copies this directory compiles. The copies keep the test of
+  the stop latch in front of the attention word (the numbers above were measured on that form); the emulator
+  tests the attention word first. They are the whole difference of the second window; nothing of it is per
+  block or per instruction executed.
 - **Per decoded instruction** the decoder asks `dbg_sh4_WantsCheck`: a load and a branch while nothing is
   armed; a block adds the test for a pending step-out. With an address armed, the query looks up the page of
   the instruction, and searches the armed set when that page holds an armed address, as the page of this

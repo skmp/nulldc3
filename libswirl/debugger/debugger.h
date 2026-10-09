@@ -97,8 +97,9 @@ namespace dbg {
 // nothing is resolved for the comparison. The core thread, if it was started, is then ended again
 // (core::Stop): no core thread and no listener stay behind. With Debugger:Required, or with
 // Debugger:StartPaused outside a selftest session, the process ends: one line on stderr and exit(2), with no
-// nulldc-exit line; otherwise the failure is logged and the emulator runs without a server. TickMs and FullTickEvery below 1 are replaced by their defaults; both are handed to the
-// core before it is started. Without Debugger:Enabled nothing is started, and a key that needs the server is
+// nulldc-exit line; otherwise the failure is logged and the emulator runs without a server. TickMs and
+// FullTickEvery below 1 are replaced by their defaults; both are handed to the core before it is started.
+// Without Debugger:Enabled nothing is started, and a key that needs the server is
 // a configuration error: with Debugger:Required set, or with Debugger:StartPaused set outside a selftest
 // session (whose test resumes the start park), the process ends the same way, one line on stderr that names
 // the key and exit(2), decided directly behind Enabled. The hooks and helpers below work all the same. Does
