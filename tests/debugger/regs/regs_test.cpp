@@ -412,7 +412,7 @@ namespace
 			{ "dc.sh4.cpu", "PC", 32 }, { "dc.sh4.cpu", "PR", 32 }, { "dc.sh4.cpu", "SR", 32 }, { "dc.sh4.cpu", "R15", 32 },
 			{ "dc.sh4.cpu", "FPSCR", 32 }, { "dc.sh4.cpu", "R7_BANK", 32 }, { "dc.sh4.cpu", "FR15", 32 }, { "dc.sh4.cpu", "XF15", 32 },
 			{ "dc.aica.arm7", "PC", 32 }, { "dc.aica.arm7", "R14", 32 }, { "dc.aica.arm7", "CPSR", 32 }, { "dc.aica.arm7", "SPSR_FIQ", 32 },
-			{ "dc.aica.dsp", "STEP", 16 }, { "dc.aica.dsp", "MDEC_CT", 32 }, { "dc.aica.dsp", "RBP", 12 }, { "dc.aica.dsp", "RBL", 2 },
+			{ "dc.aica.dsp", "STEP", 8 }, { "dc.aica.dsp", "MDEC_CT", 16 }, { "dc.aica.dsp", "RBP", 16 }, { "dc.aica.dsp", "RBL", 8 },
 			{ "dc.timing", "MODE", 0 }, { "dc.timing", "SH4_CYCLES", 64 }, { "dc.timing", "SCHED_NOW", 64 },
 			{ "dc.timing", "SH4_BACKEND", 0 }, { "dc.timing", "SH4_DEBUG_ENGINE", 0 },
 			{ "dc", "SYSCLK", 0 }, { "dc", "BUILD", 0 },

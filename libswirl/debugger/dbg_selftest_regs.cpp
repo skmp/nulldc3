@@ -1159,15 +1159,58 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 
 		Check(ok && state.step == 0 && state.mdecCt == dsp->GetDspContext()->regs.MDEC_CT, "DSP: step %u, MDEC_CT %u", state.step, state.mdecCt);
 
+		// MDEC_CT has the 16 bits of the register; the emulator keeps the counter in 32
 		ok = ReadRegister("dc.aica.dsp", "MDEC_CT", &mdec_ct) && ReadRegister("dc.aica.dsp", "STEP", &step);
-		Check(ok && mdec_ct == state.mdecCt && step == 0, "dc.aica.dsp shows them");
+		Check(ok && mdec_ct == (state.mdecCt & 0xFFFF) && step == 0, "dc.aica.dsp shows them");
+
+		// the widths of the node: those of the registers on the hardware
+		{
+			const regs::Node* node = regs::Find("dc.aica.dsp");
+			const struct { const char* name; u32 width; } widths[] = { { "STEP", 8 }, { "MDEC_CT", 16 }, { "RBP", 16 }, { "RBL", 8 } };
+			Tally tally;
+
+			for (const auto& want : widths)
+			{
+				int index = node ? regs::FindRegister(*node, want.name) : -1;
+
+				tally.Add(index >= 0 && node->registers[index].width == want.width, "dc.aica.dsp.%s: width %u, expected %u", want.name,
+					index >= 0 ? node->registers[index].width : 0, want.width);
+			}
+
+			tally.Add(node != nullptr && node->registerCount == 4, "dc.aica.dsp has other registers than these four");
+			tally.Report("the widths of dc.aica.dsp");
+		}
+
+		// The counter is reloaded with the ring buffer length, which is 0x10000 for the longest ring: the register
+		// shows the counter modulo 2^16, so 0x0000 for that sample, and its text has four digits
+		{
+			u32 kept = dsp->GetDspContext()->regs.MDEC_CT;
+			const u32 counters[] = { 0x10000, 0xFFFF, 0x2000, 1 };
+			Tally tally;
+
+			for (u32 counter : counters)
+			{
+				u64 shown = 99;
+				char text[24];
+
+				dsp->GetDspContext()->regs.MDEC_CT = counter;
+				bool read = ReadRegister("dc.aica.dsp", "MDEC_CT", &shown);
+				regs::FormatValue(16, counter, text);
+
+				tally.Add(read && shown == (counter & 0xFFFF), "MDEC_CT %X shows as %llX", counter, (unsigned long long)shown);
+				tally.Add(strlen(text) == 6 && strtoul(text, nullptr, 16) == (counter & 0xFFFF), "MDEC_CT %X has the text %s", counter, text);
+			}
+
+			dsp->GetDspContext()->regs.MDEC_CT = kept;
+			tally.Report("MDEC_CT modulo 2^16");
+		}
 
 		// RBP and RBL are fields of the common register 0x2804, whose read has no side effect
 		u32 common = aica->ReadReg(0x2804, 2);
 		u64 rbp = 0, rbl = 0;
 
 		ok = ReadRegister("dc.aica.dsp", "RBP", &rbp) && ReadRegister("dc.aica.dsp", "RBL", &rbl);
-		Check(ok && rbp == (common & 0xFFF) && rbl == ((common >> 13) & 3), "dc.aica.dsp.RBP %03llX and RBL %llX are the fields of %04X",
+		Check(ok && rbp == (common & 0xFFF) && rbl == ((common >> 13) & 3), "dc.aica.dsp.RBP %04llX and RBL %02llX are the fields of %04X",
 			(unsigned long long)rbp, (unsigned long long)rbl, common);
 
 		Tally program;

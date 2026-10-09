@@ -344,14 +344,17 @@ static const char* const arm7_actions[] = { "arm7-disassembly", "arm7-memory" };
 static const char* const sgc_actions[]  = { "sgc" };
 
 /*
-	dc.aica.dsp. STEP is the program step that executes next; MDEC_CT is the counter as the emulator keeps it,
-	which counts down from the ring buffer length; RBP and RBL are the fields of the common register 0x2804.
+	dc.aica.dsp. STEP is the program step that executes next; MDEC_CT is the counter that counts down from the
+	ring buffer length; RBP and RBL are the fields of the common register 0x2804 (12 and 2 bits of it).
+	The widths are those of the registers: MDEC_CT has 16 bits on the hardware. The emulator keeps the counter
+	as a 32-bit value and reloads it with the ring buffer length, which can be 0x10000, so the register shows
+	the counter modulo 2^16 and can read 0x0000 for one sample.
 */
 static const Register dsp_regs[] = {
-	{ "STEP",    16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspStep) },
-	{ "MDEC_CT", 32, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspMdecCt) },
-	{ "RBP",     12, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbp) },
-	{ "RBL",      2, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbl) },
+	{ "STEP",     8, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspStep) },
+	{ "MDEC_CT", 16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspMdecCt) },
+	{ "RBP",     16, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbp) },
+	{ "RBL",      8, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbl) },
 };
 
 static const char* const dsp_actions[] = { "dsp-disassembly" };
