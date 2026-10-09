@@ -3,7 +3,7 @@
 
 | Platform | Branch | Hash | CIDL |
 | ------ | ------ | ---- | ---- |
-| Installed OS and version (ie. Android 8.0) | Branch (or Google Play) | Hashtag (skip if unknown) | Downloaded from build site? |
+| Installed OS and version (ie. Windows 10) | Branch | Hashtag (skip if unknown) | Downloaded from build site? |
 
 **_Description of the Issue_**
 
