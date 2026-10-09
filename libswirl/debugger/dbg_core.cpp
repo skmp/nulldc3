@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -311,20 +312,9 @@ bool EventListed(EventId id)
 	return (unsigned)id < EV_ID_COUNT && events.listed[id];
 }
 
-Category CategoryOf(const Breakpoint& bp)
-{
-	if (!bp.code)
-		return Category::Events;
-
-	switch (bp.target)
-	{
-	case Target::Sh4:  return Category::Sh4;
-	case Target::Arm7: return Category::Arm7;
-	case Target::Dsp:  return Category::Dsp;
-	}
-
-	return Category::Events;
-}
+// The category of a breakpoint is Events for kind "event" and that of its target for a code breakpoint. The
+// core does not work it out: dbg::emu and dbg::sh4 test the bit of their own category at each arrival, in the
+// mask below.
 
 // The categories whose breakpoints can stop now: not muted, soloed or none soloed, and a client connected
 // or the grace period behind the last one not over
@@ -2730,7 +2720,7 @@ void NoteClientText(u32 client, const std::string& text)
 
 	c.named.insert(client);
 
-	printf("Debugger: client %u: %s\n", client, PrintableAscii(given.data(), std::min(given.size(), kClientTextMax)).c_str());
+	printf("Debugger: client %u: %s\n", client, PrintableAscii(given.data(), std::min<size_t>(given.size(), kClientTextMax)).c_str());
 	fflush(stdout);
 }
 

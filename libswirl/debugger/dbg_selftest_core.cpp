@@ -1054,14 +1054,14 @@ DBG_SELFTEST(core_tick, "core.tick")
 	Check(Ok(Send("state.watch", { { "expressions", json::array({ "dc.holly.intc.sb_istnrm", "dc.sh4.cpu.pc", "dc.sh4.bsc.pdtra", "dc.timing.mode" }) } })), "four watches");
 
 	{
-		json small = Tick(false), big = Tick(true);
+		json part = Tick(false), whole = Tick(true);
 
-		Check(small["watches"].size() == 4 && !small["registers"].contains("dc.holly.intc") && small["watches"][0]["value"] == Reg(big, "dc.holly.intc", "SB_ISTNRM")
-			&& WireValue(Str(small["watches"][0]["value"]), 32) && small["watches"][0]["value"] != "n/a",
-			"a watch on a path the tick does not carry shows the value the register has (%s)", small["watches"].dump().c_str());
-		Check(small["watches"][1]["value"] == Reg(small, "dc.sh4.cpu", "PC") && small["watches"][2]["value"] == "n/a" && small["watches"][3]["value"] == "fast",
+		Check(part["watches"].size() == 4 && !part["registers"].contains("dc.holly.intc") && part["watches"][0]["value"] == Reg(whole, "dc.holly.intc", "SB_ISTNRM")
+			&& WireValue(Str(part["watches"][0]["value"]), 32) && part["watches"][0]["value"] != "n/a",
+			"a watch on a path the tick does not carry shows the value the register has (%s)", part["watches"].dump().c_str());
+		Check(part["watches"][1]["value"] == Reg(part, "dc.sh4.cpu", "PC") && part["watches"][2]["value"] == "n/a" && part["watches"][3]["value"] == "fast",
 			"a watch reads what its register reads: a value, \"n/a\" for a register without a reader, the text of a text register");
-		Check(small["watches"] == big["watches"], "and the same in a full tick");
+		Check(part["watches"] == whole["watches"], "and the same in a full tick");
 	}
 
 	Check(Ok(Send("state.unwatch", { { "watchIds", json::array({ Tick(false)["watches"][0].value("id", 0u) }) } })), "(one watch removed)");
