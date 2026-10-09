@@ -251,7 +251,7 @@ std::vector<u32> BreakpointIds(const json& tick)
 }
 
 
-// The tables as the session found them: nothing listed, nothing muted, no client
+// The tables as the session found them: nothing listed, nothing muted, no client, no category active
 void CleanTables()
 {
 	json tick = Tick(false);
@@ -270,6 +270,10 @@ void CleanTables()
 	Send("breakpoints.setCategoryStates", { { "categories", { { "events", off }, { "sh4", off }, { "arm7", off }, { "dsp", off } } } });
 
 	core::SetClientCountForTest(0, false);
+
+	// A session starts with no category active, and the tests of the other packages set the mask themselves
+	// (dbg_selftest.h): the core, which has no client here, hands over nothing behind this
+	emu::SetActiveMask(0);
 }
 
 // Did a test of this session add a breakpoint or a watch before? Ids are of the process
