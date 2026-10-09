@@ -366,21 +366,6 @@ void linux_fix_personality() {
 }
 
 void linux_rpi2_init() {
-#if !defined(TARGET_NACL32) && !defined(TARGET_EMSCRIPTEN) && defined(TARGET_VIDEOCORE)
-	void* handle;
-	void (*rpi_bcm_init)(void);
-
-	handle = dlopen("libbcm_host.so", RTLD_LAZY);
-	
-	if (handle) {
-		printf("found libbcm_host\n");
-		*(void**) (&rpi_bcm_init) = dlsym(handle, "bcm_host_init");
-		if (rpi_bcm_init) {
-			printf("rpi2: bcm_init\n");
-			rpi_bcm_init();
-		}
-	}
-#endif
 }
 
 void common_linux_setup()

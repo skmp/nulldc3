@@ -32,9 +32,6 @@
 	#include "emscripten.h"
 #endif
 
-#if defined(SUPPORT_DISPMANX)
-	#include "linux-dist/dispmanx.h"
-#endif
 
 #if defined(SUPPORT_X11)
 	#include "linux-dist/x11.h"
@@ -186,9 +183,6 @@ void os_CreateWindow()
 	if (runctl_headless())
 		return;
 
-	#if defined(SUPPORT_DISPMANX)
-		dispmanx_window_create();
-	#endif
 	#if defined(SUPPORT_X11)
 		x11_window_create();
 	#endif

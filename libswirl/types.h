@@ -536,22 +536,7 @@ struct settings_t
 	} audio;
 
 
-#if USE_OMX
-	struct
-	{
-		u32 Audio_Latency;
-		bool Audio_HDMI;
-	} omx;
-#endif
 
-#if SUPPORT_DISPMANX
-	struct
-	{
-		u32 Width;
-		u32 Height;
-		bool Keep_Aspect;
-	} dispmanx;
-#endif
 
 	struct
 	{

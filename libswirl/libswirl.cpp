@@ -344,11 +344,6 @@ void InitSettings()
         settings.input.maple_expansion_devices[i][1] = i == 0 ? MDT_SegaVMU : MDT_None;
     }
 
-#if SUPPORT_DISPMANX
-    settings.dispmanx.Width = 640;
-    settings.dispmanx.Height = 480;
-    settings.dispmanx.Keep_Aspect = true;
-#endif
 
 #if (HOST_OS != OS_LINUX)
     settings.aica.BufferSize = 2048;
@@ -356,10 +351,6 @@ void InitSettings()
     settings.aica.BufferSize = 1024;
 #endif
 
-#if USE_OMX
-    settings.omx.Audio_Latency = 100;
-    settings.omx.Audio_HDMI = true;
-#endif
 }
 
 void LoadSettings(bool game_specific)
@@ -449,11 +440,6 @@ void LoadSettings(bool game_specific)
         settings.input.maple_expansion_devices[i][1] = (MapleDeviceType)cfgLoadInt(input_section, device_name, settings.input.maple_expansion_devices[i][1]);
     }
 
-#if SUPPORT_DISPMANX
-    settings.dispmanx.Width = cfgLoadInt(game_specific ? cfgGetGameId() : "dispmanx", "width", settings.dispmanx.Width);
-    settings.dispmanx.Height = cfgLoadInt(game_specific ? cfgGetGameId() : "dispmanx", "height", settings.dispmanx.Height);
-    settings.dispmanx.Keep_Aspect = cfgLoadBool(game_specific ? cfgGetGameId() : "dispmanx", "maintain_aspect", settings.dispmanx.Keep_Aspect);
-#endif
 
 #if (HOST_OS != OS_LINUX)
     settings.aica.BufferSize = 2048;
@@ -461,10 +447,6 @@ void LoadSettings(bool game_specific)
     settings.aica.BufferSize = 1024;
 #endif
 
-#if USE_OMX
-    settings.omx.Audio_Latency = cfgLoadInt(game_specific ? cfgGetGameId() : "omx", "audio_latency", settings.omx.Audio_Latency);
-    settings.omx.Audio_HDMI = cfgLoadBool(game_specific ? cfgGetGameId() : "omx", "audio_hdmi", settings.omx.Audio_HDMI);
-#endif
 
     if (!game_specific)
     {
