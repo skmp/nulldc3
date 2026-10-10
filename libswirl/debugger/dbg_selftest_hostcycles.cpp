@@ -28,6 +28,12 @@
 
 	The checks are made once, at the start of the thread behind the last cycle:
 	  - every thread ended, with its stop callback, and the next one started;
+	  - the machine counted as running (SuperH4::IsRunning) from the moment the host started it, where its
+	    emulator thread did not exist yet, its cpu was stopped and no debugger stop, reset or stop request was
+	    there to say so; and no longer in its stop callback. The answer is one word, which the machine sets
+	    for as long as it has an emulator thread that has not taken its stop callback. Put together from the
+	    cpu's word and a word for each reason a stopped cpu counts as running, the answer was no at every
+	    start, and no for a live machine to a reader whose loads fell between the stores of two hand-overs;
 	  - (recompiler) every thread started with the stubs of the code generator at the start of the code cache
 	    and nothing behind them, with no block in the tables of the block manager, and with no entry in the
 	    lookup table for a block of the thread before it;
@@ -90,6 +96,12 @@ extern std::set<RuntimeBlockInfo*> del_blocks;
 extern std::map<void*, RuntimeBlockInfo*> blkmap;
 #endif
 
+// dbg_emu.cpp: called by OnThreadStarting() as its first statement, on the thread that starts the emulator
+// thread, which does not exist yet. Written while no emulator thread exists
+namespace dbg { namespace emu { namespace test {
+extern void (*threadStarting)();
+} } }
+
 namespace {
 
 using namespace dbg;
@@ -129,6 +141,7 @@ struct {
 
 	std::vector<ThreadRun> runs;
 	u32 offThread = 0;				// stop callbacks that did not run on the emulator thread
+	u32 liveInCallback = 0;			// stop callbacks that found the machine counting as running
 
 	// what the threads started with (recompiler)
 	u32 starts = 0;
@@ -143,6 +156,8 @@ struct {
 	u64 allCode = 0;
 
 	// With the other thread
+	std::atomic<u32> hostStarts { 0 };	// starts of the machine by the other thread
+	std::atomic<u32> liveAtStart { 0 };	// of them, those that found the machine counting as running at once
 	std::atomic<u32> stopped { 0 };		// stop callbacks that ran
 	std::atomic<bool> done { false };	// every cycle is made
 	std::atomic<bool> over { false };	// the end of the run is near: no more stops
@@ -174,6 +189,10 @@ void ThreadEnded()
 
 	if (!emu::OnEmuThread())
 		hc.offThread++;
+
+	// the thread has taken its stop callback: the machine is stopped
+	if (sh4_cpu->IsRunning())
+		hc.liveInCallback++;
 
 #if FEAT_SHREC != DYNAREC_NONE
 	if (hc.jit)
@@ -258,6 +277,16 @@ void Poll()
 	virtualDreamcast->Stop([] { ThreadEnded(); });
 }
 
+// The other thread, inside Resume(): the machine has an emulator thread to its name from here on, and the
+// thread itself is not started yet
+void HostStarting()
+{
+	hc.hostStarts++;
+
+	if (sh4_cpu->IsRunning())
+		hc.liveAtStart++;
+}
+
 // The other thread plays the host: it starts the machine whenever the test has stopped it
 void Host()
 {
@@ -277,6 +306,10 @@ void Host()
 				return;
 
 			started++;
+
+			// read by this thread alone, in the Resume() below
+			emu::test::threadStarting = HostStarting;
+
 			virtualDreamcast->Resume();
 			continue;
 		}
@@ -321,6 +354,10 @@ void Summary()
 	Check(n == hc.total && hc.stopped.load() == n && hc.offThread == 0 && !hc.busy,
 		"%u times the host stopped the running machine and started it again: every thread ended with its stop callback, on the emulator thread, and the next one started (%u cycles were to be made by vblank %u, this is vblank %u)",
 		n, hc.total, hc.lastVblank, vblank_count_monotonic);
+
+	Check(hc.hostStarts.load() == n && hc.liveAtStart.load() == n && hc.liveInCallback == 0,
+		"the machine counted as running from the moment the host started it, before its emulator thread existed, at %u of %u starts, and in none of its stop callbacks (%u)",
+		hc.liveAtStart.load(), hc.hostStarts.load(), hc.liveInCallback);
 
 #if FEAT_SHREC != DYNAREC_NONE
 	if (hc.jit)

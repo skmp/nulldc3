@@ -133,12 +133,14 @@ them 890. A run that is too short for them fails with the number of cycles it ma
 
 | test | what has to hold |
 |---|---|
-| `debugger.selftest.hostcycles` | 600 cycles on the recompiler. Every thread ended with its stop callback, and the next one started. Every thread started with the stubs of the code generator at the start of the code cache, where the first thread had them, and nothing behind them; with no block in the tables of the block manager; and with no entry in the lookup table for any block of the thread before it. The code cache never filled (half of it was free at least), and the threads together compiled more than it holds: kept from thread to thread, their code would have filled it. The guest did not get slower with the number of threads: emulated time over the CPU time of a thread, the median of the last fifth of the cycles against that of the first, within a factor of 2. And the run ends in the state hash of the same run without a session, part for part: a stop of the host and the start behind it leave no trace in the guest |
-| `debugger.selftest.hostcycles.interp` | the same on the interpreter, which has no code cache: the cycles, the speed and the state hash |
+| `debugger.selftest.hostcycles` | 600 cycles on the recompiler. Every thread ended with its stop callback, and the next one started. The machine counted as running (`IsRunning()`) from the moment the host started it, where its emulator thread did not exist yet, at every one of the 600 starts, and in none of its stop callbacks: the answer is one word of the machine, set for as long as it has an emulator thread that has not taken its stop callback. Every thread started with the stubs of the code generator at the start of the code cache, where the first thread had them, and nothing behind them; with no block in the tables of the block manager; and with no entry in the lookup table for any block of the thread before it. The code cache never filled (half of it was free at least), and the threads together compiled more than it holds: kept from thread to thread, their code would have filled it. The guest did not get slower with the number of threads: emulated time over the CPU time of a thread, the median of the last fifth of the cycles against that of the first, within a factor of 2. And the run ends in the state hash of the same run without a session, part for part: a stop of the host and the start behind it leave no trace in the guest |
+| `debugger.selftest.hostcycles.interp` | the same on the interpreter, which has no code cache: the cycles, what counts as running, the speed and the state hash |
 
 With the code cache left where the thread before had it, as it was before, the recompiler's run does not get to
 its checks: by the 65th thread the cache is full, and some forty threads and half a million cache clears later the
-stubs of a new thread no longer fit and the process ends with a fault.
+stubs of a new thread no longer fit and the process ends with a fault. With `IsRunning()` put together from the
+cpu's word and the reasons for a stopped cpu to count as running, as it was before, the machine counts as running
+at none of the 600 starts: its cpu is started by the new thread, and nothing else says so until then.
 
 The session prints its figures: the median thread of each tenth of the cycles by speed (emulated cycles per
 microsecond of CPU time) and by bytes of code compiled, the CPU time of the median thread, and the vblank at which
