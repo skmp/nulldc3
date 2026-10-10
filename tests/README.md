@@ -126,8 +126,7 @@ More about the suites:
   ARM7 baseline are below their number of cases, and what else is known to be wrong in the ARM7,
 * `system/README.md`: the system tests, which emulator they run and how, their guest programs,
 * `debugger/selftest/README.md`: the selftests of the debugger in the emulator, test by test, and how a package
-  registers its own; the tests of the session `core` are in the row of `debugger.selftest.core` above and at the
-  head of `libswirl/debugger/dbg_selftest_core.cpp`,
+  registers its own,
 * `debugger/contract/README.md`: the server of the emulator against the contract runner of the devtools UI, the
   grace period, the configuration errors, the slow-client rule and the state hashes, test by test; where the mock
   of the UI repository and the emulator's server differ,

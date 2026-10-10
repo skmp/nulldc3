@@ -81,6 +81,29 @@ runs that program for a second of emulated time and reads at stops of it.
 | `regs.pure` | reading changes nothing: the machine, as a save state has it, is the same before and after every register, every device accessor and the memory around every boundary was read |
 | `regs.enabled` | `dc.aica.arm7.ENABLED` where the booted program holds and releases the ARM7. The program runs from its start for 200,000,000 cycles of the scheduler and is stopped wherever it has written another value to `ARMRST` (a scheduler callback of the test looks at the byte in every slice and asks for a pause): at the start, with nothing executed, the register reads 0; at the stop behind a write of 1 it reads 0, behind a write of 0 it reads 1; at every stop it is the flag in the save state of the sound CPU and what `SoundCPU::DebugEnabled()` says, which is what the unwinder of the ARM7 call stack asks; and the program releases the ARM7 on the way. 2ndmix makes four such writes: `spu_init()` holds the ARM7 and releases it, `play_s3m()` does so again |
 
+## The tests of the core
+
+`libswirl/debugger/dbg_selftest_core.cpp`: the core of the debugger (`dbg_core.cpp`, `dbg_events.cpp`,
+`dbg_symbols.cpp`, `dbg_callstack.cpp`): the wire protocol, the tables, the tick builder and the event log,
+against the live machine. The session has no server, and so no client and no core thread (`Debugger:SelfTest`
+keeps the server off unless `Debugger:Enabled` is set; with a server running every test fails its first check
+instead of running beside the core thread). The tests hand request texts to the dispatcher of the core and get the
+response texts, build ticks and the describe result as text, and state the number of connected clients themselves.
+The first four are machine tests: they run once, before the guest has executed anything, on the machine that boots
+`2ndmix.elf` of `NULLDC_ELF_DIR`. The last two are guest tests; what comes in as it does on the core thread, through
+`dbg::emu::Call`, comes from a thread the test starts, while the host has the machine stopped and while there is
+none.
+
+| test | what has to hold |
+|---|---|
+| `debugger.selftest.core` `.interp` | the session `core`, the six tests below |
+| `core.events` | the event log: 200 entries, with ids that ascend and stay with their entries, the oldest dropped; a message cut to its bound; with the gates closed nothing is logged and no argument of an event is evaluated; the direct append, which the note of the grace period uses |
+| `core.opcodes` | for all 65536 encodings the disassembler reports an instruction exactly where the opcode table of the interpreter executes one, but for the reios trap `0x085B`, whose line is `.word 0x085b ! reios trap` |
+| `core.tables` | breakpoints, watches and categories as the calls of the dispatcher use them: breakpoint and watch ids from 1 and never used twice; the bounds of 1024 breakpoints, 64 expressions per call and 256 characters; the order of the checks of `breakpoints.add`, and so which error wins; watches resolved without regard to case, duplicates, all or nothing; the category of a breakpoint; the active mask for mute, solo and no client; the event gates |
+| `core.tick` | the JSON of ticks and of describe: no `null`, the required keys, every register list that of describe, values in their wire form; a full tick and the four base paths; watches on paths that a tick does not carry; a symbol name and an event message with bytes that are no ASCII as `?`; the errors of the envelope; a memory slice that does not wrap |
+| `core.guest` | on the booted program, from the reset vector (the machine is reset when it is not there): a step on the reios trap runs the boot; the entry resolves to a symbol; the SH4 call stack at the entry and at a breakpoint on `stars_one_frame`, the function 2ndmix calls in every frame; the ARM7 call stack against `dc.aica.arm7.ENABLED`, with the ARM7 held in reset and running; `breakpointId` in the ticks of a stop until its breakpoint is removed; an event breakpoint and a code breakpoint under mute |
+| `core.lifetime` | with a thread that plays the host and sends what a client sends: the machine stopped, its guest exited, the machine gone and made again. Each has its reason and a new `stopId`; without a machine a tick has `registers: {}` and describe a tree of `"n/a"`; the bookkeeping requests work in every state; requests that need a running thread or a machine are answered -32001 and -32002 |
+
 ## The tests of the SH4 breakpoints and steps
 
 `libswirl/debugger/dbg_selftest_sh4bp.cpp`, which `tests/debugger/sh4bp/README.md` describes: the gates of that
