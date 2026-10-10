@@ -93,8 +93,13 @@ server off / on without a client / with an idle breakpoint / compiled out. Also 
 the ARM7 is not clocked until the guest first writes it (AICA / ARM7 tier work, needs a console measurement); the grace test
 does not pin that a connect ends the expired grace state; no real MSVC build yet (package W64).
 P-desktop (desktop-only cleanup, libretro out) is done and merged the same day (`skmp/nulldc3` = 5ac00392).
-Next, one workflow at a time, in this order unless the user reorders: J1 (`CpuRunning` atomic, x64 code cache over thread
-starts, the three leftovers of design 6.1.2), then M2-M4 (E6-E9, F3-F5, the DSP core wired in), track 10 (one web
+J1 is done and merged too (`skmp/nulldc3` = c0c81436, 190 ctest targets; two verification rounds and three read-only
+reviewers): the run flag is an atomic word with the layout it had (header revision 5; emitted x64 code unchanged, no
+slowdown), every emulator thread starts with an empty code cache and the code region is prepared once per process (2,200
+host stop / start cycles in one process: no cache clear, same speed, same hash), `IsRunning()` is one word (a reviewer showed
+that the five-word read could report a live parked machine as stopped), and the three leftovers of the core are closed.
+Next, one workflow at a time, in this order unless the user reorders: the cut of the M2 round (`M2-ROUND.md`: header
+revision 6, packages, gates; documents only), then M2-M4 (E6-E9, F3-F5, the DSP core wired in), track 10 (one web
 UI), track 3 (cycle-similar). Devtools: F0, F1, F2 and the round after design revision 3 are done and verified.
 Known defects recorded by E4a's verifier, not caused by it (package J1): the x64 JIT keeps the code of earlier emulator threads, so after a
 few hundred host stop/start cycles in one process the 10 MB code cache is full and the guest crawls; `Sh4Context::CpuRunning`

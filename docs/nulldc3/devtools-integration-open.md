@@ -2,9 +2,10 @@
 
 Companion of `TRACK1-DESIGN.md` v3. Part 1: the questions that are still open, each with its options and a
 recommendation, and the list of the questions that were answered on 2026-10-09. None of the open ones blocked the core
-package (E5), which is done: milestone M1 is complete. Part 2: "header revision 4", the comment-only changes that brought the frozen headers to what the
-document says: it is applied, and its list is kept as the record. Part 3: the list of header revision 5, which is
-empty for now. No declaration changes.
+package (E5), which is done: milestone M1 is complete. Part 2: "header revision 4", the comment-only changes that
+brought the frozen headers to what the document says: it is applied, and its list is kept as the record. Part 3:
+header revision 5, applied with package J1: one declaration (the run flag as an `AtomicU32`) and one comment. The
+next revision is 6; it comes with the cut of the M2 round and is not listed here.
 
 History. The independent check of revision 3 added Q15 and Q16, widened Q4, added H17 to H19 and extended H8, H9 and
 one row of H10. Its second pass added H20 and H21 and rewrote H8; it added no question. On 2026-10-09 thirteen of the
@@ -18,7 +19,9 @@ decisions 30 to 45 (`DESIGN-V3-DECISIONS.md`, section C) were folded into the de
 sections). They answer what the verifiers of the round and of the corrections left, open no question, and record
 header revision 4 as applied (part 2). After that the core (E5) was built, verified and merged, and the design was
 brought to what was built (its 6.1, "As built", and Appendix A.3, "E5 as built"): that opened no question and put
-no item on the list of header revision 5 (part 3).
+no item on the list of header revision 5 (part 3). Then the PLAN package P-desktop and package J1 were built,
+verified and merged; J1 made header revision 5, which is what part 3 now records (design 6.3, Appendix B, Appendix
+A.3 "J1 as built"). No question was opened.
 
 ## 1. Open questions
 
@@ -71,7 +74,7 @@ branch is merged into the integration branch `skmp/nulldc3`. All 22 items, H1 to
 name, and no declaration changed. **The list below is kept as the record** of what the revision changed; it is no
 longer a list of work. "Current" in it is the text before the revision, which the tree no longer has, and "New" is
 what the tree has, with two differences that came behind the list, in commit `ecc4652c` on the integration branch,
-behind the merge:
+behind the merge, and a third that came with header revision 5:
 
 - H8: the new `Init()` comment had one line of 180 columns ("... runs without a server. TickMs and FullTickEvery
   below 1 ..."), and the revision was applied with it. The line is re-wrapped, line breaks only; the words are those
@@ -80,6 +83,8 @@ behind the merge:
   changed by decision 43. The two stand-ins of that directory keep the latch test in front of the attention word (the
   B11 cost was measured on that form), and the README says so instead of claiming the order of `slice_end()` for
   them.
+- H1: the comment of `g_parked` in `debugger.h` no longer has the "New" text of this list. Package J1 made
+  `IsRunning()` one word of the machine, and header revision 5 reworded the comment (section 3).
 
 One of the corrections of design 6.1.1 that went with the revision was reworded as well (it is not in this list; see
 "What revision 4 does not contain"): the expectation of `debugger.regs.tables` is, by decision 42, that every row of
@@ -604,7 +609,8 @@ New:
 ### What revision 4 does not contain
 
 - `Sh4Context::CpuRunning` as `std::atomic<u32>` (`sh4_if.h`): a declaration. It is made in package J1, directly
-  after M1, as a numbered header revision of its own (the answer to Q12; design 2.3.7 item 10, 6.3).
+  after M1, as a numbered header revision of its own (the answer to Q12; design 2.3.7 item 10, 6.3). Done: it is
+  header revision 5, and the type is `AtomicU32` (section 3).
 - The removal of `NOTICE_DSP_FORCED`, `EV_DEBUGGER_DSP_FORCED` and the capability string `dsp-forced`: declarations;
   they go in the header revision of the M3 work, when the batch path is gone (design 2.5.5).
 - The widths of `dc.aica.dsp` and the event list of the `dc` node, each with the expectation of its test: not
@@ -620,31 +626,88 @@ New:
 - A declaration for `state.recordSgcFrames`: none is needed. The method is an exec call when the target is paused
   and a table call when it runs, and the core answers the lifetime errors itself (design 3.3).
 
-## 3. Header revision 5 (comment-only, pending)
+## 3. Header revision 5 (applied with J1)
 
-The next comment-only revision of the frozen headers. **Its list is empty for now.** The points in which the core
-(E5) was built differently from the design, or where the design was silent (design 6.1, "As built"), were held
-against the comments of the frozen headers, and none needs a change:
+**Applied.** Header revision 5 came with package J1 (branch `skmp/nulldc3-j1`, merged into `skmp/nulldc3`; the
+declaration in commit `48ad5abe`, the comment of `g_parked` in commit `36d1f261`, with the fix round of the
+verification) and has two items: one declaration and one comment. It is not the comment-only revision this section
+was kept open for: the declaration is the one that the design had listed for J1, made as a numbered revision as its
+D6 asks. Below is the record, in the form of section 2.
 
-- `debugger.h`, `Init()`: "one line on stderr and exit(2)" is the line of `dbg::Init`. Where the transport failed,
-  its own line stands in front of it, and that one is `dbg_net.h`'s ("one line on stderr says why"). The two
-  comments together say what happens.
-- `dbg_callstack.h`: "at most kScanWords words" covers a scan that ends at the end of the memory the stack pointer
-  is in.
-- `dbg_symbols.h`: "named, defined symbols" covers an absolute symbol, and says nothing about the order of several
-  symbols at one address, which the design now states (2.10).
-- `debugger.h`, `g_event_on`, and `dbg_core.h`: the grace note and the order of ticks are as the comments have them.
+### R5.1. `libswirl/hw/sh4/sh4_if.h`, `Sh4Context::CpuRunning`: the run flag is an `AtomicU32`
 
-- Not pending: the re-wrap of the 180-column line that H8 left in the `Init()` comment of
-  `libswirl/debugger/debugger.h`. It is done, on the integration branch behind the merge of revision 4 (commit
-  `ecc4652c`), with line breaks only (decision 45; section 2, first paragraph).
-- Not for this list, because they are declarations: `Sh4Context::CpuRunning` as an atomic (package J1's own numbered
-  revision) and the removal of the three forcing names (the revision of the M3 work); see "What revision 4 does not
-  contain".
-- Not for this list, because no frozen header is touched: the register `ENABLED` of `dc.aica.arm7` (decision 31,
-  design 6.1.1 item 8). It is a row of `dbg_regs_tables.cpp` and a selector in `dbg_regs.cpp` with E3's private
-  header `dbg_regs_private.h`; the comment of `Unwind()` in `dbg_callstack.h` (H14) already names the same source,
-  `SoundCPU::DebugEnabled()`.
+A declaration. The word keeps its offset, its size and its meaning; the generated code of both recompilers loads
+the same 32 bits. The type is `AtomicU32` (`libswirl/oslib/atomic_u32.h`, new, included from `types.h`) and not
+`std::atomic<u32>`: the context is an anonymous struct in an anonymous union, where g++ takes no member with a
+constructor, its memory is constructed by nothing, and it is cleared with `memset` and saved with `memcpy` (design
+2.3.7 item 10).
 
-An item is added here in the form of section 2 — the header, the comment, the current and the new text — when one is
-found, and the revision is applied by the integrator, as revision 4 was.
+Current:
+```
+			volatile u32 CpuRunning;
+```
+New:
+```
+			// The run flag: not 0 while the loop of the backend goes on. The generated code of both recompilers
+			// loads its 32 bits at this offset and leaves its loop on 0: the word keeps its place, its size
+			// and that meaning. An AtomicU32 (oslib/atomic_u32.h) is those 32 bits, accessed atomically.
+			// Written by the emulator thread (set where it enters its loop, cleared for a debugger stop, behind
+			// a step and at its end) and by any thread that asks the machine to stop (SuperH4_impl::Stop).
+			// Every store is sequentially consistent: none is on a path where its cost counts.
+			// Whether the machine counts as running is not read from this word: it is 0 for a machine that
+			// is parked, being reset or on its way to its stop, and SuperH4_impl::IsRunning() has a word of
+			// the machine's own for that.
+			// The emulator thread polls the word where its loop decides whether it goes on, with a relaxed
+			// load, which is the load the generated code makes (mov, ldr): what it takes from the value is
+			// whether to leave the loop, at this poll or the next; what it does behind the loop it reads under
+			// a lock or from state of its own. Every other read is sequentially consistent.
+			AtomicU32 CpuRunning;
+```
+
+### R5.2. `libswirl/debugger/debugger.h`, comment of `g_parked`: `IsRunning()` is one word
+
+A comment. It supersedes H1 of revision 4 (design 2.2.5: `IsRunning()` is `SuperH4_impl::thread_live`, true from
+`Resume()` until the emulator thread takes its stop callback). The rest of the comment of `g_parked` is unchanged.
+
+Current (the "New" text of H1):
+```
+// (E) is in a debugger stop: latched, parked or executing a step. SuperH4_impl::IsRunning() is
+// CpuRunning || g_parked || (the cpu is stopped for a reset) || (the machine has been asked to stop, or its
+// guest has exited, and the emulator thread has not taken its stop callback), so that a parked machine and one
+// on its way to a stop count as running for the host UI.
+```
+New:
+```
+// (E) is in a debugger stop: latched, parked or executing a step. SuperH4_impl::IsRunning() reads neither it
+// nor CpuRunning: it is one word of the machine, set from the start of an emulator thread until that thread
+// has taken its stop callback, so that a parked machine and one on its way to a stop count as running for the
+// host UI.
+```
+
+### What revision 5 does not contain
+
+- Anything for the points in which the core (E5) was built differently from the design, or where the design was
+  silent (design 6.1, "As built"). They were held against the comments of the frozen headers, and none needs a
+  change:
+  - `debugger.h`, `Init()`: "one line on stderr and exit(2)" is the line of `dbg::Init`. Where the transport
+    failed, its own line stands in front of it, and that one is `dbg_net.h`'s ("one line on stderr says why"). The
+    two comments together say what happens.
+  - `dbg_callstack.h`: "at most kScanWords words" covers a scan that ends at the end of the memory the stack
+    pointer is in.
+  - `dbg_symbols.h`: "named, defined symbols" covers an absolute symbol, and says nothing about the order of several
+    symbols at one address, which the design states (2.10).
+  - `debugger.h`, `g_event_on`, and `dbg_core.h`: the grace note and the order of ticks are as the comments have
+    them.
+- The re-wrap of the 180-column line that H8 left in the `Init()` comment of `libswirl/debugger/debugger.h`: it was
+  done on the integration branch behind the merge of revision 4 (commit `ecc4652c`), with line breaks only (decision
+  45; section 2, first paragraph).
+- The removal of the three forcing names: declarations, which go with the revision of the M3 work ("What revision 4
+  does not contain").
+- The register `ENABLED` of `dc.aica.arm7` (decision 31, design 6.1.1 item 8): no frozen header is touched. It is a
+  row of `dbg_regs_tables.cpp` and a selector in `dbg_regs.cpp` with E3's private header `dbg_regs_private.h`; the
+  comment of `Unwind()` in `dbg_callstack.h` (H14) already names the same source, `SoundCPU::DebugEnabled()`.
+- The removal of `resetting`, `stopping` and `StopForReset()` (design 2.2.5, 6.1.2): they are members of
+  `SuperH4_impl`, whose header is not one of the frozen ones.
+
+**The next revision is 6.** It comes with the cut of the M2 round — the document `M2-ROUND.md` beside the design —
+and has the declarations M2 needs in the frozen headers; it is listed there, not here.

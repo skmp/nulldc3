@@ -27,7 +27,10 @@ with a difference, which feedback was not adopted, what the independent check of
 sections the answers to the open questions changed. What is still open is in `DESIGN-V3-OPEN.md`, with the answered
 questions and the comment-only header revision 4, which is applied and kept there as the record. Since then the
 core (package E5) was built to this text, verified and merged: **milestone M1 is complete**, and the text is
-brought to what was built wherever the two differed (6.1, "As built"; Appendix A.3, "E5 as built").
+brought to what was built wherever the two differed (6.1, "As built"; Appendix A.3, "E5 as built"). Behind M1 the
+PLAN package P-desktop (desktop targets only) and package J1 (the run flag, the code cache, `IsRunning()`; header
+revision 5) were built, verified and merged, and the text is at that state too (6.3; Appendix A.3, "J1 as built").
+What comes next is the cut of the M2 round.
 
 Inputs: the reader reports in `agents/nulldc3/understand/` (cited, not re-derived): `devtools-protocol.md` (wire spec of
 protocol v2), `devtools-mock.md`, `devtools-panels-debugger.md`, `devtools-panels-tools.md`, `devtools-build.md`,
@@ -63,13 +66,18 @@ Decisions in force (project owner and design owner; everything below is written 
 - **D5 — commits** are made as work lands, on local branches.
 - **D6 — the shared interfaces are frozen**: the API of E1 and E2, which started first (Appendix B), and the headers E0
   delivered. Header revisions 2 and 3 are part of the contract (Appendix B). Revision 4 is comment-only, changed no
-  declaration and is applied; its list is kept as the record in `DESIGN-V3-OPEN.md`. A declaration changes only by an
-  explicit, listed approval of the integrator.
+  declaration and is applied; its list is kept as the record in `DESIGN-V3-OPEN.md`. Revision 5 came with package J1
+  and is applied: one declaration, the run flag as an `AtomicU32`, and one reworded comment (Appendix B). The next
+  revision is 6, with the cut of the M2 round. A declaration changes only by an explicit, listed approval of the
+  integrator.
 - **D7 — targets.** Desktop only (Linux, Windows, macOS), plus wasm later. Processors: x86_64 and arm64 now; later a
   wasm32 build with its own JIT, possibly riscv64. There are no 32-bit native builds, no cached-SHIL `cpp` backend and no
   libretro core. What exists: the x64 and arm64 JITs and the interpreter. New code stays clean for a 32-bit address space
   (no assumption that pointers are 64 bits, no reliance on huge virtual mappings, host signals or RWX pages in portable
-  parts), and the interpreter-only generic host path stays buildable.
+  parts), and the interpreter-only generic host path stays buildable. The tree is at this since PLAN package
+  P-desktop (merged): what it builds for is desktop Linux, Windows and macOS on x86_64 and arm64, the generic host
+  path, and the emscripten scaffolding the wasm build starts from; every other target, host and build switch is
+  gone from it (6.3).
 - **D8 — the server is the control surface, not only a debugger** (PLAN track 10). It works with no game loaded, nothing in
   it assumes that a client is a debugging session, and its configuration keys stay under `Debugger:` for now (2.11). The
   emulator's own imgui GUI, its game list and save / load states are leaving the product; what this design says about
@@ -97,12 +105,13 @@ The web UI talks to a server inside the emulator and every panel shows real stat
 | --- | --- | --- | --- |
 | M0 | devtools hygiene: lint/typecheck/test/build green, real scripts, versions, docs; a fresh clone builds without Rust; the wasm-transport build keeps building | `npm run check` = lint + typecheck + test:run + contract (mock, `--milestone M1`) + build:native + build:wasm | done (`check` runs `build:wasm` and the contract as the M1 gate since the devtools round, 4.1) |
 | M1 | protocol v3 (schema, client, mock module) and the contract runner. Emulator: transport and embedded UI, lifetime states and park loop, SH4 debugging (registers, memory, disassembly, run / pause / step / over / out, native code breakpoints, event breakpoints, watches, callstack, event log), the reduced M1 device tree (2.8), all three targets listed. Frontend: endpoint selection and reconnect; disassembly follows the PC and memory refetches when `stopId` changes; per-target defaults from `targets`; results of `control.*` shown; `reason` and `notice` in the toolbar; error boundary per dock panel; device-tree panel rework; notices for unsupported targets | the contract gate M1 (5.5.3) passes against the mock and against the emulator: scenarios S01-S14, S19, S20 on the mock, S00-S15, S19, S20 on the emulator; pure-module tests; the in-emulator selftests in ctest (`debugger.selftest.*`, the session `regs` among them), which include the breakpoint and step gates of 2.3.6 (B11 is `debugger.sh4bp.b11` in the pure suite); Windows gate (5.8) | **done: M1 is complete.** The core (E5, 6.1) is verified and merged: the M1 gate passes against the emulator on the JIT, on the interpreter and with the forced fallback, 18 scenarios passed, 0 partial, 0 not applicable each, and against the mock, 16 of 16; 187 ctest targets pass. The Windows gate is met in the form 5.8 gives it (a syntax-only compile and a review); the real MSVC build comes before the first push and the Windows run is package W64 (6.3) |
-| M2 | ARM7 step / breakpoints (resumable sound burst); memory and register writes; reset; full register tables (SB, PVR, AICA common and channels, GD-ROM, maple) with the generic register panel and the panel ids `sh4-registers`, `arm7-registers`; toolbar run control with hotkeys | contract gate M2 (adds S16); sound regression hashes identical before/after (5.6); UI unit tests | to do |
+| M2 | ARM7 step / breakpoints (resumable sound burst); memory and register writes; reset; full register tables (SB, PVR, AICA common and channels, GD-ROM, maple) with the generic register panel and the panel ids `sh4-registers`, `arm7-registers`; toolbar run control with hotkeys | contract gate M2 (adds S16); sound regression hashes identical before/after (5.6); UI unit tests | to do; next is the cut of its round (`M2-ROUND.md`: header revision 6, the packages E6, E7 and F3 with their ownership and gates; 6.3) |
 | M3 (after the T5.0 core is wired into the AICA) | SGC capture; DSP single-step / breakpoints / disassembly on the one C++ DSP core; playground runs the emscripten build of the same core and loads its program from the live emulator | contract gate M3 (adds S17, and S21 in a second run with the DSP test program); sound regression hashes with the DSP test ELF; playground results equal native results | to do |
 | M4 | Holly: CORE inspector fed by an emulator capture, TA inspector, table panels (TLB / SQ / OC-RAM, caches), TA / CORE event-breakpoint controls in the inspectors | contract gate M4 (adds S18) | to do |
 | M5 | SH4 simulator panel re-based on the measured model (moves with tracks 3/4) | vitest fixture gate, 300/305 or better | to do |
 
-M0 and M1 are the first implementation round. M2..M4 follow in order; each is independently shippable. Offline Monaco and
+M0 and M1 are the first implementation round, and it is done; so are the two packages that followed M1, the PLAN
+package P-desktop (desktop targets only) and J1 (6.3). M2..M4 follow in order; each is independently shippable. Offline Monaco and
 route-level code splitting, planned for M2 in v2, were delivered with F0 (4.1).
 
 PLAN track 10 (one web UI: settings, machine lifecycle, input mapping, notifications; the imgui GUI goes) starts after
@@ -143,9 +152,10 @@ source glob (evaluated at configure time: re-run CMake after a merge that adds a
 (2.11; its scripts are in `libswirl/debugger/cmake/`), `ws2_32` on Windows and the definition `NULLDC_DEBUGGER=1`. The
 protocol number has one source, `dbg::kProtocolVersion` in `dbg_webui.h`; the embed check reads it from that line.
 `cmake_minimum_required` stays 3.10; embedding the UI needs CMake 3.19 (`string(JSON)`, `file(ARCHIVE_CREATE)`), and an
-older CMake builds the debugger without the bundle. Option `NULLDC_DEBUGGER`: default ON, also on the interpreter-only
-generic host path. It has one default: the three switches it was OFF for (`LIBRETRO_CORE`, `TARGET_NSW`, `TARGET_PS4`)
-left the tree with PLAN package P-desktop. It stays an option: the tests project
+older CMake builds the debugger without the bundle. Option `NULLDC_DEBUGGER`: it has one default, ON, also on the
+interpreter-only generic host path. (Until PLAN package P-desktop it defaulted to OFF for three build switches of
+targets that are gone with that package; a configure that still passes one of the three stops with an error instead
+of building the desktop emulator.) It stays an option: the tests project
 and the no-regression gates of 5.7 build with it OFF. When OFF, `debugger.h` provides empty inline stand-ins (the SH4
 breakpoint query is constant false, so no check is ever compiled) and no file of `libswirl/debugger/` is compiled. The
 CMake build is the only build of the tree (the make build went with package B64).
@@ -461,9 +471,12 @@ for (;;) {
     if (reasons & (HOST_STOP | GUEST_EXIT)) break;
 }
 SaveRomFiles(...); WaitQueueEmpty() unless HOST_WAITS;             // the machine still counts as running
-thread_live = false; CpuRunning = false; g_parked = false; stopping = false;   // under callback_lock
+thread_live = false; sh4_cpu->thread_live = false;                 // under callback_lock: the machine's own word, and
+CpuRunning = false; g_parked = false; stopping = false;            // the one word IsRunning() reads (2.2.5)
 stop callback; OnThreadExiting(guestExit);
 ```
+
+`Resume()`, which starts the thread, sets both `thread_live` words under the same lock before the thread exists.
 
 `StartCpu(leavePark)` sets `CpuRunning` (and clears `g_parked` when `leavePark`) unless a stop reason is pending, in which
 case it leaves the cpu stopped and returns false. A thread whose cpu is left stopped at thread start makes no `Park()` in
@@ -537,28 +550,37 @@ The armed SH4 breakpoint set used by the backends is owned by (E); other threads
 
 #### 2.2.5 Host stops against a parked thread
 
-- `SuperH4_impl::IsRunning()` is `CpuRunning || g_parked || resetting || CpuRunning || stopping`: a machine counts as
-  running for as long as its emulator thread has not taken its stop callback — also one that the debugger has stopped
-  (latched, parked, in a step: `g_parked`), one whose cpu is stopped for a reset (`resetting`), and one that has been
-  asked to stop, or whose guest has exited, and is on its way there (`stopping`). The first three hand over to one
-  another on (E), the next one set before the one before it is cleared; read in this order, the cpu's a second time
-  behind them, no hand-over is read as a machine that does not run. A stop request sets `stopping` before it clears the
-  others, on any thread. (v2's rule that `IsRunning()` turns false the moment a stop is requested does not hold: a host
-  that takes a machine for stopped while its thread still has the stop callback to take ends its user interface under a
-  thread that waits for it to draw the frames it queued, and the process never ends.)
+- `SuperH4_impl::IsRunning()` is **one word and one load**: `SuperH4_impl::thread_live`, a `std::atomic<bool>` of the
+  machine. It is true from `Resume()` — before the emulator thread exists — until that thread takes its stop
+  callback, whatever the cpu does in between: a machine counts as running also while the debugger has it stopped
+  (latched, parked, in a step), while its cpu is stopped for a reset, and while it has been asked to stop, or its
+  guest has exited, and is on its way there. The machine writes the word in two places only, in `Resume()` and where
+  the thread takes its stop callback, each time under `callback_lock`, beside the `thread_live` of its own that its
+  stop requests go by. It reads neither `CpuRunning` nor `g_parked`: the cpu's word is 0 for a machine that is
+  parked, being reset or on its way to its stop, because the generated code of the recompilers leaves its loop on
+  0. (As built by E4a the answer was put together from five loads, `CpuRunning || g_parked || resetting ||
+  CpuRunning || stopping`, and a reader whose loads fell between the stores of two hand-overs in a row — a guest
+  reset and the debugger stop behind it — could find every one of them clear for a live machine. Package J1 made
+  it one word, 2.3.7 item 12. v2's rule that `IsRunning()` turns false the moment a stop is requested does not hold
+  either way: a host that takes a machine for stopped while its thread still has the stop callback to take ends its
+  user interface under a thread that waits for it to draw the frames it queued, and the process never ends.)
 - `g_parked` is set by (E) before it clears `CpuRunning` for any debugger stop (and again when it re-parks after a
   reset). It is cleared by (E) when it resumes, where the guest stops the cpu for a reset, and at the end of the thread
   (where it takes its stop callback, and in `OnThreadExiting()`); and by `SuperH4_impl::Stop()` on any thread (a stop
   request ends the debugger stop).
-- `SuperH4_impl::Stop()` clears `resetting`, `CpuRunning` and `g_parked` and calls `dbg::emu::Kick()`, which wakes the
+- `SuperH4_impl::Stop()` clears `CpuRunning` and `g_parked` and calls `dbg::emu::Kick()`, which wakes the
   park loop so that it returns `PARK_EVALUATE` (without a parked thread it does nothing; a kick made before
-  `OnThreadStarting()` is not kept). `Dreamcast_impl::Stop(cb)` records `HOST_STOP` and `stopping` and stores the callback
+  `OnThreadStarting()` is not kept). `Dreamcast_impl::Stop(cb)` records `HOST_STOP` and stores the callback
   under `callback_lock` before it calls `sh4_cpu->Stop()`; with no live thread it runs the callback at once; a second
   `Stop(cb)` while a stop is on its way chains its callback behind the stored one. `RequestReset()` sets `GUEST_RESET`
-  and, unless the machine has been asked to stop, `resetting` (the machine goes on counting as running while its cpu is
-  stopped for the reset), then stops the cpu as `Stop()` does but leaves `resetting` set (`StopForReset()`);
+  and stops the cpu (the machine goes on counting as running while its cpu is stopped for the reset: `thread_live`);
   `reios_exit` asks for `GUEST_EXIT` through `VirtualDreamcast::RequestExit()`, once per thread and never behind a
-  stop.
+  stop. **`resetting`, `stopping` and `StopForReset()` are dead state since J1**: the two members were terms of
+  `IsRunning()` and have no reader left, and `StopForReset()` differs from `Stop()` only in not clearing one of
+  them. As merged they are still there (`Stop()` clears `resetting`, `Stop(cb)` sets `stopping`, `RequestReset()`
+  sets `resetting` and calls `StopForReset()`, the thread clears both). They are removed — the two members, their
+  five writes, `StopForReset()`, with `RequestReset()` calling `Stop()` — by the next package that owns
+  `libswirl.cpp`, which is E6 (6.1.2).
 - `Dreamcast_impl::Term()` never runs with a live emulator thread: `StopAndWait()` records `HOST_STOP | HOST_WAITS`, stops
   the cpu and joins the thread, without L, before `sh4_cpu->Term()`.
 - `dbg::Init()` is called at the end of `reicast_init()`; `dbg::Term()` at the start of `reicast_term()`, before the GUI
@@ -1348,7 +1370,13 @@ runs behind it away from their baselines. It is the one repeat left in the gates
 The suite has further gates named after what they test (`switch`: selecting and dropping the fallback at more than 1000
 points of a run; `ownslot`: a delayed branch to its own slot; `dense`: 1024 armed addresses, the check budget, a code
 cache that is too small; `slot`, `midpair`: the interpreter's separate slot; `vector`: a stop behind the block that used
-the slice up; `arm`: what arming discards; `event`: event breakpoints and SLEEP). With one rule of the mechanism broken
+the slice up; `arm`: what arming discards; `event`: event breakpoints and SLEEP). One gate is not of the breakpoint
+mechanism: `threads` (`debugger.sh4bp.threads`, since J1) is about what the recompiler of a new emulator thread
+starts with. It makes 256 backend objects behind the first, as thread starts do, and requires one call to prepare
+the code region in all, the same region with the stubs at the same place and nothing behind them, no block in the
+tables, and the workload ending in the state of the first object. It is in this suite because the suite's stand-in
+for the host counts what the recompiler asks of it: a Linux run of the emulator cannot tell a region prepared once
+from one prepared at every start (2.3.7 item 9). With one rule of the mechanism broken
 in a scratch copy (the rest of a stopped block not run; the refund not given back; a slice counter started anew at
 every entry) the booted-guest tests of the engines that the rule belongs to fail.
 
@@ -1379,21 +1407,40 @@ every entry) the booted-guest tests of the engines that the rule belongs to fail
 8. **More than 56 armed instructions in one block** have the rest of the block compiled on every pass (2.3.4 c): correct
    but slow (2ndmix with 819 armed, muted addresses in its hottest blocks: 10.7 times the host instructions). A handful
    of breakpoints costs nothing.
-9. **Host stop / start cycles fill the x64 code cache.** Every emulator thread start keeps the code the threads before it
-   compiled (the backend's `Init` moves the cache base without resetting `LastAddr`): after about 240 to 500 host
-   stop / start cycles in one process the 10 MB cache is full and the guest crawls with a cache clear at every compile.
-   A defect of the tree outside the debugger (it is in the upstream base); it is fixed by starting every thread with
-   an empty cache, in package J1, directly after M1 (6.3).
-10. **`Sh4Context::CpuRunning` is a plain volatile** written by host threads and read on (E): it is every
-    ThreadSanitizer report of the run-control package. It becomes an atomic with the same layout in the same package
-    J1, one small package after M1, together with item 9: a declaration change of `sh4_if.h` (the JITs read the word
-    from generated code), which is why it is not part of the comment-only header revision 4.
+9. **Host stop / start cycles filled the x64 code cache: done in J1.** The defect was in the upstream base and had two
+   causes, both in `hw/sh4/dyna/driver.cpp`, where the cache and `LastAddr` live. First, every emulator thread makes
+   a backend object, and its `Init` let the one code generator of the process write its stubs where the cache had
+   got to and set the base of what a cache clear recycles behind them, so the code of every thread before stayed
+   below the base for good: after about 240 to 500 host stop / start cycles in one process the 10 MB cache was full
+   and the guest crawled with a cache clear at every compile. Now `recSH4::Init()` deletes the discarded blocks and
+   rewinds `LastAddr` and `LastAddr_min` in front of the code generator's `Init`, which verifies that the cache is
+   empty: every backend object starts with an empty cache and the stubs at the same place. Second, `recSH4::Init()`
+   asked the host to prepare the code region at every call; it asks only for the first backend object of the
+   process now. On Linux the second cause had no effect (the host hands the same pages out again); on Windows every
+   call mapped a new 10 MB region near the program, with room for some two hundred of them (5.8). Gates:
+   `debugger.selftest.hostcycles[.interp]` (5.3) and `debugger.sh4bp.threads` (2.3.6); by hand, 2200 host cycles in
+   one process with no cache clear, 24 times the cache compiled, and the last cycles as fast as the first.
+10. **`Sh4Context::CpuRunning` was a plain volatile** written by host threads and read on (E), and every
+    ThreadSanitizer report of the run-control package: **done in J1**, as header revision 5 (Appendix B). The word
+    is an `AtomicU32` (`libswirl/oslib/atomic_u32.h`, included from `types.h`) with the place, the size and the
+    meaning it had; the generated code of both recompilers loads the same 32 bits with the same instruction. The
+    type is not `std::atomic<u32>`, as v3 had planned it, because a `std::atomic` cannot stand where this word is:
+    `Sh4Context` is an anonymous struct in an anonymous union, and g++ takes no member with a constructor there; the
+    memory is constructed by nothing; and the context is cleared with `memset` and saved with `memcpy`. An
+    `AtomicU32` has the size, alignment and representation of a `u32`, no constructor, and the operations and
+    defaults of a `std::atomic<u32>`, made through `std::atomic_ref<u32>` (or the compiler's builtins where the
+    library has none). Orders: every store is sequentially consistent (none is on a hot path); the emulator thread's
+    polls, where its loop decides whether it goes on, are relaxed loads, which is the load the generated code makes;
+    every other read is sequentially consistent. Emitted x64 code and the state hashes are unchanged (5.7).
 11. **Guest time shifts in two kinds of debugger stop**, both documented skews of 2.4 and both measured as different
     state hashes on the JIT: an event breakpoint latched inside a SLEEP wait, and single steps.
-12. **`IsRunning()` is read from several words** (2.2.5). By reading only, a reader preempted between its reads for the
-    whole time (E) takes from the end of a guest reset to the park that follows it could read a live parked machine as
-    not running; never observed in over a million reads. If the run flag is reworked, `IsRunning()` is derived from one
-    word.
+12. **`IsRunning()` was read from several words: done in J1.** As built by E4a a reader preempted between its five
+    loads, for the whole time (E) takes from the end of a guest reset to the park that follows it, could read a live
+    parked machine as not running (by reading only; never observed in over a million reads). It is one word of the
+    machine now, `SuperH4_impl::thread_live`, true from `Resume()` until the thread takes its stop callback (2.2.5):
+    one load, and no store of that word lies on the path of a reset or a park. What the one word no longer gives is
+    in 6.1.2: `resetting`, `stopping` and `StopForReset()` have no reader left, and a run flag or a `g_parked` left
+    set behind the end of a thread is no longer seen through `IsRunning()`.
 13. **ARMRST against the ARM7's clock after a machine reset.** As merged, a machine reset leaves the guest-visible
     register ARMRST reading 0 while the ARM7 is not clocked, until the guest first writes the register: the devices
     are reset in their order, `AicaDevice::Reset` releases the reset, and `SoundCPU_impl::Reset`, behind it, disables
@@ -1863,8 +1910,8 @@ exists.
   owed: nothing is released behind a client's back. A connect and a disconnect each hand the event gates and the
   active mask to (E) in a `CC_TABLE` call of their own (2.6), made again 250 ms later when (E) did not take it.
   The timer starts only at a disconnect, so a `StartPaused` park waits for its first client without limit. Pinned by
-  `debugger.contract.grace` (5.4), but for the end of the expired state at a connect, which no test holds yet
-  (6.1.2).
+  `debugger.contract.grace` (5.4), the end of the expired state at a connect included since J1 (the fourth client
+  of the test).
 - What depends on a client being connected is this list — the event gates (2.6), the activity of breakpoints and the
   release of a park by the grace period, the periodic tick — and nothing else (D8). All four follow the core's own
   count of open clients (2.6).
@@ -1879,11 +1926,13 @@ exists.
   (`symbols::Clear()`). The table is read only inside calls and listeners (the one rule), so it needs no lock.
   Addresses are compared by their low 29 bits. A symbol without a size reaches to the next symbol, at most
   `kMaxSymbolReach` (`0x10000`) bytes. As built: a name ends at a NUL or at the end of its string table; where
-  several symbols have one address, a function names it before an object, an object before a symbol without a type,
-  and a global symbol before a local one; and an absolute symbol counts as defined, as in the runner's ELF reader.
-  The last has a visible cost with KallistiOS programs, seen with 2ndmix.elf: the linker constant `__tdata_size`
-  (0) names `0x00000000` and, by the 29-bit compare, `0xA0000000`, and `__executable_start` names the entry in
-  place of `_start`. The text form of an address (`symbols::Format`) is `name` at the start of a
+  several symbols have one address, the one that names it is chosen by type first (a function before an object, an
+  object before a symbol without a type), then by binding (a global symbol before a local one), then by section (a
+  symbol of a section before an absolute one); and an absolute symbol counts as defined, as in the runner's ELF
+  reader. The last step of that order came with J1: before it, with KallistiOS programs, `__executable_start`
+  named the entry in place of `_start`. What is left of taking absolute symbols, seen with 2ndmix.elf: the linker
+  constant `__tdata_size` (0) still names `0x00000000` and, by the 29-bit compare, `0xA0000000`, because nothing
+  else is at that address. The text form of an address (`symbols::Format`) is `name` at the start of a
   symbol and `name+0x<offset in lower-case hex>` inside it; the wire field `symbol` of a callstack frame and the branch
   targets in disassembly text use it. Hex in the text fields of a frame is lower case throughout: `location` as well
   (below). A client, and the contract runner, accept either case there (the mock writes upper case). A symbol name is bytes the guest image supplies: on its way to the wire every
@@ -2810,6 +2859,18 @@ emulator the system tests build.
   waits without limit. The first is a selftest session without the key and does not change, and neither do the
   sessions `sh4bp`, `sh4bpboot` and `sh4bpbase`, which set `Debugger:StartPaused=yes` and are excepted as sessions.
 - E4b, `dbg_selftest_sh4bp.cpp` (sessions `sh4bp`, `sh4bpboot`, `sh4bpbase`, done): 2.3.6.
+- J1, `dbg_selftest_hostcycles.cpp` (session `hostcycles`, done; `debugger.selftest.hostcycles[.interp]`, mode
+  same-hash): the host stops the running machine and starts it again, 600 times in one process, on the way of
+  2ndmix to its 1200th vblank; the cycles begin at vblank 300, where the program is in its main loop and every thread
+  has the same work. A thread of the test plays the host; the stop is asked for on the emulator thread, so that it
+  never meets the stop that ends the run. What has to hold: the machine counts as running (`IsRunning()`, 2.2.5)
+  at every one of the 600 starts, inside `Resume()`, where its emulator thread does not exist yet, and in none of
+  its stop callbacks; on the recompiler every thread starts with the stubs of the code generator at the start of
+  the code cache and nothing behind them, with no block in the tables and no entry in the lookup table for a block
+  of the thread before; the cache never fills although the threads together compile six times what it holds; the
+  guest does not get slower with the number of threads; and the run ends in the state hash of the same run without
+  a session (2.3.7 items 9 and 12). On the interpreter, which has no code cache: the cycles, what counts as
+  running, the speed and the hash.
 - E5, `dbg_selftest_core.cpp` (session `core`, six tests, done; `debugger.selftest.core[.interp]`):
   - `core.opcodes` (machine test): for all 65536 encodings, `dbg_disasm` reports the word as an instruction
     (`Sh4InsnInfo::valid`) iff the emulator's opcode table executes it (`OpDesc[op]->oph != iNotImplemented`), with the
@@ -2915,8 +2976,13 @@ emulator the system tests build.
     the one the core appended with no client connected (2.6). Then the client sends `debugger.describe` with
     `protocol: 2`, and the tick behind it has a second `dc.debugger.note`: the event gates were rewritten at the
     connect as well. When no paused tick comes within the 2 s, the test asks with a describe and names the broken
-    rule: the stop was not released, the mask was not cleared, or breakpoints are not active again. One rule of 2.9
-    is not in the test yet, the end of the expired state at a connect (6.1.2).
+    rule: the stop was not released, the mask was not cleared, or breakpoints are not active again. Since J1 the test
+    goes on, for the rule that a connect ends the expired state (2.9): behind the describe with `protocol: 2` the
+    third client sends `control.runUntil` and ends its connection (it closes its sending side and reads until the
+    server closes, so that the request cannot be lost); 3 s later a fourth client describes and has to find the
+    target paused at the next stop of the breakpoint — `reason: "breakpoint"`, the same `breakpointId`, `stopId` one
+    more — and `SH4_CYCLES` of that stop at most three frames behind the stop the third client left (measured 1.0;
+    with the reset of the expired state taken out, the fourth client finds the target running).
   - `debugger.contract.config`, the configuration errors of 2.11 and a server that cannot be started: six headless
     runs with 2ndmix, each of which has to end by itself within 60 s. Three without an enabled server —
     `Debugger:Required=yes` without `Debugger:Enabled`, `Debugger:StartPaused=yes` without it, and
@@ -2939,7 +3005,8 @@ emulator the system tests build.
     of 5.7.
 
   With E5 the tests project has 187 ctest targets: the 171 of before, `debugger.selftest.core[.interp]`,
-  `debugger.symbols.table` and `.damaged`, and the twelve of this directory.
+  `debugger.symbols.table` and `.damaged`, and the twelve of this directory. With J1 it has 190: those, and
+  `debugger.selftest.hostcycles[.interp]` (5.3) and `debugger.sh4bp.threads` (2.3.6).
 - The contract tests run on the emulator the system tests build (`<build>/system/emulator/devcast`, or
   `NULLDC_EMULATOR`), as the selftests do; no embedded bundle is needed: S15 passes on the built-in page. The first
   item of this recipe is for a run by hand against the UI.
@@ -3161,15 +3228,25 @@ Built in round 1 (E3, `hw/aica/aica_hash.h/.cpp`), before the sound burst is tou
 - Instruction counts (user mode, `perf_event_open`) of the build with the debugger against the build without show no
   unexplained difference: what is there is the one attention-word test per slice (measured +1196 ppm on the JIT and
   +718 ppm on the interpreter over 2ndmix 600) and the per-decoded-instruction query.
-- Known limits that these gates meet (2.3.7 items 9 to 11): a gate that stops and starts the emulator thread more than
-  about two hundred times in one process on the JIT runs into the full code cache; ThreadSanitizer runs report the
-  `CpuRunning` word and nothing else of the debugger — both until package J1, which follows M1 (6.3) —; event
-  breakpoints latched inside SLEEP waits, and single steps on
-  the JIT, change the state hash, which is the documented skew and not a regression.
-- Sanitizer runs, as E5 and its verifier made them. A ThreadSanitizer build cannot run the x64 JIT at all (it ends
+- Known limits that these gates meet (2.3.7 item 11): event breakpoints latched inside SLEEP waits, and single steps
+  on the JIT, change the state hash, which is the documented skew and not a regression. Two limits of this list
+  went with package J1 (2.3.7 items 9 and 10): a gate may stop and start the emulator thread as often as it likes
+  in one process on the JIT (2200 cycles ran with no cache clear; `debugger.selftest.hostcycles` holds 600 in
+  ctest), and a ThreadSanitizer run no longer reports the `CpuRunning` word. J1 itself met the gates of this
+  section: base, head and the build with `NULLDC_DEBUGGER=OFF` end in the same state hashes for 2ndmix 600 and 4000
+  vblanks and hello 300 on both engines (24 comparisons, none different, the `-DHAS_TA_LLE=OFF` build among them);
+  the emitted x64 code of a 600-vblank run is the same instruction for instruction once host addresses are named
+  by symbol; and speed did not move (`tests/perf`, the `none` renderer: within 1 %, inside the run-to-run spread).
+- Sanitizer runs, as E5, J1 and their verifiers made them. **The build recipe:** the tree's `reicast/cmake/config.cmake`
+  overwrites `CMAKE_C_FLAGS` and `CMAKE_CXX_FLAGS`, so sanitizer flags go into `CMAKE_<LANG>_FLAGS_<CONFIG>` (for
+  example `CMAKE_CXX_FLAGS_RELWITHDEBINFO`). A build that was given them in `CMAKE_CXX_FLAGS` links the sanitizer's
+  library, instruments nothing and reports nothing; whoever makes such a run counts the compile lines that carry
+  the flag first (389 of 389 in J1's build). A ThreadSanitizer build cannot run the x64 JIT at all (it ends
   at `recSh4 Init`, before any debugger code runs), so every ThreadSanitizer statement of this design is about the
   interpreter: there the M1 gate, `debugger.contract.grace`, `.slow` and `.config` and the session `core` gave no
-  report. With AddressSanitizer and UBSan, on both engines, no report names a debugger file; the tree's own UBSan
+  report for E5, and since J1 the session `emu` (three times), `hostcycles` and the M1 gate give no report of any
+  kind — the run-control package had recorded three to four a run, the write of the run flag among them. The control: with the word of
+  `IsRunning()` made a plain `bool` the same run reports it. With AddressSanitizer and UBSan, on both engines, no report names a debugger file; the tree's own UBSan
   lines (`_vmem.h`, `regalloc.h`, the ARM7 core, `sh4_sched.cpp`) have to be filtered for a harness to pass, and the
   leak check finds a leak in `reios_loadElf` on a run that exits normally. Those are the tree's, outside the
   debugger.
@@ -3184,7 +3261,9 @@ Built in round 1 (E3, `hw/aica/aica_hash.h/.cpp`), before the sound burst is tou
 ### 5.8 Windows
 
 A Windows build (MSVC or the appveyor recipe, x64 only) is a gate for E1 and E5: Winsock include order, `ws2_32`,
-`/permissive-`, the brace-initialised embed arrays. It cannot be made on the Linux machine, and nothing is pushed, so
+`/permissive-`, the brace-initialised embed arrays. (The CI recipes that package P-desktop kept, for Windows x64,
+Linux x64 and macOS, are stale as they stand in the tree — the AppVeyor one names a solution file that is not there
+any more —, and a CI package settles them; until then "the appveyor recipe" means its CMake line.) It cannot be made on the Linux machine, and nothing is pushed, so
 no CI makes it. **E5 therefore merges on two checks that the development machine can make, and the real MSVC build is
 made before the first push:**
 - a syntax-only compile of the package files with the MinGW-w64 cross compiler the development machine has, made as
@@ -3216,6 +3295,14 @@ build, in the form above. E4a adds one item to that run: pause, then close the w
 run needs a Windows host and is package W64 (6.3); it is no gate of M1 or of E5. Until it has been made, x64 on
 Windows uses the interpreter fallback with its notice, as it is compiled today.
 
+J1 adds an item to that run: **the Windows bound of thread starts.** Until J1 the recompiler asked the host for its
+code region at every start of an emulator thread, and on Windows each such call maps a new region of 10 MB near the
+program and none is freed, with room for some two hundred: a process could start its emulator thread about two
+hundred times. Since J1 the region is prepared once per process (2.3.7 item 9), which removes the bound — by
+reading only, since no Windows host has run it. W64 runs it: `debugger.selftest.hostcycles`, whose check of where
+the stubs stand fails on Windows if the fix is lost. A host with a display also runs the window sessions for the
+item of 6.1.2.
+
 ## 6. Work packages and file ownership
 
 Rules:
@@ -3227,16 +3314,20 @@ Rules:
 - Every package is verified independently (a verifier that did not write it), with fix rounds until it passes.
 - D10 applies to every package and verifier: headless runs, one workflow at a time, `ninja -j8`, `ctest -j4`, at most 4
   emulator processes.
-- State: **M1 is complete.** The emulator's integration branch `skmp/nulldc3` has every package of round 1 merged —
-  E1, E2, E0 (header revisions 2 and 3), E3, E4b, E4a, B64, header revision 4 with the corrections of 6.1.1 (items 1
-  to 7 on branch `skmp/nulldc3-integ-v3`, item 8 in commit `bc924abf`) and the core, E5 (branch
-  `skmp/nulldc3-dbg-e5`, head `58d0097b`, merged as `ceac25db`). On that tree the tests project has 187 ctest
-  targets, green twice, and the M1 gate of the contract runner passes against the emulator on the JIT, on the
-  interpreter and with `Debugger:ForceFallback=yes`: 18 scenarios passed, 0 partial, 0 not applicable each. The UI
-  repository has F0, F1, F2, the devtools round and the runner follow-up committed on `skmp/nulldc3` (head
-  `22b358e`; 391 unit tests, 246 e2e tests, the M1 gate on the mock with 16 scenarios passed, 0 partial, 0 not
-  applicable). Next: the Windows run, W64, and the small package J1 (the run flag as an atomic, the x64 code cache
-  over thread starts), then the later rounds of 6.3; what E5 left for the next emulator package is 6.1.2.
+- State: **M1 is complete, and the two packages behind it are done.** The emulator's integration branch `skmp/nulldc3`
+  has every package of round 1 merged — E1, E2, E0 (header revisions 2 and 3), E3, E4b, E4a, B64, header revision 4
+  with the corrections of 6.1.1 (items 1 to 7 on branch `skmp/nulldc3-integ-v3`, item 8 in commit `bc924abf`) and
+  the core, E5 (branch `skmp/nulldc3-dbg-e5`, head `58d0097b`, merged as `ceac25db`) — and behind them the PLAN
+  package P-desktop (desktop targets only; merged as `5ac00392`) and J1 (the run flag as an atomic with header
+  revision 5, the code cache over thread starts, `IsRunning()` from one word; branch `skmp/nulldc3-j1`, head
+  `ab97adbb`, merged as `c0c81436`). On that tree the tests project has 190 ctest targets, green twice, and the M1
+  gate of the contract runner passes against the emulator on the JIT, on the interpreter and with
+  `Debugger:ForceFallback=yes`: 18 scenarios passed, 0 partial, 0 not applicable each. The UI repository has F0, F1,
+  F2, the devtools round and the runner follow-up committed on `skmp/nulldc3` (head `22b358e`; 391 unit tests, 246
+  e2e tests, the M1 gate on the mock with 16 scenarios passed, 0 partial, 0 not applicable). **Next: the cut of the
+  M2 round** — a document `M2-ROUND.md` beside this design, with header revision 6 and the packages of M2 with
+  their ownership and gates — and then E6, E7 and F3 from it. W64 and A64 wait for their hosts (a Windows host; a
+  host for arm64). What is left for the next emulator package is 6.1.2.
 
 ### 6.1 Emulator, round 1 (M1)
 
@@ -3244,10 +3335,10 @@ Rules:
 | --- | --- | --- |
 | **E1** transport, build skeleton, UI embed | done | `dbg_net.h/.cpp`, `dbg_webui.h/.cpp`, `debugger.cmake`, `libswirl/debugger/cmake/`, `tests/debugger/net/` as planned. Beyond the plan: `Handler::OnBinary`, `SetStaticProvider`, the embed step checks every file against its `sha256`, a fuzz test and an interoperation test with the UI's client |
 | **E2** disassemblers | done | `dbg_disasm.h/.cpp`, `tests/debugger/disasm/` as planned; the DSP line is the playground assembler's and is tested against it (100,193 steps) |
-| **E0** shared headers | done, frozen | the headers of 2.1, the driver of the selftest, a stub per module, the debug virtuals of `sh4_if.h`, `hw/sh4/sh4_dbg.h`, the accessor declarations in the `hw/` headers. Differs from v2: run control is `Park()` with `PARK_RUN` / `PARK_EVALUATE` instead of stop-reason bits owned by the debugger; `dbg_events.cpp` is a module of its own; header revision 2 (twelve items, four of them declarations: `area0_DebugNvmemByte`, `SoundCPU::DebugGetInterrupt`, `dbg_sh4_SlotRuns`, the spellings of the stand-ins) and revision 3 (`ATTN_LATCHED`, the slice-end and SLEEP rules, the `IsRunning()` terms, the start of the cpu, `Term`) are part of the contract |
+| **E0** shared headers | done, frozen | the headers of 2.1, the driver of the selftest, a stub per module, the debug virtuals of `sh4_if.h`, `hw/sh4/sh4_dbg.h`, the accessor declarations in the `hw/` headers. Differs from v2: run control is `Park()` with `PARK_RUN` / `PARK_EVALUATE` instead of stop-reason bits owned by the debugger; `dbg_events.cpp` is a module of its own; header revision 2 (twelve items, four of them declarations: `area0_DebugNvmemByte`, `SoundCPU::DebugGetInterrupt`, `dbg_sh4_SlotRuns`, the spellings of the stand-ins) and revision 3 (`ATTN_LATCHED`, the slice-end and SLEEP rules, the `IsRunning()` terms — superseded by revision 5, with which `IsRunning()` is one word —, the start of the cpu, `Term`) are part of the contract |
 | **E3** registers, memory, device side | done for M1 | `dbg_regs.cpp`, `dbg_regs_tables.cpp`, `dbg_mem.cpp` (read), the accessor bodies and `DBG_EVENT` call sites under `hw/`, the selftest `regs`, `tests/debugger/regs/`, the sound regression harness. Differs from v2: the harness is `hw/aica/aica_hash.h/.cpp`; the flash region is what a guest read delivers; the ARM7 has its own view of the AICA register window (2.7); the SH4 on-chip registers behind a read function are computed or `"n/a"` (2.8); writers are M2 |
 | **E4b** SH4 breakpoints and steps in the active backend | done | the port of the prototype: `dbg_sh4.cpp`, the decoder, SHIL, register allocator, driver, block manager, the x64 backend, the interpreter, the fallback; `tests/debugger/sh4bp/` and the selftests `sh4bp*`. Differs from v2: a check is a 15-byte call of a shared stub, not 60 bytes inline; a block holds at most 56 checks and its rest runs outside the cache; a compiled check exists only with `DebugChecks`, and the fallback's decode carries the checks itself (`DecodeLimits::no_compile`); the fallback continues the backend's slice counter; the interpreter's separate slot is handled by `dbg_sh4_SlotRuns`; eight gates beyond B1-B14. The Windows run of 5.8 is package W64 (6.3) |
-| **E4a** emulator thread and run control | done | `dbg_emu.cpp`, the lifetime hooks and `dc_run` in `libswirl.cpp`, `SuperH4_impl`, the latch tests in `UpdateSystem()` / `UpdateINTC()` / SLEEP, the reios hooks, the selftest `emu` (nineteen tests) and the headless selftest runner `tests/debugger/selftest/`. Four verification rounds: 10,000 pauses, calls and breakpoint stops each leave the state hash unchanged; 7,382 exit runs with no hang. Differs from v2: the machine keeps its own stop reasons and the debugger's stop is `Park()`'s (2.2.4); `IsRunning()` has the terms `resetting` and `stopping` and does not turn false at the request (2.2.5); a thread whose start is refused makes no park; the first park after a host stop taken in a debugger stop is a resume; the slice end tests the attention word first; the selftests run from ctest |
+| **E4a** emulator thread and run control | done | `dbg_emu.cpp`, the lifetime hooks and `dc_run` in `libswirl.cpp`, `SuperH4_impl`, the latch tests in `UpdateSystem()` / `UpdateINTC()` / SLEEP, the reios hooks, the selftest `emu` (nineteen tests) and the headless selftest runner `tests/debugger/selftest/`. Four verification rounds: 10,000 pauses, calls and breakpoint stops each leave the state hash unchanged; 7,382 exit runs with no hang. Differs from v2: the machine keeps its own stop reasons and the debugger's stop is `Park()`'s (2.2.4); `IsRunning()` does not turn false at the request (2.2.5; E4a built it from five words with the terms `resetting` and `stopping`, and J1 made it one word of the machine, `SuperH4_impl::thread_live`); a thread whose start is refused makes no park; the first park after a host stop taken in a debugger stop is a resume; the slice end tests the attention word first; the selftests run from ctest |
 | **B64** no 32-bit hosts, no cached-SHIL backend | done | not a package of v2. Removed: the SH4 backends `jit/backend/arm32`, `x86` and `cpp` with their emitters, the 32-bit ARM7 and DSP JITs, the `CPU_X86` / `CPU_ARM` branches, the make build and what only built 32-bit targets (59 files, 23,700 lines); emitted x64 code, baselines and state hashes unchanged; the interpreter-only build (`-DTARGET_NO_REC=ON`) and the generic host path now build and boot. For this design: 2.3.5 has two JITs, 1.1 names the arm64 JIT (and the x64 JIT on Windows until 5.8), 2.5.3 the ARM7 JIT of arm64 |
 | **E5** core | done | below: the core thread with the dispatcher, the tables and the tick builder, `dbg::Init` / `Term`, the event ring, the symbol table, the unwinders, the selftest `core`, `tests/debugger/symbols/` and `tests/debugger/contract/`. Two verification rounds; the first found three gaps in the tests and no defect of the core. Where it differs from the plan: "As built", below |
 
@@ -3334,8 +3425,8 @@ Appendix A.3 ("E5 as built") has the same points with their outcome.
    5.7).
 3. `core.tick` is a machine test, so its ticks are running ticks; what holds for a paused tick is checked in
    `core.guest` and `core.lifetime` (5.3).
-4. `tests/debugger/selftest/README.md` has no section for the session `core`: the file is not E5's. The tests are
-   described in `tests/README.md` and at the head of `dbg_selftest_core.cpp` (6.1.2).
+4. `tests/debugger/selftest/README.md` had no section for the session `core`: the file was not E5's. J1 wrote it
+   (6.1.2).
 5. A server that cannot be started is two lines on stderr where the transport failed: the transport's own and the
    one of `dbg::Init` (2.11).
 6. A connect and a disconnect each make a `CC_TABLE` call for the event gates and the active mask, a service
@@ -3351,7 +3442,8 @@ Appendix A.3 ("E5 as built") has the same points with their outcome.
 10. The stack scan of the unwinders ends at the end of the memory the stack pointer is in; it does not go on into a
     mirror (2.10).
 11. Several symbols at one address: a function names it before an object, an object before a symbol without a type,
-    a global symbol before a local one. An absolute symbol counts as defined (2.10).
+    a global symbol before a local one. An absolute symbol counts as defined; since J1 it ranks behind a symbol of a
+    section (2.10, 6.1.2).
 12. `state.getDisassembly.context` has to be a number when it is present; its value is ignored (3.3).
 13. Request ids are echoed in the number form of the JSON library, and an unsigned parameter may be written as an
     integral float (3.0).
@@ -3376,7 +3468,7 @@ Verification: two rounds. The first found no defect of the core and three gaps i
 core thread does with its own client count (the grace test had its breakpoint on the entry, which is never reached
 again), nothing tested a server that was enabled and cannot be started, and the slow-client rule had no test. The
 fix round closed all three with tests and changed no source of the core. The second round passed, with one gap
-noted that is left for the next emulator package (6.1.2). Where the mock of the UI repository and this server
+noted, which J1 closed (6.1.2). Where the mock of the UI repository and this server
 differ is listed in `tests/debugger/contract/README.md`; the design decides each: the server is right about unknown
 keys of `breakpoints.setCategoryStates` (3.3), the text of `symbol` and the case of its hex (2.10), the ARM7's
 memory (2.7), the note of the grace period and the protocol note (2.6); both forms are allowed for `sp` of a frame
@@ -3537,24 +3629,28 @@ DebugGetInterrupt`, `DSP::DebugGetState / DebugGetProgramStep`, `gdrom_DebugGetS
 
 #### 6.1.2 Left for the next emulator package
 
-Three items that E5 and its verification left, small, for whichever emulator package comes next; none is a defect
-of the core.
+**The three items this list had are done with J1**: the step of `debugger.contract.grace` that holds the end of the
+expired state at a connect (commit `9bd949b9`; 2.9, 5.4), the section for the session `core` in
+`tests/debugger/selftest/README.md` (`3d4c8a07`), and the rank of a symbol of a section ahead of an absolute one in
+`dbg_symbols` (`e5dbfe39`; 2.10).
 
-1. **`debugger.contract.grace`: the connect ends the expired state** (2.9). One statement of the core has no test:
-   with the reset of the expired state taken out of the connect, every gate still passes (the verifier's mutation
-   n2), and breakpoints then go inactive the moment the next last client leaves, not 10 s later. The addition to the
-   test, about 3 s: behind the describe with `protocol: 2`, the third client sends `control.runUntil` and closes at
-   once; 3 s later a fourth client describes and has to find the target paused, with `reason: "breakpoint"`, the same
-   `breakpointId`, `stopId` one more than the third client's stop, and `SH4_CYCLES` of that stop at most three
-   frames behind it (measured 1.0 to 1.3 frames on the merged tree, hundreds with the mutation).
-2. **`tests/debugger/selftest/README.md`: a section for the session `core`**, with its six tests, as the file has
-   one for each of the other sessions. E5 could not write it (the file was not E5's); the tests are described in
-   `tests/README.md` and at the head of `dbg_selftest_core.cpp`.
-3. **`dbg_symbols`: a section-relative symbol names an address before an absolute one** (2.10). As built an
-   absolute symbol of the ELF is taken like any other, so `__tdata_size` (value 0) names `0xA0000000` and
-   `__executable_start` stands for `_start` at the entry. Within the order of 2.10 (function, object, label; global
-   before local) a symbol with a section index ranks ahead of one with `SHN_ABS`; `tests/debugger/symbols` gains the
-   case.
+What is left now, from J1 and its verification; none is a defect:
+
+1. **`resetting`, `stopping` and `StopForReset()` are removed** (the design owner's decision; 2.2.5). Since
+   `IsRunning()` is one word, nothing reads the two members of `SuperH4_impl`, and `StopForReset()` differs from
+   `Stop()` only in not clearing one of them. To remove: the two members, their five writes (four in `libswirl.cpp`,
+   one in `SuperH4_impl::Stop()`), and `StopForReset()`, with `RequestReset()` calling `Stop()`. It is done by the
+   next package that owns `libswirl.cpp`, which is E6. The pseudo-code of 2.2.4 loses its two assignments with it.
+2. **Three selftests also read the run flag and `g_parked`.** The checks "the stopped machine never counted as
+   running" of `emu.startstop`, `emu.startpark` and `emu.stopruns` watch one word since J1, so a run flag or a
+   `g_parked` left set behind the end of a thread is seen by no test (it has no effect on a run: the next thread
+   sets both itself). The three tests also read `p_sh4rcb->cntx.CpuRunning` and `dbg::g_parked` once the lifetime is
+   `Stopped`: the coverage the one word no longer gives.
+3. **The window sessions, when a host with a display runs them** (W64, or the work of PLAN track 10): confirm that
+   `emuwin.closereset` still ends the process. Its probe can no longer find a live machine counted as stopped, and
+   the three window-close callers (`linux-dist/x11.cpp`, `sdl/sdl.cpp`, `windows/win_common.cpp`) still test
+   `IsRunning()` before they act, where both branches now do the same thing (by reading only). After that run the
+   three callers call `Stop(cb)` unconditionally.
 
 ### 6.2 Frontend
 
@@ -3572,21 +3668,24 @@ of the core.
 
 ### 6.3 Emulator, later rounds (cut when M1 is merged; the ownership rule stays)
 
-M1 is merged (6.1), so this is the work that is next. First the two packages that close what M1 left open: **W64**,
-the Windows run, with the real MSVC build that 5.8 asks for before the first push (it needs a Windows host), and
-**J1**, the run flag and the code cache. Then the rounds of the milestones in order: E6 and E7 for M2, E8 for M3
-(behind the wiring of the T5.0 core), E9 for M4; A64 when a host for arm64 exists. Whichever of them is cut first
-also takes the two items of 6.1.2.
+M1 is merged (6.1), and of the packages below J1 is done, as is the PLAN package P-desktop (the last two rows).
+**What is next is the cut of the M2 round**: a document `M2-ROUND.md` beside this design, which has header revision
+6 (the declarations M2 needs in the frozen headers; revision 5 was J1's) and the packages of M2 with their
+ownership and gates, cut from the rows E6 and E7 below and from F3 (6.2). E6, E7 and F3 start from that document.
+Then E8 for M3 (behind the wiring of the T5.0 core) and E9 for M4. **W64**, the Windows run with the real MSVC
+build that 5.8 asks for before the first push, waits for a Windows host, and **A64** for a host that builds and
+runs arm64. What the packages so far left for the next one is 6.1.2.
 
 | Pkg | Content | Owns | Must not touch | Depends on | Gate |
 | --- | --- | --- | --- | --- | --- |
-| **E6** M2 sound | the sounding guest of 5.6, first; burst machine (2.5.2), ARM7 breakpoints and steps (2.5.3), the ARM7 callstack while stepping, the bodies of the ARM7 write accessors; no per-sample forcing: nothing of M2 needs the per-sample path (2.5.5) | `Dreamcast_impl::AicaUpdate` in `libswirl.cpp`, `hw/arm7/`, `hw/aica/`, the ARM7 part of `dbg_emu.cpp` (`emu::Step` for `Target::Arm7`), `tests/debugger/guest/dsptest/` (first step of the package: the sounding guest of 5.6, a KOS program that plays a tone through the sound generator, with its ELF committed; it serves the sound harness and, with the DSP program part E8 adds, the M3 gate) | `hw/sh4/`, `jit/`, the other device directories, `dbg_core.cpp` | M1 merged; the harness of 5.6 (done; its sounding guest is this package's own first step, and its lines with that guest are taken before the burst is touched) | 5.6 identical before / after, with the sounding guest, whose `samples` hash is not the hash of silence; contract S16 (ARM7 part); selftest |
+| **E6** M2 sound | the sounding guest of 5.6, first; burst machine (2.5.2), ARM7 breakpoints and steps (2.5.3), the ARM7 callstack while stepping, the bodies of the ARM7 write accessors; no per-sample forcing: nothing of M2 needs the per-sample path (2.5.5); and, as the next package that owns `libswirl.cpp`, the removal of `resetting`, `stopping` and `StopForReset()` (6.1.2 item 1), with the other items of 6.1.2 that are still open when it is cut | `Dreamcast_impl::AicaUpdate` in `libswirl.cpp`, `hw/arm7/`, `hw/aica/`, the ARM7 part of `dbg_emu.cpp` (`emu::Step` for `Target::Arm7`), `tests/debugger/guest/dsptest/` (first step of the package: the sounding guest of 5.6, a KOS program that plays a tone through the sound generator, with its ELF committed; it serves the sound harness and, with the DSP program part E8 adds, the M3 gate) | `hw/sh4/`, `jit/`, the other device directories, `dbg_core.cpp` | M1 merged; the harness of 5.6 (done; its sounding guest is this package's own first step, and its lines with that guest are taken before the burst is touched) | 5.6 identical before / after, with the sounding guest, whose `samples` hash is not the hash of silence; contract S16 (ARM7 part); selftest |
 | **E7** M2 writes and tables | `state.writeMemory`, `state.setRegister` (a write of the SH4 `PC` calls `dbg::sh4::OnPcWritten()`; a write of SR or FPSCR applies its effects), `state.editWatch`, `control.reset` (wiring only: `dbg::emu::Reset()` exists since E4a); the M2 rows of 2.8; the capabilities `memory-write`, `register-write`, `reset` | `dbg_mem.cpp`, `dbg_regs*.cpp`, `dbg_core.cpp`, `hw/holly/`, `hw/gdrom/`, `hw/maple/`, `hw/pvr/` | `hw/aica/`, `hw/arm7/`, `libswirl.cpp` (it uses the accessors E0 declared) | M1 merged | contract S16; selftest |
 | **E8** M3 | SGC capture (`dbg_sgc`), DSP steps and breakpoints on the T5.0 core (2.5.4), `state.getMemoryBinary`, the DSP program of the test guest (which makes E6's sounding guest the DSP test ELF); the header revision that removes the three forcing names (2.5.5) | `dbg_sgc.*`, the DSP part of the burst machine, the M3 methods in `dbg_core.cpp`, the DSP program part of `tests/debugger/guest/dsptest/` (the guest itself is E6's) | the DSP core itself (PLAN T5.0 owns it) | the T5.0 core wired into the AICA; E6, E7 | contract gate M3 (both runs); 5.6 with the DSP test ELF |
 | **E9** M4 | `state.getTable`, `state.captureHolly` | `dbg_core.cpp`, `hw/pvr/`, the capture hook in `rend/refsw2/` | `hw/sh4/`, `hw/aica/`, `hw/arm7/` | E7, E8 | contract gate M4 |
 | **A64** arm64 native checks | the items of 2.3.5 in `jit/backend/arm64`, and the SH4 FPU fast-tier fixes there | `jit/backend/arm64/` | everything else | a host that builds and runs arm64 | the gates of 2.3.6 on that host; `tests/debugger/sh4bp` ported to it |
-| **W64** the Windows run | gates B1-B4 and the E4a item of 5.8 on a Windows x64 build; then `DebugChecks` in Windows builds. Until it has run, x64 on Windows uses the interpreter fallback with its notice | the `_WIN32` guard in `rec_x64.cpp` | everything else | a Windows host | 5.8 |
-| **J1** the run flag and the code cache | one small package directly after M1: `Sh4Context::CpuRunning` becomes a `std::atomic<u32>` with the layout it has (2.3.7 item 10), with every reader and writer of the word, the generated code of the JITs included; and every emulator thread starts with an empty x64 code cache (2.3.7 item 9: the backend's `Init` moves the cache base without resetting `LastAddr`) | the declaration of `CpuRunning` in `hw/sh4/sh4_if.h` — a declaration change of a frozen header, listed here as D6 asks and made by the integrator as a numbered header revision —, the uses of the word under `hw/sh4/` and `jit/`, the start of the code cache in `jit/backend/x64/` | `libswirl/debugger/` but for comments that name the word; the block manager's handling of self-modifying code | M1 merged | the gates of 2.3.6 and the state hashes of 5.7 unchanged; a ThreadSanitizer run of the selftest session `emu` without a report on the word; more than 500 host stop / start cycles in one process without a full code cache; arm64 kept source-consistent (no host builds it) |
+| **W64** the Windows run | gates B1-B4 and the E4a item of 5.8 on a Windows x64 build; then `DebugChecks` in Windows builds. Until it has run, x64 on Windows uses the interpreter fallback with its notice. Also for this run: the real MSVC build (5.8), J1's item (more than two hundred thread starts in one process: `debugger.selftest.hostcycles`), and with a display the window sessions (6.1.2) | the `_WIN32` guard in `rec_x64.cpp` | everything else | a Windows host | 5.8 |
+| **J1** the run flag and the code cache (**done**: branch `skmp/nulldc3-j1`, 14 commits, head `ab97adbb`, merged as `c0c81436`; two verification rounds, three read-only reviewers beside the first) | as delivered: `Sh4Context::CpuRunning` is an `AtomicU32` (`oslib/atomic_u32.h`, new; not `std::atomic<u32>`, which cannot stand there: 2.3.7 item 10) with the place, size and meaning it had, every reader and writer of the word says its memory order, and the generated code of both JITs is unchanged; every backend object starts with an empty code cache, and the code region is prepared once per process (2.3.7 item 9); `IsRunning()` is one word of the machine, `SuperH4_impl::thread_live` (2.2.5, 2.3.7 item 12: the fix round of the verification); the three items that 6.1.2 then had | the declaration of `CpuRunning` in `hw/sh4/sh4_if.h` — a declaration change of a frozen header, made as header revision 5 (Appendix B) —, the uses of the word under `hw/sh4/` and `jit/`, the start of the code cache. **Touched outside this row, accepted by the integrator:** two statements in `libswirl.cpp` (the one word set in `Resume()` and cleared where the thread takes its stop callback); under `libswirl/debugger/` the new selftest `dbg_selftest_hostcycles.cpp`, one probe statement in `dbg_selftest_emu.cpp`, the reworded `g_parked` comment of `debugger.h` (header revision 5), and the `dbg_symbols.cpp` change of 6.1.2; the cache fix in `hw/sh4/dyna/driver.cpp`, where the cache and `LastAddr` live, not in `jit/backend/x64/` (which got a `verify`); `oslib/atomic_u32.h` and its include line in `types.h` | `libswirl/debugger/` but for comments that name the word (see the column before for what was accepted there); the block manager's handling of self-modifying code (untouched) | M1 merged | **passed**: 190 ctest targets, twice green (the 187 of before, `debugger.selftest.hostcycles[.interp]` and `debugger.sh4bp.threads`); the gates of 2.3.6 and the state hashes of 5.7 unchanged, the emitted x64 code the same instruction for instruction; ThreadSanitizer runs of the session `emu`, of `hostcycles` and of the M1 gate on the interpreter without a report of any kind; 2200 host stop / start cycles in one process without a cache clear (600 in ctest); no slowdown; arm64 kept source-consistent by reading (no host builds it). Not run: Windows (5.8, W64) and the window sessions (6.1.2) |
+| **P-desktop** desktop targets only (**done**; a PLAN package, not of this track: listed for what it changes here; branch `skmp/nulldc3-p-desktop`, 18 commits, merged as `5ac00392`) | every target, host and build switch that is not a desktop one is removed from the tree (147 files deleted, 43 modified, 13,600 lines). What the tree builds for: desktop Linux, Windows and macOS on x86_64 and arm64, the generic host path (`-DTARGET_NO_REC=ON`, an unknown processor), and the emscripten scaffolding the wasm build starts from. For this design: `NULLDC_DEBUGGER` has one default (2), D7 describes the tree, and no section names a removed target any more | the build files, `libswirl/build.h` and the conditionals of removed targets across the tree | third-party directories; renderer, audio and input backends not tied to a removed target (later packages) | M1 merged | passed: the 187 ctest targets of that time, twice green; the default build and the builds with `-DHAS_TA_LLE=OFF`, `-DTARGET_NO_REC=ON`, `-DNULLDC_DEBUGGER=OFF` and for a generic host each compile; the state hashes of 2ndmix unchanged in each; every translation unit preprocesses to the text it had, but for three unused declarations in the GUI. Nothing for Windows, macOS or arm64 was compiled (no host) |
 
 ## Appendix A. Review dispositions
 
@@ -3858,14 +3957,14 @@ change of a frozen header, of the runner or of the code.
 | 1 | the slice example `{sh4, 0xFFFFFFF0, 32}` answers `-32010` on the emulator | text corrected; the no-wrap rule stands | 2.7, 5.3 (`core.tick`) |
 | 2 | the bound of 256 watches cannot be reached on the M1 tree (247 registers, no expression twice) | a limit until M2, listed; the test description corrected | 5.3 (`core.tables`), 5.7 |
 | 3 | `core.tick` is a machine test: its ticks are running ticks | text corrected: paused-tick rules are in `core.guest` and `core.lifetime` | 5.3 |
-| 4 | no section for `core` in `tests/debugger/selftest/README.md` | left for the next emulator package | 6.1.2 |
+| 4 | no section for `core` in `tests/debugger/selftest/README.md` | left for the next emulator package; done in J1 | 6.1.2 |
 | 5 | a server that cannot be started: two lines on stderr, the transport's and `dbg::Init`'s | text corrected | 2.11, 6.1 |
 | 6 | a connect and a disconnect make a `CC_TABLE` call; what is retried, and when | text added | 2.6, 2.9 |
 | 7 | the grace note is appended inside the table call of the expiry; its text is fixed | text added | 2.6, 2.9 |
 | 8 | the protocol note is logged for every describe with another number | text added, as built (the design owner may still choose once per connection) | 2.6 |
 | 9 | the `Debugger: client` line: the first well-formed describe with a `client` string, before the dispatch | text corrected | 2.11 |
 | 10 | the stack scan ends at the end of the memory the stack pointer is in | text added | 2.10 |
-| 11 | several symbols at one address: the order; absolute symbols are taken | text added, as built, with what it costs with KallistiOS programs (the design owner may still rank absolute symbols last) | 2.10 |
+| 11 | several symbols at one address: the order; absolute symbols are taken | text added, as built, with what it costs with KallistiOS programs; the design owner then ranked absolute symbols last, done in J1 | 2.10, 6.1.2 |
 | 12 | `state.getDisassembly.context` has to be a number when present | text corrected | 3.3 |
 | 13 | ids echoed in the JSON library's number form; integral floats accepted for unsigned parameters | text added | 3.0 |
 | 14 | the contract tests add only `config:Dynarec.Enabled=yes\|no` to the recipe | text added | 5.4 |
@@ -3876,9 +3975,29 @@ change of a frozen header, of the runner or of the code.
 | — | not done: `NoMachine` over a real socket; `registersStale` on this machine | limits, listed | 5.5.4, 5.7 |
 | — | not done in the first hand-over: a test of the slow-client rule | done in the fix round, `debugger.contract.slow` | 2.9, 5.4 |
 | — | the exception for `dbg_net.cpp` (decision 44) | not needed: the transport sends the 1009 close as built | 2.11, 5.2, 6.1 |
-| — | the verification: three gaps in the tests (the core thread's client count, a server that cannot be started, the slow-client rule), no defect of the core; one gap left, the end of the expired state at a connect | the tests of 5.4 are described as they are now; the rule is in 2.9 and the missing step in 6.1.2 | 2.9, 5.4, 6.1.2 |
+| — | the verification: three gaps in the tests (the core thread's client count, a server that cannot be started, the slow-client rule), no defect of the core; one gap left, the end of the expired state at a connect | the tests of 5.4 are described as they are now; the rule is in 2.9, and the missing step was added to the grace test in J1 | 2.9, 5.4, 6.1.2 |
 | — | the register `ENABLED` as built: not monotonic, a computed row behind `kArm7Enabled`, no writer; the session `regs` runs the guest | text corrected; the write code is that of a register without a writer | 2.8, 5.3, 6.1.1 (item 8), 4.4 |
 | — | the runner follow-up's nine choices where the design was silent | each is a rule in its row or section | 5.5 (S04, S06, S07, S11, S16, S18), 5.5.1, 5.5.2, 5.5.3, 4.2.2, 4.4 |
+
+**J1 as built.** Package J1 (6.3) was verified in two rounds, with three read-only reviewers beside the first, and
+merged. Its verifier left seven points of design feedback and four notes; each is settled in the text. The first
+round's two findings — `IsRunning()` read from five words, and the code region prepared at every thread start —
+were fixed at their cause in the fix round.
+
+| # | Point | Outcome | Sections |
+| --- | --- | --- | --- |
+| 1 | the design still described `IsRunning()` as five words; as delivered it is one word of the machine, `SuperH4_impl::thread_live`, true from `Resume()` until the thread takes its stop callback | text corrected; 2.3.7 item 12 is done | 2.2.4, 2.2.5, 2.3.7 (item 12), 6.1 (the E4a and E0 rows), Appendix B, `DESIGN-V3-OPEN.md` (H1) |
+| 2 | the code cache defect had two causes, both fixed: `LastAddr` rewound at every backend `Init`, the code region prepared once per process; the second removes the Windows bound of thread starts by reading only | text corrected; the Windows bound is an item for W64 to run | 2.3.7 (item 9), 5.7, 5.8, 6.3 (W64) |
+| 3 | the row of J1 did not match what was delivered: files outside its "Owns", files in its "Must not touch", the place of the cache fix, the type | accepted by the integrator; the row is as delivered, and why the type is `AtomicU32` is stated | 6.3 (J1), 2.3.7 (item 10) |
+| 4 | header revision 5 has two items and "no item yet" was no longer true | listed, with both texts quoted; the next revision is 6 | Appendix B, D6, `DESIGN-V3-OPEN.md` (section 3) |
+| 5 | the sanitizer build recipe: the tree overwrites `CMAKE_C_FLAGS` / `CMAKE_CXX_FLAGS` | written down; the paragraph says what gives no report now | 5.7 |
+| 6 | the gate `threads` of `tests/debugger/sh4bp`, the tests `debugger.selftest.hostcycles[.interp]`, 190 tests | text added | 2.3.6, 5.3, 5.4, 6 (state) |
+| 7 | `resetting`, `stopping` and `StopForReset()` have no reader left: removed, or kept as bookkeeping? | the design owner's decision: removed, by the next package that owns `libswirl.cpp` (E6) | 2.2.5, 6.1.2 (item 1) |
+| note | the same dead state, with its five writes | as point 7 | 6.1.2 (item 1) |
+| note | three selftests of `emu` watch one word only: a run flag or `g_parked` left set behind a thread's end is seen by no test | the three tests also read both words once the lifetime is `Stopped`; left for the next emulator package | 6.1.2 (item 2), 2.3.7 (item 12) |
+| note | the window sessions were not run; `emuwin.closereset` and the three window-close callers are right by reading only | confirmed when a host with a display runs them (W64 or track 10); the callers then call `Stop(cb)` unconditionally | 6.1.2 (item 3), 5.8 |
+| note | one mutation passes every test: the clean-up of deleted blocks in `recSH4::Init()` taken out | no action: the change is equivalent today (the `Term()` of the object before has deleted them), and the line stays as a safeguard for an `Init()` that no `Term()` preceded | 2.3.7 (item 9) |
+| — | the three items of 6.1.2 (the grace test, the selftest README, the rank of absolute symbols) | done in J1 | 6.1.2, 2.9, 5.4, 2.10 |
 
 **The direction of 2026-10-08** (`PLAN.md`) changed: D7 to D10; 1 and 1.1 (track 10, caches, wasm, backends); the build
 paragraph of 2; 2.2.5 (who calls a host stop); 2.3.5 (two JITs); 2.5 (the DSP is always on); 2.7 and 3.3 (cache tables,
@@ -3908,7 +4027,7 @@ decision above or by the implementation, or is not a design matter):
 | a contract probe of the 16-client limit | protocol and runner verifiers | the limit is the transport's; `tests/debugger/net` has it |
 | a probe that a 256-character watch expression is accepted; a bound on `state.unwatch.watchIds` | runner verifier | no resolvable expression is that long; the message bound covers the array |
 | the e2e suite once under CPU throttling as a gate | protocol verifier | the requirement is stated instead (4.3: a tick re-renders only what it changed) and has its own performance test |
-| `Sh4Context::CpuRunning` as `std::atomic<u32>`, now | run-control verifier | decision 23: no declaration changes in header revision 4; it is a known limit until M1 (2.3.7 item 10) and is done directly behind it, in package J1 (6.3) |
+| `Sh4Context::CpuRunning` as `std::atomic<u32>`, now | run-control verifier | decision 23: no declaration changes in header revision 4; it is a known limit until M1 (2.3.7 item 10) and is done directly behind it, in package J1 (6.3). Done: an `AtomicU32`, header revision 5 |
 | an accessor `sh4_tmu_DebugReadTCNT` in `sh4_dbg.h` | header review | header revision 2 chose the reader in `dbg_regs.cpp`; no package owns `hw/sh4/modules` |
 | the GNU printf archetype for MinGW in `DBG_PRINTF_LIKE` | header review | no MinGW build is a target |
 | let an automated run end from a debugger park | run-control verifier | emulated time stands still while parked; the behaviour is documented and pinned (2.2.9) |
@@ -3916,7 +4035,7 @@ decision above or by the implementation, or is not a design matter):
 | `0x00802C00` / `0x00802C01` not readable for the ARM7 target | integration note of header revision 2 | superseded by what was built: the two bytes are read through the register read, a plain copy there (2.7) |
 | a rule for the event-log row format and for the toolbar's layout | panels verifier | presentation is the UI's; 4.3 records what was built |
 | a statement on Chromium's local-network check for a page from another origin | panels verifier | browser policy, not protocol; the client's error text lists it among the causes |
-| the leftovers package B64 listed (unreachable `TARGET_PANDORA` switches, the Android CI recipe, helpers without callers, sources no build lists) | B64 verifier | not this design: PLAN package P-desktop |
+| the leftovers package B64 listed (unreachable switches of removed targets, a CI recipe of one, helpers without callers, sources no build lists) | B64 verifier | not this design: PLAN package P-desktop, which is done and removed them (6.3) |
 | a file of pinned determinism hashes that a test reads, so that "the hashes equal the baseline" is a gate | verifier of the corrections of 6.1.1 | the suite compares runs with each other on purpose: a deliberate fix of behaviour then needs no baseline edit (5.7: no hash is stored in the tree) |
 | the tests project generates `libswirl/version.h` in the build directory (as built it writes the ignored file into the source tree, so a worktree that must not change cannot be built from) | verifier of the corrections of 6.1.1 | not a design matter; noted for the build work |
 
@@ -3991,9 +4110,40 @@ contract. Revisions since the freeze:
 | 2 | the integration of E3 and E4b | comment-only: where three events are raised (`dbg_events.h`); the flash store against what a guest reads (`sh4_mem_area0.h`); no remainder for a check that stopped a step, and an exception clears the exemption (`debugger.h`); the exemption needs a check behind it, an unhandled slot word refuses a step (`dbg_sh4.h`); which slice counter the fallback charges and `SliceCyclesLeft()` reports (`sh4_dbg.h`, `sh4_if.h`); the first `Park()` after an exit taken in a debugger stop is a resume (`debugger.h`, `dbg_sh4.h`); the SH4 on-chip registers behind a read function (`dbg_regs.h`); the ARM7 register indices 21..25 (`SoundCPU.h`). Declarations: `area0_DebugNvmemByte`, `SoundCPU::DebugGetInterrupt`, `dbg_sh4_SlotRuns`, and `NoWord::operator u32` / `NoFlag::exchange` of the stand-ins |
 | 3 | E4a | `ATTN_LATCHED`; the slice end tests `g_attn` first and looks at the latch behind it; the SLEEP handler tests the latch in a slice that reported something and accepted nothing; `g_attn` may be stored 0 at the thread's end; `IsRunning()` counts a cpu stopped for a reset; the cpu is started through the machine's own start function; a parked thread is released by the stop request behind `dbg::Term`; the start park of a selftest session; a call that is given up has its closure destroyed by the caller (`debugger.h`, `dbg_emu.h`, `dbg_selftest.h`) |
 | 4 | the corrections of 6.1.1, before E5 (branch `skmp/nulldc3-integ-v3`, merged) | comment-only, applied: the 22 items H1 to H22 in seven headers (`debugger.h`, `dbg_emu.h`, `dbg_events.h`, `dbg_mem.h`, `dbg_core.h`, `dbg_callstack.h`, `hw/sh4/sh4_if.h`); no declaration changed. The list, with the text before and after, is kept as the record in `DESIGN-V3-OPEN.md`. The one comment line it left at 180 columns (`debugger.h`, the `Init()` comment) is re-wrapped, line breaks only |
+| 5 | J1 (branch `skmp/nulldc3-j1`, merged) | applied: one declaration and one comment. `hw/sh4/sh4_if.h`: `Sh4Context::CpuRunning` is declared as an `AtomicU32` (it was `volatile u32`), with a comment that says who writes and reads the word and in which order; nothing else of the file changed, and the word keeps its offset and its size (pinned by a `static_assert`). `debugger.h`: the comment of `g_parked` no longer gives the terms of `IsRunning()`, which is one word of the machine; this supersedes H1 of revision 4. Both texts are quoted below |
 
-No further revision is pending: revision 5, the next comment-only one, has no item yet (`DESIGN-V3-OPEN.md`,
-section 3).
+Header revision 5, as the tree has it. In `libswirl/hw/sh4/sh4_if.h`, inside `Sh4Context`, in place of
+`volatile u32 CpuRunning;`:
+
+```cpp
+// The run flag: not 0 while the loop of the backend goes on. The generated code of both recompilers
+// loads its 32 bits at this offset and leaves its loop on 0: the word keeps its place, its size
+// and that meaning. An AtomicU32 (oslib/atomic_u32.h) is those 32 bits, accessed atomically.
+// Written by the emulator thread (set where it enters its loop, cleared for a debugger stop, behind
+// a step and at its end) and by any thread that asks the machine to stop (SuperH4_impl::Stop).
+// Every store is sequentially consistent: none is on a path where its cost counts.
+// Whether the machine counts as running is not read from this word: it is 0 for a machine that
+// is parked, being reset or on its way to its stop, and SuperH4_impl::IsRunning() has a word of
+// the machine's own for that.
+// The emulator thread polls the word where its loop decides whether it goes on, with a relaxed
+// load, which is the load the generated code makes (mov, ldr): what it takes from the value is
+// whether to leave the loop, at this poll or the next; what it does behind the loop it reads under
+// a lock or from state of its own. Every other read is sequentially consistent.
+AtomicU32 CpuRunning;
+```
+
+In `libswirl/debugger/debugger.h`, the first sentence pair of the comment of `g_parked` (the rest of the comment is
+as it was):
+
+```cpp
+// (E) is in a debugger stop: latched, parked or executing a step. SuperH4_impl::IsRunning() reads neither it
+// nor CpuRunning: it is one word of the machine, set from the start of an emulator thread until that thread
+// has taken its stop callback, so that a parked machine and one on its way to a stop count as running for the
+// host UI.
+```
+
+No revision is pending. The next one is revision 6: it comes with the cut of the M2 round (6.3) and has the
+declarations M2 needs.
 
 ## Appendix C. The SH4 mechanism: prototype and results
 
