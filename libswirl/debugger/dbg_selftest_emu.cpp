@@ -2407,8 +2407,9 @@ DBG_SELFTEST_GUEST(emu_startstop, "emu.startstop")
 
 				Spin((i * 37) % 300);
 
-				// the stop found the starter still waiting for its thread
-				if (!sh4_cpu->IsRunning())
+				// the stop found the starter still waiting for its thread: the cpu of that thread is not
+				// started. (The machine counts as running from the start of the thread on, IsRunning())
+				if (!p_sh4rcb->cntx.CpuRunning)
 					st.early++;
 
 				virtualDreamcast->Stop([] { st.callbacks++; });
