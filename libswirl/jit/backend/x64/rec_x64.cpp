@@ -181,6 +181,9 @@ public:
 		jle(slice_end, T_NEAR);
 
 		L(run_loop);  // -- run_loop
+			// The run flag is an atomic of 32 bits (sh4_if.h): this mov is a relaxed load of it, the poll of
+			// the emulator thread, once per slice
+			static_assert(sizeof(Sh4cntx.CpuRunning) == 4, "the main loop loads the run flag as 32 bits");
 			mov(rax, qword[rip + &p_sh4rcb]);
 			mov(edx, dword[rax + offsetof(Sh4RCB, cntx.CpuRunning)]);
 			test(edx, edx);                      // Load cpu run state and check cpu running

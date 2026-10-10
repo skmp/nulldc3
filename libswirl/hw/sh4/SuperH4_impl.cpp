@@ -38,7 +38,7 @@
     if (dbg::g_attn.load(std::memory_order_relaxed))
         dbg::emu::SliceHook();
 
-    return Sh4cntx.interrupt_pend | (sh4_int_bCpuRun == false);
+    return Sh4cntx.interrupt_pend | (sh4_int_bCpuRun.load(std::memory_order_relaxed) == 0);
 }
 
 // every SH4_TIMESLICE cycles
@@ -66,7 +66,8 @@ static SLICE_INLINE int slice_end()
 
     // Force an interrupt check if the cpu has been stopped
     // ngen is required to only check the bCpuRun on interrupt processing
-    return Sh4cntx.interrupt_pend | (sh4_int_bCpuRun == false);
+    // The poll of the emulator thread: a relaxed load, the one read of the word that a slice has (sh4_if.h)
+    return Sh4cntx.interrupt_pend | (sh4_int_bCpuRun.load(std::memory_order_relaxed) == 0);
 }
 
 int UpdateSystem()
@@ -147,7 +148,8 @@ void SuperH4_impl::Stop()
 
 void SuperH4_impl::StopForReset()
 {
-    sh4_int_bCpuRun = false;
+    // Sequentially consistent, as every store of the word: IsRunning() reads it among three others
+    sh4_int_bCpuRun.store(0, std::memory_order_seq_cst);
     dbg::g_parked = false;
 
     dbg::emu::Kick();
@@ -155,7 +157,7 @@ void SuperH4_impl::StopForReset()
 
 void SuperH4_impl::Start()
 {
-    sh4_int_bCpuRun = true;
+    sh4_int_bCpuRun.store(1, std::memory_order_seq_cst);
 }
 
 // One instruction, executed and charged by the backend as its Loop() would
@@ -166,7 +168,7 @@ void SuperH4_impl::Step()
 
 void SuperH4_impl::Skip()
 {
-    if (sh4_int_bCpuRun)
+    if (sh4_int_bCpuRun.load(std::memory_order_seq_cst))
     {
         printf("Sh4 Is running, can't Skip\n");
     }
@@ -178,7 +180,7 @@ void SuperH4_impl::Skip()
 
 void SuperH4_impl::Reset(bool Manual)
 {
-    if (sh4_int_bCpuRun)
+    if (sh4_int_bCpuRun.load(std::memory_order_seq_cst))
     {
         printf("Sh4 Is running, can't Reset\n");
     }
@@ -227,14 +229,27 @@ void SuperH4_impl::Reset(bool Manual)
 // The first three hand over to one another on the emulator thread, the next one set before the one before it
 // is cleared. Read in this order, the cpu's a second time behind them, no hand-over is read as a machine that
 // does not run. A stop request sets stopping before it clears the others, on any thread: it is read last
+//
+// All four are atomic, and every store and every load here is sequentially consistent: a reader that finds
+// one of them cleared finds the one that was set in front of that clear. The answer still comes from five
+// loads, and a reader that is kept from running between two of them for as long as the emulator thread takes
+// for two hand-overs can find every one of them clear. One word would end that, and it cannot be the cpu's:
+// that word is 0 for a machine that is parked, reset or on its way to its stop, which all count as running,
+// because the generated code of the recompilers leaves its loop on 0. It would be a word that takes the place
+// of g_parked, resetting and stopping, the first of which is the debugger's
 bool SuperH4_impl::IsRunning()
 {
-    return sh4_int_bCpuRun || dbg::g_parked || resetting || sh4_int_bCpuRun || stopping;
+    return sh4_int_bCpuRun.load(std::memory_order_seq_cst) || dbg::g_parked.load(std::memory_order_seq_cst)
+        || resetting.load(std::memory_order_seq_cst) || sh4_int_bCpuRun.load(std::memory_order_seq_cst)
+        || stopping.load(std::memory_order_seq_cst);
 }
 
 SuperH4_impl::SuperH4_impl() {
 
 }
+
+// The generated code of the recompilers reads the run flag by its place in the context
+static_assert(offsetof(Sh4Context, CpuRunning) == 292 && sizeof(Sh4cntx.CpuRunning) == 4, "the run flag has moved");
 
 bool SuperH4_impl::Init()
 {

@@ -707,9 +707,10 @@ static bool fallback_SliceEnd()
 	fallback_slice += SH4_TIMESLICE;
 
 	// as the main loop of a jit: the cpu state is only looked at behind UpdateSystem
+	// (the poll of the emulator thread: a relaxed load, sh4_if.h)
 	UpdateSystem_INTC();
 
-	return sh4_int_bCpuRun;
+	return sh4_int_bCpuRun.load(std::memory_order_relaxed) != 0;
 }
 
 void sh4_fallback_loop()
@@ -727,7 +728,7 @@ void sh4_fallback_loop()
 
 	// Left behind the block that used the slice up (a flow report stopped there), or entered with the cpu
 	// stopped: the end-of-slice work comes first
-	if (!fallback_SliceEnd() || !sh4_int_bCpuRun)
+	if (!fallback_SliceEnd() || !sh4_int_bCpuRun.load(std::memory_order_relaxed))
 		return;
 
 	for (;;)
