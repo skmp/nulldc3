@@ -30,6 +30,9 @@ extern std::set<RuntimeBlockInfo*> all_blocks;
 extern u32 LastAddr;
 extern u32 LastAddr_min;
 
+//stubs.cpp: how often the recompiler had the host prepare a code region
+extern u32 jit_block_prepares;
+
 //hw/sh4/sh4_core.h, whose names for the registers are not wanted here: applies a written FPSCR
 void UpdateFPSCR();
 
@@ -3404,6 +3407,59 @@ static void gate_arm()
 }
 
 
+/*
+	threads: what the recompiler of a new emulator thread starts with. Every emulator thread makes its backend
+	objects anew, and a process has as many emulator threads as its host stops and starts the machine. The code
+	region is the process's: the host is asked for it once. A recompiler that asked at every start of a thread
+	got the same pages again on Linux; on Windows it got a new region of 10 MB near the program every time, none
+	of them freed, and the process ended when the search for the next one found no room, some two hundred
+	threads on.
+*/
+static void gate_threads()
+{
+	const u32 threads = 256;
+	const WorkSetup w = { ENGINE_JIT, 40, true, true };
+
+	//the object that machine_init() made
+	work_start(w);
+
+	const MachineState first = work_run();
+
+	const u8* const region = CodeCache;
+	const void* const mainloop = (const void*)rdv_ngen->Mainloop;
+	const u32 base = LastAddr_min;
+	const u32 code = LastAddr - LastAddr_min;
+	const u32 blocks = (u32)all_blocks.size();
+	const u32 prepares = jit_block_prepares;
+
+	u32 moved = 0, stubs_moved = 0, not_empty = 0, in_tables = 0, differ = 0, other_code = 0;
+
+	for (u32 i = 0; i < threads; i++)
+	{
+		machine_thread_start();
+
+		moved += CodeCache != region;
+		stubs_moved += LastAddr_min != base || (const void*)rdv_ngen->Mainloop != mainloop;
+		not_empty += LastAddr != LastAddr_min;
+		in_tables += !all_blocks.empty();
+
+		work_start(w);
+
+		differ += work_run() != first;
+		other_code += LastAddr - LastAddr_min != code || all_blocks.size() != blocks;
+	}
+
+	check(prepares == 1 && jit_block_prepares == 1, "the host prepared the code region once, for the first of %u backend objects of the recompiler (%u calls before the %u that followed it, %u behind them)",
+		threads + 1, prepares, threads, jit_block_prepares);
+	check(moved == 0 && stubs_moved == 0, "every object has the code cache where the first had it, and the stubs of the code generator at its start, %u bytes (%u found another region, %u the stubs elsewhere)",
+		base, moved, stubs_moved);
+	check(not_empty == 0 && in_tables == 0, "every object starts with nothing behind the stubs and no block in the tables (%u had code there, %u a block)",
+		not_empty, in_tables);
+	check(differ == 0 && other_code == 0 && code != 0 && blocks != 0, "the workload ends in the state of the first object's run on every one, with the same %u blocks in %u bytes of code (%u differ in state, %u in code)",
+		blocks, code, differ, other_code);
+}
+
+
 const Gate gates[] = {
 	{ "b1", "B1 exact pc and registers at a hit: block start, mid-block, delay slot", gate_b1 },
 	{ "b2", "B2 resume exempts once; hit counts in a loop; time at the loop exit", gate_b2 },
@@ -3426,6 +3482,7 @@ const Gate gates[] = {
 	{ "vector", "an interrupt accepted in front of the instruction of a stop: it stops again when the handler returns to it", gate_vector },
 	{ "arm", "page discards on arming, blocks over two pages, category mask, breakpoints added in a stop", gate_arm },
 	{ "event", "an event breakpoint on the vblank of the machine: at a slice end, in a SLEEP wait, with an interrupt request", gate_event },
+	{ "threads", "the recompiler of a new emulator thread: the code region of the process, prepared once, and an empty code cache in it", gate_threads },
 };
 
 const u32 gate_count = sizeof(gates) / sizeof(gates[0]);

@@ -181,6 +181,9 @@ public:
 		jle(slice_end, T_NEAR);
 
 		L(run_loop);  // -- run_loop
+			// The run flag is an atomic of 32 bits (sh4_if.h): this mov is a relaxed load of it, the poll of
+			// the emulator thread, once per slice
+			static_assert(sizeof(Sh4cntx.CpuRunning) == 4, "the main loop loads the run flag as 32 bits");
 			mov(rax, qword[rip + &p_sh4rcb]);
 			mov(edx, dword[rax + offsetof(Sh4RCB, cntx.CpuRunning)]);
 			test(edx, edx);                      // Load cpu run state and check cpu running
@@ -1695,6 +1698,11 @@ struct X64NGenBackend : NGenBackend
 
 	bool Init()
 	{
+		// What is written here is the first thing in the code cache, with the base of what a cache clear
+		// recycles behind it: Init() is entered with an empty cache every time (recSH4::Init), also by the
+		// backend object of a later emulator thread, which writes the same stubs to the same place
+		verify(emit_FreeSpace() == CODE_SIZE);
+
 		// Here we emit some trampolines for Mem Read/Write functions.
 		// The purpose is making the calls smaller so that we can have rewrites.
 		// This is inspired on the 32 bit rec, that does (almost) the same.

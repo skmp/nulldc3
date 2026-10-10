@@ -379,6 +379,7 @@ using namespace std;
 #endif
 
 //basic includes
+#include "oslib/atomic_u32.h"
 #include "stdclass.h"
 
 #ifndef RELEASE

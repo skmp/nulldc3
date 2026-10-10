@@ -707,9 +707,10 @@ static bool fallback_SliceEnd()
 	fallback_slice += SH4_TIMESLICE;
 
 	// as the main loop of a jit: the cpu state is only looked at behind UpdateSystem
+	// (the poll of the emulator thread: a relaxed load, sh4_if.h)
 	UpdateSystem_INTC();
 
-	return sh4_int_bCpuRun;
+	return sh4_int_bCpuRun.load(std::memory_order_relaxed) != 0;
 }
 
 void sh4_fallback_loop()
@@ -727,7 +728,7 @@ void sh4_fallback_loop()
 
 	// Left behind the block that used the slice up (a flow report stopped there), or entered with the cpu
 	// stopped: the end-of-slice work comes first
-	if (!fallback_SliceEnd() || !sh4_int_bCpuRun)
+	if (!fallback_SliceEnd() || !sh4_int_bCpuRun.load(std::memory_order_relaxed))
 		return;
 
 	for (;;)
@@ -879,20 +880,41 @@ struct recSH4 : SuperH4Backend {
             verify(sh4_cpu->mram.data == ((u8*)p_sh4rcb->sq_buffer + 512 + 0x0C000000));
         }
 
-        // Prepare some pointer to the pre-allocated code cache:
-        void* candidate_ptr = (void*)(((unat)SH4_TCB + REI_PAGE_MASK) & ~REI_PAGE_MASK);
+        // The code region is the process's: the host prepares it for the first backend object, and every one
+        // behind it, which is every later emulator thread, finds it where it is. No host frees the region, and
+        // not every host hands the same one out twice: Windows maps a new one near the program at every call,
+        // and has no room for the next after some two hundred of them
+        if (CodeCache == NULL)
+        {
+            // Prepare some pointer to the pre-allocated code cache:
+            void* candidate_ptr = (void*)(((unat)SH4_TCB + REI_PAGE_MASK) & ~REI_PAGE_MASK);
 
-        // Call the platform-specific magic to make the pages RWX
-        CodeCache = NULL;
+            // Call the platform-specific magic to make the pages RWX
 #ifdef FEAT_NO_RWX_PAGES
-        verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache, &cc_rx_offset));
+            verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache, &cc_rx_offset));
 #else
-        verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache));
+            verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache));
 #endif
+        }
+
         // Ensure the pointer returned is non-null
         verify(CodeCache != NULL);
 
        // memset(CodeCache, 0xFF, CODE_SIZE);
+
+        // Every backend object starts with an empty code cache, and every emulator thread makes one. The code
+        // generator is one object for the whole process: its Init() writes its stubs where the cache has got
+        // to and sets the base of what a cache clear recycles behind them (emit_SetBaseAddr). Entered with the
+        // code of the backend object before this one still counted, it kept that code below the base for
+        // good, and some hundred thread starts later the cache had no room left.
+        // Nothing refers to the code that goes: bm_Reset() above took every block out of the tables and out
+        // of the lookup table, and the blocks it discarded are deleted here, so that none of them is found by
+        // the address of code that is written from now on (bm_GetStaleBlock)
+        bm_CleanupDeletedBlocks();
+
+        LastAddr = 0;
+        LastAddr_min = 0;
+
         verify(rdv_ngen->Init());
 
         bm_Reset();

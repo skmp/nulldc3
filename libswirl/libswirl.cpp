@@ -811,6 +811,7 @@ struct Dreamcast_impl : VirtualDreamcast {
         callback = nullptr;
         stop_reasons = 0;
         thread_live = false;
+        static_cast<SuperH4_impl*>(sh4_cpu)->thread_live = false;      // what IsRunning() reads
         p_sh4rcb->cntx.CpuRunning = false;
         dbg::g_parked = false;
         static_cast<SuperH4_impl*>(sh4_cpu)->stopping = false;
@@ -1044,9 +1045,9 @@ struct Dreamcast_impl : VirtualDreamcast {
     }
 
 
-    // callback_lock held, an emulator thread is live: records why it ends. From here until that thread takes
-    // its stop callback the machine counts as running by this request (SuperH4_impl::stopping), whatever the
-    // cpu and a debugger stop say: the caller stops the cpu next
+    // callback_lock held, an emulator thread is live: records why it ends. Until that thread takes its stop
+    // callback the machine goes on counting as running (SuperH4_impl::thread_live), whatever the cpu and a
+    // debugger stop say: the caller stops the cpu next
     void Stopping(u32 reasons)
     {
         stop_reasons |= reasons;
@@ -1143,9 +1144,10 @@ struct Dreamcast_impl : VirtualDreamcast {
         callback_lock.Lock();
         stop_reasons |= GUEST_RESET;
 
-        // The machine goes on counting as running while its cpu is stopped for the reset: a host that takes
-        // it for stopped ends its user interface under this thread. Not when it has been asked to stop, and
-        // not behind the end of the thread, which makes no reset any more
+        // The machine goes on counting as running while its cpu is stopped for the reset
+        // (SuperH4_impl::thread_live): a host that takes it for stopped ends its user interface under this
+        // thread. That a reset is on its way is recorded, but not when the machine has been asked to stop,
+        // and not behind the end of the thread, which makes no reset any more
         if (thread_live && !(stop_reasons & (HOST_STOP | GUEST_EXIT)))
             cpu->resetting = true;
 
@@ -1211,9 +1213,12 @@ struct Dreamcast_impl : VirtualDreamcast {
 
         verify(!sh4_cpu->IsRunning());
 
+        // The machine counts as running from here on (SuperH4_impl::IsRunning), before its thread exists: a
+        // stop request is taken for that thread from here on, too
         callback_lock.Lock();
         stop_reasons = 0;
         thread_live = true;
+        static_cast<SuperH4_impl*>(sh4_cpu)->thread_live = true;
         callback_lock.Unlock();
 
         dbg::emu::OnThreadStarting();

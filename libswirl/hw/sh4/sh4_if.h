@@ -359,7 +359,20 @@ struct Sh4Context
 			sr_status_t old_sr;
 			fpscr_t old_fpscr;
 
-			volatile u32 CpuRunning;
+			// The run flag: not 0 while the loop of the backend goes on. The generated code of both recompilers
+			// loads its 32 bits at this offset and leaves its loop on 0: the word keeps its place, its size
+			// and that meaning. An AtomicU32 (oslib/atomic_u32.h) is those 32 bits, accessed atomically.
+			// Written by the emulator thread (set where it enters its loop, cleared for a debugger stop, behind
+			// a step and at its end) and by any thread that asks the machine to stop (SuperH4_impl::Stop).
+			// Every store is sequentially consistent: none is on a path where its cost counts.
+			// Whether the machine counts as running is not read from this word: it is 0 for a machine that
+			// is parked, being reset or on its way to its stop, and SuperH4_impl::IsRunning() has a word of
+			// the machine's own for that.
+			// The emulator thread polls the word where its loop decides whether it goes on, with a relaxed
+			// load, which is the load the generated code makes (mov, ldr): what it takes from the value is
+			// whether to leave the loop, at this poll or the next; what it does behind the loop it reads under
+			// a lock or from state of its own. Every other read is sequentially consistent.
+			AtomicU32 CpuRunning;
 
 			int sh4_sched_next;
 			u32 interrupt_pend;

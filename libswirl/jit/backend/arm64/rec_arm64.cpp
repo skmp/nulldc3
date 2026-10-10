@@ -112,6 +112,10 @@ __asm__
 		"br x0								\n"
 );
 
+// The run flag is an atomic of 32 bits (sh4_if.h): the ldr of _no_update below is a relaxed load of it, the
+// poll of the emulator thread
+static_assert(sizeof(Sh4cntx.CpuRunning) == 4, "the main loop loads the run flag as 32 bits");
+
 void rec_mainloop(void* v_cntx)
 {
 	Sh4RCB* ctx = (Sh4RCB*)((u8*)v_cntx - sizeof(Sh4RCB));

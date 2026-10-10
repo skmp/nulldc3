@@ -155,10 +155,10 @@ extern bool g_in_sleep;
 // behind the SLEEP, so that an accepted interrupt returns behind it.
 extern bool g_sleep_cut;
 
-// (E) is in a debugger stop: latched, parked or executing a step. SuperH4_impl::IsRunning() is
-// CpuRunning || g_parked || (the cpu is stopped for a reset) || (the machine has been asked to stop, or its
-// guest has exited, and the emulator thread has not taken its stop callback), so that a parked machine and one
-// on its way to a stop count as running for the host UI.
+// (E) is in a debugger stop: latched, parked or executing a step. SuperH4_impl::IsRunning() reads neither it
+// nor CpuRunning: it is one word of the machine, set from the start of an emulator thread until that thread
+// has taken its stop callback, so that a parked machine and one on its way to a stop count as running for the
+// host UI.
 // Set by (E) before it clears CpuRunning for a debugger stop. Cleared by (E) when it resumes, where the guest
 // stops the cpu for a reset, and at the end of the thread (where it takes its stop callback, and in
 // OnThreadExiting()); and by SuperH4_impl::Stop() on any thread (a stop request ends the debugger stop).

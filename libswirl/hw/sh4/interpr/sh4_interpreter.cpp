@@ -101,7 +101,7 @@ struct SH4IInterpreter : SuperH4Backend {
             // an interrupt that is accepted here comes in front of a slot that was left to the loop
             if (UpdateINTC())
                 dbg_slot_pc = DBG_NO_SLOT;
-            if (!sh4_int_bCpuRun)
+            if (!sh4_int_bCpuRun.load(std::memory_order_relaxed))
                 return false;
         }
 
@@ -233,10 +233,11 @@ struct SH4IInterpreter : SuperH4Backend {
 
                 // model how the jit works
                 // only check for sh4_int_bCpuRun on interrupts
+                // (the poll of the emulator thread: a relaxed load, sh4_if.h)
                 if (UpdateSystem()) {
                     const bool accepted = UpdateINTC() != 0;
 
-                    if (!sh4_int_bCpuRun)
+                    if (!sh4_int_bCpuRun.load(std::memory_order_relaxed))
                     {
                         // The loop that checks may run next. When the last instruction left its slot to the
                         // loop and the slot is what runs next, that slot belongs to a pair that is under way.
