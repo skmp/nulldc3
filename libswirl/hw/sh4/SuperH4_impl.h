@@ -24,17 +24,25 @@ struct SuperH4_impl final : SuperH4 {
     // a fresh slice counter (SuperH4Backend::ResetSlice)
     bool slice_reset_owed = false;
 
+    // The machine has an emulator thread that has not taken its stop callback: from the moment the host starts
+    // the thread (before it exists) until the thread takes the callback, whatever its cpu does in between. It
+    // is all that IsRunning() reads. The machine writes it under its callback_lock, beside the thread_live of
+    // its own that its stop requests go by, so that any thread can read the same fact without that lock
+    std::atomic<bool> thread_live { false };
+
     // A reset of the machine is on its way: the emulator thread has stopped the cpu for it and starts it again
-    // behind it. The machine counts as running all through (IsRunning), so that the host stops it as it stops
-    // a running one and does not take it for stopped. The machine sets it, before StopForReset() and only
-    // while it has not been asked to stop; Stop() clears it, and the emulator thread when the reset is done
+    // behind it. The machine sets it, before StopForReset() and only while it has not been asked to stop;
+    // Stop() clears it, and the emulator thread when the reset is done.
+    // Nothing reads it: it was a term of IsRunning(), which is thread_live now. The machine counts as running
+    // all through a reset as it did, so that the host stops it as it stops a running one
     std::atomic<bool> resetting { false };
 
     // The machine has been asked to stop, or its guest has ended, and the emulator thread has not taken its
     // stop callback yet: on its way there it waits for the user interface to draw the frames it queued. The
-    // machine counts as running all through (IsRunning), so that a host that acts a second time stops it as it
-    // stops a running one, behind the stop that is on its way, and does not end its user interface under the
-    // thread. The machine sets it before it stops the cpu, and clears it where the thread takes the callback
+    // machine sets it before it stops the cpu, and clears it where the thread takes the callback.
+    // Nothing reads it: it was a term of IsRunning(), which is thread_live now. The machine counts as running
+    // all the way to the callback as it did, so that a host that acts a second time stops it as it stops a
+    // running one, behind the stop that is on its way, and does not end its user interface under the thread
     std::atomic<bool> stopping { false };
 
     void SetA0Handler(Area0Hanlders slot, MMIODevice* dev);

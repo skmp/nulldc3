@@ -136,9 +136,9 @@ void SuperH4_impl::Run() {
         sh4_backend->Loop();
 }
 
-// Any thread. A stop request also ends a debugger stop and a reset as reasons for the machine to count as
-// running (IsRunning): from here on it does so by the request alone, which the machine has recorded
-// (stopping). The park loop is woken so that the emulator thread takes the request
+// Any thread. A stop request also ends a debugger stop, and a reset that was on its way. The machine counts
+// as running until its emulator thread has taken the request (IsRunning). The park loop is woken so that the
+// thread takes it
 void SuperH4_impl::Stop()
 {
     resetting = false;
@@ -148,7 +148,7 @@ void SuperH4_impl::Stop()
 
 void SuperH4_impl::StopForReset()
 {
-    // Sequentially consistent, as every store of the word: IsRunning() reads it among three others
+    // Sequentially consistent, as every store of the word (sh4_if.h)
     sh4_int_bCpuRun.store(0, std::memory_order_seq_cst);
     dbg::g_parked = false;
 
@@ -222,26 +222,19 @@ void SuperH4_impl::Reset(bool Manual)
     }
 }
 
-// A machine counts as running for as long as its emulator thread has not taken its stop callback: also one
-// that the debugger has stopped (latched, parked, in a step), one that is being reset, and one that has been
-// asked to stop and is on its way there. The host UI stops each of them like a running one
+// A machine counts as running for as long as it has an emulator thread that has not taken its stop callback:
+// from the moment the host starts the thread until the thread takes the callback. Also one that the debugger
+// has stopped (latched, parked, in a step), one that is being reset, and one that has been asked to stop and
+// is on its way there. The host UI stops each of them like a running one
 //
-// The first three hand over to one another on the emulator thread, the next one set before the one before it
-// is cleared. Read in this order, the cpu's a second time behind them, no hand-over is read as a machine that
-// does not run. A stop request sets stopping before it clears the others, on any thread: it is read last
-//
-// All four are atomic, and every store and every load here is sequentially consistent: a reader that finds
-// one of them cleared finds the one that was set in front of that clear. The answer still comes from five
-// loads, and a reader that is kept from running between two of them for as long as the emulator thread takes
-// for two hand-overs can find every one of them clear. One word would end that, and it cannot be the cpu's:
-// that word is 0 for a machine that is parked, reset or on its way to its stop, which all count as running,
-// because the generated code of the recompilers leaves its loop on 0. It would be a word that takes the place
-// of g_parked, resetting and stopping, the first of which is the debugger's
+// One word and one load. The cpu's word cannot be it: that one is 0 for a machine that is parked, reset or on
+// its way to its stop, because the generated code of the recompilers leaves its loop on 0. Put together from
+// the cpu's word and a word for each of those reasons, the answer took five loads, and a reader whose loads
+// fell between the stores of two hand-overs in a row (a guest reset and the debugger stop behind it) found
+// every one of them clear for a live machine
 bool SuperH4_impl::IsRunning()
 {
-    return sh4_int_bCpuRun.load(std::memory_order_seq_cst) || dbg::g_parked.load(std::memory_order_seq_cst)
-        || resetting.load(std::memory_order_seq_cst) || sh4_int_bCpuRun.load(std::memory_order_seq_cst)
-        || stopping.load(std::memory_order_seq_cst);
+    return thread_live.load(std::memory_order_seq_cst);
 }
 
 SuperH4_impl::SuperH4_impl() {
