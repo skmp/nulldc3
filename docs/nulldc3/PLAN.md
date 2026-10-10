@@ -44,11 +44,15 @@ track.
   place: unreachable `TARGET_PANDORA` switches in the window/input/renderer layer, a few helpers whose only callers were the
   removed backends, `deps/vixl/aarch32`, platform sources no build lists (Android shell, dispmanx, emscripten.cpp). The full
   audit list is in `agents/nulldc3/b64/final-verdict.json`.
-  Package **P-desktop** (queued; not before M1 unless asked): remove the non-desktop platform code — `libswirl/android`,
-  `reicast/android-studio`, the Android / iOS / Switch / PS4 / Pandora / GCW-Zero / dispmanx / NaCl switches (about 160
-  occurrences in 42 of the tree's own files), their CMake toolchain files and CI recipes — keeping Linux, Windows, macOS and the
-  emscripten scaffolding. **The libretro core is removed too** (user, 2026-10-08): `libswirl/libretro`, `libswirl/libretro-common`,
-  `libretro_data`, and the `LIBRETRO` switches in sources and build files.
+  Package **P-desktop** — DONE 2026-10-10 (merged, `skmp/nulldc3` = 5ac00392; two verification rounds): Android, iOS, Switch,
+  PS4, Pandora, GCW-Zero, Raspberry Pi specifics, NaCl, MIPS Linux, UWP, BSD / QNX / DOS host branches and the libretro core are
+  out (147 files deleted, 43 modified, 13,637 lines); a configure for a non-desktop system stops with a message. Kept: Linux,
+  Windows, macOS on x86_64 and arm64, the generic host path, the emscripten scaffolding. What a kept target compiles is
+  unchanged text (checked mechanically); state hashes unchanged; five build configurations and 187 ctest targets green. Left
+  for later packages, listed in `resume/p-desktop.final-result.json`: the three CI recipes of kept targets are stale (Azure
+  macOS image, AppVeyor `reicast.sln`, Wercker's old box) — one CI package settles them; unconditional code only Android used
+  (virtual gamepad, microphone, screen orientation) goes with the imgui GUI (track 10); SDL / joystick / XAudio backends that
+  no CMake target lists; GLES paths and `gl.rpi4_workaround` go with the renderers (track 9).
 - Timing tiers are **run-time** settings, one per processor, in a new settings group:
   `Timing.SH4`, `Timing.AICA`, `Timing.ARM7` = `fast` | `cycle-similar` | `cycle-accurate` (+ one preset selector in the UI).
   `fast` keeps today's speed tricks but with its functional bugs fixed, and is the only tier with speed options (idle skip,
@@ -88,8 +92,9 @@ server off / on without a client / with an idle breakpoint / compiled out. Also 
 `dc.aica.arm7` and the runner follow-up (design 4.2.2). Known and recorded: after a machine reset ARMRST reads "released" while
 the ARM7 is not clocked until the guest first writes it (AICA / ARM7 tier work, needs a console measurement); the grace test
 does not pin that a connect ends the expired grace state; no real MSVC build yet (package W64).
-Next, one workflow at a time, in this order unless the user reorders: P-desktop (desktop-only cleanup, libretro out), J1
-(`CpuRunning` atomic, x64 code cache over thread starts), then M2-M4 (E6-E9, F3-F5, the DSP core wired in), track 10 (one web
+P-desktop (desktop-only cleanup, libretro out) is done and merged the same day (`skmp/nulldc3` = 5ac00392).
+Next, one workflow at a time, in this order unless the user reorders: J1 (`CpuRunning` atomic, x64 code cache over thread
+starts, the three leftovers of design 6.1.2), then M2-M4 (E6-E9, F3-F5, the DSP core wired in), track 10 (one web
 UI), track 3 (cycle-similar). Devtools: F0, F1, F2 and the round after design revision 3 are done and verified.
 Known defects recorded by E4a's verifier, not caused by it (package J1): the x64 JIT keeps the code of earlier emulator threads, so after a
 few hundred host stop/start cycles in one process the 10 MB code cache is full and the guest crawls; `Sh4Context::CpuRunning`
