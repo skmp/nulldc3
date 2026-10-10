@@ -880,16 +880,23 @@ struct recSH4 : SuperH4Backend {
             verify(sh4_cpu->mram.data == ((u8*)p_sh4rcb->sq_buffer + 512 + 0x0C000000));
         }
 
-        // Prepare some pointer to the pre-allocated code cache:
-        void* candidate_ptr = (void*)(((unat)SH4_TCB + REI_PAGE_MASK) & ~REI_PAGE_MASK);
+        // The code region is the process's: the host prepares it for the first backend object, and every one
+        // behind it, which is every later emulator thread, finds it where it is. No host frees the region, and
+        // not every host hands the same one out twice: Windows maps a new one near the program at every call,
+        // and has no room for the next after some two hundred of them
+        if (CodeCache == NULL)
+        {
+            // Prepare some pointer to the pre-allocated code cache:
+            void* candidate_ptr = (void*)(((unat)SH4_TCB + REI_PAGE_MASK) & ~REI_PAGE_MASK);
 
-        // Call the platform-specific magic to make the pages RWX
-        CodeCache = NULL;
+            // Call the platform-specific magic to make the pages RWX
 #ifdef FEAT_NO_RWX_PAGES
-        verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache, &cc_rx_offset));
+            verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache, &cc_rx_offset));
 #else
-        verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache));
+            verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache));
 #endif
+        }
+
         // Ensure the pointer returned is non-null
         verify(CodeCache != NULL);
 
