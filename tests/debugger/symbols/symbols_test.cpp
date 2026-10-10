@@ -269,6 +269,18 @@ namespace
 			{ "alias_obj",   0x8C020000, 8,     kObject,  kGlobal, kText },
 			{ "alias_func",  0x8C020000, 8,     kFunc,    kLocal,  kText },
 			{ "alias_gfunc", 0x8C020000, 8,     kFunc,    kGlobal, kText },
+			// absolute symbols and symbols of a section at one address, the same in type and binding: the
+			// first one of a section names it. (A KallistiOS program has __executable_start, absolute, in
+			// front of _start.)
+			{ "abs_first",   0x8C040000, 0,     kNotype,  kGlobal, kAbs  },
+			{ "sect_second", 0x8C040000, 0,     kNotype,  kGlobal, kText },
+			{ "abs_third",   0x8C040000, 0,     kNotype,  kGlobal, kAbs  },
+			{ "sect_fourth", 0x8C040000, 0,     kNotype,  kGlobal, kText },
+			// type and binding come first
+			{ "sect_label",  0x8C040100, 0,     kNotype,  kGlobal, kText },
+			{ "abs_func",    0x8C040100, 4,     kFunc,    kGlobal, kAbs  },
+			{ "sect_local",  0x8C040200, 0,     kNotype,  kLocal,  kText },
+			{ "abs_global",  0x8C040200, 0,     kNotype,  kGlobal, kAbs  },
 			// what the table does not take
 			{ "",            0x8C010000, 0,     kSection, kLocal,  kText },
 			{ ".text",       0x8C010000, 0,     kSection, kLocal,  kText },
@@ -282,7 +294,7 @@ namespace
 		};
 	}
 
-	const size_t kFixtureSymbols = 14;
+	const size_t kFixtureSymbols = 22;
 
 	struct Found {
 		bool ok;
@@ -389,6 +401,15 @@ namespace
 		CheckIn(0x8C020000, "alias_gfunc", 0, "of several symbols at one address the global function names it");
 		CheckIn(0x8C020007, "alias_gfunc", 7, "and what lies in it");
 		CheckIn(0x8C020008, "alias_label", 8, "behind the sized ones, the label of that address still reaches to the next symbol");
+
+		// a symbol of a section and an absolute one
+		CheckIn(0x8C040000, "sect_second", 0, "of absolute symbols and symbols of a section at one address, the same in type and binding, the first one of a section names it");
+		CheckIn(0x8C040080, "sect_second", 0x80, "and what lies behind it");
+		Check(symbols::Find("abs_first", &addr) && addr == 0x8C040000 && symbols::Find("abs_third", &addr) && addr == 0x8C040000,
+			"the absolute symbols of that address are found by their names (%08X)", addr);
+		CheckIn(0x8C040100, "abs_func", 0, "the type comes first: an absolute function names its address before a label of a section");
+		CheckIn(0x8C040104, "sect_label", 4, "which names what lies behind the function");
+		CheckIn(0x8C040200, "abs_global", 0, "and so does the binding: a global absolute symbol names its address before a local symbol of a section");
 
 		// the text form
 		Check(Text(0x8C010040) == "_main", "the text form at the start of a symbol is its name (\"%s\")", Text(0x8C010040).c_str());

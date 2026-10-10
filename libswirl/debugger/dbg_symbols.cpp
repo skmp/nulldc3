@@ -43,6 +43,7 @@ const unsigned kSttObject = 1;
 const unsigned kSttFunc = 2;
 
 const uint16_t kShnUndef = 0;
+const uint16_t kShnAbs = 0xFFF1;
 
 struct Symbol {
 	uint32_t key;			// the address, masked: what is compared
@@ -173,8 +174,10 @@ void Load(const uint8_t* image, size_t size)
 			s.size = sym_size;
 			s.end = 0;
 			// a function names its address before an object does, that before a label; a global one before
-			// a local one
-			s.rank = (uint8_t)((type == kSttFunc ? 0 : type == kSttObject ? 2 : 4) + (bind != 0 ? 0 : 1));
+			// a local one; and of two that are the same in both, the symbol of a section before an absolute
+			// one. An absolute symbol is a number the linker was given: where a program is linked to start
+			// (__executable_start of a KallistiOS program has the address of _start), a size, a constant
+			s.rank = (uint8_t)((type == kSttFunc ? 0 : type == kSttObject ? 4 : 8) + (bind != 0 ? 0 : 2) + (shndx == kShnAbs ? 1 : 0));
 			s.order = (uint32_t)table.size();
 			s.name.assign((const char*)text, length);
 
