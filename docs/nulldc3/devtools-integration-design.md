@@ -144,8 +144,8 @@ source glob (evaluated at configure time: re-run CMake after a merge that adds a
 protocol number has one source, `dbg::kProtocolVersion` in `dbg_webui.h`; the embed check reads it from that line.
 `cmake_minimum_required` stays 3.10; embedding the UI needs CMake 3.19 (`string(JSON)`, `file(ARCHIVE_CREATE)`), and an
 older CMake builds the debugger without the bundle. Option `NULLDC_DEBUGGER`: default ON, also on the interpreter-only
-generic host path. As built it defaults to OFF for `LIBRETRO_CORE`, `TARGET_NSW` and `TARGET_PS4`; those three switches
-leave the tree with PLAN package P-desktop, and the option then has one default. It stays an option: the tests project
+generic host path. It has one default: the three switches it was OFF for (`LIBRETRO_CORE`, `TARGET_NSW`, `TARGET_PS4`)
+left the tree with PLAN package P-desktop. It stays an option: the tests project
 and the no-regression gates of 5.7 build with it OFF. When OFF, `debugger.h` provides empty inline stand-ins (the SH4
 breakpoint query is constant false, so no check is ever compiled) and no file of `libswirl/debugger/` is compiled. The
 CMake build is the only build of the tree (the make build went with package B64).

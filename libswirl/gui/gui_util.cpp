@@ -48,17 +48,7 @@ void select_directory_popup(const char *prompt, float scaling, StringCallback ca
 {
 	if (select_current_directory.empty())
 	{
-#if defined(_ANDROID)
-		const char *home = getenv("REICAST_HOME");
-		if (home != NULL)
-		{
-			const char *pcolon = strchr(home, ':');
-			if (pcolon != NULL)
-				select_current_directory = std::string(home, pcolon - home);
-			else
-				select_current_directory = home;
-		}
-#elif HOST_OS == OS_LINUX || HOST_OS == OS_DARWIN
+#if HOST_OS == OS_LINUX || HOST_OS == OS_DARWIN
 		const char *home = getenv("HOME");
 		if (home != NULL)
 			select_current_directory = home;
@@ -110,27 +100,6 @@ void select_directory_popup(const char *prompt, float scaling, StringCallback ca
 						select_subfolders.push_back(std::string(1, (char)('A' + i)) + ":\\");
 			}
 			else
-#elif _ANDROID
-			if (select_current_directory == PSEUDO_ROOT)
-			{
-				error_message = "Storage Locations";
-				const char *home = getenv("REICAST_HOME");
-				while (home != NULL)
-				{
-					const char *pcolon = strchr(home, ':');
-					if (pcolon != NULL)
-					{
-						select_subfolders.push_back(std::string(home, pcolon - home));
-						home = pcolon + 1;
-					}
-					else
-					{
-						select_subfolders.push_back(home);
-						home = NULL;
-					}
-				}
-			}
-			else
 #endif
 			{
 				DIR *dir = opendir(select_current_directory.c_str());
@@ -172,7 +141,7 @@ void select_directory_popup(const char *prompt, float scaling, StringCallback ca
 						}
 					}
 					closedir(dir);
-#if defined(_WIN32) || defined(_ANDROID)
+#if defined(_WIN32)
 					if (!dotdot_seen)
 						select_subfolders.push_back("..");
 #endif
@@ -224,14 +193,10 @@ void select_directory_popup(const char *prompt, float scaling, StringCallback ca
 						child_path += native_separator;
 #endif
 				}
-#ifdef _ANDROID
-				if (access(child_path.c_str(), R_OK) != 0)
-					child_path = PSEUDO_ROOT;
-#endif
 			}
 			else
 			{
-#if defined(_WIN32) || defined(_ANDROID)
+#if defined(_WIN32)
 				if (path == PSEUDO_ROOT)
 					child_path = name;
 				else

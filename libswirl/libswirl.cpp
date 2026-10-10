@@ -100,17 +100,13 @@ int64_t get_time_usec(void)
     if (!QueryPerformanceCounter(&count))
         return 0;
     return count.QuadPart * 1000000 / freq.QuadPart;
-#elif defined(_POSIX_MONOTONIC_CLOCK) || defined(__QNX__) || defined(ANDROID) || defined(__MACH__) || HOST_OS==OS_LINUX
+#elif defined(_POSIX_MONOTONIC_CLOCK) || defined(__MACH__) || HOST_OS==OS_LINUX
     struct timespec tv = { 0 };
     if (clock_gettime(CLOCK_MONOTONIC, &tv) < 0)
         return 0;
     return tv.tv_sec * INT64_C(1000000) + (tv.tv_nsec + 500) / 1000;
 #elif defined(EMSCRIPTEN)
     return emscripten_get_now() * 1000;
-#elif defined(__mips__) || defined(DJGPP)
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (1000000 * tv.tv_sec + tv.tv_usec);
 #else
 #error "Your platform does not have a timer function implemented in cpu_features_get_time_usec(). Cannot continue."
 #endif
@@ -344,22 +340,13 @@ void InitSettings()
         settings.input.maple_expansion_devices[i][1] = i == 0 ? MDT_SegaVMU : MDT_None;
     }
 
-#if SUPPORT_DISPMANX
-    settings.dispmanx.Width = 640;
-    settings.dispmanx.Height = 480;
-    settings.dispmanx.Keep_Aspect = true;
-#endif
 
-#if (HOST_OS != OS_LINUX || defined(_ANDROID) || defined(TARGET_PANDORA))
+#if (HOST_OS != OS_LINUX)
     settings.aica.BufferSize = 2048;
 #else
     settings.aica.BufferSize = 1024;
 #endif
 
-#if USE_OMX
-    settings.omx.Audio_Latency = 100;
-    settings.omx.Audio_HDMI = true;
-#endif
 }
 
 void LoadSettings(bool game_specific)
@@ -449,22 +436,13 @@ void LoadSettings(bool game_specific)
         settings.input.maple_expansion_devices[i][1] = (MapleDeviceType)cfgLoadInt(input_section, device_name, settings.input.maple_expansion_devices[i][1]);
     }
 
-#if SUPPORT_DISPMANX
-    settings.dispmanx.Width = cfgLoadInt(game_specific ? cfgGetGameId() : "dispmanx", "width", settings.dispmanx.Width);
-    settings.dispmanx.Height = cfgLoadInt(game_specific ? cfgGetGameId() : "dispmanx", "height", settings.dispmanx.Height);
-    settings.dispmanx.Keep_Aspect = cfgLoadBool(game_specific ? cfgGetGameId() : "dispmanx", "maintain_aspect", settings.dispmanx.Keep_Aspect);
-#endif
 
-#if (HOST_OS != OS_LINUX || defined(_ANDROID) || defined(TARGET_PANDORA))
+#if (HOST_OS != OS_LINUX)
     settings.aica.BufferSize = 2048;
 #else
     settings.aica.BufferSize = 1024;
 #endif
 
-#if USE_OMX
-    settings.omx.Audio_Latency = cfgLoadInt(game_specific ? cfgGetGameId() : "omx", "audio_latency", settings.omx.Audio_Latency);
-    settings.omx.Audio_HDMI = cfgLoadBool(game_specific ? cfgGetGameId() : "omx", "audio_hdmi", settings.omx.Audio_HDMI);
-#endif
 
     if (!game_specific)
     {
@@ -611,10 +589,6 @@ void SaveSettings()
 
     GamepadDevice::SaveMaplePorts();
 
-#ifdef _ANDROID
-    void SaveAndroidSettings();
-    SaveAndroidSettings();
-#endif
 }
 
 int reicast_init(int argc, char* argv[])
@@ -644,17 +618,13 @@ int reicast_init(int argc, char* argv[])
 
     runctl_configure();
 
-#if BUILD_RETROARCH_CORE == 0
     os_CreateWindow();
-#endif
     os_SetupInput();
 
     g_GUI.reset(GUI::Create());
     g_GUI->Init();
 
-#if BUILD_RETROARCH_CORE == 0
     g_GUIRenderer.reset(GUIRenderer::Create(g_GUI.get()));
-#endif
 
     if (showOnboarding)
         g_GUI->OpenOnboarding();

@@ -15,11 +15,6 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmacro-redefined"
 #endif
-#ifdef _ANDROID
-#include <sys/mman.h>
-#undef REI_PAGE_MASK
-#define REI_PAGE_MASK (REI_PAGE_SIZE-1)
-#else
 #if HOST_OS == OS_DARWIN
 #define REI_PAGE_SIZE 16384
 #else
@@ -27,7 +22,6 @@
 #endif
 #undef REI_PAGE_MASK
 #define REI_PAGE_MASK (REI_PAGE_SIZE-1)
-#endif
 #if BUILD_COMPILER==COMPILER_CLANG
 #pragma clang diagnostic pop
 #endif

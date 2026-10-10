@@ -14,7 +14,4 @@ build:
         - script:
             name: reicast Linux x64 cmake
             code: mkdir build-standalone && cd build-standalone && cmake .. -G Ninja && ninja
-        - script:
-            name: reicast Linux x64 cmake libretro
-            code: mkdir build-libretro && cd build-libretro && cmake .. -DLIBRETRO_CORE=ON -G Ninja && ninja
 

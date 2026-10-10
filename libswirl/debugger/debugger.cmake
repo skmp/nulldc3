@@ -3,12 +3,7 @@
 # Included once from the top-level CMakeLists.txt, after core_SRCS is set and before the target is created.
 # The code tests NULLDC_DEBUGGER; with the option OFF nothing under libswirl/debugger is compiled.
 
-# The server needs threads and sockets, which the console targets do not have, and a libretro core
-# should not open a listening socket unless asked to.
 set(NULLDC_DEBUGGER_DEFAULT ON)
-if(LIBRETRO_CORE OR TARGET_NSW OR TARGET_PS4)
-  set(NULLDC_DEBUGGER_DEFAULT OFF)
-endif()
 option(NULLDC_DEBUGGER "Debugger server for the devtools UI (HTTP + WebSocket)" ${NULLDC_DEBUGGER_DEFAULT})
 
 if(NULLDC_DEBUGGER)

@@ -330,11 +330,6 @@ struct maple_device_instance
 #include <stdlib.h>
 #include <stdio.h>
 
-#if defined(TARGET_NACL32)
-	int nacl_printf(const wchar* Text,...);
-	#define printf nacl_printf
-	#define puts(X) printf("%s\n", X)
-#endif
 
 #if HOST_OS == OS_DARWIN
 int darw_printf(const wchar* Text,...);
@@ -536,22 +531,7 @@ struct settings_t
 	} audio;
 
 
-#if USE_OMX
-	struct
-	{
-		u32 Audio_Latency;
-		bool Audio_HDMI;
-	} omx;
-#endif
 
-#if SUPPORT_DISPMANX
-	struct
-	{
-		u32 Width;
-		u32 Height;
-		bool Keep_Aspect;
-	} dispmanx;
-#endif
 
 	struct
 	{
@@ -608,27 +588,6 @@ inline bool is_u16(u32 v) { return (u16)v==(u32)v; }
 
 static inline void do_nada(...) { }
 
-#ifdef _ANDROID
-#include <android/log.h>
-
-#ifdef printf
-#undef printf
-#endif
-
-#ifdef puts
-#undef puts
-#endif
-
-#define LOG_TAG   "devcast"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,LOG_TAG,__VA_ARGS__)
-#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,LOG_TAG,__VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR,LOG_TAG,__VA_ARGS__)
-#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG,LOG_TAG,__VA_ARGS__)
-
-#define puts      LOGI
-#define printf    LOGI
-#define putinf    LOGI
-#endif
 
 
 

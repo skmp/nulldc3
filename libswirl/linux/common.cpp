@@ -33,7 +33,7 @@
 #include <sys/param.h>
 #include <sys/mman.h>
 #include <sys/time.h>
-#if !defined(TARGET_BSD) && !defined(TARGET_IPHONE) && !defined(TARGET_NACL32) && !defined(TARGET_EMSCRIPTEN) && !defined(TARGET_OSX) && !defined(TARGET_OSX_X64)
+#if !defined(TARGET_EMSCRIPTEN) && !defined(TARGET_OSX) && !defined(TARGET_OSX_X64)
   #include <sys/personality.h>
   #include <dlfcn.h>
 #endif
@@ -350,11 +350,7 @@ double os_GetSeconds()
 	return a.tv_sec-tvs_base+a.tv_usec/1000000.0;
 }
 
-#if TARGET_IPHONE
-void os_DebugBreak() {
-    __asm__("trap");
-}
-#elif HOST_OS != OS_LINUX
+#if HOST_OS != OS_LINUX
 void os_DebugBreak()
 {
 	__builtin_trap();
@@ -362,7 +358,7 @@ void os_DebugBreak()
 #endif
 
 void linux_fix_personality() {
-    #if !defined(TARGET_BSD) && !defined(_ANDROID) && !defined(TARGET_OS_MAC) && !defined(TARGET_NACL32) && !defined(TARGET_EMSCRIPTEN)
+    #if !defined(TARGET_OS_MAC) && !defined(TARGET_EMSCRIPTEN)
         printf("Personality: %08X\n", personality(0xFFFFFFFF));
         personality(~READ_IMPLIES_EXEC & personality(0xFFFFFFFF));
         printf("Updated personality: %08X\n", personality(0xFFFFFFFF));
@@ -370,21 +366,6 @@ void linux_fix_personality() {
 }
 
 void linux_rpi2_init() {
-#if !defined(TARGET_BSD) && !defined(_ANDROID) && !defined(TARGET_NACL32) && !defined(TARGET_EMSCRIPTEN) && defined(TARGET_VIDEOCORE)
-	void* handle;
-	void (*rpi_bcm_init)(void);
-
-	handle = dlopen("libbcm_host.so", RTLD_LAZY);
-	
-	if (handle) {
-		printf("found libbcm_host\n");
-		*(void**) (&rpi_bcm_init) = dlsym(handle, "bcm_host_init");
-		if (rpi_bcm_init) {
-			printf("rpi2: bcm_init\n");
-			rpi_bcm_init();
-		}
-	}
-#endif
 }
 
 void common_linux_setup()

@@ -20,13 +20,8 @@
 #include "deps/zlib/zlib.h"
 #include "deps/xxhash/xxhash.h"
 
-#if _ANDROID
-#include <android/log.h>
-#include <jni.h>
-#else
 #define LOGW printf
 #define LOGI printf
-#endif
 #ifndef RELEASE
 #define LOGJVS(...) LOGI(__VA_ARGS__)
 #else
@@ -991,12 +986,10 @@ struct maple_microphone: maple_base
 					w8(0x04);//status (just the bit for recording)
 					w8(0x0f);//gain (default)
 					w8(0);//exp ?
-#ifndef TARGET_PANDORA
 					if(get_mic_data(micdata)){
 						w8(240);//ct (240 samples)
 						wptr(micdata, SIZE_OF_MIC_DATA);
 					}else
-#endif
 					{
 						w8(0);
 					}

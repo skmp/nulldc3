@@ -11,7 +11,7 @@ Workdir/lib*ant.properties
 refsw-offline/refsw-offline
 refsw-offline/FB_W_SOF1.png
 
-# iOS General
+# Xcode General
 .DS_Store
 */build/*
 **/build/*
@@ -33,8 +33,6 @@ reicast.xccheckout
 build/*
 *.so
 *Karen_angelXwind*
-local.properties
-ant.properties
 *build_obj
 *.d
 Workdir/data
@@ -43,7 +41,6 @@ Workdir/vmu*
 Workdir/webui*
 Workdir/emu.cfg
 Workdir/lib*ant.properties
-reicast-ios.xccheckout
 
 # Linux General
 reicast/linux/.map
@@ -56,23 +53,8 @@ reicast/linux/dispframe.elf
 # Visual Studio
 generated
 .vs
-
-# Android General
 bin/
-gen/
 obj/
-build/*
-*.so
-local.properties
-ant.properties
-
-# Android Studio
-.gradle
-*.iml
-.externalNativeBuild
-gradle.properties
-reicast/android-studio/reicast/src/main/assets/build
-reicast/android-studio/reicast/.cxx
 
 # JetBrains IDES
 .idea/

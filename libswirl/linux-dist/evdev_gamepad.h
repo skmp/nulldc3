@@ -29,11 +29,6 @@ public:
 
 		if (!find_mapping(mapping_file))
 		{
-#if defined(TARGET_PANDORA)
-			mapping_file = "controller_pandora.cfg";
-#elif defined(TARGET_GCW0)
-			mapping_file = "controller_gcwz.cfg";
-#else
 			if (_name == "Microsoft X-Box 360 pad"
 				|| _name == "Xbox 360 Wireless Receiver"
 				|| _name == "Xbox 360 Wireless Receiver (XBOX)")
@@ -53,7 +48,6 @@ public:
 			{
 				mapping_file = "controller_generic.cfg";
 			}
-#endif
 			if (find_mapping(mapping_file))
 			{
 				printf("using default mapping '%s'\n", input_mapper->name.c_str());

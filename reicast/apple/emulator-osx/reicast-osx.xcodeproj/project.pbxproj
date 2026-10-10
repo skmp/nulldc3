@@ -617,13 +617,7 @@
 		5312CC8D24081FE500C67C85 /* context.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = context.cpp; sourceTree = "<group>"; };
 		5312CC8E24081FE500C67C85 /* context.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = context.h; sourceTree = "<group>"; };
 		5312CC9024081FE500C67C85 /* nixprof.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = nixprof.cpp; sourceTree = "<group>"; };
-		5312CC9224081FE500C67C85 /* utils.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = utils.h; sourceTree = "<group>"; };
-		5312CC9324081FE500C67C85 /* utils.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = utils.cpp; sourceTree = "<group>"; };
-		5312CC9424081FE500C67C85 /* android_gamepad.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = android_gamepad.h; sourceTree = "<group>"; };
-		5312CC9524081FE500C67C85 /* Android.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Android.cpp; sourceTree = "<group>"; };
-		5312CC9624081FE500C67C85 /* Android.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Android.h; sourceTree = "<group>"; };
 		5312CC9724081FE500C67C85 /* stdclass.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = stdclass.h; sourceTree = "<group>"; };
-		5312CC9924081FE500C67C85 /* gui_android.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gui_android.h; sourceTree = "<group>"; };
 		5312CC9A24081FE500C67C85 /* gui_settings.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gui_settings.cpp; sourceTree = "<group>"; };
 		5312CC9B24081FE500C67C85 /* gui_renderer.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gui_renderer.cpp; sourceTree = "<group>"; };
 		5312CC9C24081FE500C67C85 /* gui_settings_social.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gui_settings_social.cpp; sourceTree = "<group>"; };
@@ -631,7 +625,6 @@
 		5312CC9E24081FE500C67C85 /* gui_settings_controls.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gui_settings_controls.cpp; sourceTree = "<group>"; };
 		5312CC9F24081FE500C67C85 /* gui_renderer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gui_renderer.h; sourceTree = "<group>"; };
 		5312CCA024081FE500C67C85 /* gui_util.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gui_util.cpp; sourceTree = "<group>"; };
-		5312CCA124081FE500C67C85 /* gui_android.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gui_android.cpp; sourceTree = "<group>"; };
 		5312CCA224081FE500C67C85 /* gui.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gui.h; sourceTree = "<group>"; };
 		5312CCA324081FE500C67C85 /* gui_partials.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = gui_partials.h; sourceTree = "<group>"; };
 		5312CCA424081FE500C67C85 /* gui.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = gui.cpp; sourceTree = "<group>"; };
@@ -1007,7 +1000,6 @@
 		5312CECE24081FE600C67C85 /* audiobackend_pulseaudio.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = audiobackend_pulseaudio.cpp; sourceTree = "<group>"; };
 		5312CED024081FE600C67C85 /* threading.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = threading.cpp; sourceTree = "<group>"; };
 		5312CED124081FE600C67C85 /* audiobackend_sdl2.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = audiobackend_sdl2.cpp; sourceTree = "<group>"; };
-		5312CED224081FE600C67C85 /* audiobackend_omx.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = audiobackend_omx.cpp; sourceTree = "<group>"; };
 		5312CED324081FE600C67C85 /* oslib.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = oslib.h; sourceTree = "<group>"; };
 		5312CED424081FE600C67C85 /* audiobackend_coreaudio.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = audiobackend_coreaudio.cpp; sourceTree = "<group>"; };
 		5312CED524081FE600C67C85 /* threading.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = threading.h; sourceTree = "<group>"; };
@@ -1052,11 +1044,9 @@
 		5312CF0924081FE600C67C85 /* main.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = main.h; sourceTree = "<group>"; };
 		5312CF0A24081FE600C67C85 /* x11.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = x11.cpp; sourceTree = "<group>"; };
 		5312CF0B24081FE600C67C85 /* emscripten.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = emscripten.cpp; sourceTree = "<group>"; };
-		5312CF0C24081FE600C67C85 /* dispmanx.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = dispmanx.cpp; sourceTree = "<group>"; };
 		5312CF0D24081FE600C67C85 /* joystick.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = joystick.h; sourceTree = "<group>"; };
 		5312CF0E24081FE600C67C85 /* emscripten.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = emscripten.h; sourceTree = "<group>"; };
 		5312CF0F24081FE600C67C85 /* x11.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = x11.h; sourceTree = "<group>"; };
-		5312CF1024081FE600C67C85 /* dispmanx.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = dispmanx.h; sourceTree = "<group>"; };
 		5312CF1124081FE600C67C85 /* evdev.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = evdev.h; sourceTree = "<group>"; };
 		5312CF1224081FE600C67C85 /* joystick.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = joystick.cpp; sourceTree = "<group>"; };
 		5312CF1324081FE600C67C85 /* evdev_gamepad.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = evdev_gamepad.h; sourceTree = "<group>"; };
@@ -1281,7 +1271,6 @@
 				5312CB5824081FE500C67C85 /* version.h */,
 				5312CC1724081FE500C67C85 /* version.h.in */,
 				5312CC4B24081FE500C67C85 /* README.md */,
-				5312CC9124081FE500C67C85 /* android */,
 				5312CC1024081FE500C67C85 /* archive */,
 				5312CC4524081FE500C67C85 /* cfg */,
 				5312CCAC24081FE500C67C85 /* deps */,
@@ -1797,22 +1786,9 @@
 			path = nixprof;
 			sourceTree = "<group>";
 		};
-		5312CC9124081FE500C67C85 /* android */ = {
-			isa = PBXGroup;
-			children = (
-				5312CC9224081FE500C67C85 /* utils.h */,
-				5312CC9324081FE500C67C85 /* utils.cpp */,
-				5312CC9424081FE500C67C85 /* android_gamepad.h */,
-				5312CC9524081FE500C67C85 /* Android.cpp */,
-				5312CC9624081FE500C67C85 /* Android.h */,
-			);
-			path = android;
-			sourceTree = "<group>";
-		};
 		5312CC9824081FE500C67C85 /* gui */ = {
 			isa = PBXGroup;
 			children = (
-				5312CC9924081FE500C67C85 /* gui_android.h */,
 				5312CC9A24081FE500C67C85 /* gui_settings.cpp */,
 				5312CC9B24081FE500C67C85 /* gui_renderer.cpp */,
 				5312CC9C24081FE500C67C85 /* gui_settings_social.cpp */,
@@ -1820,7 +1796,6 @@
 				5312CC9E24081FE500C67C85 /* gui_settings_controls.cpp */,
 				5312CC9F24081FE500C67C85 /* gui_renderer.h */,
 				5312CCA024081FE500C67C85 /* gui_util.cpp */,
-				5312CCA124081FE500C67C85 /* gui_android.cpp */,
 				5312CCA224081FE500C67C85 /* gui.h */,
 				5312CCA324081FE500C67C85 /* gui_partials.h */,
 				5312CCA424081FE500C67C85 /* gui.cpp */,
@@ -2506,7 +2481,6 @@
 				5312CECE24081FE600C67C85 /* audiobackend_pulseaudio.cpp */,
 				5312CECF24081FE600C67C85 /* posix */,
 				5312CED124081FE600C67C85 /* audiobackend_sdl2.cpp */,
-				5312CED224081FE600C67C85 /* audiobackend_omx.cpp */,
 				5312CED324081FE600C67C85 /* oslib.h */,
 				5312CED424081FE600C67C85 /* audiobackend_coreaudio.cpp */,
 				5312CED524081FE600C67C85 /* threading.h */,
@@ -2643,11 +2617,9 @@
 				5312CF0924081FE600C67C85 /* main.h */,
 				5312CF0A24081FE600C67C85 /* x11.cpp */,
 				5312CF0B24081FE600C67C85 /* emscripten.cpp */,
-				5312CF0C24081FE600C67C85 /* dispmanx.cpp */,
 				5312CF0D24081FE600C67C85 /* joystick.h */,
 				5312CF0E24081FE600C67C85 /* emscripten.h */,
 				5312CF0F24081FE600C67C85 /* x11.h */,
-				5312CF1024081FE600C67C85 /* dispmanx.h */,
 				5312CF1124081FE600C67C85 /* evdev.h */,
 				5312CF1224081FE600C67C85 /* joystick.cpp */,
 				5312CF1324081FE600C67C85 /* evdev_gamepad.h */,
