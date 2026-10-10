@@ -186,6 +186,32 @@ class Client:
         ticks, self.pending = self.pending, []
         return ticks
 
+    def send_and_leave(self, method, params, timeout=3.0):
+        """A request, and the end of the connection right behind it: no answer is waited for and there is no
+        closing handshake. The server reads the request and then the end of the stream, in that order: only the
+        sending side is closed here, and what the server still sends is read until it has closed its side, so
+        that nothing of the request is lost to a reset of the connection."""
+        request_id = self.next_id
+        self.next_id += 1
+        try:
+            self._send(1, json.dumps({'jsonrpc': '2.0', 'id': request_id, 'method': method, 'params': params}).encode('utf-8'))
+            self.sock.shutdown(socket.SHUT_WR)
+        except OSError as error:
+            self.sock.close()
+            raise Error('%s: the connection is gone: %s' % (method, error))
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                self.sock.settimeout(left)
+                if not self.sock.recv(1 << 18):
+                    break
+        except OSError:
+            pass
+        self.sock.close()
+
     def close(self):
         try:
             self._send(8, struct.pack('>H', 1000))

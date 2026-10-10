@@ -13,7 +13,8 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
     grace          a client leaves the target stopped at a breakpoint that is reached in every frame; 11 s later
                    the target has run on without stopping there, and the breakpoint stops it again, unasked,
                    in front of the next client; the tables as they were, the note of the grace period in the
-                   event log, and the event gates open again
+                   event log, and the event gates open again; and when that client resumes and leaves, the
+                   breakpoint stops the target within the new grace period
     config         the configuration errors: three runs that end by themselves with exit code 2; and a server
                    that was enabled and cannot be started (its port is taken): exit code 2 with
                    Debugger:Required or Debugger:StartPaused, one line and a run without the server otherwise
@@ -399,10 +400,36 @@ def mode_grace(args):
         check(described['executionState'] == state, 'a describe changes nothing of the stop: %r, was %r' % (described['executionState'], state), run)
         check(len(notes(described)) == 2, 'the event gates are open again for the new client: its describe with protocol 2 is noted in the event '
               'log (%d dc.debugger.note entries, 2 with the note of the grace period)' % len(notes(described)), run)
-        c.close()
+
+        # The connect ended the expired state of the grace period, and not only for as long as this client stays.
+        # It resumes the target and leaves right behind its request: a new period begins, breakpoints are active
+        # in it, and the function of every frame stops the target within a frame. With the expired state left as
+        # it was, breakpoints would be inactive the moment this client is gone, and the target would run until
+        # the next client connects
+        c.send_and_leave('control.runUntil', {})
+        time.sleep(3.0)
+        d = wsclient.Client('127.0.0.1', port)
+        found = d.describe()
+        new = found['executionState']
+        left_again = 'the client that the grace period had expired for resumed the target and left'
+        check(new != state, '%s, and 3 s later the target is at the stop that was resumed (%r): the resume was not taken' % (left_again, new), run)
+        check(new['state'] == 'paused', 'the connect did not end the expired state of the grace period: %s, and 3 s later, inside the new '
+              'grace period, the target runs (%r). The enabled breakpoint on %s, which is reached in every frame, has not stopped it: '
+              'breakpoints were inactive the moment the last client had left' % (left_again, new, where), run)
+        check(new.get('reason') == 'breakpoint' and new.get('breakpointId') == stop['breakpointId'] and new['stopId'] == state['stopId'] + 1,
+              '%s: the stop a client finds 3 s later is not the next stop of the breakpoint on %s: %r, the stop that was resumed was %r'
+              % (left_again, where, new, state), run)
+        behind = register_value(found, 'dc.timing', 'SH4_CYCLES') - register_value(hit, 'dc.timing', 'SH4_CYCLES')
+        check(0 <= behind <= 3 * FRAME_CYCLES, 'the connect did not end the expired state of the grace period: %s, and the breakpoint on %s, '
+              'which is reached in every frame, stopped the target %d SH4 cycles behind the stop that was resumed, which is more than three '
+              'frames (%d). Breakpoints were inactive when the last client had left, and are active again since this one connected'
+              % (left_again, where, behind, 3 * FRAME_CYCLES), run)
+        d.close()
         print('stopped at %s (stop %d), left alone for %.1f s: released, %.1f frames without a stop there, then stop %d in front of the next '
-              'client, unasked; 2 breakpoints, 2 watches and the categories as they were; note: %s'
-              % (where, stop['stopId'], time.monotonic() - left, ran / FRAME_CYCLES, state['stopId'], noted[0]['message']))
+              'client, unasked; 2 breakpoints, 2 watches and the categories as they were; note: %s; that client resumed and left, and stop %d '
+              'was made %.1f frames behind its resume, inside the new grace period'
+              % (where, stop['stopId'], time.monotonic() - left, ran / FRAME_CYCLES, state['stopId'], noted[0]['message'], new['stopId'],
+                 behind / FRAME_CYCLES))
     except wsclient.Error as error:
         check(False, 'the client: %s' % error, run)
     finally:
