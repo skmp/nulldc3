@@ -854,6 +854,22 @@ Engine machine_engine()
 	return engine;
 }
 
+void machine_thread_start()
+{
+	//SuperH4_impl::setBackend: the new object takes the place of the one before it, which ends, and is
+	//initialised then
+	SuperH4Backend* fresh = Get_Sh4Recompiler();
+
+	delete backends[0];
+	backends[0] = fresh;
+
+	if (backend != backends[1])
+		backend = fresh;
+
+	if (!fresh->Init())
+		fatal("backend init");
+}
+
 void machine_reset(Engine e)
 {
 	engine = e;

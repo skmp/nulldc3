@@ -52,8 +52,15 @@ void vmem_platform_ondemand_page(void* address, unsigned size_bytes) { }
 void vmem_platform_create_mappings(const vmem_mapping* vmem_maps, unsigned nummaps) { }
 void vmem_platform_destroy() { }
 
+//How often the recompiler had the host prepare a code region (the gate threads). Here a call makes the pages
+//of the region executable where they are, as the emulator does on Linux; the emulator on Windows maps a new
+//region near the program for every call and frees none
+u32 jit_block_prepares;
+
 bool vmem_platform_prepare_jit_block(void* code_area, unsigned size, void** code_area_rwx)
 {
+	jit_block_prepares++;
+
 #if defined(_WIN32)
 	DWORD old;
 	if (!VirtualProtect(code_area, size, PAGE_EXECUTE_READWRITE, &old))

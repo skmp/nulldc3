@@ -102,6 +102,10 @@ void machine_reset(Engine engine);
 
 Engine machine_engine();
 
+//A new emulator thread: it makes the backend object of the recompiler anew, as dc_run does at every start of a
+//thread (SuperH4_impl::setBackend). The object before it is gone. machine_reset() comes next
+void machine_thread_start();
+
 //The debugger writes the pc
 void machine_set_pc(u32 pc);
 
