@@ -894,6 +894,20 @@ struct recSH4 : SuperH4Backend {
         verify(CodeCache != NULL);
 
        // memset(CodeCache, 0xFF, CODE_SIZE);
+
+        // Every backend object starts with an empty code cache, and every emulator thread makes one. The code
+        // generator is one object for the whole process: its Init() writes its stubs where the cache has got
+        // to and sets the base of what a cache clear recycles behind them (emit_SetBaseAddr). Entered with the
+        // code of the backend object before this one still counted, it kept that code below the base for
+        // good, and some hundred thread starts later the cache had no room left.
+        // Nothing refers to the code that goes: bm_Reset() above took every block out of the tables and out
+        // of the lookup table, and the blocks it discarded are deleted here, so that none of them is found by
+        // the address of code that is written from now on (bm_GetStaleBlock)
+        bm_CleanupDeletedBlocks();
+
+        LastAddr = 0;
+        LastAddr_min = 0;
+
         verify(rdv_ngen->Init());
 
         bm_Reset();

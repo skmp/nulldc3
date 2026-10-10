@@ -1698,6 +1698,11 @@ struct X64NGenBackend : NGenBackend
 
 	bool Init()
 	{
+		// What is written here is the first thing in the code cache, with the base of what a cache clear
+		// recycles behind it: Init() is entered with an empty cache every time (recSH4::Init), also by the
+		// backend object of a later emulator thread, which writes the same stubs to the same place
+		verify(emit_FreeSpace() == CODE_SIZE);
+
 		// Here we emit some trampolines for Mem Read/Write functions.
 		// The purpose is making the calls smaller so that we can have rewrites.
 		// This is inspired on the 32 bit rec, that does (almost) the same.
