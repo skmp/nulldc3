@@ -93,6 +93,35 @@ mechanism on the park loop of the emulator. They boot `2ndmix.elf` of `NULLDC_EL
 | `debugger.selftest.sh4bpbase` `.interp` | the session `sh4bpbase`: the baselines of those runs |
 | `debugger.selftest.sh4bp.sessions` | `tests/debugger/sh4bp/selftest.sh`: the sessions of `sh4bp` on the JIT, on the interpreter and on the JIT with the interpreter fallback forced agree on registers, step traces and time; the runs of the booted guest are in the state of their baselines, on those three and on the JIT and the fallback with idleskip off |
 
+## Host stop / start cycles
+
+`libswirl/debugger/dbg_selftest_hostcycles.cpp`: the host stops the running machine and starts it again, 600 times
+in one process, on the way of `2ndmix.elf` to its 1200th vblank. Every start of the machine is a new emulator
+thread with new backends, and on the recompiler that has to be an empty code cache every time: a thread that kept
+the code of the threads before it left every thread less of the 10 MB, until the guest went from one cache clear
+to the next.
+
+A thread is asked to stop, as the host asks, when it has run for 1,000,000 emulated cycles; a thread of the test
+plays the host, waits for it to be gone and starts the machine again. The stop is asked for on the emulator thread,
+from a call that the other thread makes all the time, where it is known how far the run is: the stop of the test
+never meets the stop that ends the run. The cycles begin at vblank 300, where 2ndmix is in its main loop and every
+thread has the same work (it compiles about 160 KiB), and take about 360 vblanks on the recompiler; the run leaves
+them 890. A run that is too short for them fails with the number of cycles it made.
+
+| test | what has to hold |
+|---|---|
+| `debugger.selftest.hostcycles` | 600 cycles on the recompiler. Every thread ended with its stop callback, and the next one started. Every thread started with the stubs of the code generator at the start of the code cache, where the first thread had them, and nothing behind them; with no block in the tables of the block manager; and with no entry in the lookup table for any block of the thread before it. The code cache never filled (half of it was free at least), and the threads together compiled more than it holds: kept from thread to thread, their code would have filled it. The guest did not get slower with the number of threads: emulated time over the CPU time of a thread, the median of the last fifth of the cycles against that of the first, within a factor of 2. And the run ends in the state hash of the same run without a session, part for part: a stop of the host and the start behind it leave no trace in the guest |
+| `debugger.selftest.hostcycles.interp` | the same on the interpreter, which has no code cache: the cycles, the speed and the state hash |
+
+With the code cache left where the thread before had it, as it was before, the recompiler's run does not get to
+its checks: by the 65th thread the cache is full, and some forty threads and half a million cache clears later the
+stubs of a new thread no longer fit and the process ends with a fault.
+
+The session prints its figures: the median thread of each tenth of the cycles by speed (emulated cycles per
+microsecond of CPU time) and by bytes of code compiled, the CPU time of the median thread, and the vblank at which
+the cycles ended. `Debugger:SelfTestHostCycles`, `Debugger:SelfTestHostCycleSpan` and
+`Debugger:SelfTestHostCycleFrom` are the number of cycles, the emulated cycles of a thread and the first vblank.
+
 ## With a window
 
 `window_checklist.sh <devcast> <work dir> [once]` does at the window of the emulator what a person does there, once

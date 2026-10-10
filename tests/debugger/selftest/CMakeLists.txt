@@ -150,6 +150,17 @@ nulldc_debugger_selftest(emurun.pending MODE same-hash ELF 2ndmix.elf)
 nulldc_debugger_selftest(emurun.pauses  MODE same-hash ELF 2ndmix.elf ENGINES ${nulldc_selftest_exact_engines}
                          ARGS --expect "pauses were taken and resumed")
 
+# The host stops the running machine and starts it again, 600 times on the way of 2ndmix to its 1200th vblank
+# (libswirl/debugger/dbg_selftest_hostcycles.cpp): every emulator thread starts with an empty code cache, the
+# cache never fills, the guest does not get slower, and the run ends in the state hash of a run nobody touched.
+# The cycles begin at vblank 300, where the program is in its main loop and every thread has the same work;
+# they take about 400 vblanks, and the run leaves them twice that.
+# The interpreter has no code cache: its run is about the stops and the starts alone
+nulldc_debugger_selftest(hostcycles MODE same-hash ELF 2ndmix.elf CONFIG Debugger:SelfTestHostCycleFrom=300
+                         ARGS --vblanks 1200
+                              --expect "times the host stopped the running machine and started it again"
+                              --expect "the guest did not get slower")
+
 # A parked run stays parked, whatever Exit.* key it has: by a session, and by Debugger:StartPaused. The second
 # is no session, so it has the server enabled (on a port of the system's choice) and no client: without a
 # server Debugger:StartPaused=yes is a configuration error
