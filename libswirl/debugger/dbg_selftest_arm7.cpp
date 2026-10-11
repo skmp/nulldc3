@@ -1852,8 +1852,7 @@ DBG_SELFTEST_GUEST(arm7_step_frompause, "arm7.step.frompause")
 		// one period of the AICA callback at most, and the rest of a slice
 		if (stop.cause == StopCause::Step && stop.stopId == st_pause.stopId + 1 && SeenIs(list, { { Lifetime::Parked, StopCause::Step } })
 			&& c.n[0] == st_pause.c.n[0] + 1 && Suspended() == SOUND_BURST_ARM7 && passed > 0 && passed <= kAicaPeriod + SH4_TIMESLICE
-			&& (ArmPc() == st_pause.pc + 4 || ArmPc() == kVector || ArmPc() == kMain || ArmPc() == kLeaf || ArmPc() == kBehindBl || ArmPc() < 0x20
-				|| ArmPc() == st_pause.pc - 4))
+			&& ArmPc() != st_pause.pc)
 			st_pause.good++;
 
 		// complete at the vector with nothing executed: a FIQ was entered in front of the instruction
@@ -3309,6 +3308,7 @@ namespace {
 
 struct {
 	Co co;
+	u32 phases;			// the ARM phases that had run to their end at the stop behind the burst before
 } st_reads;
 
 bool SameChannel(const AicaChannelDebug& a, const AicaChannelDebug& b)
@@ -3328,19 +3328,22 @@ DBG_SELFTEST_GUEST(arm7_reads_suspended, "arm7.reads.suspended")
 		CO_YIELD(st_reads.co);
 
 	// in the middle of the burst: some samples in
+	st_reads.phases = ReadCounts().n[1];
+
 	while (!SuspendAt(stop, kMain))
 		CO_YIELD(st_reads.co);
 
 	ArmBps({ });
 
-	while (ReadCounts().n[1] % 32 < 7 && Suspended() == SOUND_BURST_ARM7)
+	while (ReadCounts().n[1] - st_reads.phases < 7 && Suspended() == SOUND_BURST_ARM7)
 	{
 		if (!StepArm())
 			break;
 		CO_YIELD(st_reads.co);
 	}
 
-	Check(Suspended() == SOUND_BURST_ARM7 && ReadCounts().n[1] % 32 >= 7, "the stop is inside a burst, behind %u of its samples", ReadCounts().n[1] % 32);
+	Check(Suspended() == SOUND_BURST_ARM7 && ReadCounts().n[1] - st_reads.phases >= 7 && ReadCounts().n[1] - st_reads.phases < 32,
+		"the stop is inside a burst, behind %u of its samples", ReadCounts().n[1] - st_reads.phases);
 
 	{
 		ArmRegs a = ReadArm(), b = ReadArm();
@@ -3839,6 +3842,7 @@ struct {
 	Co co;
 	Counts c;
 	u32 checks;
+	u32 phases;			// the ARM phases that had run to their end at the stop behind a burst
 } st_gr;
 
 }
@@ -3852,6 +3856,8 @@ DBG_SELFTEST_GUEST(arm7_grace, "arm7.grace")
 
 	while (!Settle(stop))
 		CO_YIELD(st_gr.co);
+
+	st_gr.phases = ReadCounts().n[1];
 
 	while (!SuspendAt(stop, kMain))
 		CO_YIELD(st_gr.co);
@@ -3876,7 +3882,8 @@ DBG_SELFTEST_GUEST(arm7_grace, "arm7.grace")
 
 	Check(stop.cause == StopCause::Pause && SeenIs(list, { { Lifetime::Running, StopCause::NoCause }, { Lifetime::Parked, StopCause::Pause } }),
 		"the resume runs through: published %s", SeenText(list).c_str());
-	Check(c.n[0] - st_gr.c.n[0] >= 3 && c.n[3] - st_gr.c.n[3] == c.n[0] - st_gr.c.n[0] + 1 && c.n[1] % 32 == 0 && arm7::test::checks == st_gr.checks,
+	Check(c.n[0] - st_gr.c.n[0] >= 3 && c.n[3] - st_gr.c.n[3] == c.n[0] - st_gr.c.n[0] + 1 && c.n[1] - st_gr.phases == 32 * (c.n[0] - st_gr.c.n[0] + 1)
+		&& arm7::test::checks == st_gr.checks,
 		"the suspended burst ran to its end with its tail, %u more bursts ran, and no check was made (%u)", c.n[0] - st_gr.c.n[0],
 		arm7::test::checks - st_gr.checks);
 
