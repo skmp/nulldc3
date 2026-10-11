@@ -2551,6 +2551,19 @@ DBG_SELFTEST_GUEST(core_writes, "core.writes")
 		Check(InBand(SetRegister("dc.no.such.node", "R0", "0")) == kErrInvalidParams && InBand(SetRegister("dc.sh4.cpu", "NO_SUCH", "0")) == kErrInvalidParams
 			&& InBand(SetRegister("dc.sh4", "R0", "0")) == kErrInvalidParams && InBand(SetRegister("dc.no.such.node", "R0", "twelve")) == kErrInvalidParams,
 			"a path or a name that the tree does not have: -32602");
+		{
+			// A name is compared whole: what stands in front of a NUL is not the name. Sent as a client sends it,
+			// with the escape \u0000 in the JSON text
+			const std::string path_nul("dc.sh4.cpu\0x", 12), name_nul("R0\0y", 4);
+			const json by_path = Send("state.setRegister", { { "path", path_nul }, { "name", "R0" }, { "value", "0x5A5A0001" } });
+			const json by_name = Send("state.setRegister", { { "path", "dc.sh4.cpu" }, { "name", name_nul }, { "value", "0x5A5A0002" } });
+			const json by_both = Send("state.setRegister", { { "path", path_nul }, { "name", name_nul }, { "value", "0x5A5A0003" } });
+
+			Check(InBand(by_path) == kErrInvalidParams && InBand(by_name) == kErrInvalidParams && InBand(by_both) == kErrInvalidParams && ctx.r[0] == wr.r0 && TakeTicks().empty(),
+				"a path or a name with a NUL behind the name of a node or of a register (\"dc.sh4.cpu\\u0000x\", \"R0\\u0000y\") is none of the tree: -32602, R0 is what it was "
+				"(%08X), and no tick was broadcast (%s)", ctx.r[0], by_both.dump().c_str());
+		}
+
 		Check(InBand(SetRegister("dc.aica.arm7", "ENABLED", "0")) == kErrNotWritable && InBand(SetRegister("dc", "BUILD", "0")) == kErrNotWritable
 			&& InBand(SetRegister("dc.timing", "SH4_CYCLES", "0")) == kErrNotWritable && InBand(SetRegister("dc.sh4.ccn", "MMUCR", "0")) == kErrNotWritable
 			&& InBand(SetRegister("dc.holly.intc", "SB_ISTNRM", "0")) == kErrNotWritable && InBand(SetRegister("dc.aica.dsp", "STEP", "0")) == kErrNotWritable,
@@ -2618,6 +2631,18 @@ DBG_SELFTEST_GUEST(core_writes, "core.writes")
 		/*
 			state.editWatch: state.setRegister on the register of a watch
 		*/
+		{
+			// the same for a watch, which state.editWatch would then write through: no watch is made of such a text
+			const std::string name_nul("dc.sh4.cpu.r1\0y", 15), path_nul("dc.sh4.cpu\0x.r1", 15);
+			const json by_name = Send("state.watch", { { "expressions", json::array({ name_nul }) } });
+			const json by_path = Send("state.watch", { { "expressions", json::array({ "dc.sh4.cpu.r2", path_nul }) } });
+
+			Check(InBand(by_name) == kErrInvalidParams && InBand(by_path) == kErrInvalidParams && Tick(false)["watches"].empty(),
+				"a watch expression with a NUL behind the name of a register or of a node is no register of the tree: -32602, and no watch is listed (%s)",
+				by_name.dump().c_str());
+			TakeTicks();
+		}
+
 		Check(Ok(Send("state.watch", { { "expressions", json::array({ "dc.sh4.cpu.r1", "dc.aica.arm7.enabled", "dc.build", "dc.sh4.cpu.dbr" }) } })), "(four watches)");
 
 		{

@@ -2046,6 +2046,11 @@ void MethodSetCategoryStates(const Request& req, Outcome& out)
 // "<node path>.<register name>": lower-cased as a whole, then split at its last dot
 bool ResolveWatch(const std::string& expression, Watch* watch)
 {
+	// No name of the tree has a NUL in it, and the look-ups below compare C strings, which end at the first one:
+	// a text with one is no register of the tree, whatever stands in front of the NUL
+	if (expression.find('\0') != std::string::npos)
+		return false;
+
 	std::string lower = expression;
 
 	for (char& c : lower)
@@ -2410,7 +2415,10 @@ void MethodSetRegister(const Request& req, Outcome& out)
 				c = (char)(c - 'A' + 'a');
 		}
 
-		const regs::Node* node = regs::Find(lower.c_str());
+		// No name of the tree has a NUL in it, and the two look-ups compare C strings, which end at the first one:
+		// a path or a name with one is not found, whatever stands in front of the NUL
+		const bool whole = path.find('\0') == std::string::npos && name.find('\0') == std::string::npos;
+		const regs::Node* node = whole ? regs::Find(lower.c_str()) : nullptr;
 		const int index = node != nullptr ? regs::FindRegister(*node, name.c_str()) : -1;
 
 		if (index < 0)
