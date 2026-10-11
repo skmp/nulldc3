@@ -10,6 +10,11 @@
   empty.
 - `devtools-integration-decisions.md` — the 45 decisions that revision 3 of the design folds in: the 29 of 2026-10-09
   and the 16 that followed the devtools round on 2026-10-10 (working name `DESIGN-V3-DECISIONS.md`).
+- `devtools-integration-m2-round.md` — the cut of the M2 round of the debugger (working name `M2-ROUND.md`): its
+  scope, header revision 6, the packages with what each owns and its gate, their order, the sounding guest, the
+  decisions M2-D1 to M2-D68 and the project owner's answers, the changes the round makes to the design text, the
+  briefs and the reviews. Where it and the design differ it is the contract until the end of the round, when the
+  design is brought to it; the frozen headers cite it from header revision 6 on.
 - `sh4-breakpoints-spec.md` — the SH4 breakpoint / single-step mechanism in the active backend, with the prototype's results.
 - `automated-runs.md` — headless mode, the `-config` keys that end a run, the exit line and its state hash, the pinned
   RTC, what a fatal fault and a signal that is sent do. Reference for `tests/system` and `tests/perf`.

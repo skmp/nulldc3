@@ -48,9 +48,12 @@ struct AICA : MMIODevice {
 	virtual void TimeStep() = 0;
 
 	/*
-		Debugger access. Called on the emulator thread outside Update() and TimeStep(), or by a thread that
-		holds the debugger's lifetime lock while no emulator thread exists; DebugWriteReg on the emulator
-		thread only. The defaults are those of a device that gives the debugger nothing.
+		Debugger access. Called on the emulator thread outside Update() and TimeStep() — between two sound
+		bursts, or while the debugger has one suspended in front of an ARM7 instruction, where the sound
+		generator stands between two samples —, or by a thread that holds the debugger's lifetime lock while
+		no emulator thread exists; DebugWriteReg on the emulator thread only. Update() and TimeStep()
+		themselves also run in the debugger's park context, when a suspended burst is run on. The defaults are
+		those of a device that gives the debugger nothing.
 	*/
 
 	// Copies len bytes of the register file from offset (offset + len <= 0x8000) as guest reads deliver
@@ -61,7 +64,9 @@ struct AICA : MMIODevice {
 
 	// Writes the 16-bit register at offset (even, below 0x8000) as a write by the SH4 does: the sound
 	// generator, the timers, the interrupt lines and the ARM7 reset follow it. Returns false, having
-	// changed nothing, when the register cannot be written.
+	// changed nothing, when the register cannot be written. No device has a body for it and nothing calls
+	// it: in M2 the debugger writes no register of the AICA, ARMRST among them (the debugger does not hold or
+	// release the ARM7).
 	virtual bool DebugWriteReg(u32 offset, u32 value) { return false; }
 
 	// The state of channel 0..63 at this moment. No side effects. Returns false for any other channel

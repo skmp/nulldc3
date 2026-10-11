@@ -163,8 +163,10 @@ More about the suites:
                        symbols/ (the symbol table of the loaded ELF, README.md); sh4bp/,
                        a suite of this project: SH4 breakpoints and steps in the SH4 backends (README.md);
                        selftest/, the selftests of the debugger run in the emulator the system tests
-                       build (README.md); and contract/, the server of that emulator against the contract
-                       runner of the devtools UI (README.md)
+                       build (README.md); contract/, the server of that emulator against the contract
+                       runner of the devtools UI (README.md); and guest/, the guest programs of the tree
+                       that the debugger's tests boot, one directory each with the tests that run that
+                       emulator on it
 
 ## The single-step vectors
 
@@ -445,3 +447,14 @@ A suite of `tests/debugger` that needs more of the emulator than such a module, 
 translation units as the other suites of this project do, is one of those suites ("Adding a suite"):
 `tests/CMakeLists.txt` adds it behind `common/libswirl.cmake`, and it names its tests `debugger.<suite>.<name>`
 itself.
+
+`tests/debugger/guest` is no suite: it holds the guest programs of the tree that the debugger's tests boot, one
+directory each, with its sources, its committed image and the tests that run the emulator on it.
+`tests/CMakeLists.txt` adds the directory behind the system tests, whose options it uses (`NULLDC_SYSTEM_TESTS`,
+`NULLDC_EMULATOR`, `NULLDC_ELF_DIR`). Its `CMakeLists.txt` finds python, sets the emulator that is run
+(`nulldc_guest_emulator`) and the reason why none can be (`nulldc_guest_skip`), as `debugger/selftest` sets its
+two, and adds every subdirectory that has a `CMakeLists.txt`, in the order of the names: a guest is registered by
+putting its directory there. A function that one of those directories defines for the ones behind it uses these
+two variables, python as it was found there, `nulldc_tests_path` and cache variables, and nothing its own
+`CMakeLists.txt` sets: it runs in the scope of its caller. No guest is there yet, and the directory registers no
+test.

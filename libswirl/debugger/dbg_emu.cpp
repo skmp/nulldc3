@@ -20,6 +20,7 @@
 
 #include "dbg_emu.h"
 #include "dbg_sh4.h"
+#include "dbg_arm7.h"
 #include "dbg_selftest.h"
 #include "dbg_symbols.h"
 
@@ -809,6 +810,12 @@ int Step(Target t, StepKind k, const char** why)
 	return 0;
 }
 
+bool TargetSteps(Target t)
+{
+	// the stub of header revision 6: the run control of the ARM7 comes with its package
+	return t == Target::Sh4;
+}
+
 int Reset()
 {
 	if (!OnEmuThread() || !e.inPark)
@@ -834,6 +841,11 @@ void SetSh4Breakpoints(const u32* ids, const u32* addrs, u32 n)
 	sh4::SetBreakpoints(ids, addrs, n);
 }
 
+void SetArm7Breakpoints(const u32* ids, const u32* addrs, u32 n)
+{
+	arm7::SetBreakpoints(ids, addrs, n);
+}
+
 void SetEventBreakpoints(const u32* ids, const u8* events, u32 n)
 {
 	memset(eventBp, 0, sizeof(eventBp));
@@ -855,6 +867,7 @@ void SetActiveMask(u32 categories)
 	activeMask = categories;
 
 	sh4::SetActiveMask(categories);
+	arm7::SetActiveMask(categories);
 }
 
 RunState GetRunState()
@@ -878,6 +891,11 @@ void LatchStop(StopCause cause, u32 breakpointId)
 	Merge(e.want, e.wantId, cause, breakpointId);
 
 	Latch();
+}
+
+void OnSoundStop(StopCause, u32)
+{
+	// the stub of header revision 6: no check of the ARM7 stops, so nothing calls it
 }
 
 void OnEvent(EventId id)

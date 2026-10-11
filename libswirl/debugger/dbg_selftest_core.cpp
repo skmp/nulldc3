@@ -35,6 +35,7 @@
 #include "deps/nlohmann/json.hpp"
 
 #include "dbg_selftest.h"
+#include "dbg_arm7.h"
 #include "dbg_core_private.h"
 #include "dbg_disasm.h"
 #include "dbg_mem.h"
@@ -61,6 +62,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -650,9 +652,87 @@ DBG_SELFTEST(core_tables, "core.tables")
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.sh4.cpu.pc" }, { "kind", "event" } })) == kErrNotSupported, "the event of a code breakpoint is no event: -32004");
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.holly.core.vblank" }, { "kind", "code" }, { "address", 0 } })) == kErrNotSupported,
 		"a code breakpoint on a name that is no target's: -32004");
-	Check(InBand(Send("breakpoints.add", { { "event", "dc.aica.arm7.pc" }, { "kind", "code" } })) == kErrNotSupported
-		&& InBand(Send("breakpoints.add", { { "event", "dc.aica.dsp.step" }, { "address", 3 } })) == kErrNotSupported,
+	Check(InBand(Send("breakpoints.add", { { "event", "dc.aica.dsp.step" }, { "address", 3 } })) == kErrNotSupported,
 		"a code breakpoint of a target without stepping: -32004, before its address is looked at");
+
+	// The ARM7 is what emu::TargetSteps() says: such a target while its run control does not exist, and one
+	// whose code breakpoints the core takes and hands over once it does
+	if (!emu::TargetSteps(Target::Arm7))
+	{
+		Check(InBand(Send("breakpoints.add", { { "event", "dc.aica.arm7.pc" }, { "kind", "code" } })) == kErrNotSupported,
+			"the ARM7 does not step: a code breakpoint of it is -32004, before its address is looked at");
+	}
+	else
+	{
+		auto arm7_at = [](u32 address) {
+			return json({ { "event", "dc.aica.arm7.pc" }, { "address", address } });
+		};
+
+		// what dbg::arm7 was handed last, as { id, address } pairs in ascending order
+		auto handed = [] {
+			u32 got_ids[8], got_addrs[8];
+			const u32 n = arm7::GetBreakpoints(got_ids, got_addrs, 8);
+			std::vector<std::pair<u32, u32>> pairs;
+
+			for (u32 i = 0; i < n && i < 8; i++)
+				pairs.push_back({ got_ids[i], got_addrs[i] });
+
+			// more than the test ever lists: no set of the test equals it
+			if (n > 8)
+				pairs.push_back({ 0, n });
+
+			std::sort(pairs.begin(), pairs.end());
+			return pairs;
+		};
+
+		typedef std::vector<std::pair<u32, u32>> Pairs;
+
+		Check(InBand(Send("breakpoints.add", { { "event", "dc.aica.arm7.pc" }, { "kind", "code" } })) == kErrInvalidParams,
+			"the ARM7 steps: a code breakpoint of it without an address is -32602");
+		Check(InBand(Send("breakpoints.add", arm7_at(2))) == kErrInvalidParams, "an address of the ARM7 that is no multiple of 4: -32602");
+		Check(InBand(Send("breakpoints.add", arm7_at(0x01000000u))) == kErrInvalidParams, "an address above the ARM7's addressMax, 0x00FFFFFF: -32602");
+		Check(Tick(false)["breakpoints"].size() == 3 && handed().empty(), "the refused requests add nothing, and nothing of the ARM7 is handed to dbg::arm7");
+
+		// Three of them: at the highest multiple of 4, low in the wave memory, and at an address that is a
+		// mirror on a machine with 2 MiB of it. The addresses are kept as given
+		const u32 arm7_addrs[3] = { 0x00FFFFFCu, 0x00000040u, 0x00200040u };
+		u32 arm7_ids[3] = { 0, 0, 0 };
+		bool added = true, shown = true;
+
+		for (u32 i = 0; i < 3; i++)
+		{
+			added = added && Ok(Send("breakpoints.add", arm7_at(arm7_addrs[i])));
+			arm7_ids[i] = BreakpointIds(Tick(false)).back();
+		}
+
+		tick = Tick(false);
+
+		for (u32 i = 0; i < 3; i++)
+		{
+			const std::string key = std::to_string(arm7_ids[i]);
+
+			shown = shown && tick["breakpoints"].contains(key) && tick["breakpoints"][key].size() == 5 && tick["breakpoints"][key]["id"] == arm7_ids[i]
+				&& tick["breakpoints"][key]["event"] == "dc.aica.arm7.pc" && tick["breakpoints"][key]["kind"] == "code"
+				&& tick["breakpoints"][key]["address"] == arm7_addrs[i] && tick["breakpoints"][key]["enabled"] == true;
+		}
+
+		Check(added && shown && tick["breakpoints"].size() == 6 && arm7_ids[0] < arm7_ids[1] && arm7_ids[1] < arm7_ids[2],
+			"code breakpoints of the ARM7 at multiples of 4 up to 0x00FFFFFF are taken and listed: id, event, address as given, kind, enabled (%s)",
+			tick["breakpoints"].dump().c_str());
+		Check(handed() == Pairs({ { arm7_ids[0], arm7_addrs[0] }, { arm7_ids[1], arm7_addrs[1] }, { arm7_ids[2], arm7_addrs[2] } }),
+			"the hand-over: dbg::arm7 has the three, each id at its address (%zu pairs)", handed().size());
+
+		Check(Ok(Send("breakpoints.toggle", { { "id", arm7_ids[1] }, { "enabled", false } })) && Tick(false)["breakpoints"][std::to_string(arm7_ids[1])]["enabled"] == false,
+			"one of them toggled off: it stays listed, disabled");
+		Check(handed() == Pairs({ { arm7_ids[0], arm7_addrs[0] }, { arm7_ids[2], arm7_addrs[2] } }),
+			"the hand-over: dbg::arm7 has the two enabled ones with their ids at their addresses, and not the disabled one (%zu pairs)", handed().size());
+
+		Check(Ok(Send("breakpoints.remove", { { "id", arm7_ids[0] } })) && handed() == Pairs({ { arm7_ids[2], arm7_addrs[2] } }),
+			"one of the two removed: the hand-over has the other");
+		Check(Ok(Send("breakpoints.remove", { { "id", arm7_ids[1] } })) && Ok(Send("breakpoints.remove", { { "id", arm7_ids[2] } })) && handed().empty(),
+			"all three removed: dbg::arm7 has none");
+	}
+
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.sh4.cpu.pc" }, { "kind", "code" } })) == kErrInvalidParams, "a code breakpoint of the SH4 without an address: -32602");
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.sh4.cpu.pc" }, { "address", 0x8C010001u } })) == kErrInvalidParams, "an odd address: -32602");
 	Check(InBand(Send("breakpoints.add", { { "event", 5 } })) == kErrInvalidParams && InBand(Send("breakpoints.add", { { "event", "dc.no.such.event" }, { "kind", "other" } })) == kErrInvalidParams
@@ -967,10 +1047,11 @@ DBG_SELFTEST(core_tick, "core.tick")
 		json& targets = shape["targets"];
 
 		Check(targets.size() == 3 && targets[0]["id"] == "sh4" && targets[0]["stepping"] == true && targets[0]["memory"] == true && targets[0]["addressMax"] == 0xFFFFFFFFu
-			&& targets[1]["id"] == "arm7" && targets[1]["stepping"] == false && targets[1]["addressMax"] == 0x00FFFFFFu && targets[1]["instructionSize"] == 4
+			&& targets[1]["id"] == "arm7" && targets[1]["stepping"] == emu::TargetSteps(Target::Arm7) && targets[1]["addressMax"] == 0x00FFFFFFu && targets[1]["instructionSize"] == 4
 			&& targets[2]["id"] == "dsp" && targets[2]["stepping"] == false && targets[2]["memory"] == false && !targets[2].contains("defaultMemoryAddress")
 			&& targets[2]["addressRadix"] == 10 && targets[2]["addressDigits"] == 3 && targets[2]["addressMax"] == 127 && targets[0].size() == 13 && targets[2].size() == 12,
-			"three targets: the SH4 steps, the ARM7 and the DSP do not yet, the DSP has no memory and no defaultMemoryAddress");
+			"three targets: the SH4 steps, the ARM7 as emu::TargetSteps() has it (%s), the DSP does not yet, the DSP has no memory and no defaultMemoryAddress",
+			emu::TargetSteps(Target::Arm7) ? "it steps" : "not yet");
 	}
 
 	/*

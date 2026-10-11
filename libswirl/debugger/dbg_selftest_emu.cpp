@@ -461,6 +461,45 @@ bool WaitLifetime(Lifetime want, int timeout_ms = 20000)
 	return true;
 }
 
+// What a stopped machine must not show, counted. To be asked once the lifetime is Stopped: the emulator thread
+// has published that as its last action and touches nothing any more, and the next one has not been started.
+// IsRunning() is one word of the machine and reads neither the run flag of the cpu nor g_parked, so a run flag
+// or a g_parked that a thread left set at its end shows in no answer of it: each of the three is looked at
+struct StoppedLooks {
+	std::atomic<u32> running { 0 }, runFlag { 0 }, parked { 0 };
+
+	void Clear()
+	{
+		running = 0;
+		runFlag = 0;
+		parked = 0;
+	}
+
+	// One look. True when the machine does not count as running and both words are clear
+	bool Look()
+	{
+		const bool r = sh4_cpu->IsRunning();
+		const bool f = p_sh4rcb->cntx.CpuRunning != 0;
+		const bool p = g_parked.load();
+
+		if (r)
+			running++;
+
+		if (f)
+			runFlag++;
+
+		if (p)
+			parked++;
+
+		return !r && !f && !p;
+	}
+
+	bool Clean() const
+	{
+		return running == 0 && runFlag == 0 && parked == 0;
+	}
+};
+
 // Asks for a pause until the emulator thread has parked for a stop behind after_stop
 bool PauseAndWait(u32 after_stop, int timeout_ms = 20000)
 {
@@ -2361,7 +2400,8 @@ namespace {
 
 struct {
 	int phase;
-	std::atomic<u32> cycles { 0 }, callbacks { 0 }, hung { 0 }, running { 0 }, early { 0 };
+	std::atomic<u32> cycles { 0 }, callbacks { 0 }, hung { 0 }, early { 0 };
+	StoppedLooks stopped;
 } st;
 
 const u32 kStartStops = 40;
@@ -2381,7 +2421,7 @@ DBG_SELFTEST_GUEST(emu_startstop, "emu.startstop")
 		st.cycles = 0;
 		st.callbacks = 0;
 		st.hung = 0;
-		st.running = 0;
+		st.stopped.Clear();
 		st.early = 0;
 		st.phase = 1;
 
@@ -2422,10 +2462,8 @@ DBG_SELFTEST_GUEST(emu_startstop, "emu.startstop")
 					break;
 				}
 
-				if (sh4_cpu->IsRunning())
+				if (!st.stopped.Look())
 				{
-					st.running++;
-
 					// put right, for the next thread to start
 					sh4_cpu->Stop();
 				}
@@ -2444,7 +2482,9 @@ DBG_SELFTEST_GUEST(emu_startstop, "emu.startstop")
 
 	Check(st.hung == 0 && st.cycles == kStartStops && stop.cause == StopCause::Start, "%u times a host stop while the thread started: the thread ended every time", st.cycles.load());
 	Check(st.callbacks == kStartStops, "every stop ran its callback, once (%u)", st.callbacks.load());
-	Check(st.running == 0, "the stopped machine never counted as running (it did %u times of %u)", st.running.load(), kStartStops);
+	Check(st.stopped.Clean(),
+		"the stopped machine never counted as running, and its thread left neither the run flag of the cpu nor g_parked set (of %u times it counted as running %u, the run flag was set %u, g_parked %u)",
+		kStartStops, st.stopped.running.load(), st.stopped.runFlag.load(), st.stopped.parked.load());
 	Note("the stop came in before the cpu of the new thread was started in %u of %u", st.early.load(), kStartStops);
 
 	TakeSeen();
@@ -2466,7 +2506,8 @@ struct {
 	// the thread that starts the emulator thread is in OnThreadStarting(), where it waits for the stop
 	std::atomic<bool> inGap { false }, stopMade { false };
 
-	std::atomic<u32> gapRounds { 0 }, rounds { 0 }, callbacks { 0 }, direct { 0 }, lost { 0 }, hung { 0 }, running { 0 };
+	std::atomic<u32> gapRounds { 0 }, rounds { 0 }, callbacks { 0 }, direct { 0 }, lost { 0 }, hung { 0 };
+	StoppedLooks stopped;
 
 	// start parks of the threads that the other thread stops: counted by the emulator thread
 	std::atomic<u32> parks { 0 };
@@ -2508,10 +2549,8 @@ bool StartParkEnded()
 		return false;
 	}
 
-	if (sh4_cpu->IsRunning())
+	if (!sk.stopped.Look())
 	{
-		sk.running++;
-
 		// put right, for the next thread to start
 		sh4_cpu->Stop();
 	}
@@ -2628,7 +2667,8 @@ DBG_SELFTEST_GUEST(emu_startpark, "emu.startpark")
 		Goto(EMU_G_spin);
 		TakeSeen();
 
-		sk.gapRounds = sk.rounds = sk.callbacks = sk.direct = sk.lost = sk.hung = sk.running = 0;
+		sk.gapRounds = sk.rounds = sk.callbacks = sk.direct = sk.lost = sk.hung = 0;
+		sk.stopped.Clear();
 		sk.parks = 0;
 		sk.done = false;
 		sk.gapParks = sk.early = 0;
@@ -2655,7 +2695,9 @@ DBG_SELFTEST_GUEST(emu_startpark, "emu.startpark")
 		"%u times a host stop wherever it meets the start of such a thread: the thread ended every time (%u)", kStartParkStops, sk.rounds.load());
 	Check(sk.callbacks == sk.gapRounds + sk.rounds + sk.lost, "every stop that the machine took for a thread ran its callback, once (%u of %u)",
 		sk.callbacks.load(), sk.gapRounds + sk.rounds + sk.lost);
-	Check(sk.running == 0, "the stopped machine never counted as running (it did %u times)", sk.running.load());
+	Check(sk.stopped.Clean(),
+		"the stopped machine never counted as running, and its thread left neither the run flag of the cpu nor g_parked set (it counted as running %u times, the run flag was set %u times, g_parked %u)",
+		sk.stopped.running.load(), sk.stopped.runFlag.load(), sk.stopped.parked.load());
 	Note("of those %u the stop came in before the cpu of the new thread was started in %u, and with the thread parked at its start or on its way there in %u; %u stops found no thread",
 		sk.rounds.load(), sk.early, sk.rounds - sk.early, sk.direct.load());
 
@@ -3221,7 +3263,7 @@ struct Twice {
 struct {
 	int phase;
 	std::atomic<bool> otherFailed { false };
-	std::atomic<bool> runningStopped { true };
+	std::atomic<bool> runningStopped { true };		// stopped, the machine was not as it has to be (StoppedLooks)
 	std::atomic<int> rvCall { 99 };
 	emu::RunState stopped;
 
@@ -3233,7 +3275,8 @@ struct {
 	std::atomic<int> exitCloses { 0 };
 
 	// the rounds of the other thread
-	std::atomic<u32> rounds { 0 }, firsts { 0 }, chained { 0 }, seconds { 0 }, direct { 0 }, bypassed { 0 }, stoppedRunning { 0 }, hung { 0 };
+	std::atomic<u32> rounds { 0 }, firsts { 0 }, chained { 0 }, seconds { 0 }, direct { 0 }, bypassed { 0 }, hung { 0 };
+	StoppedLooks looks, roundLooks;		// in the three single stops, and in the rounds
 	std::atomic<bool> roundsDone { false };
 	u32 parkedFirst, starts;
 } sr;
@@ -3264,7 +3307,9 @@ void TwiceCheck(const Twice& t, const char* when)
 	Check(t.direct == 0 && t.firstAt == 1 && t.secondAt == 2,
 		"%s: a second action of the host stops the machine as well, and its callback runs behind the first (%d, %d; found stopped %d times)",
 		when, t.firstAt.load(), t.secondAt.load(), t.direct.load());
-	Check(!t.runningInCallback && !sr.runningStopped && !sr.otherFailed, "%s: the machine does not count as running when the stop callback looks, nor once it is stopped", when);
+	Check(!t.runningInCallback && !sr.runningStopped && !sr.otherFailed,
+		"%s: the machine does not count as running when the stop callback looks, nor once it is stopped, where the run flag of the cpu and g_parked are clear as well (counted as running %u, the run flag %u, g_parked %u)",
+		when, sr.looks.running.load(), sr.looks.runFlag.load(), sr.looks.parked.load());
 }
 
 // The other thread waits for the emulator thread to be gone, and starts the next
@@ -3277,7 +3322,7 @@ void StopRunsNext()
 	}
 
 	sr.stopped = emu::GetRunState();
-	sr.runningStopped = sh4_cpu->IsRunning();
+	sr.runningStopped = !sr.looks.Look();
 
 	virtualDreamcast->Resume();
 }
@@ -3330,8 +3375,7 @@ void StopRunsRounds()
 			break;
 		}
 
-		if (sh4_cpu->IsRunning())
-			sr.stoppedRunning++;
+		sr.roundLooks.Look();
 
 		sr.rounds++;
 
@@ -3357,6 +3401,7 @@ DBG_SELFTEST_GUEST(emu_stopruns, "emu.stopruns")
 
 		sr.otherFailed = false;
 		sr.runningStopped = true;
+		sr.looks.Clear();
 		sr.phase = 1;
 
 		// parked
@@ -3421,9 +3466,12 @@ DBG_SELFTEST_GUEST(emu_stopruns, "emu.stopruns")
 
 		Check(sr.exitFirst && !sr.exitAgain, "an exit of the guest is asked for once: the second request says that it changed nothing");
 		Check(sr.exitRunning && sr.exitDirect == 0 && sr.exitCloses == 1, "a machine whose guest has ended counts as running until its thread has stopped: the close button behind the exit goes through the machine (callback ran %d times)", sr.exitCloses.load());
-		Check(!sr.otherFailed && !sr.runningStopped && sr.stopped.cause == StopCause::GuestExit && stop.cause == StopCause::Start, "the thread ended for the guest exit; stopped, the machine does not count as running");
+		Check(!sr.otherFailed && !sr.runningStopped && sr.stopped.cause == StopCause::GuestExit && stop.cause == StopCause::Start,
+			"the thread ended for the guest exit; stopped, the machine does not count as running, and the run flag of the cpu and g_parked are clear (counted as running %u, the run flag %u, g_parked %u)",
+			sr.looks.running.load(), sr.looks.runFlag.load(), sr.looks.parked.load());
 
-		sr.rounds = sr.firsts = sr.chained = sr.seconds = sr.direct = sr.bypassed = sr.stoppedRunning = sr.hung = 0;
+		sr.rounds = sr.firsts = sr.chained = sr.seconds = sr.direct = sr.bypassed = sr.hung = 0;
+		sr.roundLooks.Clear();
 		sr.roundsDone = false;
 		sr.parkedFirst = sr.starts = 0;
 		sr.phase = 4;
@@ -3453,9 +3501,12 @@ DBG_SELFTEST_GUEST(emu_stopruns, "emu.stopruns")
 
 		Check(sr.hung == 0 && sr.rounds == kStopRunsRounds && sr.starts == kStopRunsRounds, "%u times the host stopped the machine and acted again at once: the thread ended every time", sr.rounds.load());
 		Check(sr.bypassed == 0, "the host never found a machine stopped whose thread had its stop callback still to take (it did %u times of %u)", sr.bypassed.load(), kStopRunsRounds);
-		Check(sr.firsts == kStopRunsRounds && sr.seconds == sr.chained && sr.chained + sr.direct == kStopRunsRounds && sr.stoppedRunning == 0,
-			"every callback ran once (%u, and %u of the %u second actions that went through the machine); stopped, the machine never counted as running (%u)",
-			sr.firsts.load(), sr.seconds.load(), sr.chained.load(), sr.stoppedRunning.load());
+		Check(sr.firsts == kStopRunsRounds && sr.seconds == sr.chained && sr.chained + sr.direct == kStopRunsRounds,
+			"every callback ran once (%u, and %u of the %u second actions that went through the machine)",
+			sr.firsts.load(), sr.seconds.load(), sr.chained.load());
+		Check(sr.roundLooks.Clean(),
+			"stopped, the machine never counted as running, and its thread left neither the run flag of the cpu nor g_parked set (of %u times it counted as running %u, the run flag was set %u, g_parked %u)",
+			kStopRunsRounds, sr.roundLooks.running.load(), sr.roundLooks.runFlag.load(), sr.roundLooks.parked.load());
 		Note("the second action found the thread gone %u times of %u; the thread was parked for a pause when the stop came in %u times", sr.direct.load(), kStopRunsRounds, sr.parkedFirst);
 		break;
 	}

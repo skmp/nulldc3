@@ -19,8 +19,9 @@
 	shares. Debugger sources include this header; emulator code includes debugger.h, which has the threads,
 	the lifetime states and the contexts this header refers to.
 
-	This header and those that include it (dbg_sh4.h, dbg_core.h, dbg_mem.h, dbg_callstack.h, dbg_selftest.h)
-	exist only in builds with NULLDC_DEBUGGER: debugger.h has stand-ins for a build without it, these have none.
+	This header and those that include it (dbg_sh4.h, dbg_arm7.h, dbg_core.h, dbg_mem.h, dbg_callstack.h,
+	dbg_selftest.h) exist only in builds with NULLDC_DEBUGGER: debugger.h has stand-ins for a build without it,
+	these have none.
 */
 
 namespace dbg {
@@ -135,7 +136,14 @@ enum : u32 {
 										// blocks, so timing differs as well. Reserved: never set while
 										// sh4_fallback_loop() charges by the decoder's blocks, as hw/sh4/sh4_dbg.h
 										// requires
-	NOTICE_ARM7_FALLBACK       = 4,		// the ARM7 runs on the interpreter fallback: timing differs
+	NOTICE_ARM7_FALLBACK       = 4,		// the ARM7 runs on the interpreter fallback: timing differs. Set while the
+										// backend that executes the ARM7 is a recompiler
+										// (SoundCPU::DebugIsRecompiler) and dbg_arm7_armed is not 0: the debug loop
+										// then replaces the recompiler. Also set in the stop that ends a step, a
+										// resume or a run in which the debug loop executed in place of the
+										// recompiler, whatever is armed at that stop (a step and a temporary
+										// breakpoint end before the stop is published). Never set where that
+										// backend is the interpreter, which is every x86-64 build
 	NOTICE_DSP_FORCED          = 8,		// the per-sample DSP path is forced on by the debugger. Transitional: it can
 										// be set only while the AICA has a path without the DSP, and goes with it
 };
@@ -204,8 +212,10 @@ namespace emu {
 struct RunState {
 	Lifetime lifetime;
 	u32 stopId;				// counts stops: advances on every transition into a state reported as paused (a park
-							// for any cause, Stopped, NoMachine), on every completed step, on a reset made while
-							// paused and on a reset or state load while Stopped. A service excursion leaves it alone
+							// for any cause, Stopped, NoMachine), on every completed step, on a stop that the ARM7
+							// check makes while the park loop runs a suspended sound burst on (no park is entered
+							// for it), on a reset made while paused and on a reset or state load while Stopped. A
+							// service excursion leaves it alone
 	StopCause cause;		// NoCause exactly when lifetime is Running
 	u32 breakpointId;		// for Breakpoint and Event: the id of the breakpoint, the lowest when several match;
 							// otherwise 0 (ids start at 1)
@@ -259,8 +269,8 @@ enum CallClass {
 // - does what its class says and no more. CC_READ: read guest state (dbg_regs, dbg_mem, dbg_callstack,
 //   dbg_symbols), read the tables, build a tick and hand it to dbg::net. In the slice hook the SH4 context
 //   is complete only with SH4DBG_CTX_AT_SLICE (GetSh4Engine). CC_TABLE: also SetSh4Breakpoints,
-//   SetEventBreakpoints, SetActiveMask. CC_WRITE: also dbg::mem::Write, dbg::regs::Write, Reset.
-//   CC_EXEC: also Resume, Step.
+//   SetArm7Breakpoints, SetEventBreakpoints, SetActiveMask. CC_WRITE: also dbg::mem::Write,
+//   dbg::regs::Write, Reset. CC_EXEC: also Resume, Step.
 int Call(CallClass cls, std::function<void()> fn);
 
 /*
@@ -272,7 +282,8 @@ int Call(CallClass cls, std::function<void()> fn);
 // hold a lock that the listener takes.
 //
 // The listener is invoked with the state just published
-//   on (E)  for every stop (park for any cause, completed step, reset while paused) and every resume;
+//   on (E)  for every stop (park for any cause, completed step, reset while paused, a stop that the ARM7
+//           check makes while the park loop runs a suspended sound burst on) and every resume;
 //   on the thread that made a lifetime change, with L held, for Stopped, NoMachine, and Running at a
 //           thread start.
 // A service excursion publishes nothing. At every invocation guest state is quiescent and may be read
@@ -292,28 +303,54 @@ void SetListener(void (*listener)(const RunState& state));
 void RequestPause();
 
 // Inside a CC_EXEC call. Arms a resume: after the call returns, the park loop leaves the park context and
-// publishes Running. Returns 0; kErrNotPaused, with nothing armed, if the thread is not parked or an action
-// is already armed.
+// publishes Running. With a sound burst suspended it runs the burst on first (debugger.h, Park()): if a
+// breakpoint of the ARM7 suspends it again, the thread stays parked, that stop is published and Running is
+// not. Returns 0; kErrNotPaused, with nothing armed, if the thread is not parked or an action is already
+// armed.
 int Resume();
 
-// Inside a CC_EXEC call. Validates a step and arms it; the park loop executes it after the call returns,
-// and publishes a new stop when it completed (StopCause::Step unless a breakpoint or event ended it). A
-// step over or out that turns into a resume publishes Running first. A step of any kind is complete,
-// without executing anything, when the interrupt acceptance that the latch deferred accepts an interrupt on
-// the way out of the park context: the stop is at the vector (dbg::sh4::PrepareStep).
+// Inside a CC_EXEC call. Validates a step and arms it; the park loop acts on it after the call returns, and
+// a new stop is published when it is complete (StopCause::Step unless a breakpoint or an event ended it).
+//
+// Target::Sh4. The park loop executes the step. With a sound burst suspended it runs the burst on first: a
+// breakpoint of the ARM7 that suspends it again is published as the stop, and the step is dropped. A step
+// over or out that turns into a resume publishes Running first. A step of any kind is complete, without
+// executing anything, when the interrupt acceptance that the latch deferred accepts an interrupt on the way
+// out of the park context: the stop is at the vector (dbg::sh4::PrepareStep).
+//
+// Target::Arm7. Into: one instruction of the ARM7 (dbg::arm7::PrepareStep). With a burst suspended the park
+// loop runs it on in the park context until the check behind the instruction stops it: nothing is published
+// in between, no emulated time passes, the SH4 executes nothing; when the instruction was the last of its
+// burst, the step is complete at the end of the burst, with none suspended. With no burst suspended the park
+// loop leaves without publishing (debugger.h, Park()): the SH4 runs to the next burst, one period of the
+// AICA callback at most, and the step is the first instruction of that burst. The step is complete without
+// executing anything when a FIQ is entered in front of its instruction (the stop is at the vector) and when
+// that burst finds the ARM7 held in reset. A stop of the SH4 that comes first is published with its own
+// cause. Over: on a BL the temporary breakpoint behind it and a resume, else as Into. Out: the temporary
+// breakpoint at R14 and a resume (dbg::arm7::PrepareStepOver, PrepareStepOut). That resume is Resume()'s: it
+// publishes Running when it leaves. Like Into, both execute the instruction they stand on, also with a
+// listed breakpoint on it and whatever the stop before them was.
+//
 // Returns 0 when armed. Otherwise nothing is armed and it returns
 //   kErrNotPaused     the thread is not parked, or an action is already armed
-//   kErrNotSupported  the target cannot be stepped (Arm7 and Dsp until their run control exists; Over and
-//                     Out on Dsp always)
+//   kErrNotSupported  the target cannot be stepped: TargetSteps(t) is false; Over and Out on Dsp always
 //   kErrCannotStep    a precondition of an SH4 step failed (dbg::sh4::StepCheck); *why, if why is not null,
 //                     receives the reason as a constant string
-//   kErrNotClocked    Arm7 or Dsp while the ARM7 is held in reset
+//   kErrNotClocked    Arm7 while the ARM7 is held in reset (dbg::arm7::StepCheck); Dsp likewise, from M3
 int Step(Target t, StepKind k, const char** why = nullptr);
 
-// Inside a CC_WRITE call. Parked: resets the machine through Dreamcast_impl::Reset at once; the thread
-// stays parked and publishes a new stop with StopCause::Reset. Running (the call runs in a service
-// excursion): asks the machine for a guest reset; it resets and keeps running, nothing is published.
-// Returns 0.
+// Any thread, any lifetime state, never blocks. Whether run control and code breakpoints of the target exist
+// in this build: what debugger.describe gives as targets[].stepping, and what the core asks before it accepts
+// a code breakpoint or forwards a step. Constant for the process. The SH4: true. The ARM7: true once its run
+// control exists (package E6b of the M2 round; false before it). The DSP: false until M3.
+bool TargetSteps(Target t);
+
+// Inside a CC_WRITE call. Parked: resets the machine through Dreamcast_impl::Reset at once, which discards a
+// suspended sound burst; the thread stays parked and publishes a new stop with StopCause::Reset. Running (the
+// call runs in a service excursion): asks the machine for a guest reset; it resets and keeps running, nothing
+// is published.
+// Returns 0. Called anywhere but on (E) in the park context it changes nothing and returns kErrHostStopped;
+// a CC_WRITE call is never made there.
 int Reset();
 
 // Inside a CC_TABLE call. The enabled SH4 code breakpoints, all of them: ids[i] stops at addrs[i]
@@ -322,19 +359,29 @@ int Reset();
 // UseFallbackLoop() change while running, the excursion ends by entering Run() on the other loop.
 void SetSh4Breakpoints(const u32* ids, const u32* addrs, u32 n);
 
+// Inside a CC_TABLE call. The enabled ARM7 code breakpoints, all of them: ids[i] stops at addrs[i] (addresses
+// as the client gave them, multiples of 4 up to 0x00FFFFFF; the address rule is applied by dbg::arm7 when a
+// check is made). n <= kMaxBreakpoints; the arrays are read during the call only. Forwarded to
+// dbg::arm7::SetBreakpoints. It never causes code-cache work and never changes the loop of the SH4. It can
+// change dbg_arm7_armed (debugger.h), and with it NOTICE_ARM7_FALLBACK, which GetRunState() then has at once.
+// Like the other setters it also runs under L while no emulator thread exists, with or without a machine.
+void SetArm7Breakpoints(const u32* ids, const u32* addrs, u32 n);
+
 // Inside a CC_TABLE call. The enabled event breakpoints, all of them: ids[i] is on the event events[i]
 // (an EventId). Same array rules.
 void SetEventBreakpoints(const u32* ids, const u8* events, u32 n);
 
 // Inside a CC_TABLE call. CategoryBit() of every category whose breakpoints can stop now: not muted, soloed
 // or no category soloed, and a client connected or within kClientGraceMs of the last one. Read at every
-// arrival at a breakpoint; never causes code-cache work. Forwarded to dbg::sh4::SetActiveMask; it can make
-// UseFallbackLoop() change as SetSh4Breakpoints can.
+// arrival at a breakpoint; never causes code-cache work. Forwarded to dbg::sh4::SetActiveMask and
+// dbg::arm7::SetActiveMask; it can make UseFallbackLoop() change as SetSh4Breakpoints can, and
+// dbg_arm7_armed as SetArm7Breakpoints can.
 // Before the first call the mask is 0: no listed breakpoint and no event breakpoint stops.
 void SetActiveMask(u32 categories);
 
 // Any thread, never blocks. The state last published, as one consistent copy. notice is current even when
-// nothing was published since: dbg::emu updates it when a service excursion switches loops.
+// nothing was published since: dbg::emu updates it when a service excursion switches loops and when a table
+// call changes whether the ARM7 runs on its fallback.
 RunState GetRunState();
 
 // Any thread, never blocks. True on the emulator thread, from OnThreadEntered() until OnThreadExiting()
@@ -347,7 +394,8 @@ bool OnEmuThread();
 
 // (E) only, while the guest executes (in a backend loop or a step): from the SH4 check and flow helpers
 // (dbg_sh4.cpp) and from the slice hook. Decides a debugger stop: records the cause, sets g_stop_latched
-// and g_parked and clears Sh4cntx.CpuRunning. Never blocks.
+// and g_parked and clears Sh4cntx.CpuRunning. Never blocks. The sound side does not call it: a breakpoint
+// or a step of the ARM7 is recorded through OnSoundStop, below, and latched by the slice hook.
 // It does not leave the backend loop itself. The caller returns into the loop in the way that ends it at
 // once: a helper returns non-zero to the backend; the slice hook returns into UpdateSystem(), whose result
 // ends the loop.
@@ -359,10 +407,33 @@ bool OnEmuThread();
 // priority of StopCause, and among breakpoints of the winning cause the lowest id.
 void LatchStop(StopCause cause, u32 breakpointId);
 
+// (E) only, from the ARM7 check (dbg_arm7_Check, dbg_arm7_OnBurstUnclocked: debugger.h) and from
+// dbg::arm7::CompleteStepAtBurstEnd, when a breakpoint of the ARM7 stops or a step of the ARM7 is complete.
+// Never blocks. It records the stop; it latches nothing and leaves nothing. It does not look at the run flag:
+// a check that hits has suspended its burst whatever the machine is about to do, and dc_run deals with a
+// burst it finds suspended.
+// While the guest executes (the burst runs in the AICA scheduler callback, in a run or during a step):
+// records the cause as a freezing cause and sets ATTN_PAUSE; the slice hook latches it behind the scheduler
+// tick of the UpdateSystem() call that is running, also inside a SLEEP wait and during a step. The SH4
+// executes nothing behind it. When the machine leaves Run() in the same slice for a reason of its own, dc_run
+// acts on that first, with no Park() in between. A host stop or a guest exit: the burst runs to its end
+// without checks in front of the stop callback, and this stop is not published. A guest reset: the burst is
+// discarded, and the stop that the next Park() publishes is the reset's (StopCause::Reset), as for every
+// stop that was wanted when a reset came.
+// In the park context (the park loop runs a suspended burst on): records the cause as the stop that the park
+// loop publishes next. The thread stays parked.
+//   Breakpoint, id   an active listed breakpoint of the ARM7 stopped; the lowest id when several are on the
+//                    address
+//   Step, 0          the temporary breakpoint of the ARM7 stopped, or a step of the ARM7 is complete
+// When other causes meet it in the same stop the published cause follows the priority of StopCause, and among
+// breakpoints of the winning cause the lowest id, as for LatchStop.
+void OnSoundStop(StopCause cause, u32 breakpointId);
+
 // (E) only, from dbg::EventSlow for an event raised on the emulator thread. While the guest executes
 // (Running, or a step) and an enabled event breakpoint on id exists whose category is active: records it
 // as a freezing cause and sets ATTN_PAUSE; the slice hook latches the stop in the UpdateSystem() call that
-// is running, or in the next one. In the park context it does nothing. Never blocks.
+// is running, or in the next one. In the park context it does nothing, also while the park loop runs a
+// suspended sound burst on: the events of that burst are logged and do not stop. Never blocks.
 void OnEvent(EventId id);
 
 /*

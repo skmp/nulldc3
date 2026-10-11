@@ -219,13 +219,13 @@ struct TargetInfo {
 	u32 defaultDisassemblyAddress;
 	u32 defaultMemoryAddress;
 	bool memory;
-	bool stepping;			// control.step* and code breakpoints: the SH4 in milestone M1
 };
 
+// Whether a target steps and takes code breakpoints is not in the table: emu::TargetSteps() says it
 const TargetInfo kTargets[kTargetCount] = {
-	{ Target::Sh4,  "sh4",  "SH4",  "dc.sh4.cpu",   "PC",   kEventSh4Pc,   2, 0xFFFFFFFF, 16, 8, 0x8C010000, 0x8C010000, true,  true  },
-	{ Target::Arm7, "arm7", "ARM7", "dc.aica.arm7", "PC",   kEventArm7Pc,  4, 0x00FFFFFF, 16, 8, 0x00000000, 0x00000000, true,  false },
-	{ Target::Dsp,  "dsp",  "DSP",  "dc.aica.dsp",  "STEP", kEventDspStep, 1, 127,        10, 3, 0,          0,          false, false },
+	{ Target::Sh4,  "sh4",  "SH4",  "dc.sh4.cpu",   "PC",   kEventSh4Pc,   2, 0xFFFFFFFF, 16, 8, 0x8C010000, 0x8C010000, true  },
+	{ Target::Arm7, "arm7", "ARM7", "dc.aica.arm7", "PC",   kEventArm7Pc,  4, 0x00FFFFFF, 16, 8, 0x00000000, 0x00000000, true  },
+	{ Target::Dsp,  "dsp",  "DSP",  "dc.aica.dsp",  "STEP", kEventDspStep, 1, 127,        10, 3, 0,          0,          false },
 };
 
 const TargetInfo& InfoOf(Target t)
@@ -364,7 +364,7 @@ void PushPresence()
 // Inside a table call that changed a breakpoint: the enabled sets, all of them, and what follows them
 void PushBreakpoints()
 {
-	std::vector<u32> sh4_ids, sh4_addrs, event_ids;
+	std::vector<u32> sh4_ids, sh4_addrs, arm7_ids, arm7_addrs, event_ids;
 	std::vector<u8> events;
 
 	for (const auto& entry : breakpoints)
@@ -384,9 +384,15 @@ void PushBreakpoints()
 			sh4_ids.push_back(bp.id);
 			sh4_addrs.push_back(bp.address);
 		}
+		else if (bp.target == Target::Arm7)
+		{
+			arm7_ids.push_back(bp.id);
+			arm7_addrs.push_back(bp.address);
+		}
 	}
 
 	emu::SetSh4Breakpoints(sh4_ids.data(), sh4_addrs.data(), (u32)sh4_ids.size());
+	emu::SetArm7Breakpoints(arm7_ids.data(), arm7_addrs.data(), (u32)arm7_ids.size());
 	emu::SetEventBreakpoints(event_ids.data(), events.data(), (u32)event_ids.size());
 
 	PushPresence();
@@ -965,7 +971,7 @@ std::string BuildDescribe(const emu::RunState& state)
 		w.Key("memory");
 		w.Bool(t.memory);
 		w.Key("stepping");
-		w.Bool(t.stepping);
+		w.Bool(emu::TargetSteps(t.target));
 		w.EndObject();
 	}
 
@@ -1857,7 +1863,7 @@ void MethodBreakpointsAdd(const Request& req, Outcome& out)
 		if (target == nullptr)
 			return Unsupported(out, "code breakpoints on " + PrintableAscii(event.data(), std::min<size_t>(event.size(), 96)));
 
-		if (!target->stepping)
+		if (!emu::TargetSteps(target->target))
 			return Unsupported(out, std::string("code breakpoints of target ") + target->id);
 
 		if (!has_address)
@@ -1866,8 +1872,9 @@ void MethodBreakpointsAdd(const Request& req, Outcome& out)
 		if (address % target->instructionSize != 0)
 			return BadParam(out, std::string("address is not a multiple of ") + std::to_string(target->instructionSize));
 
-		if (target->target == Target::Dsp && address > target->addressMax)
-			return BadParam(out, "address is not a step of the DSP");
+		// no instruction of the target is above its addressMax
+		if (address > target->addressMax)
+			return BadParam(out, std::string("address is above the highest address of target ") + target->id);
 
 		bp.target = target->target;
 		bp.address = address;
@@ -2244,7 +2251,7 @@ void Step(const Request& req, Outcome& out, StepKind kind)
 	if (!ParamTarget(req, out, nullptr, &target))
 		return;
 
-	if (!target->stepping)
+	if (!emu::TargetSteps(target->target))
 	{
 		// the lifetime first, then a step while running, then what the target cannot do
 		switch (emu::GetRunState().lifetime)

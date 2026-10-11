@@ -513,7 +513,8 @@ struct SuperH4Backend {
     // Discards every compiled block that overlaps the 4 KiB page of the guest address, in every mirror of
     // that page, and nothing else: page protection and the marks of pages that hold data stay as they are.
     // Called when the debugger arms or disarms the address, and when the debugger writes main memory on a
-    // host without the virtual memory layout.
+    // host without the virtual memory layout (the writer of dbg_mem then removes the protection of the page
+    // itself).
     virtual void DebugDiscardPage(u32 addr)               { }
 
     // Step-out: false discards every compiled block that ends with a call or a return, so that they are

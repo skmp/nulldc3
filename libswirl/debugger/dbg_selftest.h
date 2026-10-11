@@ -37,7 +37,8 @@
 	  guest test     drives the guest from debugger stops, in place of a client. The park loop hands it every
 	                 stop; in that call it stands where a call of every class may stand: it reads and writes
 	                 guest state and the tables directly and uses dbg::emu (SetSh4Breakpoints,
-	                 SetEventBreakpoints, SetActiveMask, Resume, Step, Reset, ...) to arm what happens next.
+	                 SetArm7Breakpoints, SetEventBreakpoints, SetActiveMask, Resume, Step, Reset, ...) to arm
+	                 what happens next.
 	                 No client is connected, so a test that sets an event breakpoint also opens the gate of
 	                 its event, and closes it again (g_event_on, debugger.h).
 	                 No client is connected, so the test also sets the active mask (emu::SetActiveMask); it

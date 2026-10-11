@@ -136,17 +136,11 @@ void SuperH4_impl::Run() {
         sh4_backend->Loop();
 }
 
-// Any thread. A stop request also ends a debugger stop, and a reset that was on its way. The machine counts
-// as running until its emulator thread has taken the request (IsRunning). The park loop is woken so that the
-// thread takes it
+// Any thread: the host stops the machine, or the guest has ended; and the emulator thread where the guest
+// asks for a reset of the machine. The cpu leaves its loop, and a debugger stop ends with it. The machine
+// counts as running until its emulator thread has taken its stop callback (IsRunning), all through a reset
+// as well. The park loop is woken so that the thread takes the request
 void SuperH4_impl::Stop()
-{
-    resetting = false;
-
-    StopForReset();
-}
-
-void SuperH4_impl::StopForReset()
 {
     // Sequentially consistent, as every store of the word (sh4_if.h)
     sh4_int_bCpuRun.store(0, std::memory_order_seq_cst);
