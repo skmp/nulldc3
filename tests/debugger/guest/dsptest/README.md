@@ -35,7 +35,7 @@ default `/opt/toolchains/dc/sh-elf/bin`) for the SH4 part, and for the ARM7 part
 default `/opt/toolchains/dc/arm-eabi/bin`). **GNU `as` is the reference for `arm7.bin`** (the files here were made
 with binutils 2.43 for both processors). Where there is no arm-eabi binutils, clang with
 `--target=armv4t-none-eabi`, `ld.lld` and `llvm-objcopy` stand in: `arm7.s` has no literal pool and no constant
-that an assembler could encode in two ways, and clang 18 gives the same 340 bytes. Where there is neither, `gen.sh`
+that an assembler could encode in two ways, and clang 18 gives the same 352 bytes. Where there is neither, `gen.sh`
 keeps `arm7.bin` and the ARM7 labels as they are, so that a change of `dsptest.s` needs no ARM assembler. Nothing in
 the outputs depends on the machine, the user, the date or a path.
 
@@ -66,7 +66,7 @@ first lines of this guest showed it: the interpreter's line was the recompiler's
 and `arm7`. So `_start` waits for that tick, in a way that is the same on every engine: it writes one ARM
 instruction that branches to itself to wave memory 0 and releases the ARM7 onto it, which gives the AICA its clock
 (while the ARM7 is held no timer steps and, sample by sample, no sample is made), and reads `SCIPD` until
-`SAMPLE_DONE` is set. Then it holds the ARM7 again and does the set-up, which is over 6500 cycles later on the
+`SAMPLE_DONE` is set. Then it holds the ARM7 again and does the set-up, which is over 6600 cycles later on the
 interpreter and far sooner on the recompiler: between the first tick and the second on both. A reset of the
 machine goes the same way, whenever it comes. So:
 
@@ -76,13 +76,13 @@ machine goes the same way, whenever it comes. So:
   release is taken out is silent sample by sample (the line of 32 zero pairs) and sounds in batches, where the
   channels the SH4 keyed on are rendered without the ARM7.
 
-**The ARM7** (`arm7.s`, 85 instructions). `a_main_loop` runs in **SVC mode** (the mode the reset leaves, a mode with
+**The ARM7** (`arm7.s`, 88 instructions). `a_main_loop` runs in **SVC mode** (the mode the reset leaves, a mode with
 an SPSR), the handler in FIQ mode; IRQ stays masked.
 
 | label | what |
 |---|---|
 | `a_vectors` | `0x00` to `0x1C`: reset to `a_reset`, FIQ (`0x1C`) to `a_fiq`, everything else to `a_hang`, a branch to itself that is never executed |
-| `a_reset` | the registers of FIQ mode and of SVC mode, among them every address the loop and the handler use (`r5` the common registers of the AICA, `r6` the variables at wave memory `0x400`, `r12_fiq` the channel registers); `SCILV0-2` so that timer A has level 2; every pending bit cleared; timer A with a period of **13 samples** (`TIMA = 0xF3`), enabled in `SCIEB`; F cleared. Falls into the loop |
+| `a_reset` | the registers of FIQ mode and of SVC mode, among them every address the loop and the handler use (`r5` the common registers of the AICA, `r6` the variables at wave memory `0x400`, `r12_fiq` the channel registers); `SCIEB` 0 and `SCILV0-2` so that timer A has level 2; timer A with a period of **13 samples** (`TIMA = 0xF3`); every pending bit cleared; **the service of a request that is latched ended** (a read of L, a write of M: what the handler does); timer A enabled in `SCIEB`; F cleared. Falls into the loop. It leaves the interrupt of the AICA as the start of the machine has it, whatever ran before |
 | `a_main_loop` | one pass: counts in `r3` and at `[0x400]`; **the F window** (`a_fwin`: `msr CPSR_c, #0xD3`, F set); reads the timer's count and `SCIPD`, stores them at `[0x404]` and `[0x408]`, folds both into `r4`; `a_fwin_end`: `msr CPSR_c, #0x93`, F cleared; clears `SAMPLE_DONE` through `SCIRE`; `bl a_leaf`; `b a_main_loop`. 14 instructions, all but the last two plain |
 | `a_fwin`, `a_fwin_end` | the two `msr` of the window. Six plain instructions execute with F set; `a_fwin_end - 4` is the last of them |
 | `a_leaf` | two plain instructions and `mov pc, lr` |
@@ -114,6 +114,18 @@ Every access of a register of the AICA is a word access, on both processors; a b
   (`g_irq` returns by `rte`): a PC that a debugger writes into another mirror of main memory stays in that mirror.
 - **`g_irq` keeps every register** of the code it interrupts and pushes nothing: it runs on the register bank of
   the handler (`SR.RB`).
+- **A release of the ARM7 starts the same program, whatever ran before it.** `g_hold_arm7` and `g_release_arm7`
+  hold the ARM7 at a tick of the test's choice, and one time in thirteen the timer has overflowed with the last
+  sample of the burst in front of the hold: its request is pending, and the release latches it again (so does the
+  release of an ARM7 that was held inside `a_fiq`, in front of its clear of the pending bit). `a_reset` ends that
+  service before it clears F. So the first interrupt behind a release is the one of the timer `a_reset` armed, 13
+  samples on, and the FIQ entries behind any release that the SH4 makes between two bursts are those of the plain
+  run behind its own, entry for entry: the same sample of the same tick counted from the release, the same `Step`,
+  the same return address ("The FIQ entries"). (Without the end of the service the
+  request is entered behind the `msr` that ends `a_reset`, inside the first sample, with the return address
+  `a_main_loop + 4`: every count of the handler is one ahead and the timer is armed a second time.) What a release
+  does not bring back is what `a_reset` does not write: the registers of the channels, the timers B and C, whose
+  pending bits the loop folds, and the wave memory.
 - **Everything the SH4 does to the sound is done between the first tick and the second**, but for one write: the
   pan write of `g_irq`, which is made in front of the tick behind the one whose interrupt it answers, on every
   engine. That is why the recompiler and the interpreter agree in `samples`, `regs`, `arm7`, `ticks` and `cycles`
@@ -132,17 +144,22 @@ it. **Not by the return address:** an entry by the first test of a sample that s
 return address of the entries behind it, `a_fwin_end + 8`.
 
 For this guest, in each of the four configurations (the count is the ARM7's and the same in all four), over 2000
-ticks: 4920 entries; **2864 made by the first `Step`**, in front of each of the ten instructions outside the window
-(20 of them with the return address `a_fwin_end + 8`); **13 by the second** (the `msr` of `a_fwin_end` starts its
-sample); **2043 by the third or a later one** (the third to the eighth: each of the six instructions of the window
-starts such a sample), all with the return address `a_fwin_end + 8`. 1709 of the 2000 ticks have an entry of the
+ticks: 4920 entries; **2861 made by the first `Step`**, in front of each of the ten instructions outside the window
+(19 of them with the return address `a_fwin_end + 8`); **13 by the second** (the `msr` of `a_fwin_end` starts its
+sample); **2046 by the third or a later one** (the third to the eighth: each of the six instructions of the window
+starts such a sample), all with the return address `a_fwin_end + 8`. 1710 of the 2000 ticks have an entry of the
 last class, and there are no two ticks in a row without one. The entries meet each of the 32 samples of a tick 153
 or 154 times.
 
 The count belongs to these bytes on this ARM7 interpreter. One instruction more or less in the loop or in the
 handler gives another orbit: handlers a few instructions longer or shorter left the first class at one or two
-places of the loop, or the second class empty. Whoever changes the guest, or what an ARM7 instruction costs,
-counts again.
+places of the loop, or the second class empty; `a_reset`, whose length decides where in its sample the loop starts,
+moved 3 entries in 4920 from the first class to the third when it grew by three instructions. Whoever changes
+the guest, or what an ARM7 instruction costs, counts again.
+
+The count is of a run from a release of the ARM7, and of every such run: `a_reset` is over within the first sample
+behind a release and leaves nothing of an earlier run in the interrupt of the AICA ("What tests may lean on"), so
+a test that holds and releases the ARM7 starts this sequence of entries again.
 
 ## The sound lines
 

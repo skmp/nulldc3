@@ -10,7 +10,7 @@
 ! that branches to itself, which gives the AICA its clock (no timer steps and no sample is made while the ARM7 is
 ! held), and waits until SAMPLE_DONE says that a tick has run. Then it holds the ARM7, copies the ARM7 program
 ! (arm7.s) and one period of a wave into the wave memory, sets two channels up, keys them on and releases the ARM7
-! again: 6500 cycles on the interpreter, the slowest engine, of the 145124 between two ticks. From then on the ARM7
+! again: 6600 cycles on the interpreter, the slowest engine, of the 145124 between two ticks. From then on the ARM7
 ! and the timer of the AICA drive the sound, and the SH4 counts in g_main_loop; every 64th timer interrupt the ARM7
 ! raises the AICA's interrupt to the SH4, and g_irq answers it with one register write that is heard, in front of
 ! the next tick.

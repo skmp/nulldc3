@@ -30,7 +30,8 @@
 @ entered at the first instruction of a sample or inside one, and that is no chance: every sample starts at a
 @ whole instruction, so the place is the orbit of a map on the 17 instructions of the loop, which can stay on a
 @ few of them. As written the entries reach all 17 (README.md, "The FIQ entries", has the count). One instruction
-@ more or less, in the loop or in the handler, gives another orbit: such a change is followed by a new count.
+@ more or less, in the loop, in the handler or in a_reset (whose length decides where in its sample the loop
+@ starts), gives another orbit: such a change is followed by a new count.
 
 	.text
 	.arm
@@ -52,8 +53,22 @@ a_hang:
 	b	a_hang
 	.size	a_hang, .-a_hang
 
-@ Entered in SVC mode with I and F set (the reset of the ARM7DI). It sets every register the program uses, so
-@ that a release of the ARM7 starts the same program whatever ran before it
+@ Entered in SVC mode with I and F set (the reset of the ARM7DI). It sets every register the program uses, and it
+@ leaves the interrupt of the AICA as the start of the machine has it: nothing pending, no request latched, none
+@ in service, the timer 13 samples in front of its overflow. So a release of the ARM7 starts the same program
+@ whatever ran before it, and makes the FIQ entries of README.md again, counted from the release.
+@
+@ A release latches a request again that was pending when the ARM7 was held (the timer had overflowed with the
+@ last sample in front of the hold, or the ARM7 was held in a_fiq in front of its clear of the pending bit). Such
+@ a request waits for F and would be entered behind the msr that ends a_reset: an interrupt of the program that
+@ is gone. Hence the end of a_reset, in this order:
+@   - SCIEB first: nothing new is let in;
+@   - the timer in front of SCIRE: from its write on it does not overflow for 13 samples, so no pending bit of
+@     the timer is set again behind the clear, wherever a time step of the AICA falls (as the emulator charges
+@     the ARM7, a_reset is over within the first sample behind a release, and none falls into it);
+@   - then L and M, the handshake of a service as a_fiq makes it: reading L lets go of nFIQ, writing M ends the
+@     service. Nothing is pending by then, so nothing is latched behind it;
+@   - and SCIEB again, timer A, with F cleared last
 	.type	a_reset, %function
 a_reset:
 	msr	CPSR_c, #0xD1		@ FIQ mode: its registers
@@ -75,10 +90,13 @@ a_reset:
 	str	r1, [r5, #0xA8]		@ SCILV0
 	str	r0, [r5, #0xAC]		@ SCILV1: timer A has level 2
 	str	r1, [r5, #0xB0]		@ SCILV2
+	mov	r2, #0xF3
+	str	r2, [r5, #0x90]		@ TIMA: the timer overflows with the 13th sample from here, and not before
 	mvn	r2, #0
 	str	r2, [r5, #0xA4]		@ SCIRE: every pending bit cleared
-	mov	r2, #0xF3
-	str	r2, [r5, #0x90]		@ TIMA: the timer overflows with the 13th sample from here
+	ldr	r2, [r5, #0x500]	@ L: a request that is latched lets go of nFIQ
+	mov	r2, #1
+	str	r2, [r5, #0x504]	@ M: and its service ends
 	str	r0, [r5, #0x9C]		@ SCIEB: timer A
 	msr	CPSR_c, #0x93		@ F cleared
 	.size	a_reset, .-a_reset
