@@ -125,6 +125,19 @@ nulldc_debugger_selftest(arm7.fallback SELFTEST arm7 ENGINES jit CONFIG Debugger
 nulldc_debugger_selftest(arm7.persample SELFTEST arm7 CONFIG config:aica.NoBatch=yes
                          ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
 
+# The debugger's writes: guest memory and the registers of the two processors, with what each write owes the
+# machine (libswirl/debugger/dbg_selftest_writes.cpp), on the same guest. On the JIT, on the interpreter and on
+# the JIT with the interpreter fallback of the SH4 forced.
+# writes.smc is the one test writes.mem.cached where a main-memory write without the discard of the compiled
+# blocks of its page would show: with Dynarec.SmcCheckLevel=-1 a block of a page that holds data does not check
+# its code when it is entered. In every other configuration that check, or the fault handler, makes such a write
+# good, and the test passes with or without the discard
+nulldc_debugger_selftest(writes ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
+nulldc_debugger_selftest(writes.fallback SELFTEST writes ENGINES jit CONFIG Debugger:ForceFallback=yes
+                         ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
+nulldc_debugger_selftest(writes.smc SELFTEST writes.mem.cached ENGINES jit CONFIG config:Dynarec.SmcCheckLevel=-1
+                         ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
+
 # What sessions of those have to agree on, and the forced fallback and idleskip off: the script of that
 # directory, whose sessions are headless too
 set(test debugger.selftest.sh4bp.sessions)
@@ -161,6 +174,20 @@ nulldc_debugger_selftest(emurun.reads   MODE same-hash ELF 2ndmix.elf)
 nulldc_debugger_selftest(emurun.pending MODE same-hash ELF 2ndmix.elf)
 nulldc_debugger_selftest(emurun.pauses  MODE same-hash ELF 2ndmix.elf ENGINES ${nulldc_selftest_exact_engines}
                          ARGS --expect "pauses were taken and resumed")
+
+# The debugger's writes in a run of the guest of the tree that an Exit.* key ends: 240 stops latched at slice ends,
+# each with a write of main memory, of the page of the guest's code, of a general register, of SR, of FPSCR (which
+# empties the code cache) and of R0 to R12 of the ARM7, and the restore of each; half of them as the requests of a
+# client. The state hash of a run nobody touched. The test never returns: it is no test of the session "writes",
+# whose filter would select a test named under its prefix and never print its summary
+nulldc_debugger_selftest(writesrun.neutral MODE same-hash
+                         ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
+                              --expect "240 stops latched at a slice end, each with its writes and their restores"
+                              --expect "every write read back, and every restore"
+                              --expect "240 writes of main memory and 240 writes into the page of the guest's code"
+                              --expect "240 writes of R8, 240 of SR and 240 of FPSCR that empty the code cache"
+                              --expect "3120 writes of R0 to R12 of the ARM7"
+                              --expect "4320 of the writes and restores were requests of a client")
 
 # The host stops the running machine and starts it again, 600 times on the way of 2ndmix to its 1200th vblank
 # (libswirl/debugger/dbg_selftest_hostcycles.cpp): every emulator thread starts with an empty code cache, the

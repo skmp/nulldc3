@@ -22,6 +22,8 @@
 	                           session that has no server and no core thread
 	  dbg_selftest_arm7.cpp    reads the event log (events::Snapshot): what a sound burst logged while the park
 	                           loop ran it on
+	  dbg_selftest_writes.cpp  hands request texts to the dispatcher, as dbg_selftest_core.cpp does: the writes
+	                           of a client in a run that has to stay the run nobody touched
 */
 
 namespace dbg {
