@@ -20,6 +20,12 @@
 #	                                                    same three
 #	    debugger.contract.m2writes.guest .interp        the same four parts against the sounding guest of the tree,
 #	                                                    with the two notes
+#	    debugger.contract.m2 .m2.interp .m2.fallback    the gate of milestone M2 (--milestone M2): the scenarios
+#	                                                    of M1 and S16 whole, with its fifth part, the device tree
+#	                                                    of M2, on the same three
+#	    debugger.contract.m2.guest .interp              the second run of that gate, against the sounding guest
+#	                                                    of the tree (--milestone M2 --only S00,S16), with the two
+#	                                                    notes
 #	    debugger.contract.grace                         the grace period after the last client left, and the
 #	                                                    client that connects behind it
 #	    debugger.contract.config                        the configuration errors of the server's keys, and a
@@ -29,8 +35,8 @@
 #	      each with .interp                             server on and no client, and with an idle breakpoint
 #
 #	The runner needs the dreamcast-devtools checkout with its node_modules (NULLDC_DEVTOOLS_DIR) and npm:
-#	without them m1*, m2arm7*, m2writes* and hash.idlebp* are tests whose data is missing. Everything needs
-#	2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree.
+#	without them m1*, m2*, m2arm7*, m2writes* and hash.idlebp* are tests whose data is missing. Everything
+#	needs 2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree.
 #
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -70,13 +76,15 @@ endif()
 
 # nulldc_debugger_contract(<name> MODE <mode of contract.py> [ENGINES <jit|interp>...] [RUNNER] [FALLBACK]
 #                          [IDLE_SYMBOL <symbol>] [TIMEOUT <seconds>] [GUEST <program>]
-#                          [PARTS <scenario>:<part>[+<part>...]] [REQUIRE_NOTE <text>...])
+#                          [PARTS <scenario>:<part>[+<part>...]] [ONLY <scenario>[,<scenario>...]]
+#                          [REQUIRE_NOTE <text>...])
 # makes debugger.contract.<name> (the SH4 on the JIT) and debugger.contract.<name>.interp (on the interpreter).
 # RUNNER: the test runs the contract runner of the devtools UI.
 # GUEST: the emulator boots this program, not 2ndmix.elf: the test does not ask for NULLDC_ELF_DIR.
-# PARTS, REQUIRE_NOTE: for the mode parts, handed to the runner as its --parts and --require-note.
+# PARTS: for the mode parts, handed to the runner as its --parts. ONLY: for the mode m2, as its --only.
+# REQUIRE_NOTE: for the modes parts and m2, as its --require-note.
 function(nulldc_debugger_contract name)
-  cmake_parse_arguments(ARG "RUNNER;FALLBACK" "MODE;IDLE_SYMBOL;TIMEOUT;GUEST;PARTS" "ENGINES;REQUIRE_NOTE" ${ARGN})
+  cmake_parse_arguments(ARG "RUNNER;FALLBACK" "MODE;IDLE_SYMBOL;TIMEOUT;GUEST;PARTS;ONLY" "ENGINES;REQUIRE_NOTE" ${ARGN})
 
   if(NOT ARG_ENGINES)
     set(ARG_ENGINES jit)
@@ -127,6 +135,9 @@ function(nulldc_debugger_contract name)
     if(ARG_PARTS)
       list(APPEND command --parts ${ARG_PARTS})
     endif()
+    if(ARG_ONLY)
+      list(APPEND command --only ${ARG_ONLY})
+    endif()
     foreach(note ${ARG_REQUIRE_NOTE})
       list(APPEND command --require-note "${note}")
     endforeach()
@@ -161,6 +172,18 @@ nulldc_debugger_contract(m2arm7.guest    MODE parts PARTS S16:arm7 RUNNER ENGINE
 nulldc_debugger_contract(m2writes          MODE parts PARTS S16:arm7+writeMemory+setRegister+reset RUNNER ENGINES jit interp)
 nulldc_debugger_contract(m2writes.fallback MODE parts PARTS S16:arm7+writeMemory+setRegister+reset RUNNER FALLBACK)
 nulldc_debugger_contract(m2writes.guest    MODE parts PARTS S16:arm7+writeMemory+setRegister+reset RUNNER ENGINES jit interp
+                         GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
+                         REQUIRE_NOTE "arm7: held at the start" "arm7: bl stepped over and out")
+
+# The gate of milestone M2 (M2-ROUND 3.6, 3.10): --milestone M2 selects the scenarios of M1 and S16, and each has
+# to pass whole. S16 has its fifth part from the tree of this milestone on: the M2 nodes with their parents, the
+# two register panels of the processors, a register on every node whose registers are M2's, and each of the twelve
+# register panels the action of one node. And S08 reaches the bound of 256 watches on a tree of 2940 registers.
+# On the three engines against 2ndmix; and the second run of the gate on the JIT and the interpreter against the
+# sounding guest of the tree, where the arm7 part has to have met the ARM7 held at its start and a bl
+nulldc_debugger_contract(m2          MODE m2 RUNNER ENGINES jit interp)
+nulldc_debugger_contract(m2.fallback MODE m2 RUNNER FALLBACK)
+nulldc_debugger_contract(m2.guest    MODE m2 ONLY S00,S16 RUNNER ENGINES jit interp
                          GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
                          REQUIRE_NOTE "arm7: held at the start" "arm7: bl stepped over and out")
 

@@ -3,7 +3,7 @@
 
     contract.py --emulator <devcast> --work <dir> --guest <2ndmix.elf> --mode <mode> [--engine jit|interp]
                 [--fallback] [--devtools <dreamcast-devtools checkout>] [--npm <npm>] [--idle-symbol <symbol>]
-                [--parts <scenario>:<part>[+<part>...]] [--require-note <text>]...
+                [--parts <scenario>:<part>[+<part>...]] [--only <scenario>[,<scenario>...]] [--require-note <text>]...
 
 Every emulator is run as tests/system runs one: headless, an environment of its own with fresh HOME,
 XDG_CONFIG_HOME and XDG_DATA_HOME under the work directory, no display, the real-time clock pinned, a core file
@@ -11,6 +11,10 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
 
     m1             the gate of milestone M1: the emulator at its StartPaused stop, and the contract runner of the
                    devtools UI against it (npm run contract -- --url ... --profile emulator --elf ... --milestone M1)
+    m2             the gate of milestone M2: the same emulator, and the runner with --milestone M2, which selects
+                   the scenarios of M1 and of M2 and requires each of them to pass whole. With --only it is the
+                   second run of that gate, against the sounding guest of the tree (--milestone M2 --only S00,S16),
+                   and every --require-note is handed on to the runner: a run without the note is no pass
     parts          parts of a scenario of the runner that has parts, by themselves: the same emulator, and the
                    runner with --only S00,<scenario> --parts <scenario>:<part>[+<part>...], and with every
                    --require-note handed on to it. A package shows a part of a scenario this way while the
@@ -315,6 +319,21 @@ def run_runner(args, selection, what):
 def mode_m1(args):
     """The gate of milestone M1."""
     run_runner(args, ['--milestone', 'M1'], 'the gate of M1')
+
+
+def mode_m2(args):
+    """The gate of milestone M2: the scenarios of M1 and S16 with its five parts, each of them whole. With --only,
+    its second run, which the emulator makes with the sounding guest of the tree: there the ARM7 is held at the
+    anchor and has a bl and an interrupt handler, and the runner fails a run that lacks a note --require-note asks
+    for."""
+    selection = ['--milestone', 'M2']
+    what = 'the gate of M2'
+    if args.only:
+        selection += ['--only', args.only]
+        what = 'the gate of M2, %s' % args.only
+    for note in args.require_note:
+        selection += ['--require-note', note]
+    run_runner(args, selection, what)
 
 
 def mode_parts(args):
@@ -711,15 +730,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--emulator', required=True)
     parser.add_argument('--work', required=True)
-    parser.add_argument('--guest', required=True, help='2ndmix.elf; m1, parts: or another program, the guest of the tree')
-    parser.add_argument('--mode', required=True, choices=('m1', 'parts', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp'))
+    parser.add_argument('--guest', required=True, help='2ndmix.elf; m1, m2, parts: or another program, the guest of the tree')
+    parser.add_argument('--mode', required=True, choices=('m1', 'm2', 'parts', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp'))
     parser.add_argument('--engine', default='jit', choices=('jit', 'interp'))
     parser.add_argument('--fallback', action='store_true', help='Debugger:ForceFallback=yes')
-    parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, parts, hash-idlebp)')
+    parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, m2, parts, hash-idlebp)')
     parser.add_argument('--npm', default='npm')
     parser.add_argument('--idle-symbol', default='', help='hash-idlebp, grace: a symbol of the guest that is reached in every frame')
     parser.add_argument('--parts', default='', help='parts: <scenario>:<part>[+<part>...], as the runner takes it, e.g. S16:arm7')
-    parser.add_argument('--require-note', action='append', default=[], help='parts: a note the run has to have, handed on to the runner')
+    parser.add_argument('--only', default='', help='m2: the scenarios of its second run, as the runner takes them, e.g. S00,S16')
+    parser.add_argument('--require-note', action='append', default=[], help='m2, parts: a note the run has to have, handed on to the runner')
     parser.add_argument('--vblanks', type=int, default=600, help='Exit.AfterVblanks of the hash runs')
     parser.add_argument('--watchdog', type=int, default=600, help='seconds a run, or the runner, may take')
     parser.add_argument('--config-watchdog', type=int, default=60, help='config: seconds a run may take to end by itself')
@@ -735,7 +755,7 @@ def main():
             print('FAIL: no %s at %s' % (what, path))
             return 1
 
-    if args.mode in ('m1', 'parts', 'hash-idlebp'):
+    if args.mode in ('m1', 'm2', 'parts', 'hash-idlebp'):
         args.devtools = os.path.abspath(args.devtools)
         if not os.path.isdir(os.path.join(args.devtools, 'node_modules')):
             print('FAIL: no node_modules in the devtools checkout ' + args.devtools)
@@ -751,9 +771,15 @@ def main():
     if args.mode == 'parts' and not re.match(r'^S\d+:[A-Za-z0-9]+(\+[A-Za-z0-9]+)*$', args.parts):
         print('FAIL: --parts is missing, or is not <scenario>:<part>[+<part>...]')
         return 1
+    if args.only and (args.mode != 'm2' or not re.match(r'^S\d+(,S\d+)*$', args.only)):
+        print('FAIL: --only is for the mode m2, and is <scenario>[,<scenario>...]')
+        return 1
+    if args.require_note and args.mode not in ('m2', 'parts'):
+        print('FAIL: --require-note is for the modes m2 and parts')
+        return 1
 
-    modes = {'m1': mode_m1, 'parts': mode_parts, 'grace': mode_grace, 'config': mode_config, 'slow': mode_slow, 'hash-off': mode_hash_off,
-             'hash-noclient': mode_hash_noclient, 'hash-idlebp': mode_hash_idlebp}
+    modes = {'m1': mode_m1, 'm2': mode_m2, 'parts': mode_parts, 'grace': mode_grace, 'config': mode_config, 'slow': mode_slow,
+             'hash-off': mode_hash_off, 'hash-noclient': mode_hash_noclient, 'hash-idlebp': mode_hash_idlebp}
 
     shutil.rmtree(args.work, ignore_errors=True)
     os.makedirs(args.work)
