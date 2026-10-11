@@ -786,8 +786,16 @@ struct Dreamcast_impl : VirtualDreamcast {
                 break;
         }
 
-        // A sound burst that the debugger suspended runs to its end, and nothing can stop it: what the stop
-        // callback sees, and what the exit line of an automated run prints, is the state behind a whole burst
+        // A sound burst that the debugger suspended runs to its end, and nothing can stop it: the stop
+        // callback, and the exit line that it prints in an automated run, find the burst whole.
+        //
+        // Whole is the burst, not yet the SH4's answer to it. A thread that gets here with the debugger's stop
+        // latch set (a check of the ARM7 or an event breakpoint stopped in the tick of the request, or the
+        // thread was parked) has the interrupt acceptance of its last slice end still owed: the latch held it
+        // back, and dbg::emu::OnThreadExiting makes it, behind the callback. An interrupt that is pending
+        // here, one that the rest of this burst raised among them, is accepted in the state the next thread
+        // starts from and not in the state the callback sees. In a run no debugger stopped the slice end
+        // accepted it before Run() returned: an exit line taken in such a tick can have another `sh4` part
         RunSoundBurst(false);
 
         SaveRomFiles(get_writable_data_path(DATA_PATH));

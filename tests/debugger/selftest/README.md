@@ -171,7 +171,10 @@ such a test never returns, and the run ends by the sound harness or by an `Exit.
 work in a run whose sound line and state hash have to be those of a run nobody touched: the tests
 `debugger.sound.neutral.*` of `tests/debugger/guest/neutral` run them, through the mode `neutral` of
 `tests/debugger/guest/dsptest/soundlines.py`. (A test that the run ends is never named under the prefix of a
-session: the filter of a session selects by prefix and waits for its last test to return.)
+session: the filter of a session selects by prefix and waits for its last test to return.) Each takes its stops
+early in the run. A run that an exit key ends in the very tick in which a stop is latched prints its exit line with
+an interrupt acceptance of the SH4 still owed, which is made behind the stop callback: the `sh4` part of that line
+is then not the plain run's (`tests/debugger/guest/neutral/CMakeLists.txt`).
 
 A loop of steps in these tests has an end (100000 steps, more than a burst has instructions), and so has the list
 of published states that a test keeps between two looks at it: a machine on which a step ends no ARM phase fails

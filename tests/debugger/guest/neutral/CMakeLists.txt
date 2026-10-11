@@ -5,7 +5,17 @@
 #	selftest session whose one test never returns (libswirl/debugger/dbg_selftest_arm7.cpp, arm7n.*). Each makes
 #	four runs of dsptest.elf and holds two things against the run without the session: the sound line at 2000
 #	ticks, whole, and the state hash at 90 vblanks, part for part. The line has no field for wave memory, main
-#	memory or the scheduler; the hash has. The SH4 of the guest does not sleep, so both hold whole.
+#	memory or the scheduler; the hash has.
+#
+#	Both hold whole because the SH4 of the guest does not sleep, and because every test takes its stops early in
+#	the run. A stop that is latched at a slice end and resumed leaves no trace outside a SLEEP wait. A run that
+#	ends in the very tick in which a stop is latched - a check of the ARM7 that suspends the burst, an event
+#	breakpoint - is another matter: the burst is whole in front of the stop callback that prints the exit line,
+#	but the interrupt acceptance of the SH4 that the latch held back is made behind that callback (dc_run of
+#	libswirl/libswirl.cpp), so with an interrupt pending there the `sh4` part of the line, and its `hash`, are
+#	not those of the plain run. The tests have done their work within some hundreds of sound bursts (idlebp
+#	takes its one stop some 900 bursts in); the line is taken at 2000 and the hash some 2070 bursts in. A test
+#	that is added here keeps its stops as far from the end of the run.
 #
 #	A test that armed nothing would pass both, so each says what it did in lines that its target requires
 #	(EXPECT), and fails a check of its own when it did less:

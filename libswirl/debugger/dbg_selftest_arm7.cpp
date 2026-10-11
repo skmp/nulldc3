@@ -4259,7 +4259,19 @@ DBG_SELFTEST_GUEST(arm7_grace, "arm7.grace")
 	requires, so that a test that armed nothing is not taken for one that changed nothing.
 
 	Their stops behind a burst are those of an event breakpoint on the timers of the AICA, which is a stop
-	latched at a slice end: outside a SLEEP wait it leaves no trace (the guest does not sleep).
+	latched at a slice end: outside a SLEEP wait (the guest does not sleep) a run that goes on from it keeps no
+	trace of it. The latch holds back the interrupt acceptance of that slice end, and the leave of the park
+	context makes it, in front of the first instruction of the SH4.
+
+	A run that ends in the tick of a stop is another matter, and no test of these takes one there. The thread
+	then goes to its stop callback, which prints the exit line, with the latch set and that acceptance owed: it
+	is made behind the callback (dc_run of libswirl.cpp, emu::OnThreadExiting). So it is with a check of the
+	ARM7 that suspends the burst in the tick of the exit: the burst is whole in front of the callback, and an
+	interrupt of the SH4 that is pending there, one that the rest of the burst raised among them, is not
+	accepted yet. The `sh4` part of such an exit line is not that of the run nobody touched, whose slice end
+	accepted the interrupt before the cpu left its loop. Each test has done its work early: within some hundreds
+	of bursts, idlebp with its one stop some 900 bursts in, where the sound line is taken at 2000 and the state
+	hash, at 90 vblanks, some 2070 bursts in.
 */
 namespace {
 
