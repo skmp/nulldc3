@@ -15,6 +15,11 @@
 #	                                                    (tests/debugger/guest/dsptest), where the run has to have
 #	                                                    found the ARM7 held at its start and stepped over and out
 #	                                                    of a bl (--require-note)
+#	    debugger.contract.m2writes .interp .fallback    the parts arm7, writeMemory, setRegister and reset of S16
+#	                                                    (--parts S16:arm7+writeMemory+setRegister+reset), on the
+#	                                                    same three
+#	    debugger.contract.m2writes.guest .interp        the same four parts against the sounding guest of the tree,
+#	                                                    with the two notes
 #	    debugger.contract.grace                         the grace period after the last client left, and the
 #	                                                    client that connects behind it
 #	    debugger.contract.config                        the configuration errors of the server's keys, and a
@@ -24,8 +29,8 @@
 #	      each with .interp                             server on and no client, and with an idle breakpoint
 #
 #	The runner needs the dreamcast-devtools checkout with its node_modules (NULLDC_DEVTOOLS_DIR) and npm:
-#	without them m1*, m2arm7* and hash.idlebp* are tests whose data is missing. Everything needs 2ndmix.elf of
-#	NULLDC_ELF_DIR, but the tests on the guest of the tree.
+#	without them m1*, m2arm7*, m2writes* and hash.idlebp* are tests whose data is missing. Everything needs
+#	2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree.
 #
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -138,13 +143,24 @@ nulldc_debugger_contract(m1          MODE m1 RUNNER ENGINES jit interp)
 nulldc_debugger_contract(m1.fallback MODE m1 RUNNER FALLBACK)
 
 # The part arm7 of the runner's scenario S16 (the breakpoints and steps of the ARM7, design 5.5), by itself: the
-# scenario as a whole is partial until the writes, the reset and the tree of milestone M2 are there, and partial
-# is no pass. On the three engines against 2ndmix, whose ARM7 is released more than once while the program
-# starts; and on the JIT and the interpreter against the sounding guest of the tree, where the run has to have
-# met the ARM7 held at its start and a bl to step over and out of: the runner fails a run that lacks a note
+# scenario as a whole is partial until the tree of milestone M2 is there, and partial is no pass. On the three
+# engines against 2ndmix, whose ARM7 is released more than once while the program starts; and on the JIT and the
+# interpreter against the sounding guest of the tree, where the run has to have met the ARM7 held at its start and
+# a bl to step over and out of: the runner fails a run that lacks a note
 nulldc_debugger_contract(m2arm7          MODE parts PARTS S16:arm7 RUNNER ENGINES jit interp)
 nulldc_debugger_contract(m2arm7.fallback MODE parts PARTS S16:arm7 RUNNER FALLBACK)
 nulldc_debugger_contract(m2arm7.guest    MODE parts PARTS S16:arm7 RUNNER ENGINES jit interp
+                         GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
+                         REQUIRE_NOTE "arm7: held at the start" "arm7: bl stepped over and out")
+
+# The four parts of S16 that the emulator has behind the writes and the reset: arm7, writeMemory, setRegister and
+# reset (the fifth, tree, comes with the M2 rows of the device tree). On the three engines against 2ndmix, and on
+# the JIT and the interpreter against the sounding guest of the tree, where the write side differs: the scratch
+# address below a stack at the top of main memory and its two mirrors, the 64 KiB written back over the guest's own
+# code, the register banks under the handler of the AICA's interrupt, the reset of a program that reios loads again
+nulldc_debugger_contract(m2writes          MODE parts PARTS S16:arm7+writeMemory+setRegister+reset RUNNER ENGINES jit interp)
+nulldc_debugger_contract(m2writes.fallback MODE parts PARTS S16:arm7+writeMemory+setRegister+reset RUNNER FALLBACK)
+nulldc_debugger_contract(m2writes.guest    MODE parts PARTS S16:arm7+writeMemory+setRegister+reset RUNNER ENGINES jit interp
                          GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
                          REQUIRE_NOTE "arm7: held at the start" "arm7: bl stepped over and out")
 
