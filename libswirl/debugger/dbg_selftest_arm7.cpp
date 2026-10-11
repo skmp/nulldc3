@@ -22,7 +22,7 @@
 	tick in which a check suspends a burst, in the first slice of a run - is done by a scheduler callback of
 	the tests ("the hand"), which is registered behind the AICA's and so runs behind it in its tick.
 
-	Three tests are not part of "arm7", because a session of theirs does not end with the summary of the driver
+	Four tests are not part of "arm7", because a session of theirs does not end with the summary of the driver
 	(arm7n.*, at the end of this file): they are what tests/debugger/guest/neutral holds the sound line and the
 	state hash of a run against.
 
@@ -4554,4 +4554,157 @@ DBG_SELFTEST_GUEST(arm7n_steps, "arm7n.steps")
 	NEUTRAL_END(n_steps.co);
 
 	CO_END(n_steps.co);
+}
+
+/*
+	arm7n.hoststop: the completion of a suspended burst in dc_run, held to the run nobody touched. Breakpoints of
+	the ARM7 are hit, on thirteen addresses in turn, and at each of sixty hits the host stops the machine while
+	the thread is parked on the suspended burst, and starts it again. The thread that ends runs the rest of the
+	burst in front of its stop callback, without checks, from where the breakpoint left it: inside a sample,
+	with some of its ticks used. The next thread, which has no start park, runs on.
+
+	The tests of the session hold this path to its counts (arm7.hoststop.suspended, arm7.exit.suspended,
+	arm7.sameslice.*): that the rest of the ARM phases ran, each with its time step, and the tail once. What
+	those phases executed is held here, by the sound line and the state hash: a completion that started the
+	suspended sample again, or dropped the rest of it, moves both.
+
+	The sixty are over within some hundreds of bursts. The stops of the host are taken with the thread parked,
+	not in the tick of the exit key
+*/
+namespace {
+
+// in the loop, in its F window, on the msr that ends it, around the bl and in the leaf, in the FIQ handler, on
+// the vector, and on the store that raises the AICA's interrupt to the SH4
+const u32 kHostAddrs[] = { kMain, kMain + 4, kPlain, kLastOfWindow, kUnmask, kBl, kBehindBl, kLeaf, kLeaf + 4, kFiq, kFiq + 4, kVector, kRaise };
+const u32 kHostAddrCount = sizeof(kHostAddrs) / sizeof(kHostAddrs[0]);
+const u32 kHostStops = 60;
+const u32 kHostBpId = 100;
+
+struct {
+	Co co;
+	u32 hits, cycles, other, bad;
+	u32 at[kHostAddrCount];
+	bool counted;			// whole has the counts of a stop behind a burst
+	Counts whole;
+	std::atomic<u32> callbacks { 0 }, callbacksSuspended { 0 };
+	std::atomic<bool> failed { false };
+} n_host;
+
+// the stop callback of the host: the burst is whole in front of it
+void NeutralHostStopped()
+{
+	n_host.callbacks++;
+
+	if (Suspended() != SOUND_BURST_NONE)
+		n_host.callbacksSuspended++;
+}
+
+void NeutralHostNext()
+{
+	const u32 which = n_host.cycles % kHostAddrCount;
+
+	ArmBps({ { kHostBpId + which, kHostAddrs[which] } });
+}
+
+// At a stop behind a burst: was every burst since the stop behind a burst before this one whole, 32 ARM phases with
+// their time steps and one tail, whichever thread ran it to its end?
+bool NeutralHostWhole()
+{
+	const Counts c = ReadCounts();
+	const u32 bursts = c.n[0] - n_host.whole.n[0];
+	const bool ok = !n_host.counted
+		|| (c.n[1] - n_host.whole.n[1] == 32 * bursts && c.n[2] - n_host.whole.n[2] == 32 * bursts && c.n[3] - n_host.whole.n[3] == bursts);
+
+	n_host.whole = c;
+	n_host.counted = true;
+
+	return ok;
+}
+
+}
+
+DBG_SELFTEST_GUEST(arm7n_hoststop, "arm7n.hoststop")
+{
+	CO_BEGIN(n_host.co);
+
+	emu::SetActiveMask(kMaskAll);
+	EventBp(kNeutralEvent);
+
+	n_host.hits = n_host.cycles = n_host.other = n_host.bad = 0;
+	n_host.counted = false;
+	memset(n_host.at, 0, sizeof(n_host.at));
+
+	for (;;)
+	{
+		if (!Resume())
+			return false;
+		CO_YIELD(n_host.co);
+
+		if (stop.cause == StopCause::Breakpoint && Suspended() == SOUND_BURST_ARM7 && stop.breakpointId >= kHostBpId
+			&& stop.breakpointId < kHostBpId + kHostAddrCount && n_host.cycles < kHostStops)
+		{
+			// a hit: the breakpoint goes, and the host stops the machine while this thread is parked on the burst
+			n_host.hits++;
+			n_host.at[stop.breakpointId - kHostBpId]++;
+
+			ArmBps({ });
+
+			OtherStart([] {
+				if (!WaitLifetime(Lifetime::Stopped))
+				{
+					n_host.failed = true;
+					return;
+				}
+
+				// as a thread without a session starts: with no start park
+				emu::test::plainStart = true;
+				virtualDreamcast->Resume();
+			});
+
+			virtualDreamcast->Stop(NeutralHostStopped);
+			CO_YIELD(n_host.co);
+
+			// the first stop of the next thread: behind a burst, at the event breakpoint, which is still listed
+			OtherJoin();
+			n_host.cycles++;
+
+			if (stop.cause != StopCause::Event || Suspended() != SOUND_BURST_NONE || !NeutralHostWhole())
+				n_host.bad++;
+
+			if (n_host.cycles < kHostStops)
+				NeutralHostNext();
+
+			continue;
+		}
+
+		if (stop.cause != StopCause::Event || Suspended() != SOUND_BURST_NONE)
+		{
+			n_host.other++;
+			continue;
+		}
+
+		// behind a burst
+		if (!NeutralHostWhole())
+			n_host.bad++;
+
+		if (n_host.cycles >= kHostStops)
+			break;
+
+		NeutralHostNext();
+	}
+
+	NoEventBp();
+	ArmBps({ });
+
+	Check(n_host.cycles == kHostStops && n_host.hits == kHostStops && n_host.bad == 0 && n_host.other == 0 && !n_host.failed,
+		"the host stopped the machine %u times while the thread was parked on a burst that a breakpoint of the ARM7 had suspended, and started it again: the next "
+		"thread ran on to a stop behind a burst, with every burst whole (%u did not; %u stops of another kind)", n_host.cycles, n_host.bad, n_host.other);
+	Check(n_host.callbacks == kHostStops && n_host.callbacksSuspended == 0, "each of the %u stop callbacks found the burst whole (%u did not)",
+		n_host.callbacks.load(), n_host.callbacksSuspended.load());
+	Note("stops by address: %u %u %u %u %u %u %u %u %u %u %u %u %u; the last one in burst %u of the run", n_host.at[0], n_host.at[1], n_host.at[2], n_host.at[3],
+		n_host.at[4], n_host.at[5], n_host.at[6], n_host.at[7], n_host.at[8], n_host.at[9], n_host.at[10], n_host.at[11], n_host.at[12], ReadCounts().n[0]);
+
+	NEUTRAL_END(n_host.co);
+
+	CO_END(n_host.co);
 }

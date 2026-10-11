@@ -1,9 +1,9 @@
 ## The debugger at work on the ARM7 of the sounding guest: the run is the run nobody touched ##
 #
-#	Twelve tests, debugger.sound.neutral.<idlebp|hitresume|steps>.<jit|interp>.<batch|persample>, made by
-#	nulldc_sound_neutral of ../dsptest/CMakeLists.txt: the mode neutral of ../dsptest/soundlines.py on a selftest
-#	session whose one test never returns (libswirl/debugger/dbg_selftest_arm7.cpp, arm7n.*). Each makes four
-#	runs of dsptest.elf and holds two things against the run without the session: the sound line at 2000
+#	Sixteen tests, debugger.sound.neutral.<idlebp|hitresume|steps|hoststop>.<jit|interp>.<batch|persample>, made
+#	by nulldc_sound_neutral of ../dsptest/CMakeLists.txt: the mode neutral of ../dsptest/soundlines.py on a
+#	selftest session whose one test never returns (libswirl/debugger/dbg_selftest_arm7.cpp, arm7n.*). Each makes
+#	four runs of dsptest.elf and holds two things against the run without the session: the sound line at 2000
 #	ticks, whole, and the state hash at 90 vblanks, part for part. The line has no field for wave memory, main
 #	memory or the scheduler; the hash has. The SH4 of the guest does not sleep, so both hold whole.
 #
@@ -18,6 +18,11 @@
 #	                was taken often enough: from a stop with no burst suspended, across a time step of the AICA,
 #	                across the end of a burst (20 each), and of the msr that ends the F window of the guest's
 #	                loop, ending on the FIQ vector inside one ARM phase (5)
+#	    hoststop    sixty times the host stops the machine while the thread is parked on a burst that a
+#	                breakpoint of the ARM7 suspended, on thirteen addresses in turn, and starts it again: the
+#	                thread that ends runs the rest of the burst in front of its stop callback (dc_run), from
+#	                inside a sample. The sessions of debugger.selftest.arm7* hold that path to its counts; what
+#	                the rest of the burst executed is held here
 #
 #	README.md of ../dsptest has the guest; tests/debugger/selftest/README.md has the tests of the session.
 #
@@ -33,3 +38,7 @@ nulldc_sound_neutral(steps     SELFTEST arm7n.steps
                             "steps across a time step of the AICA"
                             "steps across the end of a burst"
                             "steps of the msr that ends the F window which ended on the FIQ vector inside one ARM phase")
+
+nulldc_sound_neutral(hoststop  SELFTEST arm7n.hoststop
+                     EXPECT "the host stopped the machine 60 times while the thread was parked on a burst"
+                            "each of the 60 stop callbacks found the burst whole")

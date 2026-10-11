@@ -166,12 +166,12 @@ exit or a guest reset in the first slice of a run, or in the tick in which a bur
 | `arm7.notice` | `NOTICE_ARM7_FALLBACK` follows the backend that executes the ARM7: on this host, where that is the interpreter, it is never set, with a breakpoint armed, at its stop, at the stop of a step |
 | `arm7.grace` | the active mask cleared while a burst is suspended: the resume runs through the breakpoint that suspended it and every later arrival, and no check is made |
 
-`arm7n.idlebp`, `arm7n.hitresume` and `arm7n.steps` are in the same file and not in the session: such a test never
-returns, and the run ends by the sound harness or by an `Exit.*` key. They are the debugger at work in a run whose
-sound line and state hash have to be those of a run nobody touched: the tests `debugger.sound.neutral.*` of
-`tests/debugger/guest/neutral` run them, through the mode `neutral` of `tests/debugger/guest/dsptest/soundlines.py`.
-(A test that the run ends is never named under the prefix of a session: the filter of a session selects by prefix
-and waits for its last test to return.)
+`arm7n.idlebp`, `arm7n.hitresume`, `arm7n.steps` and `arm7n.hoststop` are in the same file and not in the session:
+such a test never returns, and the run ends by the sound harness or by an `Exit.*` key. They are the debugger at
+work in a run whose sound line and state hash have to be those of a run nobody touched: the tests
+`debugger.sound.neutral.*` of `tests/debugger/guest/neutral` run them, through the mode `neutral` of
+`tests/debugger/guest/dsptest/soundlines.py`. (A test that the run ends is never named under the prefix of a
+session: the filter of a session selects by prefix and waits for its last test to return.)
 
 A loop of steps in these tests has an end (100000 steps, more than a burst has instructions), and so has the list
 of published states that a test keeps between two looks at it: a machine on which a step ends no ARM phase fails
