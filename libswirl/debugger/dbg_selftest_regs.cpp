@@ -11,6 +11,7 @@
 #include "dbg_regs.h"
 #include "dbg_regs_private.h"
 
+#include "hw/aica/aica.h"
 #include "hw/aica/aica_mmio.h"
 #include "hw/aica/dsp.h"
 #include "hw/aica/dsp_backend.h"
@@ -2624,6 +2625,74 @@ DBG_SELFTEST(regs_rows_aica, "regs.rows.aica")
 
 	if (!Check(layout && cpu.size() == scpu_state_size, "the save state of the AICA has the register file at byte %zu, behind the timers, VREG and ARMRST", aica_file_at))
 		return;
+
+	// The rows of the common block against the struct the emulator itself reads the block through
+	// (CommonData_struct, hw/aica/aica.h): a member set to all ones in a block of zeroes shows the bits the
+	// compiler gives it, and those are the bits of the row of its name. The two halves of DMEA are one row
+	{
+		const regs::Node* common = regs::Find("dc.aica.common");
+		Tally layout_of;
+		u32 members = 0;
+
+		auto compare = [&](const char* name, const CommonData_struct& ones) {
+			std::vector<u8> block(0x8000, 0), mine(0x8000, 0);
+			const int index = common != nullptr ? regs::FindRegister(*common, name) : -1;
+
+			members++;
+			memcpy(&block[0x2800], &ones, sizeof(ones));
+
+			if (index < 0)
+			{
+				layout_of.Add(false, "dc.aica.common has no row %s", name);
+				return;
+			}
+
+			// the bits of the row, by its key
+			const regs::Register& reg = common->registers[index];
+			const u32 selector = regs::KeySelector(reg.key);
+			const u32 offset = regs::AicaFieldOffset(selector), shift = regs::AicaFieldShift(selector);
+
+			auto set = [&mine](u32 word_at, u32 n) { mine[word_at + n / 8] |= (u8)(1 << (n % 8)); };
+
+			if (!regs::AicaFieldTwoWords(selector))
+			{
+				for (u32 b = 0; b < reg.width; b++)
+					set(offset, shift + b);
+			}
+			else
+			{
+				for (u32 b = 16; b < reg.width; b++)
+					set(offset, shift + b - 16);
+				for (u32 b = regs::AicaFieldLowShift(selector); b < 16; b++)
+					set(offset + 4, b);
+			}
+
+			const size_t at = FirstDifference(block, mine);
+
+			layout_of.Add(block == mine && regs::KeySource(reg.key) == regs::kSrcAica, "dc.aica.common.%s: its bits differ from the member's at byte %04zX of the file (%02X, the struct has %02X)",
+				name, at, at < mine.size() ? mine[at] : 0, at < block.size() ? block[at] : 0);
+		};
+
+#define MEMBER(row, member) { CommonData_struct ones; memset(&ones, 0, sizeof(ones)); ones.member = ~0u; compare(row, ones); }
+#define MEMBER2(row, high, low) { CommonData_struct ones; memset(&ones, 0, sizeof(ones)); ones.high = ~0u; ones.low = ~0u; compare(row, ones); }
+		MEMBER("MVOL", MVOL) MEMBER("VER", VER) MEMBER("DAC18B", DAC18B) MEMBER("MEM8MB", MEM8MB) MEMBER("MONO", Mono)
+		MEMBER("RBP", RBP) MEMBER("RBL", RBL) MEMBER("TESTB0", TESTB0)
+		MEMBER("MIBUF", MIBUF) MEMBER("MIEMP", MIEMP) MEMBER("MIFUL", MIFUL) MEMBER("MIOVF", MIOVF) MEMBER("MOEMP", MOEMP) MEMBER("MOFUL", MOFUL)
+		MEMBER("MOBUF", MOBUF) MEMBER("MSLC", MSLC) MEMBER("AFSET", AFSET)
+		MEMBER("EG", EG) MEMBER("SGC", SGC) MEMBER("LP", LP) MEMBER("CA", CA)
+		MEMBER("MRWINH", MRWINH) MEMBER("T", $T) MEMBER("TSCD", $TSCD) MEMBER2("DMEA", DMEA_hi, DMEA_lo)
+		MEMBER("DRGA", DRGA) MEMBER("DGATE", DGATE) MEMBER("DEXE", DEXE) MEMBER("DLG", DLG) MEMBER("DDIR", DDIR)
+		MEMBER("TIMA", TIMA) MEMBER("TACTL", TACTL) MEMBER("TIMB", TIMB) MEMBER("TBCTL", TBCTL) MEMBER("TIMC", TIMC) MEMBER("TCCTL", TCCTL)
+		MEMBER("SCIEB", SCIEB) MEMBER("SCIPD", SCIPD) MEMBER("SCIRE", SCIRE) MEMBER("SCILV0", SCILV0) MEMBER("SCILV1", SCILV1) MEMBER("SCILV2", SCILV2)
+		MEMBER("MCIEB", MCIEB) MEMBER("MCIPD", MCIPD) MEMBER("MCIRE", MCIRE)
+		MEMBER("AR", AR) MEMBER("VREG", VREG)
+#undef MEMBER2
+#undef MEMBER
+
+		layout_of.Report("the fields of dc.aica.common against the members of the emulator's struct of the common block");
+		Check(common != nullptr && members + 2 == common->registerCount, "every field of the node was compared: %u members, and L and M, which are no members of the file",
+			members);
+	}
 
 	u32 rows = 0, no_reader = 0;
 
