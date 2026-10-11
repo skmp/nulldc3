@@ -238,6 +238,39 @@ u32 Suspended()
 	return virtualDreamcast->SoundBurstSuspended();
 }
 
+// What the sound CPU writes into a save state, which is what the sound line and the state hash fold of it: bool
+// aica_interr, u32 aica_reg_L, bool e68k_out, u32 e68k_reg_L, u32 e68k_reg_M, the RN_ARM_REG_COUNT words of the
+// context, bool armIrqEnable, bool armFiqEnable, int armMode, bool enabled
+const size_t kScpuWordsAt = 1 + 4 + 1 + 4 + 4;
+const size_t kScpuStateSize = kScpuWordsAt + RN_ARM_REG_COUNT * 4 + 1 + 1 + 4 + 1;
+
+std::vector<u8> ScpuState()
+{
+	void* data = nullptr;
+	unsigned int size = 0;
+
+	Scpu()->serialize(&data, &size);
+
+	std::vector<u8> state(size);
+
+	data = state.data();
+	size = 0;
+	Scpu()->serialize(&data, &size);
+
+	return state;
+}
+
+// A word of the context as it is stored, not as the debugger reads it
+u32 StoredWord(const std::vector<u8>& state, u32 index)
+{
+	u32 word = 0xDEADBEEF;
+
+	if (state.size() == kScpuStateSize)
+		memcpy(&word, &state[kScpuWordsAt + index * 4], 4);
+
+	return word;
+}
+
 // What the sound bursts of the machine have done: started, ARM phases, time steps, tails
 struct Counts {
 	u32 n[4];
@@ -938,6 +971,58 @@ DBG_SELFTEST_GUEST(arm7_bp_hit, "arm7.bp.hit")
 	ArmBps({ });
 
 	CO_END(bp_hit.co);
+}
+
+/*
+	arm7.bp.context: the debug loop leaves the context of the ARM7 as the interpreter's own loop leaves it. Every
+	word of that context is in the save state, and so in the sound line and in the state hash; two of them are
+	scratch that only an instruction boundary inside the FIQ handler shows, and no tick of the guest falls there
+	(its bursts end in the loop).
+
+	The CPSR word is stored when the core composes it, and is stale in between. The entry of a FIQ composes it
+	in the mode switch and masks I and F behind that: through the handler the stored word has F as the
+	interrupted loop had it, clear, while the core has it set, which is what the debugger reads. A debug loop
+	that composed the CPSR anywhere would store the word of the debugger's read
+*/
+namespace {
+
+struct {
+	Co co;
+} bp_ctx;
+
+}
+
+DBG_SELFTEST_GUEST(arm7_bp_context, "arm7.bp.context")
+{
+	std::vector<u8> state;
+
+	CO_BEGIN(bp_ctx.co);
+
+	while (!Settle(stop))
+		CO_YIELD(bp_ctx.co);
+
+	// the first instruction of the handler: behind the entry and the branch of the vector
+	while (!SuspendAt(stop, kFiq))
+		CO_YIELD(bp_ctx.co);
+
+	state = ScpuState();
+
+	Check(state.size() == kScpuStateSize, "the save state of the sound CPU has the size of its %u words and its ten fields: %zu bytes",
+		(u32)RN_ARM_REG_COUNT, state.size());
+	Check(ArmMode() == 0x11 && (Arm(RN_CPSR) & 0xC0) == 0xC0 && StoredWord(state, RN_CPSR) == (Arm(RN_CPSR) & ~0x40u),
+		"inside the FIQ handler the stored CPSR word is the one the entry composed, with F as the loop had it: %08X, where the core has %08X. The debug loop "
+		"composed none", StoredWord(state, RN_CPSR), Arm(RN_CPSR));
+	Check(StoredWord(state, 15) == kFiq + 4, "R15 is what the branch of the vector left: %08X", StoredWord(state, 15));
+	Check(StoredWord(state, R15_ARM_NEXT) == kFiq && StoredWord(state, INTR_PEND) == 0 && StoredWord(state, CYCL_CNT) == 0,
+		"the address of the next instruction is the PC of the stop; no FIQ is pending and enabled; the tick remainder of the recompiler, which the "
+		"interpreter never writes, is %u", StoredWord(state, CYCL_CNT));
+
+	// the suspended burst keeps nothing in the context: where it stands is the machine's
+	Check(ScpuState() == state && ReadArm().r[15] == kFiq, "and the debugger's reads leave the save state as it is");
+
+	ArmBps({ });
+
+	CO_END(bp_ctx.co);
 }
 
 /*
