@@ -58,16 +58,17 @@ guest changing.
 | `g_release_arm7` | releases the ARM7 and goes to `g_main`. Not reached by itself |
 | `g_wave`, `g_arm7_image` | the sine and the ARM7 program, data |
 
-**The first tick.** The cut of the M2 round had everything the SH4 does to the sound "in front of the first tick of
-the AICA, on both engines". There is no such place. The scheduler starts with the first tick due, so it runs at
-the end of the first slice of the SH4, 448 cycles behind the start of the machine: the interpreter has executed 56
-instructions by then, the recompiler all of a set-up of 800. The first lines of this guest showed it: the
-interpreter's line was the recompiler's a tick late in `samples`, `regs` and `arm7`. So `_start` waits for that
-tick, in a way that is the same on every engine: it writes one ARM instruction that branches to itself to wave
-memory 0 and releases the ARM7 onto it, which gives the AICA its clock (while the ARM7 is held no timer steps and,
-sample by sample, no sample is made), and reads `SCIPD` until `SAMPLE_DONE` is set. Then it holds the ARM7 again
-and does the set-up, which is over 6500 cycles later on the interpreter and far sooner on the recompiler: between
-the first tick and the second on both. A reset of the machine goes the same way, whenever it comes. So:
+**The first tick.** The cut of the M2 round (`docs/nulldc3/devtools-integration-m2-round.md`, 5.2) had everything
+the SH4 does to the sound "before the first AICA tick on both engines". There is no such place. The scheduler
+starts with the first tick due, so it runs at the end of the first slice of the SH4, 448 cycles behind the start
+of the machine: the interpreter has executed 56 instructions by then, the recompiler all of a set-up of 800. The
+first lines of this guest showed it: the interpreter's line was the recompiler's a tick late in `samples`, `regs`
+and `arm7`. So `_start` waits for that tick, in a way that is the same on every engine: it writes one ARM
+instruction that branches to itself to wave memory 0 and releases the ARM7 onto it, which gives the AICA its clock
+(while the ARM7 is held no timer steps and, sample by sample, no sample is made), and reads `SCIPD` until
+`SAMPLE_DONE` is set. Then it holds the ARM7 again and does the set-up, which is over 6500 cycles later on the
+interpreter and far sooner on the recompiler: between the first tick and the second on both. A reset of the
+machine goes the same way, whenever it comes. So:
 
 - the ARM7 is held at the entry of the program (`ENABLED` 0), clocked for one tick on a one-word program, held
   again and released onto `a_reset`: a debugger that looks during the first two ticks sees that;
