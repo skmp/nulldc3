@@ -148,8 +148,7 @@ bool Read(const Node& node, uint32_t index, uint64_t* value, char* text, uint32_
 //                  a sound burst is suspended (the ARM7 stands between two instructions then)
 // Returns 0. Returns kErrNotWritable (-32013), having changed nothing, for a register without kRegWritable,
 // for an index out of range, with no machine, and when the device refuses the value (an odd PC of the SH4;
-// the CPSR of the ARM7 with mode bits that are no mode), or kErrNotSupported (-32004) while no writer exists
-// at all.
+// the CPSR of the ARM7 with mode bits that are no mode).
 int Write(const Node& node, uint32_t index, uint64_t value);
 
 } }

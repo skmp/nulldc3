@@ -22,6 +22,9 @@
 	  core.tick      (machine) the JSON of ticks and of describe; strings that are no UTF-8
 	  core.guest     (guest)   the booted ELF: symbols, call stacks, the breakpoint of a stop
 	  core.lifetime  (guest)   a machine that is stopped, whose guest has exited, that is gone and made again
+	  core.reset     (guest)   control.reset: at a stop, which becomes the stop of the reset, and while the machine runs
+	  core.writes    (guest)   state.writeMemory, state.setRegister and state.editWatch by parameter, error order,
+	                           channel and lifetime; what describe says of them; the tick behind a write
 
 	A test on (E) hands its requests over in place: it stands where a call of every class may stand. What comes
 	in as it does on the core thread, through dbg::emu::Call, comes from a thread the test starts: while the
@@ -29,6 +32,9 @@
 
 	The session boots 2ndmix.elf (tests/debugger/selftest/CMakeLists.txt). core.guest starts at the reset
 	vector, where reios has its trap, and resets the machine when it is not there.
+
+	What the writers under the three write methods do to the machine is not this session's: that is the session
+	"writes" (dbg_selftest_writes.cpp), on the guest of the tree.
 */
 
 // json.hpp comes in front of every tree header
@@ -59,11 +65,20 @@
 #include <cstring>
 #include <functional>
 #include <initializer_list>
+#include <map>
+#include <mutex>
 #include <set>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+
+namespace dbg { namespace emu { namespace test {
+
+// dbg_emu.cpp: invoked behind the listener with every state that is published
+extern void (*observer)(const RunState& state);
+
+} } }
 
 namespace {
 
@@ -722,6 +737,20 @@ DBG_SELFTEST(core_tables, "core.tables")
 		Check(handed() == Pairs({ { arm7_ids[0], arm7_addrs[0] }, { arm7_ids[1], arm7_addrs[1] }, { arm7_ids[2], arm7_addrs[2] } }),
 			"the hand-over: dbg::arm7 has the three, each id at its address (%zu pairs)", handed().size());
 
+		// neither processor is handed the other's: nothing of the SH4 is armed by the three, and an enabled
+		// code breakpoint of the SH4 beside them is armed there and is not in the set of the ARM7
+		Check(dbg_sh4_armed == 0, "the hand-over: the breakpoints of the ARM7 arm nothing of the SH4 (%u armed)", dbg_sh4_armed);
+		{
+			const bool added_sh4 = Ok(Send("breakpoints.add", { { "event", "dc.sh4.cpu.pc" }, { "address", 0x8C010000u } }));
+
+			Check(added_sh4 && dbg_sh4_armed == 1 && handed() == Pairs({ { arm7_ids[0], arm7_addrs[0] }, { arm7_ids[1], arm7_addrs[1] }, { arm7_ids[2], arm7_addrs[2] } }),
+				"the hand-over: a code breakpoint of the SH4 beside them is armed for the SH4 alone (%u armed, %zu pairs)", dbg_sh4_armed, handed().size());
+
+			const bool removed_sh4 = Ok(Send("breakpoints.remove", { { "id", BreakpointIds(Tick(false)).back() } }));
+
+			Check(removed_sh4 && dbg_sh4_armed == 0, "(the breakpoint of the SH4 removed: %u armed)", dbg_sh4_armed);
+		}
+
 		Check(Ok(Send("breakpoints.toggle", { { "id", arm7_ids[1] }, { "enabled", false } })) && Tick(false)["breakpoints"][std::to_string(arm7_ids[1])]["enabled"] == false,
 			"one of them toggled off: it stays listed, disabled");
 		Check(handed() == Pairs({ { arm7_ids[0], arm7_addrs[0] }, { arm7_ids[2], arm7_addrs[2] } }),
@@ -937,10 +966,6 @@ DBG_SELFTEST(core_tables, "core.tables")
 		Check(equal, "every watch reads what its register reads in the same tick (%s)", differs.c_str());
 	}
 
-	// milestone M2
-	Check(InBand(Send("state.editWatch", { { "watchId", w0 + 1 }, { "value", "0x0" } })) == kErrNotSupported && InBand(Send("state.editWatch")) == kErrNotSupported,
-		"state.editWatch is -32004 until M2, in-band, with or without its parameters");
-
 	CleanTables();
 	tick = Tick(false);
 	Check(tick["watches"].empty() && tick["breakpoints"].empty(), "(the tables are empty for the tests behind this one)");
@@ -1041,8 +1066,10 @@ DBG_SELFTEST(core_tick, "core.tick")
 		emu::Sh4EngineInfo engine;
 		const bool known = emu::GetSh4Engine(&engine);
 
-		Check(caps.count("event-breakpoints") == 1 && caps.count("callstack") == 1 && known && caps.count(engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native") == 1
-			&& caps.size() == 3, "the capabilities of M1, and the one of the engine that is selected (%s)", shape["capabilities"].dump().c_str());
+		Check(caps.count("event-breakpoints") == 1 && caps.count("callstack") == 1 && caps.count("memory-write") == 1 && caps.count("register-write") == 1
+			&& caps.count("reset") == 1 && known && caps.count(engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native") == 1 && caps.size() == 6
+			&& shape["capabilities"].size() == 6, "the capabilities of M1 and of M2, five, and the one of the engine that is selected (%s)",
+			shape["capabilities"].dump().c_str());
 
 		json& targets = shape["targets"];
 
@@ -1217,7 +1244,8 @@ DBG_SELFTEST(core_tick, "core.tick")
 	Check(core::HandleRequestText(R"({"jsonrpc":"2.0","id":5})") == R"({"jsonrpc":"2.0","id":5,"error":{"code":-32600,"message":"invalid request"}})", "no method: -32600");
 	Check(RpcError(Send("no.such.method")) == kErrMethodNotFound && RpcError(Send("event.tick")) == kErrMethodNotFound, "a method the protocol does not have: -32601");
 	Check(RpcError(Send("state.getTable", { { "id", 5 } })) == kErrNotSupported && RpcError(Send("state.getMemoryBinary")) == kErrNotSupported
-		&& InBand(Send("state.setRegister")) == kErrNotSupported && InBand(Send("control.reset")) == kErrNotSupported && InBand(Send("state.recordSgcFrames", { { "frames", "x" } })) == kErrNotSupported,
+		&& RpcError(Send("state.getSgcFrameData")) == kErrNotSupported && RpcError(Send("state.captureHolly", { { "what", 1 } })) == kErrNotSupported
+		&& InBand(Send("state.recordSgcFrames", { { "frames", "x" } })) == kErrNotSupported && InBand(Send("state.recordSgcFrames")) == kErrNotSupported,
 		"a method of a later milestone: -32004 on the channel of the method, whatever its parameters are");
 	Check(Ok(json::parse(core::HandleRequestText(R"({"jsonrpc":"2.0","id":9,"method":"state.unwatch","more":1,"params":{"watchIds":[],"other":{"a":null}}})"), nullptr, false)),
 		"a member of the request and a key of params that the protocol does not name are not looked at");
@@ -1678,7 +1706,7 @@ void Look(Found* found, bool with_tables)
 	found->run = Ask("control.runUntil");
 	found->step = Ask("control.step", { { "target", "sh4" } });
 	found->pause = Ask("control.pause", { { "target", "sh4" } });
-	found->later_inband = Ask("state.setRegister", { { "path", "dc.sh4.cpu" } });
+	found->later_inband = Ask("state.recordSgcFrames", { { "frames", "many" } });
 	found->later_rpc = Ask("state.getTable", { { "id", "sq" } });
 }
 
@@ -1754,7 +1782,7 @@ DBG_SELFTEST_GUEST(core_lifetime, "core.lifetime")
 				tick["callstacks"]["sh4"].size());
 		}
 
-		Check(shape.is_object() && shape["deviceTree"][0]["registers"][0]["value"] == "200MHz" && shape["capabilities"].size() == 3, "describe: the tree with its values, and the engine capability (%s)",
+		Check(shape.is_object() && shape["deviceTree"][0]["registers"][0]["value"] == "200MHz" && shape["capabilities"].size() == 6, "describe: the tree with its values, and the engine capability (%s)",
 			shape.is_object() ? shape["capabilities"].dump().c_str() : "no JSON");
 		Check(Ok(Parsed(f.add)) && Ok(Parsed(f.watch)), "bookkeeping works: breakpoints.add and state.watch are answered {} (%s, %s)", f.add.c_str(), f.watch.c_str());
 		Check(Parsed(f.slice).contains("result") && Parsed(f.stack).contains("result") && Parsed(f.disasm).contains("result")
@@ -1873,8 +1901,8 @@ DBG_SELFTEST_GUEST(core_lifetime, "core.lifetime")
 
 			Check(shape.is_object() && nodes.size() == count && problems.empty() && values > 200 && not_na == 0,
 				"describe: the static tree, %u nodes, with every one of its %u values \"n/a\" (%u are not)", count, values, not_na);
-			Check(shape.is_object() && shape["capabilities"] == json::array({ "event-breakpoints", "callstack" }) && shape["targets"].size() == 3,
-				"no engine capability, and the three targets (%s)", shape.is_object() ? shape["capabilities"].dump().c_str() : "no JSON");
+			Check(shape.is_object() && shape["capabilities"] == json::array({ "event-breakpoints", "callstack", "memory-write", "register-write", "reset" })
+				&& shape["targets"].size() == 3, "no engine capability, and the three targets (%s)", shape.is_object() ? shape["capabilities"].dump().c_str() : "no JSON");
 
 			Check(RpcError(Parsed(f.slice)) == kErrNoGame && RpcError(Parsed(f.stack)) == kErrNoGame && RpcError(Parsed(f.disasm)) == kErrNoGame,
 				"reads of guest state: -32002, as JSON-RPC errors (%s)", f.slice.c_str());
@@ -1902,6 +1930,932 @@ DBG_SELFTEST_GUEST(core_lifetime, "core.lifetime")
 		events::ClearForTest();
 
 		lt.phase = 0;
+		return true;
+	}
+	}
+}
+
+/*
+	What the two tests below share: the ticks the core broadcasts from inside a call, which a session without a
+	server hands to a test (core::SetTickSinkForTest), and what dbg::emu publishes.
+*/
+namespace {
+
+std::mutex& sink_lock = *new std::mutex();
+std::vector<std::string>& sink_ticks = *new std::vector<std::string>();
+
+void TickSink(const std::string& tick)
+{
+	std::lock_guard<std::mutex> lock(sink_lock);
+
+	sink_ticks.push_back(tick);
+}
+
+// The ticks since the last look, as their params
+std::vector<json> TakeTicks()
+{
+	std::vector<std::string> texts;
+
+	{
+		std::lock_guard<std::mutex> lock(sink_lock);
+
+		texts.swap(sink_ticks);
+	}
+
+	std::vector<json> ticks;
+
+	for (const std::string& text : texts)
+	{
+		json message = json::parse(text, nullptr, false);
+
+		ticks.push_back(message.is_object() && message.contains("params") ? message["params"] : json::object());
+	}
+
+	return ticks;
+}
+
+std::mutex& published_lock = *new std::mutex();
+std::vector<emu::RunState>& published = *new std::vector<emu::RunState>();
+
+void Published(const emu::RunState& state)
+{
+	std::lock_guard<std::mutex> lock(published_lock);
+
+	if (published.size() < 1000)
+		published.push_back(state);
+}
+
+std::vector<emu::RunState> TakePublished()
+{
+	std::lock_guard<std::mutex> lock(published_lock);
+	std::vector<emu::RunState> list;
+
+	list.swap(published);
+	return list;
+}
+
+// "Parked:reset Running ..." for a line
+std::string PublishedText(const std::vector<emu::RunState>& list)
+{
+	std::string text;
+
+	for (const emu::RunState& s : list)
+	{
+		if (!text.empty())
+			text += ' ';
+
+		text += s.lifetime == Lifetime::NoMachine ? "NoMachine" : s.lifetime == Lifetime::Stopped ? "Stopped" : s.lifetime == Lifetime::Running ? "Running" : "Parked";
+
+		if (s.cause != StopCause::NoCause)
+			text += std::string(":") + StopCauseName(s.cause);
+	}
+
+	return text.empty() ? "nothing" : text;
+}
+
+// A paused tick of one stop
+bool PausedTickOf(const json& tick, u32 stopId)
+{
+	return tick.is_object() && tick.contains("executionState") && tick["executionState"].value("state", "") == "paused" && tick["executionState"].value("stopId", 0u) == stopId;
+}
+
+// A running tick behind that stop: no reason, no breakpoint
+bool RunningTickOf(const json& tick, u32 stopId)
+{
+	return tick.is_object() && tick.contains("executionState") && tick["executionState"].value("state", "") == "running" && tick["executionState"].value("stopId", 0u) == stopId
+		&& !tick["executionState"].contains("reason") && !tick["executionState"].contains("breakpointId");
+}
+
+const u32 kEntry = 0x8C010000;				// where reios enters a program
+
+}
+
+/*
+	core.reset: control.reset. At a stop it is one more stop, with reason reset, and the machine is the one a
+	reset leaves; the tables are kept. While the machine runs it resets and runs on, and nothing is published
+*/
+namespace {
+
+struct {
+	int phase;
+	u32 stop0, entry_id, off_id, watch_id;
+	std::string tables;				// breakpoints, watches and categories of the tick in front of the reset
+	std::atomic<bool> asked { false }, timed_out { false };
+	std::string answer;
+} rs;
+
+// What a reset has to keep, as one text: the breakpoints, the watches and the categories of a tick
+std::string TablesOf(const json& tick)
+{
+	json watches = json::array();
+
+	// (the value of a watch is its register's: it changes with the machine)
+	for (const json& w : tick["watches"])
+		watches.push_back({ { "id", w["id"] }, { "expression", w["expression"] } });
+
+	return tick["breakpoints"].dump() + watches.dump() + tick["categories"].dump();
+}
+
+}
+
+DBG_SELFTEST_GUEST(core_reset, "core.reset")
+{
+	const u32 pc = p_sh4rcb->cntx.pc;
+
+	switch (rs.phase)
+	{
+	case 0:
+	{
+		if (!Alone("core.reset"))
+			return true;
+
+		ids_used = true;
+
+		CleanTables();
+		core::SetClientCountForTest(1, false);
+
+		// a breakpoint on the entry of the program: every boot runs into it
+		const std::vector<u32> before = BreakpointIds(Tick(false));
+
+		Check(Ok(Send("breakpoints.add", { { "event", "dc.sh4.cpu.pc" }, { "address", kEntry } })), "a code breakpoint on the entry of the program, %08X", kEntry);
+
+		const std::vector<u32> fresh = NewIds(Tick(false), before);
+
+		rs.entry_id = fresh.size() == 1 ? fresh[0] : 0;
+		rs.phase = 1;
+
+		// from the entry itself the resume would run through it: the boot is made again
+		if (pc == kEntry)
+			emu::Reset();
+		else
+			Check(Ok(Send("control.runUntil")), "resume");
+
+		return false;
+	}
+
+	case 1:
+	{
+		// the stop of the reset this test made to get away from the entry
+		if (stop.cause == StopCause::Reset)
+		{
+			Check(Ok(Send("control.runUntil")), "(the machine was reset to boot again: resume)");
+			return false;
+		}
+
+		if (!Check(stop.cause == StopCause::Breakpoint && stop.breakpointId == rs.entry_id && pc == kEntry, "the boot stops at the breakpoint on the entry (\"%s\" id %u, pc %08X)",
+			StopCauseName(stop.cause), stop.breakpointId, pc))
+		{
+			rs.phase = 0;
+			CleanTables();
+			return true;
+		}
+
+		// something for the reset to keep: a disabled breakpoint, a watch, a muted category
+		std::vector<u32> before = BreakpointIds(Tick(false));
+
+		Check(Ok(Send("breakpoints.add", { { "event", "dc.sh4.cpu.pc" }, { "address", kEntry + 0x100 }, { "enabled", false } }))
+			&& Ok(Send("state.watch", { { "expressions", json::array({ "dc.sh4.cpu.vbr" }) } }))
+			&& Ok(Send("breakpoints.setCategoryStates", { { "categories", { { "dsp", { { "muted", true }, { "soloed", false } } } } } })),
+			"a disabled breakpoint, a watch and the category dsp muted");
+
+		json tick = Tick(false);
+		std::vector<u32> fresh = NewIds(tick, before);
+
+		rs.off_id = fresh.size() == 1 ? fresh[0] : 0;
+		rs.watch_id = tick["watches"].size() == 1 ? tick["watches"][0].value("id", 0u) : 0;
+		rs.tables = TablesOf(tick);
+
+		Check(tick["executionState"].value("breakpointId", 0u) == rs.entry_id && tick["breakpoints"].size() == 2 && tick["watches"].size() == 1 && tick["categories"]["dsp"]["muted"] == true,
+			"the tick of the stop names its breakpoint, and lists two breakpoints, the watch and the category (%s)", tick["executionState"].dump().c_str());
+
+		// the reset, asked at this stop
+		emu::test::observer = Published;
+		core::SetTickSinkForTest(TickSink);
+		TakePublished();
+		TakeTicks();
+
+		rs.stop0 = stop.stopId;
+		rs.phase = 2;
+
+		// (it has no parameters: a key it does not name is not looked at)
+		json answer = Send("control.reset", { { "target", 5 } });
+
+		Check(Ok(answer), "control.reset at the stop of a breakpoint is answered {} (%s)", answer.dump().c_str());
+		Check(TakeTicks().empty(), "and broadcasts no tick of its own: the stop of the reset is its tick");
+		return false;
+	}
+
+	case 2:
+	{
+		const std::vector<emu::RunState> list = TakePublished();
+		json tick = Tick(false);
+		emu::RunState now = emu::GetRunState();
+
+		Check(stop.cause == StopCause::Reset && stop.lifetime == Lifetime::Parked && stop.stopId == rs.stop0 + 1 && stop.breakpointId == 0,
+			"a reset at a stop is one more stop: reason reset, the next stopId, no breakpoint (\"%s\", stop %u behind %u, id %u)", StopCauseName(stop.cause), stop.stopId,
+			rs.stop0, stop.breakpointId);
+		Check(list.size() == 1 && list[0].lifetime == Lifetime::Parked && list[0].cause == StopCause::Reset && now.lifetime == Lifetime::Parked,
+			"that stop is all that was published: no Running in between (%s)", PublishedText(list).c_str());
+		Check(pc == kResetVector && Hex(Reg(tick, "dc.sh4.cpu", "PC")) == kResetVector, "the machine is reset: the PC of the SH4 is the one a reset leaves, %08X, not the "
+			"PC of the stop, %08X", pc, kEntry);
+		Check(PausedTickOf(tick, stop.stopId) && tick["executionState"].value("reason", "") == "reset" && !tick["executionState"].contains("breakpointId"),
+			"its tick: paused, reason reset, and no breakpointId, though the breakpoint of the stop before is listed (%s)", tick["executionState"].dump().c_str());
+		Check(TablesOf(tick) == rs.tables && tick["breakpoints"].contains(std::to_string(rs.entry_id)) && tick["breakpoints"][std::to_string(rs.entry_id)]["enabled"] == true
+			&& tick["breakpoints"].contains(std::to_string(rs.off_id)) && tick["breakpoints"][std::to_string(rs.off_id)]["enabled"] == false
+			&& tick["watches"].size() == 1 && tick["watches"][0]["id"] == rs.watch_id && tick["categories"]["dsp"]["muted"] == true,
+			"the tables are what they were: the breakpoint that had stopped, the disabled one, the watch and the muted category (%s)", tick["breakpoints"].dump().c_str());
+
+		CheckArm7(tick, false, "behind the reset");
+
+		// the machine runs behind its reset: the boot stops at the entry again
+		rs.stop0 = stop.stopId;
+		rs.phase = 3;
+
+		Check(Ok(Send("control.runUntil")), "resume");
+		return false;
+	}
+
+	case 3:
+	{
+		TakePublished();
+
+		if (!Check(stop.cause == StopCause::Breakpoint && stop.breakpointId == rs.entry_id && pc == kEntry && stop.stopId == rs.stop0 + 1,
+			"the machine runs behind its reset: the boot stops at the breakpoint on the entry (\"%s\" id %u, pc %08X)", StopCauseName(stop.cause), stop.breakpointId, pc))
+		{
+			emu::test::observer = nullptr;
+			core::SetTickSinkForTest(nullptr);
+			rs.phase = 0;
+			CleanTables();
+			return true;
+		}
+
+		// A reset while the machine runs. The program goes on from its entry; a thread asks for the reset when
+		// the machine has run for a while, as a client does. The breakpoint on the entry says that it was made
+		events::ClearForTest();
+		TakeTicks();
+
+		rs.asked = false;
+		rs.timed_out = false;
+		rs.stop0 = stop.stopId;
+		rs.phase = 4;
+
+		HostStart([] {
+			if (!WaitLifetime(Lifetime::Running))
+				return;
+
+			// far from its entry
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+			rs.answer = Ask("control.reset");
+			rs.asked = true;
+
+			// a machine that is not reset never comes back to its entry: the test is given a stop all the same
+			if (!WaitLifetime(Lifetime::Parked, 30000))
+			{
+				rs.timed_out = true;
+				emu::RequestPause();
+			}
+		});
+
+		Check(Ok(Send("control.runUntil")), "resume, and a thread that asks for control.reset while the machine runs");
+		return false;
+	}
+
+	default:
+	{
+		HostJoin();
+
+		const std::vector<emu::RunState> list = TakePublished();
+		json tick = Tick(false);
+		u32 resets = 0;
+
+		for (const json& entry : tick["eventLog"])
+			resets += entry["metadata"]["event"] == "dc.system.reset";
+
+		Check(rs.asked && Ok(Parsed(rs.answer)), "control.reset while the machine runs is answered {} (%s)", rs.answer.c_str());
+		Check(!rs.timed_out && stop.cause == StopCause::Breakpoint && stop.breakpointId == rs.entry_id && pc == kEntry,
+			"and the machine is reset: it boots again and stops at the breakpoint on the entry of the program (\"%s\" id %u, pc %08X%s)", StopCauseName(stop.cause),
+			stop.breakpointId, pc, rs.timed_out ? "; it never came there, and was paused" : "");
+		Check(list.size() == 2 && list[0].lifetime == Lifetime::Running && list[1].lifetime == Lifetime::Parked && list[1].cause == StopCause::Breakpoint
+			&& stop.stopId == rs.stop0 + 1, "nothing is published for it: the resume, and the stop of the breakpoint, which is the next stop (%s; stop %u behind %u)",
+			PublishedText(list).c_str(), stop.stopId, rs.stop0);
+		Check(TakeTicks().empty(), "and no tick is broadcast for it");
+		Check(resets == 1, "the event log has the reset: one entry dc.system.reset (%u)", resets);
+
+		emu::test::observer = nullptr;
+		core::SetTickSinkForTest(nullptr);
+
+		CleanTables();
+		events::ClearForTest();
+
+		rs.phase = 0;
+		return true;
+	}
+	}
+}
+
+/*
+	core.writes: the three write methods as a client meets them. By parameter (-32602, in front of everything
+	else), by lifetime, by the errors of each method in their order, all of them in-band; what describe says:
+	five capabilities besides the engine's, and flags.writable on the registers that have a writer and nowhere
+	else; the tick behind an accepted write, which is of the stop the write was made in; and a write made while
+	the machine runs, which is served, with a running tick behind it, and never answered -32003.
+
+	The register the test writes while the program runs is DBR, which the program does not use, and its memory
+	is in the middle of main memory, far from the program and from its stack.
+*/
+namespace {
+
+const u32 kQuietAddr = 0x8CA00000;
+
+struct RunningAnswers {
+	bool ran = false;
+	std::string refused_register, refused_memory, bad_register, bad_memory, memory, read, reg, watch, unknown;
+	size_t ticks_memory = 0, ticks_register = 0, ticks_refused = 0;
+	json tick_memory, tick_register;
+};
+
+struct StoppedAnswers {
+	bool reached = false;
+	std::string memory, reg, watch, reset, bad_memory, bad_register, bad_watch, unknown_register, unknown_watch, dsp_memory, rom_memory, slice;
+};
+
+struct {
+	int phase;
+	u32 stop0, pc0, r0, dbr, watch_r1, watch_enabled, watch_text, watch_dbr;
+	u8 quiet[4];
+	std::atomic<bool> failed { false };
+	std::atomic<int> start_rv { 99 };
+	RunningAnswers running;
+	StoppedAnswers stopped, none;
+} wr;
+
+json WriteMemory(const char* target, u32 address, std::initializer_list<int> bytes)
+{
+	return Send("state.writeMemory", { { "target", target }, { "address", address }, { "data", json(std::vector<int>(bytes)) } });
+}
+
+json SetRegister(const char* path, const char* name, const char* value)
+{
+	return Send("state.setRegister", { { "path", path }, { "name", name }, { "value", value } });
+}
+
+// R0 of the SH4 written with a text: the value it then reads, 0xFFFFFFFF behind a write that was not taken
+u32 R0Written(const char* text)
+{
+	if (!Ok(SetRegister("dc.sh4.cpu", "R0", text)))
+		return 0xFFFFFFFF;
+
+	return p_sh4rcb->cntx.r[0];
+}
+
+void AskStopped(StoppedAnswers* a, u32 watch)
+{
+	a->reached = true;
+
+	// what the request alone shows comes in front of the lifetime
+	a->bad_memory = Ask("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr }, { "data", json::array() } });
+	a->bad_register = Ask("state.setRegister", { { "path", "dc.sh4.cpu" }, { "name", "R0" } });
+	a->bad_watch = Ask("state.editWatch", { { "watchId", "1" }, { "value", "0" } });
+
+	// the lifetime in front of what a method finds out itself
+	a->memory = Ask("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr }, { "data", json::array({ 0xEE, 0xEE, 0xEE, 0xEE }) } });
+	a->reg = Ask("state.setRegister", { { "path", "dc.sh4.cpu" }, { "name", "DBR" }, { "value", "0xEEEEEEEE" } });
+	a->watch = Ask("state.editWatch", { { "watchId", watch }, { "value", "0xEEEEEEEE" } });
+	a->reset = Ask("control.reset");
+	a->unknown_register = Ask("state.setRegister", { { "path", "dc.no.such.node" }, { "name", "R0" }, { "value", "0" } });
+	a->unknown_watch = Ask("state.editWatch", { { "watchId", 99999 }, { "value", "0" } });
+	a->dsp_memory = Ask("state.writeMemory", { { "target", "dsp" }, { "address", 0 }, { "data", json::array({ 0 }) } });
+	a->rom_memory = Ask("state.writeMemory", { { "target", "sh4" }, { "address", 0 }, { "data", json::array({ 0 }) } });
+
+	a->slice = Ask("state.getMemorySlice", { { "address", kQuietAddr }, { "length", 4 } });
+}
+
+}
+
+DBG_SELFTEST_GUEST(core_writes, "core.writes")
+{
+	Sh4Context& ctx = p_sh4rcb->cntx;
+
+	switch (wr.phase)
+	{
+	case 0:
+	{
+		if (!Alone("core.writes"))
+			return true;
+
+		ids_used = true;
+
+		CleanTables();
+		events::ClearForTest();
+		core::SetClientCountForTest(1, false);
+		core::SetTickSinkForTest(TickSink);
+		TakeTicks();
+
+		wr.stop0 = stop.stopId;
+		wr.pc0 = ctx.pc;
+		wr.r0 = ctx.r[0];
+		wr.dbr = ctx.dbr;
+
+		/*
+			What describe says
+		*/
+		json shape = json::parse(core::DescribeText(), nullptr, false);
+		std::vector<std::pair<std::string, json>> nodes;
+		std::set<std::string> problems;
+
+		if (shape.is_object())
+			CollectNodes(shape["deviceTree"], "", &nodes, &problems);
+
+		{
+			emu::Sh4EngineInfo engine;
+			json caps = shape.is_object() ? shape["capabilities"] : json::array();
+			json want = json::array({ "event-breakpoints", "callstack", "memory-write", "register-write", "reset" });
+
+			if (emu::GetSh4Engine(&engine))
+				want.push_back(engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native");
+
+			Check(caps == want && caps.size() == 6, "describe has five capabilities besides the engine's: the two of M1, and memory-write, register-write and reset (%s)",
+				caps.dump().c_str());
+		}
+
+		{
+			u32 count, flagged = 0, wrong = 0, registers = 0;
+			const regs::Node* table = regs::Nodes(&count);
+			std::map<std::string, json> described;
+			std::string first;
+
+			for (const auto& node : nodes)
+				described[node.first] = node.second;
+
+			for (u32 n = 0; n < count; n++)
+			{
+				const json& list = described[table[n].path];
+
+				for (u32 r = 0; r < table[n].registerCount; r++)
+				{
+					const json reg = r < list.size() ? list[r] : json::object();
+					const bool writable = (table[n].registers[r].flags & regs::kRegWritable) != 0;
+					const bool says = reg.contains("flags");
+
+					registers++;
+					flagged += says;
+
+					if (says != writable || reg.size() != (says ? 4u : 3u) || (says && reg["flags"] != json({ { "writable", true } })) || reg.value("name", "") != table[n].registers[r].name)
+					{
+						if (wrong++ == 0)
+							first = std::string(table[n].path) + "." + table[n].registers[r].name + ": " + reg.dump();
+					}
+				}
+			}
+
+			Check(nodes.size() == count && wrong == 0 && flagged == 69 + 40, "in describe a register has flags: {\"writable\": true} exactly when its row has a writer, and no other "
+				"key beside name, value and width: %u of %u registers, the 69 of dc.sh4.cpu and the 40 of dc.aica.arm7 that are not ENABLED (%u are wrong; %s)", flagged,
+				registers, wrong, first.empty() ? "none" : first.c_str());
+
+			json enabled, pc_sh4, pc_arm7, build;
+
+			for (const auto& node : nodes)
+			{
+				for (const json& reg : node.second)
+				{
+					if (node.first == "dc.aica.arm7" && reg["name"] == "ENABLED")
+						enabled = reg;
+					if (node.first == "dc.aica.arm7" && reg["name"] == "PC")
+						pc_arm7 = reg;
+					if (node.first == "dc.sh4.cpu" && reg["name"] == "PC")
+						pc_sh4 = reg;
+					if (node.first == "dc" && reg["name"] == "BUILD")
+						build = reg;
+				}
+			}
+
+			Check(enabled.is_object() && !enabled.contains("flags") && build.is_object() && !build.contains("flags") && pc_sh4.contains("flags") && pc_arm7.contains("flags"),
+				"ENABLED of the ARM7 and a text register have no flags; the PC of either processor has");
+		}
+
+		{
+			json tick = Tick(true);
+			u32 with_flags = 0, registers = 0;
+
+			for (auto it = tick["registers"].begin(); it != tick["registers"].end(); ++it)
+			{
+				for (const json& reg : it.value())
+				{
+					registers++;
+					with_flags += reg.contains("flags") || reg.size() != 3;
+				}
+			}
+
+			Check(registers > 200 && with_flags == 0 && PausedTickOf(tick, stop.stopId), "no register of a tick has flags: %u registers of a full paused tick, each with name, "
+				"value and width (%u have more)", registers, with_flags);
+		}
+
+		/*
+			state.writeMemory
+		*/
+		u8 kept[8], top[2];
+
+		memcpy(kept, GetMemPtr(kQuietAddr, 8), 8);
+		memcpy(top, GetMemPtr(0x8CFFFFFE, 2), 2);
+
+		json data4 = json::array({ 1, 2, 3, 4 });
+
+		Check(InBand(Send("state.writeMemory", { { "address", kQuietAddr }, { "data", data4 } })) == kErrInvalidParams
+			&& InBand(Send("state.writeMemory", { { "target", 5 }, { "address", kQuietAddr }, { "data", data4 } })) == kErrInvalidParams
+			&& InBand(Send("state.writeMemory", { { "target", "cpu" }, { "address", kQuietAddr }, { "data", data4 } })) == kErrInvalidParams,
+			"state.writeMemory without a target, or with one that is no target: -32602, in-band (a read has a default target, a write has none)");
+		Check(InBand(Send("state.writeMemory", { { "target", "sh4" }, { "data", data4 } })) == kErrInvalidParams
+			&& InBand(Send("state.writeMemory", { { "target", "sh4" }, { "address", "0x8CA00000" }, { "data", data4 } })) == kErrInvalidParams
+			&& InBand(Send("state.writeMemory", { { "target", "sh4" }, { "address", -4 }, { "data", data4 } })) == kErrInvalidParams
+			&& InBand(Send("state.writeMemory", { { "target", "sh4" }, { "address", 4294967296.0 }, { "data", data4 } })) == kErrInvalidParams,
+			"without an address, or with one that is a string, negative or above 32 bits: -32602");
+
+		{
+			json big = json::array(), most = json::array();
+
+			for (u32 i = 0; i < kMaxWriteMemoryBytes + 1; i++)
+				big.push_back(0xEE);
+
+			Check(InBand(Send("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr } })) == kErrInvalidParams
+				&& InBand(Send("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr }, { "data", "AQID" } })) == kErrInvalidParams
+				&& InBand(Send("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr }, { "data", json::array() } })) == kErrInvalidParams
+				&& InBand(Send("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr }, { "data", big } })) == kErrInvalidParams,
+				"without data, with data that is no array, with none and with 65537 bytes: -32602");
+			Check(InBand(Send("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr }, { "data", json::array({ 0xEE, 256 }) } })) == kErrInvalidParams
+				&& InBand(Send("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr }, { "data", json::array({ 0xEE, -1 }) } })) == kErrInvalidParams
+				&& InBand(Send("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr }, { "data", json::array({ 0xEE, 1.5 }) } })) == kErrInvalidParams
+				&& InBand(Send("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr }, { "data", json::array({ 0xEE, "1" }) } })) == kErrInvalidParams,
+				"with a byte that is 256, negative, a fraction or a string: -32602");
+
+			// the errors of the method itself
+			Check(InBand(WriteMemory("dsp", 0, { 0xEE })) == kErrNotSupported, "target dsp: -32004, in-band; the DSP has no memory");
+			Check(InBand(WriteMemory("sh4", 0x00000000, { 0xEE })) == kErrNotWritable && InBand(WriteMemory("sh4", 0x005F8000, { 0xEE })) == kErrNotWritable
+				&& InBand(WriteMemory("arm7", 0x00800000, { 0xEE })) == kErrNotWritable && InBand(WriteMemory("sh4", 0xFFFFFFFF, { 0xEE, 0xEE })) == kErrNotWritable,
+				"the boot ROM, a register window, the ARM7 above its wave memory and a range past the end of the address space: -32013, in-band");
+			Check(InBand(WriteMemory("sh4", 0x8FFFFFFE, { top[0] ^ 0xFF, top[1] ^ 0xFF, 0xEE, 0xEE })) == kErrNotWritable
+				&& InBand(WriteMemory("sh4", 0x0FFFFFFE, { top[0] ^ 0xFF, top[1] ^ 0xFF, 0xEE, 0xEE })) == kErrNotWritable && memcmp(top, GetMemPtr(0x8CFFFFFE, 2), 2) == 0,
+				"a range across the end of main memory: -32013, and its first half is not written");
+			Check(memcmp(kept, GetMemPtr(kQuietAddr, 8), 8) == 0 && TakeTicks().empty(), "nothing was stored by any of them, and none broadcast a tick");
+
+			// taken
+			json answer = WriteMemory("sh4", kQuietAddr, { 0x11, 0x22, 0x33, 0x44 });
+			std::vector<json> ticks = TakeTicks();
+			json slice = Send("state.getMemorySlice", { { "address", kQuietAddr & 0x1FFFFFFF }, { "length", 4 } });
+
+			Check(Ok(answer) && GetMemPtr(kQuietAddr, 4)[0] == 0x11 && GetMemPtr(kQuietAddr, 4)[3] == 0x44 && slice.contains("result")
+				&& slice["result"]["data"] == json::array({ 0x11, 0x22, 0x33, 0x44 }), "four bytes of main memory are written: {}, and they read back through another mirror (%s)",
+				answer.dump().c_str());
+			Check(ticks.size() == 1 && PausedTickOf(ticks[0], stop.stopId) && ticks[0]["executionState"].value("reason", "") == StopCauseName(stop.cause),
+				"one tick is broadcast behind the write: paused, with the stopId and the reason of the stop it was made in (%zu ticks; %s)", ticks.size(),
+				ticks.empty() ? "none" : ticks[0]["executionState"].dump().c_str());
+
+			// the bound: 65536 bytes, written back as they read
+			json block = Send("state.getMemorySlice", { { "address", kEntry }, { "length", kMaxWriteMemoryBytes } });
+
+			if (block.contains("result"))
+				most = block["result"]["data"];
+
+			answer = Send("state.writeMemory", { { "target", "sh4" }, { "address", kEntry }, { "data", most } });
+			ticks = TakeTicks();
+
+			Check(most.size() == kMaxWriteMemoryBytes && Ok(answer) && ticks.size() == 1 && PausedTickOf(ticks[0], stop.stopId)
+				&& Send("state.getMemorySlice", { { "address", kEntry }, { "length", kMaxWriteMemoryBytes } })["result"]["data"] == most,
+				"65536 bytes, the program's own, written back as they read: {}, a tick, and they read as before");
+
+			// wave memory through the ARM7
+			u8& wave = sh4_cpu->aica_ram.data[0x001F0000 & (sh4_cpu->aica_ram.size - 1)];
+			const u8 wave_was = wave;
+
+			answer = WriteMemory("arm7", 0x001F0000, { wave_was ^ 0x5A });
+			ticks = TakeTicks();
+			Check(Ok(answer) && ticks.size() == 1 && wave == (wave_was ^ 0x5A), "a byte of wave memory through the target arm7: {}, a tick");
+			wave = wave_was;
+		}
+
+		memcpy(GetMemPtr(kQuietAddr, 8), kept, 8);
+		TakeTicks();
+
+		/*
+			state.setRegister
+		*/
+		Check(InBand(Send("state.setRegister", { { "name", "R0" }, { "value", "0" } })) == kErrInvalidParams
+			&& InBand(Send("state.setRegister", { { "path", "dc.sh4.cpu" }, { "value", "0" } })) == kErrInvalidParams
+			&& InBand(Send("state.setRegister", { { "path", "dc.sh4.cpu" }, { "name", "R0" } })) == kErrInvalidParams
+			&& InBand(Send("state.setRegister", { { "path", 5 }, { "name", "R0" }, { "value", "0" } })) == kErrInvalidParams
+			&& InBand(Send("state.setRegister", { { "path", "dc.sh4.cpu" }, { "name", 0 }, { "value", "0" } })) == kErrInvalidParams
+			&& InBand(Send("state.setRegister", { { "path", "dc.sh4.cpu" }, { "name", "R0" }, { "value", 0 } })) == kErrInvalidParams,
+			"state.setRegister without a path, a name or a value, or with one that is no string (a value that is a number among them): -32602, in-band");
+
+		// the errors of the method itself, in their order: the register, its writer, the text, the device
+		Check(InBand(SetRegister("dc.no.such.node", "R0", "0")) == kErrInvalidParams && InBand(SetRegister("dc.sh4.cpu", "NO_SUCH", "0")) == kErrInvalidParams
+			&& InBand(SetRegister("dc.sh4", "R0", "0")) == kErrInvalidParams && InBand(SetRegister("dc.no.such.node", "R0", "twelve")) == kErrInvalidParams,
+			"a path or a name that the tree does not have: -32602");
+		{
+			// A name is compared whole: what stands in front of a NUL is not the name. Sent as a client sends it,
+			// with the escape \u0000 in the JSON text
+			const std::string path_nul("dc.sh4.cpu\0x", 12), name_nul("R0\0y", 4);
+			const json by_path = Send("state.setRegister", { { "path", path_nul }, { "name", "R0" }, { "value", "0x5A5A0001" } });
+			const json by_name = Send("state.setRegister", { { "path", "dc.sh4.cpu" }, { "name", name_nul }, { "value", "0x5A5A0002" } });
+			const json by_both = Send("state.setRegister", { { "path", path_nul }, { "name", name_nul }, { "value", "0x5A5A0003" } });
+
+			Check(InBand(by_path) == kErrInvalidParams && InBand(by_name) == kErrInvalidParams && InBand(by_both) == kErrInvalidParams && ctx.r[0] == wr.r0 && TakeTicks().empty(),
+				"a path or a name with a NUL behind the name of a node or of a register (\"dc.sh4.cpu\\u0000x\", \"R0\\u0000y\") is none of the tree: -32602, R0 is what it was "
+				"(%08X), and no tick was broadcast (%s)", ctx.r[0], by_both.dump().c_str());
+		}
+
+		Check(InBand(SetRegister("dc.aica.arm7", "ENABLED", "0")) == kErrNotWritable && InBand(SetRegister("dc", "BUILD", "0")) == kErrNotWritable
+			&& InBand(SetRegister("dc.timing", "SH4_CYCLES", "0")) == kErrNotWritable && InBand(SetRegister("dc.sh4.ccn", "MMUCR", "0")) == kErrNotWritable
+			&& InBand(SetRegister("dc.holly.intc", "SB_ISTNRM", "0")) == kErrNotWritable && InBand(SetRegister("dc.aica.dsp", "STEP", "0")) == kErrNotWritable,
+			"a register without a writer, and one of width 0: -32013");
+		Check(InBand(SetRegister("dc.aica.arm7", "ENABLED", "twelve")) == kErrNotWritable && InBand(SetRegister("dc", "BUILD", "")) == kErrNotWritable,
+			"no writer comes in front of the text: a value that is no number is -32013 there as well");
+
+		{
+			u32 refused = 0;
+
+			for (const char* text : { "twelve", "-1", "+1", "", " ", "1.5", "0x", "0X", "x10", "0x1G", "1 2", "0x 1", "1e3", "0b1", "$10", "10h" })
+				refused += InBand(SetRegister("dc.sh4.cpu", "R0", text)) == kErrInvalidParams;
+
+			Check(refused == 16 && ctx.r[0] == wr.r0 && TakeTicks().empty(), "a value that is neither 0x and hex digits nor decimal digits: -32602, for each of 16 texts (%u); "
+				"R0 is what it was, and no tick was broadcast", refused);
+		}
+
+		Check(InBand(SetRegister("dc.sh4.cpu", "PC", "0x8C010001")) == kErrNotWritable && InBand(SetRegister("dc.aica.arm7", "CPSR", "0")) == kErrNotWritable
+			&& ctx.pc == wr.pc0, "a value the device refuses, an odd PC of the SH4 and a CPSR of the ARM7 that is no mode: -32013, not -32602");
+
+		// taken: the value, in its forms
+		{
+			json answer = SetRegister("dc.sh4.cpu", "R0", "0x12345678");
+			std::vector<json> ticks = TakeTicks();
+
+			Check(Ok(answer) && ctx.r[0] == 0x12345678 && ticks.size() == 1 && PausedTickOf(ticks[0], stop.stopId) && Reg(ticks[0], "dc.sh4.cpu", "R0") == "0x12345678",
+				"R0 of the SH4 is written: {}, and one tick behind it, paused, of the same stop, with the value (%zu ticks)", ticks.size());
+
+			const u32 dec = R0Written("255"), blanks = R0Written(" 0x1f "), tabs = R0Written("\t17\t "), upper = R0Written("0XaBcDeF"), zeros = R0Written("000000000000000000000000000019");
+
+			Check(dec == 0xFF && blanks == 0x1F && tabs == 17 && upper == 0xABCDEF && zeros == 19, "decimal digits, blanks and tabs around the text, 0X and digits of either case, "
+				"leading zeros: %X, %X, %X, %X, %X", dec, blanks, tabs, upper, zeros);
+
+			// of a text of any length the low bits count
+			const u32 hex33 = R0Written("0x1FFFFFFFF"), hex76 = R0Written("0xABC123456789ABCDEF0"), dec64 = R0Written("18446744073709551621"),
+				dec70 = R0Written("1180591620717411303429"), dec99 = R0Written("340282366920938463463374607431768211461");
+
+			Check(hex33 == 0xFFFFFFFF && hex76 == 0x9ABCDEF0 && dec64 == 5 && dec70 == 5 && dec99 == 5, "of a text of any length the low bits are kept: 33 and 76 bits of hex "
+				"(%08X, %08X), and in decimal 2^64 + 5, 2^70 + 5 and 2^128 + 5 (%u, %u, %u)", hex33, hex76, dec64, dec70, dec99);
+
+			// the path and the name without regard to case
+			const std::string arm_r1 = Reg(Tick(false), "dc.aica.arm7", "R1");
+
+			answer = SetRegister("DC.SH4.CPU", "r0", "0x77");
+			Check(Ok(answer) && ctx.r[0] == 0x77 && Ok(SetRegister("Dc.Aica.Arm7", "r1", arm_r1.c_str())) && Reg(Tick(false), "dc.aica.arm7", "R1") == arm_r1,
+				"the path and the name are matched without regard to case (R0 of the SH4; R1 of the ARM7, written with the value it has, %s)", arm_r1.c_str());
+
+			TakeTicks();
+
+			// a register reads back what is stored
+			const u32 sr = sh4_sr_GetFull();
+
+			answer = SetRegister("dc.sh4.cpu", "SR", "0xFFFFFFFF");
+			ticks = TakeTicks();
+			Check(Ok(answer) && ticks.size() == 1 && Reg(ticks[0], "dc.sh4.cpu", "SR") == "0x700083F3", "SR written with 0xFFFFFFFF reads 0x700083F3 in the tick behind the "
+				"write: what is stored (%s)", ticks.empty() ? "no tick" : Reg(ticks[0], "dc.sh4.cpu", "SR").c_str());
+
+			char back[16];
+
+			snprintf(back, sizeof(back), "0x%08X", sr);
+			Check(Ok(SetRegister("dc.sh4.cpu", "SR", back)) && sh4_sr_GetFull() == sr, "(SR is written back)");
+			TakeTicks();
+		}
+
+		/*
+			state.editWatch: state.setRegister on the register of a watch
+		*/
+		{
+			// the same for a watch, which state.editWatch would then write through: no watch is made of such a text
+			const std::string name_nul("dc.sh4.cpu.r1\0y", 15), path_nul("dc.sh4.cpu\0x.r1", 15);
+			const json by_name = Send("state.watch", { { "expressions", json::array({ name_nul }) } });
+			const json by_path = Send("state.watch", { { "expressions", json::array({ "dc.sh4.cpu.r2", path_nul }) } });
+
+			Check(InBand(by_name) == kErrInvalidParams && InBand(by_path) == kErrInvalidParams && Tick(false)["watches"].empty(),
+				"a watch expression with a NUL behind the name of a register or of a node is no register of the tree: -32602, and no watch is listed (%s)",
+				by_name.dump().c_str());
+			TakeTicks();
+		}
+
+		Check(Ok(Send("state.watch", { { "expressions", json::array({ "dc.sh4.cpu.r1", "dc.aica.arm7.enabled", "dc.build", "dc.sh4.cpu.dbr" }) } })), "(four watches)");
+
+		{
+			json tick = Tick(false);
+
+			wr.watch_r1 = wr.watch_enabled = wr.watch_text = wr.watch_dbr = 0;
+
+			for (const json& w : tick["watches"])
+			{
+				if (w["expression"] == "dc.sh4.cpu.r1")
+					wr.watch_r1 = w.value("id", 0u);
+				if (w["expression"] == "dc.aica.arm7.enabled")
+					wr.watch_enabled = w.value("id", 0u);
+				if (w["expression"] == "dc.build")
+					wr.watch_text = w.value("id", 0u);
+				if (w["expression"] == "dc.sh4.cpu.dbr")
+					wr.watch_dbr = w.value("id", 0u);
+			}
+
+			TakeTicks();
+
+			const u32 r1 = ctx.r[1];
+
+			Check(InBand(Send("state.editWatch", { { "value", "0" } })) == kErrInvalidParams && InBand(Send("state.editWatch", { { "watchId", wr.watch_r1 } })) == kErrInvalidParams
+				&& InBand(Send("state.editWatch", { { "watchId", "1" }, { "value", "0" } })) == kErrInvalidParams
+				&& InBand(Send("state.editWatch", { { "watchId", -1 }, { "value", "0" } })) == kErrInvalidParams
+				&& InBand(Send("state.editWatch", { { "watchId", wr.watch_r1 }, { "value", 0 } })) == kErrInvalidParams,
+				"state.editWatch without a watchId or a value, or with one of another type: -32602, in-band");
+			Check(InBand(Send("state.editWatch", { { "watchId", 99999 }, { "value", "0" } })) == kErrInvalidParams
+				&& InBand(Send("state.editWatch", { { "watchId", 99999 }, { "value", "twelve" } })) == kErrInvalidParams, "a watchId that no watch has: -32602");
+			Check(InBand(Send("state.editWatch", { { "watchId", wr.watch_enabled }, { "value", "1" } })) == kErrNotWritable
+				&& InBand(Send("state.editWatch", { { "watchId", wr.watch_enabled }, { "value", "twelve" } })) == kErrNotWritable
+				&& InBand(Send("state.editWatch", { { "watchId", wr.watch_text }, { "value", "1" } })) == kErrNotWritable,
+				"a watch on a register without a writer, or on a text: -32013, also with a value that is no number");
+			Check(InBand(Send("state.editWatch", { { "watchId", wr.watch_r1 }, { "value", "twelve" } })) == kErrInvalidParams && ctx.r[1] == r1 && TakeTicks().empty(),
+				"a watch on R1 and a value that is no number: -32602, and nothing is written or broadcast");
+
+			json answer = Send("state.editWatch", { { "watchId", wr.watch_r1 }, { "value", " 0x00C0FFEE " } });
+			std::vector<json> ticks = TakeTicks();
+
+			Check(Ok(answer) && ctx.r[1] == 0x00C0FFEE && ticks.size() == 1 && PausedTickOf(ticks[0], stop.stopId) && Reg(ticks[0], "dc.sh4.cpu", "R1") == "0x00C0FFEE",
+				"a watch on R1 is edited: {}, R1 has the value, and one tick behind it shows it in the register and in the watch (%s)",
+				ticks.empty() ? "no tick" : ticks[0]["watches"].dump().c_str());
+
+			ctx.r[1] = r1;
+		}
+
+		ctx.r[0] = wr.r0;
+
+		Check(emu::GetRunState().stopId == stop.stopId && emu::GetRunState().lifetime == Lifetime::Parked, "no write was a stop: the stop is the one the test began at (%u)",
+			emu::GetRunState().stopId);
+
+		/*
+			While the machine runs. A thread sends what a client sends
+		*/
+		memcpy(wr.quiet, GetMemPtr(kQuietAddr, 4), 4);
+		TakeTicks();
+
+		wr.running = RunningAnswers();
+		wr.phase = 1;
+
+		HostStart([] {
+			RunningAnswers& a = wr.running;
+
+			if (!WaitLifetime(Lifetime::Running))
+				return;
+
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+			a.ran = true;
+
+			// refused, and not with "not paused"
+			a.refused_register = Ask("state.setRegister", { { "path", "dc.aica.arm7" }, { "name", "ENABLED" }, { "value", "0" } });
+			a.refused_memory = Ask("state.writeMemory", { { "target", "sh4" }, { "address", 0 }, { "data", json::array({ 0 }) } });
+			a.bad_register = Ask("state.setRegister", { { "path", "dc.sh4.cpu" }, { "name", "DBR" }, { "value", "twelve" } });
+			a.bad_memory = Ask("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr }, { "data", json::array({ 256 }) } });
+			a.unknown = Ask("state.editWatch", { { "watchId", 99999 }, { "value", "0" } });
+			a.ticks_refused = TakeTicks().size();
+
+			// taken
+			a.memory = Ask("state.writeMemory", { { "target", "sh4" }, { "address", kQuietAddr }, { "data", json::array({ 0xA1, 0xB2, 0xC3, 0xD4 }) } });
+
+			{
+				std::vector<json> ticks = TakeTicks();
+
+				a.ticks_memory = ticks.size();
+				a.tick_memory = ticks.empty() ? json::object() : ticks[0];
+			}
+
+			a.read = Ask("state.getMemorySlice", { { "address", kQuietAddr }, { "length", 4 } });
+			a.reg = Ask("state.setRegister", { { "path", "dc.sh4.cpu" }, { "name", "DBR" }, { "value", "0x0DB00DB0" } });
+
+			{
+				std::vector<json> ticks = TakeTicks();
+
+				a.ticks_register = ticks.size();
+				a.tick_register = ticks.empty() ? json::object() : ticks[0];
+			}
+
+			a.watch = Ask("state.editWatch", { { "watchId", wr.watch_dbr }, { "value", "0x0DB11DB1" } });
+
+			emu::RequestPause();
+		});
+
+		Check(Ok(Send("control.runUntil")), "resume, and a thread that writes while the machine runs");
+		return false;
+	}
+
+	case 1:
+	{
+		HostJoin();
+
+		const RunningAnswers& a = wr.running;
+		json read = Parsed(a.read);
+
+		Check(a.ran && stop.cause == StopCause::Pause && stop.stopId == wr.stop0 + 1, "the machine ran, and was paused (\"%s\")", StopCauseName(stop.cause));
+		Check(InBand(Parsed(a.refused_register)) == kErrNotWritable && InBand(Parsed(a.refused_memory)) == kErrNotWritable,
+			"a write to a running target is served: a register without a writer and the boot ROM are -32013 there, not -32003 (%s)", a.refused_register.c_str());
+		Check(InBand(Parsed(a.bad_register)) == kErrInvalidParams && InBand(Parsed(a.bad_memory)) == kErrInvalidParams && InBand(Parsed(a.unknown)) == kErrInvalidParams
+			&& a.ticks_refused == 0, "a text that is no number, a byte of 256 and an unknown watchId are -32602 there, and nothing is broadcast (%zu ticks)", a.ticks_refused);
+		Check(Ok(Parsed(a.memory)) && read.contains("result") && read["result"]["data"] == json::array({ 0xA1, 0xB2, 0xC3, 0xD4 }),
+			"four bytes of main memory are written while the machine runs: {}, and a read made while it runs has them (%s)", a.memory.c_str());
+		Check(a.ticks_memory == 1 && RunningTickOf(a.tick_memory, wr.stop0), "with one tick behind the write, a running tick of the stop the machine left: no reason, the same "
+			"stopId (%zu ticks; %s)", a.ticks_memory, a.tick_memory.value("executionState", json::object()).dump().c_str());
+		Check(Ok(Parsed(a.reg)) && a.ticks_register == 1 && RunningTickOf(a.tick_register, wr.stop0) && Reg(a.tick_register, "dc.sh4.cpu", "DBR") == "0x0DB00DB0",
+			"a register is written while the machine runs, DBR: {}, and a running tick that has its value (%s; %zu ticks)", a.reg.c_str(), a.ticks_register);
+		Check(Ok(Parsed(a.watch)) && ctx.dbr == 0x0DB11DB1, "and a watch on it is edited: DBR is %08X at the stop of the pause", ctx.dbr);
+
+		ctx.dbr = wr.dbr;
+		memcpy(GetMemPtr(kQuietAddr, 4), wr.quiet, 4);
+		TakeTicks();
+
+		/*
+			By lifetime. A thread plays the host: it stops the machine, takes it apart and makes it again
+		*/
+		wr.stopped = StoppedAnswers();
+		wr.none = StoppedAnswers();
+		wr.failed = false;
+		wr.start_rv = 99;
+		wr.phase = 2;
+
+		HostStart([] {
+			const std::string image = cfgLoadStr("config", "image", "");
+
+			virtualDreamcast->Stop([] { });
+
+			if (!WaitLifetime(Lifetime::Stopped))
+			{
+				wr.failed = true;
+				return;
+			}
+
+			AskStopped(&wr.stopped, wr.watch_dbr);
+
+			virtualDreamcast.reset();
+
+			AskStopped(&wr.none, wr.watch_dbr);
+
+			virtualDreamcast.reset(VirtualDreamcast::Create());
+
+			if (!virtualDreamcast->Init())
+			{
+				wr.failed = true;
+				return;
+			}
+
+			wr.start_rv = virtualDreamcast->StartGame(image);
+		});
+		return false;
+	}
+
+	default:
+	{
+		HostJoin();
+
+		Check(!wr.failed && wr.start_rv == 0 && wr.stopped.reached && wr.none.reached, "the host stopped the machine, took it apart, made it again and started it (%d)",
+			wr.start_rv.load());
+
+		for (int which = 0; which < 2; which++)
+		{
+			const StoppedAnswers& a = which == 0 ? wr.stopped : wr.none;
+			const int lifetime = which == 0 ? kErrHostStopped : kErrNoGame;
+			const char* where = which == 0 ? "while the host has the machine stopped" : "with no machine";
+
+			Check(InBand(Parsed(a.bad_memory)) == kErrInvalidParams && InBand(Parsed(a.bad_register)) == kErrInvalidParams && InBand(Parsed(a.bad_watch)) == kErrInvalidParams,
+				"%s: what the request alone shows is -32602, in front of the lifetime (%s)", where, a.bad_memory.c_str());
+			Check(InBand(Parsed(a.memory)) == lifetime && InBand(Parsed(a.reg)) == lifetime && InBand(Parsed(a.watch)) == lifetime && InBand(Parsed(a.reset)) == lifetime,
+				"%s: state.writeMemory, state.setRegister, state.editWatch and control.reset are %d, in-band (%s)", where, lifetime, a.memory.c_str());
+			Check(InBand(Parsed(a.unknown_register)) == lifetime && InBand(Parsed(a.unknown_watch)) == lifetime,
+				"%s: the lifetime comes in front of what a method finds out itself: a path and a watchId that do not exist are %d as well", where, lifetime);
+			Check(InBand(Parsed(a.dsp_memory)) == lifetime && InBand(Parsed(a.rom_memory)) == lifetime,
+				"%s: and so are state.writeMemory to the target dsp and into the boot ROM, %d: not the -32004 and the -32013 they are when the call is served (%s; %s)", where,
+				lifetime, a.dsp_memory.c_str(), a.rom_memory.c_str());
+		}
+
+		{
+			json slice = Parsed(wr.stopped.slice);
+
+			Check(slice.contains("result") && slice["result"]["data"] == json::array({ wr.quiet[0], wr.quiet[1], wr.quiet[2], wr.quiet[3] }),
+				"nothing was written while the machine was stopped: the bytes read as before (%s)", wr.stopped.slice.c_str());
+			Check(RpcError(Parsed(wr.none.slice)) == kErrNoGame, "(and with no machine there is nothing to read)");
+		}
+
+		Check(TakeTicks().empty(), "no tick was broadcast for a request that was refused by the lifetime");
+		Check(stop.cause == StopCause::Start && p_sh4rcb->cntx.pc == kResetVector, "the machine made again parks at its start (\"%s\", pc %08X)", StopCauseName(stop.cause),
+			p_sh4rcb->cntx.pc);
+
+		core::SetTickSinkForTest(nullptr);
+
+		CleanTables();
+		events::ClearForTest();
+
+		wr.phase = 0;
 		return true;
 	}
 	}

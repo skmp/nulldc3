@@ -10,12 +10,19 @@
 #include "hw/aica/aica_mmio.h"
 #include "hw/arm7/SoundCPU.h"
 #include "hw/holly/sh4_mem_area0.h"
+#include "hw/mem/_vmem.h"
 #include "hw/pvr/pvr_mem.h"
 #include "hw/pvr/pvr_regs.h"
 #include "hw/sh4/sh4_if.h"
+#include "rend/TexCache.h"
+
+#if FEAT_SHREC != DYNAREC_NONE
+#include "hw/sh4/dyna/blockmanager.h"
+#endif
 
 #include <algorithm>
 #include <cstring>
+#include <vector>
 
 /*
 	Guest memory for the debugger. A read is cut into runs of one region; each run is copied from the backing
@@ -409,7 +416,234 @@ u32 Read(Target t, u32 addr, u32 len, u8* out, u8* readableBits)
 	return readable;
 }
 
-// Nothing can be written yet.
-int Write(Target, u32, u32, const u8*) { return kErrNotSupported; }
+/*
+	Writes. A write is cut into the runs of a read; a run of a store goes to the store, after what the store's
+	own write detection would have done for a write by the guest. Nothing is written through a guest memory
+	handler.
+*/
+
+namespace {
+
+// The store behind a writable region, null where the region has none
+VLockedMemory* StoreOf(Region region)
+{
+	VLockedMemory* store = nullptr;
+
+	switch (region)
+	{
+	case Region::Ram:     store = &sh4_cpu->mram; break;
+	case Region::Vram64:
+	case Region::Vram32:  store = &sh4_cpu->vram; break;
+	case Region::AicaRam: store = &sh4_cpu->aica_ram; break;
+	default:              return nullptr;
+	}
+
+	// a store is mirrored by its size, a power of two
+	if (store->data == nullptr || store->size == 0 || (store->size & (store->size - 1)) != 0)
+		return nullptr;
+
+	return store;
+}
+
+// The pages of REI_PAGE_SIZE of a store that a run touches, each of them once and in rising order
+class Pages
+{
+public:
+	explicit Pages(u32 store_size) : touched_((store_size + REI_PAGE_SIZE - 1) / REI_PAGE_SIZE, 0) { }
+
+	void Add(u32 offset) { touched_[offset / REI_PAGE_SIZE] = 1; }
+
+	// count bytes from offset on, in a store that is mirrored by its size
+	void AddMirrored(u32 offset, u32 count, u32 store_size)
+	{
+		const u32 mask = store_size - 1;
+
+		if (count >= store_size)
+		{
+			std::fill(touched_.begin(), touched_.end(), 1);
+			return;
+		}
+
+		for (u32 done = 0; done < count; )
+		{
+			const u32 at = (offset + done) & mask;
+			const u32 n = std::min(count - done, REI_PAGE_SIZE - (at & (REI_PAGE_SIZE - 1)));
+
+			Add(at);
+			done += n;
+		}
+	}
+
+	template <typename Fn>
+	void ForEach(Fn fn) const
+	{
+		for (size_t page = 0; page < touched_.size(); page++)
+		{
+			if (touched_[page])
+				fn((u32)(page * REI_PAGE_SIZE));
+		}
+	}
+
+private:
+	std::vector<u8> touched_;
+};
+
+// Byte i of the run goes to data[(offset + i) & (size - 1)]; where a run is longer than its store the later
+// bytes win, as they would for a guest that wrote them in rising order
+void StoreMirrored(u8* data, u32 size, u32 offset, u32 count, const u8* in)
+{
+	const u32 mask = size - 1;
+
+	for (u32 done = 0; done < count; )
+	{
+		const u32 at = (offset + done) & mask;
+		const u32 n = std::min(count - done, size - at);
+
+		memcpy(data + at, in + done, n);
+		done += n;
+	}
+}
+
+// Main memory: the compiled blocks of every page the run touches go first
+void WriteRam(u32 addr, u32 count, const u8* in)
+{
+	VLockedMemory& ram = sh4_cpu->mram;
+
+#if FEAT_SHREC != DYNAREC_NONE
+	Pages pages(ram.size);
+
+	pages.AddMirrored(addr, count, ram.size);
+
+	if (_nvmem_enabled())
+	{
+		// What a faulting write of the guest does to the page (the fault handler of libswirl.cpp): its blocks are
+		// discarded, it is a page that holds data from here on, and its protection goes
+		pages.ForEach([&ram](u32 page) {
+			bm_LockedWrite(&ram.data[page]);
+		});
+	}
+	else
+	{
+		// No layout: bm_LockedWrite measures an address from the base of the layout and finds no page. The
+		// blocks go through the backend (per 4 KiB page, in every mirror), and the protection that bm_AddBlock
+		// put on the page, with or without the layout, is removed here
+		SuperH4Backend* backend = sh4_cpu->DebugBackend();
+
+		pages.ForEach([&ram, backend](u32 page) {
+			if (backend != nullptr)
+			{
+				for (u32 at = 0; at < REI_PAGE_SIZE; at += 4096)
+					backend->DebugDiscardPage(0x0C000000 + page + at);
+			}
+
+			ram.UnLockRegion(page, REI_PAGE_SIZE);
+		});
+	}
+#endif
+
+	StoreMirrored(ram.data, ram.size, addr, count, in);
+}
+
+// Video memory: what a faulting write of the guest does to every page of the store that is touched comes
+// first (the textures locked on it are invalidated, its protection goes). to_store(i) is where byte i of the
+// run lives in the store
+template <typename ToStore>
+void WriteVram(u32 count, const u8* in, ToStore to_store)
+{
+	VLockedMemory& vram = sh4_cpu->vram;
+	Pages pages(vram.size);
+
+	for (u32 i = 0; i < count; i++)
+		pages.Add(to_store(i));
+
+	pages.ForEach([&vram](u32 page) {
+		VramLockedWrite(vram.data, &vram.data[page]);
+	});
+
+	for (u32 i = 0; i < count; i++)
+		vram.data[to_store(i)] = in[i];
+}
+
+}
+
+int Write(Target t, u32 addr, u32 len, const u8* data)
+{
+	if (sh4_cpu == nullptr)
+		return kErrNotWritable;
+
+	// a write does not wrap
+	if ((u64)addr + len > ((u64)1 << 32))
+		return kErrNotWritable;
+
+	// all or nothing: every byte of the range is in a store, before the first one is written
+	for (u32 done = 0; done < len; )
+	{
+		u32 at = addr + done;
+		u32 last;
+		Region region = Locate(t, at, &last);
+
+		if (StoreOf(region) == nullptr)
+			return kErrNotWritable;
+
+		done += (u32)std::min<u64>(len - done, (u64)(last - at) + 1);
+	}
+
+	bool wave = false;
+
+	for (u32 done = 0; done < len; )
+	{
+		u32 at = addr + done;
+		u32 last;
+		Region region = Locate(t, at, &last);
+		u32 count = (u32)std::min<u64>(len - done, (u64)(last - at) + 1);
+		const u8* in = data + done;
+
+		switch (region)
+		{
+		case Region::Ram:
+			WriteRam(at, count, in);
+			break;
+
+		case Region::Vram64:
+		{
+			const u32 mask = sh4_cpu->vram.size - 1;
+
+			WriteVram(count, in, [at, mask](u32 i) { return (at + i) & mask; });
+			break;
+		}
+
+		case Region::Vram32:
+		{
+			// the two banks of the 64-bit view alternate every four bytes; a byte keeps its place in its word
+			const u32 mask = sh4_cpu->vram.size - 1;
+
+			WriteVram(count, in, [at, mask](u32 i) { return pvr_map32(at + i) & mask; });
+			break;
+		}
+
+		case Region::AicaRam:
+			// the SH4 has it at 0x00800000, a multiple of its size; the ARM7 at 0
+			StoreMirrored(sh4_cpu->aica_ram.data, sh4_cpu->aica_ram.size, at, count, in);
+			wave = true;
+			break;
+
+		default:
+			break;
+		}
+
+		done += count;
+	}
+
+	// the ARM7 recompiler does not see a store into code it has compiled
+	if (wave)
+	{
+		SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+
+		if (scpu != nullptr)
+			scpu->InvalidateJitCache();
+	}
+
+	return 0;
+}
 
 } }

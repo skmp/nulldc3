@@ -11,14 +11,19 @@
 #include "dbg_core.h"
 
 /*
-	What the core's own files share, and nothing else includes: dbg_core.cpp, dbg_main.cpp, dbg_events.cpp and
-	dbg_selftest_core.cpp. Not one of the frozen headers; it has no JSON type (json.hpp is for the sources).
+	What the core's own files share: dbg_core.cpp, dbg_main.cpp, dbg_events.cpp and dbg_selftest_core.cpp. The
+	selftests of other packages include it for the parts named below, and nothing else does. Not one of the
+	frozen headers; it has no JSON type (json.hpp is for the sources).
 
-	  dbg_main.cpp           hands the core the tick period and the full-tick count it read (Configure)
-	  dbg_events.cpp         gives the tick builder the event log (events::Snapshot) and takes the one entry that
-	                         is made with every gate closed (events::Append)
-	  dbg_selftest_core.cpp  hands request texts to the dispatcher and reads what a client would be sent, in a
-	                         session that has no server and no core thread
+	  dbg_main.cpp             hands the core the tick period and the full-tick count it read (Configure)
+	  dbg_events.cpp           gives the tick builder the event log (events::Snapshot) and takes the one entry that
+	                           is made with every gate closed (events::Append)
+	  dbg_selftest_core.cpp    hands request texts to the dispatcher and reads what a client would be sent, in a
+	                           session that has no server and no core thread
+	  dbg_selftest_arm7.cpp    reads the event log (events::Snapshot): what a sound burst logged while the park
+	                           loop ran it on
+	  dbg_selftest_writes.cpp  hands request texts to the dispatcher, as dbg_selftest_core.cpp does: the writes
+	                           of a client in a run that has to stay the run nobody touched
 */
 
 namespace dbg {
@@ -70,6 +75,14 @@ void SetClientCountForTest(u32 clients, bool graceExpired);
 // CategoryBit() of every category that is not muted and is soloed or has no other soloed, and 0 once the grace
 // period behind the last client has expired. On (E), or under L while no emulator thread exists.
 u32 ActiveMaskForTest();
+
+// For a session without a server: `sink` gets the text of every tick the core would broadcast to its clients
+// from inside a call - behind a request that changed the tables, and behind one that wrote guest state - in
+// place of them; null, the default: such a tick is not built. It is called where the tick is built: on (E), or
+// on the thread that holds L while no emulator thread exists. Set and cleared on (E), or under L while no
+// emulator thread exists. (The run-state listener, whose ticks are those of the stops and resumes, is
+// installed with the server: a session has none, and a test reads those with BuildTickText().)
+void SetTickSinkForTest(void (*sink)(const std::string& tick));
 
 // The text that a string of guest or host origin has on the wire: every byte outside printable ASCII
 // (0x20..0x7E) is '?'. Any thread.

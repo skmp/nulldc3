@@ -7,15 +7,19 @@
 #include "dbg_regs.h"
 #include "dbg_regs_private.h"
 
+#include "dbg_arm7.h"
 #include "dbg_emu.h"
+#include "dbg_sh4.h"
 
 #include "hw/aica/aica_mmio.h"
 #include "hw/aica/dsp.h"
 #include "hw/arm7/SoundCPU.h"
 #include "hw/arm7/arm7_context.h"
 #include "hw/holly/sb.h"
+#include "hw/sh4/sh4_dbg.h"
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_interpreter.h"
+#include "hw/sh4/sh4_interrupts.h"
 #include "hw/sh4/sh4_mmr.h"
 #include "hw/sh4/sh4_sched.h"
 #include "version.h"
@@ -27,6 +31,10 @@
 	The register readers. Every value comes from a backing store or from a reader written for the debugger: an
 	array of register slots, the SH4 context, a debug accessor of a device. No read function of a register and
 	no guest memory handler is called from here, so a read changes nothing and cannot end the process.
+
+	The register writers, behind the readers of their source: the registers of the two processors, and no
+	other. A write is a store into the context of its processor together with what the processor itself does
+	when it loads the register (dbg_regs.h has the list); no write function of a register is called.
 
 	The machine is looked up on every call (sh4_cpu and its devices); nothing is kept between two calls.
 */
@@ -105,6 +113,102 @@ static bool ReadSh4(u32 selector, u64* value)
 	}
 
 	return true;
+}
+
+// PR, SZ and the rounding mode: what a block of the recompiler has in its code from the FPSCR of the moment it
+// was compiled (bits 19, 20 and the field RM)
+static u32 Sh4FpMode(u32 fpscr_value)
+{
+	fpscr_t fpscr;
+
+	fpscr.full = fpscr_value;
+
+	return (fpscr.PR << 3) | (fpscr.SZ << 2) | fpscr.RM;
+}
+
+// A store into the SH4 context, with what the SH4 does when it loads the register. Returns 0, or kErrNotWritable,
+// having changed nothing, for a value that is refused
+static int WriteSh4(u32 selector, u32 value)
+{
+	if (p_sh4rcb == nullptr)
+		return kErrNotWritable;
+
+	Sh4Context& ctx = p_sh4rcb->cntx;
+
+	if (selector >= kSh4R0 && selector < kSh4R0 + 16)
+		ctx.r[selector - kSh4R0] = value;
+	else if (selector >= kSh4R0Bank && selector < kSh4R0Bank + 8)
+		ctx.r_bank[selector - kSh4R0Bank] = value;
+	else if (selector >= kSh4Fr0 && selector < kSh4Fr0 + 16)
+		memcpy(&ctx.xffr[16 + selector - kSh4Fr0], &value, sizeof(value));
+	else if (selector >= kSh4Xf0 && selector < kSh4Xf0 + 16)
+		memcpy(&ctx.xffr[selector - kSh4Xf0], &value, sizeof(value));
+	else
+	{
+		switch (selector)
+		{
+		case kSh4Pc:
+		{
+			// nothing executes at an odd address
+			if (value & 1)
+				return kErrNotWritable;
+
+			const u32 replaced = ctx.pc;
+
+			ctx.pc = value;
+			sh4::OnPcWritten();
+
+			// A block is found by its address under a mask, with no address in the key: the slot of the new PC,
+			// or of an address its code goes on to, can hold the block of another address. With the cache empty
+			// every block is compiled at the address the guest reaches it by
+			if (value != replaced)
+				sh4_cpu->ResetCache();
+			break;
+		}
+
+		case kSh4Pr:    ctx._pr = value; break;
+
+		case kSh4Sr:
+			// the banks of R0..R7 follow MD and RB; with MD clear RB is stored as 0
+			sh4_sr_SetFull(value);
+
+			// An interrupt is pending and the SR as it is now lets it in. In the park context the latch is set
+			// and nothing is accepted here: the acceptance is owed, and made when the context is left
+			if (UpdateSR())
+				UpdateINTC();
+			break;
+
+		case kSh4Gbr:   ctx.gbr = value; break;
+		case kSh4Vbr:   ctx.vbr = value; break;
+		case kSh4Mach:  ctx.mac.h = value; break;
+		case kSh4Macl:  ctx.mac.l = value; break;
+		case kSh4Ssr:   ctx.ssr = value; break;
+		case kSh4Spc:   ctx.spc = value; break;
+		case kSh4Sgr:   ctx.sgr = value; break;
+		case kSh4Dbr:   ctx.dbr = value; break;
+
+		case kSh4Fpscr:
+		{
+			const u32 replaced = ctx.fpscr.full;
+
+			// the FP banks follow FR, the host FP mode of this thread the rounding and denormal mode
+			ctx.fpscr.full = value & FPSCR_MASK;
+			UpdateFPSCR();
+
+			// a compiled block has the FP mode of the moment it was compiled, and is found by its address alone
+			if (Sh4FpMode(ctx.fpscr.full) != Sh4FpMode(replaced))
+				sh4_cpu->ResetCache();
+			break;
+		}
+
+		case kSh4Fpul:  ctx.fpul = value; break;
+
+		default:
+			return kErrNotWritable;
+		}
+	}
+
+	return 0;
 }
 
 /*
@@ -225,6 +329,50 @@ static bool ReadArm7(u32 selector, u64* value)
 
 	*value = word;
 	return true;
+}
+
+static u32 arm7_cache_resets;
+
+uint32_t Arm7CacheResets()
+{
+	return arm7_cache_resets;
+}
+
+// Through the writer of the sound CPU. Returns 0, or kErrNotWritable, having changed nothing, for ENABLED and for
+// a value the device refuses
+static int WriteArm7(u32 selector, u32 value)
+{
+	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+
+	// ENABLED is no register of the processor, and the debugger does not hold or release the ARM7
+	if (scpu == nullptr || selector == kArm7Enabled)
+		return kErrNotWritable;
+
+	u32 replaced = 0, stored = 0;
+	const bool had = selector == kArm7Pc && scpu->DebugGetReg(kArm7Pc, &replaced);
+
+	// the device refuses a CPSR whose mode bits are no mode, and stores a PC with bits 0 and 1 clear
+	if (!scpu->DebugSetReg(selector, value))
+		return kErrNotWritable;
+
+	if (selector == kArm7Pc)
+	{
+		arm7::OnPcWritten();
+
+		// The recompiler of the ARM7 finds a block by its address under the mask of the wave memory, and a block
+		// has the address it was compiled at in its code (the PC it leaves, the link of a bl, what R15 reads):
+		// behind a PC written into another mirror of the wave memory a resume would run the block of the first
+		// mirror and put the PC back there, where a step, which decodes at the PC, goes on in the mirror written.
+		// With the cache empty every block is compiled at the address the ARM7 reaches it by. The device stores
+		// the PC as it is given, bits 0 and 1 apart; a PC written with the value it has moves nothing
+		if (!had || !scpu->DebugGetReg(kArm7Pc, &stored) || stored != replaced)
+		{
+			scpu->InvalidateJitCache();
+			arm7_cache_resets++;
+		}
+	}
+
+	return 0;
 }
 
 static bool ReadDsp(u32 selector, u64* value)
@@ -365,8 +513,30 @@ bool Read(const Node& node, uint32_t index, uint64_t* value, char* text, uint32_
 	return true;
 }
 
-// No register can be written yet.
-int Write(const Node&, uint32_t, uint64_t) { return kErrNotSupported; }
+int Write(const Node& node, uint32_t index, uint64_t value)
+{
+	if (sh4_cpu == nullptr || index >= node.registerCount)
+		return kErrNotWritable;
+
+	const Register& reg = node.registers[index];
+
+	if (!(reg.flags & kRegWritable) || reg.width == 0)
+		return kErrNotWritable;
+
+	// the rows that have the flag are 32 bits wide
+	const u32 stored = (u32)(value & WidthMask(reg.width));
+	const u32 selector = KeySelector(reg.key);
+
+	switch (KeySource(reg.key))
+	{
+	case kSrcSh4:  return WriteSh4(selector, stored);
+	case kSrcArm7: return WriteArm7(selector, stored);
+	default:       break;
+	}
+
+	// a row that has the flag and no writer
+	return kErrNotWritable;
+}
 
 /*
 	Registers by address
