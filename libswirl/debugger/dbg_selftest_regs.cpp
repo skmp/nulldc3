@@ -721,12 +721,29 @@ DBG_SELFTEST(regs_read, "regs.read")
 		edges.Add(!regs::Read(node, node.registerCount, &value, text, sizeof(text)) && value == 0x1234 && strcmp(text, "x") == 0,
 			"%s: Read() behind the last register", node.path);
 		edges.Add(!regs::Read(node, 0xFFFFFFFF, &value, text, sizeof(text)), "%s: Read() of index -1", node.path);
-		edges.Add(regs::Write(node, 0, 0) == kErrNotSupported, "%s: Write() does not say that no writer exists", node.path);
+
+		// A write that the writer refuses, having changed nothing: behind the last register of the node, and to
+		// its first register without a writer. (What a write that is taken does is the session "writes".)
+		edges.Add(regs::Write(node, node.registerCount, 0) == kErrNotWritable && regs::Write(node, 0xFFFFFFFF, 0) == kErrNotWritable, "%s: Write() behind the last register",
+			node.path);
+
+		for (u32 r = 0; r < node.registerCount; r++)
+		{
+			if (node.registers[r].flags & regs::kRegWritable)
+				continue;
+
+			u64 before = 0, after = 0;
+			const bool readable = node.registers[r].width != 0 && regs::Read(node, r, &before, nullptr, 0);
+
+			edges.Add(regs::Write(node, r, ~before) == kErrNotWritable && (!readable || (regs::Read(node, r, &after, nullptr, 0) && after == before)),
+				"%s.%s: Write() to a register without a writer", node.path, node.registers[r].name);
+			break;
+		}
 	}
 
 	reads.Report("registers that read as their flags say");
 	values.Report("values inside their width, texts not empty, outputs untouched on failure");
-	edges.Report("reads without outputs and outside a node");
+	edges.Report("reads without outputs and outside a node, and writes that are refused");
 
 	Note("%u registers, %u read as n/a (%u of them because no SH4 engine is known%s)", total, unreadable, by_engine,
 		engine_known ? "" : ": dbg::emu does not give one");

@@ -41,40 +41,41 @@ static const uint8_t dc_events[] = { EV_SYSTEM_RESET, EV_SYSTEM_STATE, EV_DEBUGG
 /*
 	dc.sh4.cpu: the registers of the SH4 context. FR and XF are the raw 32 bits of the single-precision
 	registers; Rn_BANK is the bank of R0..R7 that is not selected.
+	Every row is writable (dbg::regs::Write, dbg_regs.h): a store into the context, with what the processor does
+	when it loads PC, SR or FPSCR.
 */
 #define SH4(sel) MakeKey(kSrcSh4, sel)
+#define SH4_REG(name, sel) { name, 32, kRegWritable, kNoAddr, SH4(sel) }
 #define SH4_ROW16(prefix, first) \
-	{ prefix "0",  32, 0, kNoAddr, SH4(first + 0)  }, { prefix "1",  32, 0, kNoAddr, SH4(first + 1)  }, \
-	{ prefix "2",  32, 0, kNoAddr, SH4(first + 2)  }, { prefix "3",  32, 0, kNoAddr, SH4(first + 3)  }, \
-	{ prefix "4",  32, 0, kNoAddr, SH4(first + 4)  }, { prefix "5",  32, 0, kNoAddr, SH4(first + 5)  }, \
-	{ prefix "6",  32, 0, kNoAddr, SH4(first + 6)  }, { prefix "7",  32, 0, kNoAddr, SH4(first + 7)  }, \
-	{ prefix "8",  32, 0, kNoAddr, SH4(first + 8)  }, { prefix "9",  32, 0, kNoAddr, SH4(first + 9)  }, \
-	{ prefix "10", 32, 0, kNoAddr, SH4(first + 10) }, { prefix "11", 32, 0, kNoAddr, SH4(first + 11) }, \
-	{ prefix "12", 32, 0, kNoAddr, SH4(first + 12) }, { prefix "13", 32, 0, kNoAddr, SH4(first + 13) }, \
-	{ prefix "14", 32, 0, kNoAddr, SH4(first + 14) }, { prefix "15", 32, 0, kNoAddr, SH4(first + 15) }
+	SH4_REG(prefix "0",  first + 0),  SH4_REG(prefix "1",  first + 1),  SH4_REG(prefix "2",  first + 2),  SH4_REG(prefix "3",  first + 3), \
+	SH4_REG(prefix "4",  first + 4),  SH4_REG(prefix "5",  first + 5),  SH4_REG(prefix "6",  first + 6),  SH4_REG(prefix "7",  first + 7), \
+	SH4_REG(prefix "8",  first + 8),  SH4_REG(prefix "9",  first + 9),  SH4_REG(prefix "10", first + 10), SH4_REG(prefix "11", first + 11), \
+	SH4_REG(prefix "12", first + 12), SH4_REG(prefix "13", first + 13), SH4_REG(prefix "14", first + 14), SH4_REG(prefix "15", first + 15)
 
 static const Register sh4_cpu_regs[] = {
-	{ "PC",    32, 0, kNoAddr, SH4(kSh4Pc) },
-	{ "PR",    32, 0, kNoAddr, SH4(kSh4Pr) },
-	{ "SR",    32, 0, kNoAddr, SH4(kSh4Sr) },
-	{ "GBR",   32, 0, kNoAddr, SH4(kSh4Gbr) },
-	{ "VBR",   32, 0, kNoAddr, SH4(kSh4Vbr) },
-	{ "MACH",  32, 0, kNoAddr, SH4(kSh4Mach) },
-	{ "MACL",  32, 0, kNoAddr, SH4(kSh4Macl) },
-	{ "SSR",   32, 0, kNoAddr, SH4(kSh4Ssr) },
-	{ "SPC",   32, 0, kNoAddr, SH4(kSh4Spc) },
-	{ "SGR",   32, 0, kNoAddr, SH4(kSh4Sgr) },
-	{ "DBR",   32, 0, kNoAddr, SH4(kSh4Dbr) },
-	{ "FPSCR", 32, 0, kNoAddr, SH4(kSh4Fpscr) },
-	{ "FPUL",  32, 0, kNoAddr, SH4(kSh4Fpul) },
+	SH4_REG("PC",    kSh4Pc),
+	SH4_REG("PR",    kSh4Pr),
+	SH4_REG("SR",    kSh4Sr),
+	SH4_REG("GBR",   kSh4Gbr),
+	SH4_REG("VBR",   kSh4Vbr),
+	SH4_REG("MACH",  kSh4Mach),
+	SH4_REG("MACL",  kSh4Macl),
+	SH4_REG("SSR",   kSh4Ssr),
+	SH4_REG("SPC",   kSh4Spc),
+	SH4_REG("SGR",   kSh4Sgr),
+	SH4_REG("DBR",   kSh4Dbr),
+	SH4_REG("FPSCR", kSh4Fpscr),
+	SH4_REG("FPUL",  kSh4Fpul),
 	SH4_ROW16("R", kSh4R0),
-	{ "R0_BANK", 32, 0, kNoAddr, SH4(kSh4R0Bank + 0) }, { "R1_BANK", 32, 0, kNoAddr, SH4(kSh4R0Bank + 1) },
-	{ "R2_BANK", 32, 0, kNoAddr, SH4(kSh4R0Bank + 2) }, { "R3_BANK", 32, 0, kNoAddr, SH4(kSh4R0Bank + 3) },
-	{ "R4_BANK", 32, 0, kNoAddr, SH4(kSh4R0Bank + 4) }, { "R5_BANK", 32, 0, kNoAddr, SH4(kSh4R0Bank + 5) },
-	{ "R6_BANK", 32, 0, kNoAddr, SH4(kSh4R0Bank + 6) }, { "R7_BANK", 32, 0, kNoAddr, SH4(kSh4R0Bank + 7) },
+	SH4_REG("R0_BANK", kSh4R0Bank + 0), SH4_REG("R1_BANK", kSh4R0Bank + 1), SH4_REG("R2_BANK", kSh4R0Bank + 2), SH4_REG("R3_BANK", kSh4R0Bank + 3),
+	SH4_REG("R4_BANK", kSh4R0Bank + 4), SH4_REG("R5_BANK", kSh4R0Bank + 5), SH4_REG("R6_BANK", kSh4R0Bank + 6), SH4_REG("R7_BANK", kSh4R0Bank + 7),
 	SH4_ROW16("FR", kSh4Fr0),
 	SH4_ROW16("XF", kSh4Xf0),
 };
+
+#undef SH4_ROW16
+#undef SH4_REG
+#undef SH4
 
 static const uint8_t sh4_events[] = { EV_SH4_INTERRUPT, EV_SH4_EXCEPTION };
 
@@ -295,51 +296,53 @@ static const char* const holly_core_actions[] = { "holly-core" };
 	from a machine reset until the guest releases it and whenever the guest holds it again. It is what a client
 	sees of the reset (the ARM7 call stack is empty exactly while it reads 0), and nothing writes it. It stands
 	behind PC: the program counter is the first register of the node of every processor.
+	Every row but ENABLED is writable (dbg::regs::Write, through SoundCPU::DebugSetReg): the guest holds and
+	releases its ARM7, the debugger does not.
 */
 #define ARM7(sel) MakeKey(kSrcArm7, sel)
 
 static const Register arm7_regs[] = {
-	{ "PC",       32, 0, kNoAddr, ARM7(kArm7Pc) },
+	{ "PC",       32, kRegWritable, kNoAddr, ARM7(kArm7Pc) },
 	{ "ENABLED",  1,  kRegComputed, kNoAddr, ARM7(kArm7Enabled) },
-	{ "R0",       32, 0, kNoAddr, ARM7(kArm7R0 + 0) },
-	{ "R1",       32, 0, kNoAddr, ARM7(kArm7R0 + 1) },
-	{ "R2",       32, 0, kNoAddr, ARM7(kArm7R0 + 2) },
-	{ "R3",       32, 0, kNoAddr, ARM7(kArm7R0 + 3) },
-	{ "R4",       32, 0, kNoAddr, ARM7(kArm7R0 + 4) },
-	{ "R5",       32, 0, kNoAddr, ARM7(kArm7R0 + 5) },
-	{ "R6",       32, 0, kNoAddr, ARM7(kArm7R0 + 6) },
-	{ "R7",       32, 0, kNoAddr, ARM7(kArm7R0 + 7) },
-	{ "R8",       32, 0, kNoAddr, ARM7(kArm7R0 + 8) },
-	{ "R9",       32, 0, kNoAddr, ARM7(kArm7R0 + 9) },
-	{ "R10",      32, 0, kNoAddr, ARM7(kArm7R0 + 10) },
-	{ "R11",      32, 0, kNoAddr, ARM7(kArm7R0 + 11) },
-	{ "R12",      32, 0, kNoAddr, ARM7(kArm7R0 + 12) },
-	{ "R13",      32, 0, kNoAddr, ARM7(kArm7R0 + 13) },
-	{ "R14",      32, 0, kNoAddr, ARM7(kArm7R0 + 14) },
-	{ "CPSR",     32, 0, kNoAddr, ARM7(kArm7Cpsr) },
-	{ "SPSR",     32, 0, kNoAddr, ARM7(kArm7Spsr) },
-	{ "R13_USR",  32, 0, kNoAddr, ARM7(kArm7R13Usr) },
-	{ "R14_USR",  32, 0, kNoAddr, ARM7(kArm7R14Usr) },
-	{ "R8_FIQ",   32, 0, kNoAddr, ARM7(kArm7R8Fiq + 0) },
-	{ "R9_FIQ",   32, 0, kNoAddr, ARM7(kArm7R8Fiq + 1) },
-	{ "R10_FIQ",  32, 0, kNoAddr, ARM7(kArm7R8Fiq + 2) },
-	{ "R11_FIQ",  32, 0, kNoAddr, ARM7(kArm7R8Fiq + 3) },
-	{ "R12_FIQ",  32, 0, kNoAddr, ARM7(kArm7R8Fiq + 4) },
-	{ "R13_FIQ",  32, 0, kNoAddr, ARM7(kArm7R8Fiq + 5) },
-	{ "R14_FIQ",  32, 0, kNoAddr, ARM7(kArm7R8Fiq + 6) },
-	{ "SPSR_FIQ", 32, 0, kNoAddr, ARM7(kArm7SpsrFiq) },
-	{ "R13_IRQ",  32, 0, kNoAddr, ARM7(kArm7R13Irq) },
-	{ "R14_IRQ",  32, 0, kNoAddr, ARM7(kArm7R14Irq) },
-	{ "SPSR_IRQ", 32, 0, kNoAddr, ARM7(kArm7SpsrIrq) },
-	{ "R13_SVC",  32, 0, kNoAddr, ARM7(kArm7R13Svc) },
-	{ "R14_SVC",  32, 0, kNoAddr, ARM7(kArm7R14Svc) },
-	{ "SPSR_SVC", 32, 0, kNoAddr, ARM7(kArm7SpsrSvc) },
-	{ "R13_ABT",  32, 0, kNoAddr, ARM7(kArm7R13Abt) },
-	{ "R14_ABT",  32, 0, kNoAddr, ARM7(kArm7R14Abt) },
-	{ "SPSR_ABT", 32, 0, kNoAddr, ARM7(kArm7SpsrAbt) },
-	{ "R13_UND",  32, 0, kNoAddr, ARM7(kArm7R13Und) },
-	{ "R14_UND",  32, 0, kNoAddr, ARM7(kArm7R14Und) },
-	{ "SPSR_UND", 32, 0, kNoAddr, ARM7(kArm7SpsrUnd) },
+	{ "R0",       32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 0) },
+	{ "R1",       32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 1) },
+	{ "R2",       32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 2) },
+	{ "R3",       32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 3) },
+	{ "R4",       32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 4) },
+	{ "R5",       32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 5) },
+	{ "R6",       32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 6) },
+	{ "R7",       32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 7) },
+	{ "R8",       32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 8) },
+	{ "R9",       32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 9) },
+	{ "R10",      32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 10) },
+	{ "R11",      32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 11) },
+	{ "R12",      32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 12) },
+	{ "R13",      32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 13) },
+	{ "R14",      32, kRegWritable, kNoAddr, ARM7(kArm7R0 + 14) },
+	{ "CPSR",     32, kRegWritable, kNoAddr, ARM7(kArm7Cpsr) },
+	{ "SPSR",     32, kRegWritable, kNoAddr, ARM7(kArm7Spsr) },
+	{ "R13_USR",  32, kRegWritable, kNoAddr, ARM7(kArm7R13Usr) },
+	{ "R14_USR",  32, kRegWritable, kNoAddr, ARM7(kArm7R14Usr) },
+	{ "R8_FIQ",   32, kRegWritable, kNoAddr, ARM7(kArm7R8Fiq + 0) },
+	{ "R9_FIQ",   32, kRegWritable, kNoAddr, ARM7(kArm7R8Fiq + 1) },
+	{ "R10_FIQ",  32, kRegWritable, kNoAddr, ARM7(kArm7R8Fiq + 2) },
+	{ "R11_FIQ",  32, kRegWritable, kNoAddr, ARM7(kArm7R8Fiq + 3) },
+	{ "R12_FIQ",  32, kRegWritable, kNoAddr, ARM7(kArm7R8Fiq + 4) },
+	{ "R13_FIQ",  32, kRegWritable, kNoAddr, ARM7(kArm7R8Fiq + 5) },
+	{ "R14_FIQ",  32, kRegWritable, kNoAddr, ARM7(kArm7R8Fiq + 6) },
+	{ "SPSR_FIQ", 32, kRegWritable, kNoAddr, ARM7(kArm7SpsrFiq) },
+	{ "R13_IRQ",  32, kRegWritable, kNoAddr, ARM7(kArm7R13Irq) },
+	{ "R14_IRQ",  32, kRegWritable, kNoAddr, ARM7(kArm7R14Irq) },
+	{ "SPSR_IRQ", 32, kRegWritable, kNoAddr, ARM7(kArm7SpsrIrq) },
+	{ "R13_SVC",  32, kRegWritable, kNoAddr, ARM7(kArm7R13Svc) },
+	{ "R14_SVC",  32, kRegWritable, kNoAddr, ARM7(kArm7R14Svc) },
+	{ "SPSR_SVC", 32, kRegWritable, kNoAddr, ARM7(kArm7SpsrSvc) },
+	{ "R13_ABT",  32, kRegWritable, kNoAddr, ARM7(kArm7R13Abt) },
+	{ "R14_ABT",  32, kRegWritable, kNoAddr, ARM7(kArm7R14Abt) },
+	{ "SPSR_ABT", 32, kRegWritable, kNoAddr, ARM7(kArm7SpsrAbt) },
+	{ "R13_UND",  32, kRegWritable, kNoAddr, ARM7(kArm7R13Und) },
+	{ "R14_UND",  32, kRegWritable, kNoAddr, ARM7(kArm7R14Und) },
+	{ "SPSR_UND", 32, kRegWritable, kNoAddr, ARM7(kArm7SpsrUnd) },
 };
 
 #undef ARM7

@@ -476,6 +476,45 @@ namespace
 			Check(enabled && (enabled->flags & kRegWritable) == 0, "dc.aica.arm7.ENABLED is read-only");
 		}
 
+		// The rows that have a writer (milestone M2): the registers of the two processors, which are every row of
+		// dc.sh4.cpu and every row of dc.aica.arm7 but ENABLED, and no other row of the tree
+		{
+			uint32_t sh4_rows = 0, arm7_rows = 0, other_rows = 0;
+			std::string first_other;
+
+			for (uint32_t i = 0; i < count; i++)
+			{
+				std::string path = nodes[i].path;
+
+				for (uint32_t r = 0; r < nodes[i].registerCount; r++)
+				{
+					const Register& reg = nodes[i].registers[r];
+					bool processor = path == "dc.sh4.cpu" || (path == "dc.aica.arm7" && strcmp(reg.name, "ENABLED") != 0);
+
+					if (!(reg.flags & kRegWritable))
+					{
+						Check(!processor, "%s.%s: a register of a processor without kRegWritable", nodes[i].path, reg.name);
+						continue;
+					}
+
+					if (path == "dc.sh4.cpu")
+						sh4_rows++;
+					else if (processor)
+						arm7_rows++;
+					else if (other_rows++ == 0)
+						first_other = path + "." + reg.name;
+
+					// what a writer is handed: 32 bits, from the context of its processor
+					Check(reg.width == 32 && (KeySource(reg.key) == kSrcSh4 || KeySource(reg.key) == kSrcArm7) && (reg.flags & (kRegComputed | kRegNoReader)) == 0,
+						"%s.%s: writable, and not a plain 32-bit register of a processor", nodes[i].path, reg.name);
+				}
+			}
+
+			Check(sh4_rows == 69 && arm7_rows == 40, "kRegWritable is on the 69 rows of dc.sh4.cpu and on the 40 rows of dc.aica.arm7 that are not ENABLED (%u, %u)", sh4_rows,
+				arm7_rows);
+			Check(other_rows == 0, "no other row has kRegWritable (%u have, the first is %s)", other_rows, first_other.c_str());
+		}
+
 		// the nodes of a running tick
 		for (uint32_t i = 0; i < count; i++)
 		{

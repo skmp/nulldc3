@@ -464,7 +464,9 @@ void WriteRegisterValue(JsonOut& w, const regs::Node& node, u32 index, bool read
 	w.String("n/a");
 }
 
-void WriteRegisters(JsonOut& w, const regs::Node& node, bool readable)
+// The registers of a node. describe: as debugger.describe has them, where a register that state.setRegister can
+// write says so; a tick carries values, and no flags
+void WriteRegisters(JsonOut& w, const regs::Node& node, bool readable, bool describe)
 {
 	w.BeginArray();
 
@@ -477,6 +479,16 @@ void WriteRegisters(JsonOut& w, const regs::Node& node, bool readable)
 		WriteRegisterValue(w, node, i, readable);
 		w.Key("width");
 		w.Number(node.registers[i].width);
+
+		if (describe && (node.registers[i].flags & regs::kRegWritable))
+		{
+			w.Key("flags");
+			w.BeginObject();
+			w.Key("writable");
+			w.Bool(true);
+			w.EndObject();
+		}
+
 		w.EndObject();
 	}
 
@@ -670,7 +682,7 @@ std::string BuildTick(const emu::RunState& state, bool full)
 				continue;
 
 			w.Key(node.path);
-			WriteRegisters(w, node, true);
+			WriteRegisters(w, node, true, false);
 		}
 	}
 
@@ -850,7 +862,7 @@ void WriteNode(JsonOut& w, const regs::Node* nodes, u32 count, u32 at, bool mach
 	if (node.registerCount != 0)
 	{
 		w.Key("registers");
-		WriteRegisters(w, node, machine);
+		WriteRegisters(w, node, machine, true);
 	}
 
 	if (node.eventCount != 0)
@@ -932,8 +944,9 @@ std::string BuildDescribe(const emu::RunState& state)
 	w.String("event-breakpoints");
 	w.String("callstack");
 
-	// milestone M2: each with its method (state.writeMemory)
+	// milestone M2: each with its method (state.writeMemory; state.setRegister and state.editWatch)
 	w.String("memory-write");
+	w.String("register-write");
 
 	// what executes SH4 breakpoints and steps, once a backend is selected
 	if (machine)
@@ -2286,6 +2299,158 @@ void MethodWriteMemory(const Request& req, Outcome& out)
 	});
 }
 
+// The value of state.setRegister and of state.editWatch: ASCII blanks around it are dropped; then 0x or 0X and
+// one or more hex digits of either case, or one or more decimal digits, and nothing else: no sign, no empty
+// text. Of a text of any length the low 64 bits are kept
+bool ParseValue(const std::string& text, u64* value)
+{
+	size_t first = 0, last = text.size();
+
+	while (first < last && (text[first] == ' ' || text[first] == '\t'))
+		first++;
+	while (last > first && (text[last - 1] == ' ' || text[last - 1] == '\t'))
+		last--;
+
+	u64 v = 0;
+
+	if (last - first >= 2 && text[first] == '0' && (text[first + 1] == 'x' || text[first + 1] == 'X'))
+	{
+		first += 2;
+
+		if (first == last)
+			return false;
+
+		for (size_t i = first; i < last; i++)
+		{
+			const char c = text[i];
+			u32 digit;
+
+			if (c >= '0' && c <= '9')
+				digit = (u32)(c - '0');
+			else if (c >= 'a' && c <= 'f')
+				digit = (u32)(c - 'a' + 10);
+			else if (c >= 'A' && c <= 'F')
+				digit = (u32)(c - 'A' + 10);
+			else
+				return false;
+
+			v = (v << 4) | digit;
+		}
+	}
+	else
+	{
+		if (first == last)
+			return false;
+
+		for (size_t i = first; i < last; i++)
+		{
+			const char c = text[i];
+
+			if (c < '0' || c > '9')
+				return false;
+
+			// modulo 2^64
+			v = v * 10 + (u32)(c - '0');
+		}
+	}
+
+	*value = v;
+	return true;
+}
+
+// Inside a write call: `text` into a register of the tree. The answers behind "the register exists", in their
+// order: a register of width 0 or without a writer, a text that is no number, a value the device refuses
+int WriteRegisterText(const regs::Node& node, u32 index, const std::string& text, std::string* message)
+{
+	const regs::Register& reg = node.registers[index];
+	const std::string name = std::string(node.path) + "." + reg.name;
+
+	if (reg.width == 0 || !(reg.flags & regs::kRegWritable))
+	{
+		*message = "not writable: " + name + (reg.width == 0 ? " is text" : " has no writer");
+		return (int)kErrNotWritable;
+	}
+
+	u64 value;
+
+	if (!ParseValue(text, &value))
+	{
+		*message = "invalid params: value is neither 0x and hex digits nor decimal digits";
+		return (int)kErrInvalidParams;
+	}
+
+	const int rv = regs::Write(node, index, value);
+
+	if (rv == kErrNotWritable)
+	{
+		char given[24];
+
+		regs::FormatValue(reg.width, value, given);
+		*message = "not writable: " + name + " does not take the value " + given;
+	}
+
+	return rv;
+}
+
+void MethodSetRegister(const Request& req, Outcome& out)
+{
+	std::string path, name, value;
+
+	if (!ParamString(req, out, "path", &path) || !ParamString(req, out, "name", &name) || !ParamString(req, out, "value", &value))
+		return;
+
+	WriteCall(out, [path, name, value](std::string* message) {
+		// the path without regard to case, as the path of a watch expression; FindRegister ignores case by itself
+		std::string lower = path;
+
+		for (char& c : lower)
+		{
+			if (c >= 'A' && c <= 'Z')
+				c = (char)(c - 'A' + 'a');
+		}
+
+		const regs::Node* node = regs::Find(lower.c_str());
+		const int index = node != nullptr ? regs::FindRegister(*node, name.c_str()) : -1;
+
+		if (index < 0)
+		{
+			*message = "invalid params: " + PrintableAscii(path.data(), std::min<size_t>(path.size(), 96)) + " has no register "
+				+ PrintableAscii(name.data(), std::min<size_t>(name.size(), 96));
+			return (int)kErrInvalidParams;
+		}
+
+		return WriteRegisterText(*node, (u32)index, value, message);
+	});
+}
+
+// state.setRegister on the register of a watch
+void MethodEditWatch(const Request& req, Outcome& out)
+{
+	u64 id;
+	std::string value;
+
+	if (!ParamUnsigned(req, out, "watchId", 0, ~(u64)0, &id) || !ParamString(req, out, "value", &value))
+		return;
+
+	WriteCall(out, [id, value](std::string* message) {
+		const Watch* found = nullptr;
+
+		for (const Watch& w : watches)
+		{
+			if (w.id == id)
+				found = &w;
+		}
+
+		if (found == nullptr)
+		{
+			*message = "invalid params: no watch has id " + std::to_string(id);
+			return (int)kErrInvalidParams;
+		}
+
+		return WriteRegisterText(*found->node, found->index, value, message);
+	});
+}
+
 /*
 	Run control (design 2.3.2). A request is answered when it is validated and armed; a tick says what
 	became of it.
@@ -2414,9 +2579,9 @@ const Method kMethods[] = {
 	{ "breakpoints.toggle",            true,  MethodBreakpointsToggle },
 	{ "breakpoints.setCategoryStates", true,  MethodSetCategoryStates },
 	// milestone M2
-	{ "state.editWatch",               true,  nullptr },
+	{ "state.editWatch",               true,  MethodEditWatch },
 	{ "state.writeMemory",             true,  MethodWriteMemory },
-	{ "state.setRegister",             true,  nullptr },
+	{ "state.setRegister",             true,  MethodSetRegister },
 	{ "control.reset",                 true,  nullptr },
 	// milestone M3
 	{ "state.recordSgcFrames",         true,  nullptr },
