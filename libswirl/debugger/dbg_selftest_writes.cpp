@@ -36,7 +36,9 @@
 	    in memory and says nothing about the block cache.
 
 	writesrun.neutral, at the end of this file, is no test of the session "writes": the run ends it
-	(tests/debugger/selftest/README.md).
+	(tests/debugger/selftest/README.md). Neither is smcwrites.cached, behind writes.mem.cached: it is the steps
+	of that test in the one configuration in which they can fail for a missing discard, and it holds first that
+	it runs in that configuration, which the session "writes" does not.
 */
 
 #include "dbg_selftest.h"
@@ -1004,9 +1006,10 @@ DBG_SELFTEST_GUEST(writes_mem_code, "writes.mem.code")
 
 	What a writer without the discard would do depends on the configuration. With Dynarec.SmcCheckLevel at its
 	default every block of a page that holds data compares its code bytes when it is entered and discards itself:
-	this test then passes with or without the discard. It is the registration debugger.selftest.writes.smc, with
-	Dynarec.SmcCheckLevel=-1, in which the block of the loop has no such check and a store without the discard
-	leaves it in the cache: there the stale nop executes, and the test fails
+	this test then passes with or without the discard. The witness is the run with Dynarec.SmcCheckLevel=-1, in
+	which the block of the loop has no such check and a store without the discard leaves it in the cache: there
+	the stale nop executes, and the test fails. That run is the test smcwrites.cached, behind this one: the same
+	steps, and in front of them the check that the configuration is that one
 */
 namespace {
 
@@ -1016,9 +1019,8 @@ struct {
 	u32 r12;
 } m_cached;
 
-}
-
-DBG_SELFTEST_GUEST(writes_mem_cached, "writes.mem.cached")
+// The steps of writes.mem.cached and of smcwrites.cached
+bool CachedWitness(const emu::RunState& stop)
 {
 	CO_BEGIN(m_cached.co);
 
@@ -1096,6 +1098,33 @@ DBG_SELFTEST_GUEST(writes_mem_cached, "writes.mem.cached")
 	SetS("R12", m_cached.r12);
 
 	CO_END(m_cached.co);
+}
+
+}
+
+DBG_SELFTEST_GUEST(writes_mem_cached, "writes.mem.cached")
+{
+	return CachedWitness(stop);
+}
+
+/*
+	smcwrites.cached: writes.mem.cached where a store without the discard shows (the registration
+	debugger.selftest.writes.smc). It is no test of the session "writes", which runs in the default
+	configuration: it first holds that this run is not that one. Without the two checks a run that the key
+	Dynarec.SmcCheckLevel=-1 did not reach, or one on the interpreter, would be the default run of the steps
+	under another name, which passes with or without the discard
+*/
+DBG_SELFTEST_GUEST(smcwrites_cached, "smcwrites.cached")
+{
+	// in front of the first step
+	if (m_cached.co.line == 0)
+	{
+		Check(TheEngine().blocks, "the SH4 runs on a recompiler: compiled blocks are kept in a block cache (%s)", TheEngine().name);
+		Check(settings.dynarec.SmcCheckLevel == NoCheck, "Dynarec.SmcCheckLevel is %d, and has to be -1: no block of a page that holds data checks its code when it is entered, "
+			"so that a block which a write left in the cache would run as it was compiled", (int)settings.dynarec.SmcCheckLevel);
+	}
+
+	return CachedWitness(stop);
 }
 
 /*

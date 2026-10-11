@@ -128,14 +128,16 @@ nulldc_debugger_selftest(arm7.persample SELFTEST arm7 CONFIG config:aica.NoBatch
 # The debugger's writes: guest memory and the registers of the two processors, with what each write owes the
 # machine (libswirl/debugger/dbg_selftest_writes.cpp), on the same guest. On the JIT, on the interpreter and on
 # the JIT with the interpreter fallback of the SH4 forced.
-# writes.smc is the one test writes.mem.cached where a main-memory write without the discard of the compiled
-# blocks of its page would show: with Dynarec.SmcCheckLevel=-1 a block of a page that holds data does not check
-# its code when it is entered. In every other configuration that check, or the fault handler, makes such a write
-# good, and the test passes with or without the discard
+# writes.smc is the steps of the test writes.mem.cached where a main-memory write without the discard of the
+# compiled blocks of its pages would show: with Dynarec.SmcCheckLevel=-1 a block of a page that holds data does
+# not check its code when it is entered. In every other configuration that check, or the fault handler, makes
+# such a write good, and the steps pass with or without the discard. So the run is a test of its own,
+# smcwrites.cached, which is not selected by the session "writes" and which fails when it is not on a recompiler
+# with that level: a key that did not reach the run cannot make this target the default run under another name
 nulldc_debugger_selftest(writes ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
 nulldc_debugger_selftest(writes.fallback SELFTEST writes ENGINES jit CONFIG Debugger:ForceFallback=yes
                          ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
-nulldc_debugger_selftest(writes.smc SELFTEST writes.mem.cached ENGINES jit CONFIG config:Dynarec.SmcCheckLevel=-1
+nulldc_debugger_selftest(writes.smc SELFTEST smcwrites ENGINES jit CONFIG config:Dynarec.SmcCheckLevel=-1
                          ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
 
 # What sessions of those have to agree on, and the forced fallback and idleskip off: the script of that
