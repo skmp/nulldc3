@@ -35,6 +35,9 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
     hash-noclient  the state hash with the server on and no client, and with the server off
     hash-idlebp    the state hash with a client connected and a muted breakpoint on a hot address, and with the
                    server off
+    hash-listening the state hash with a client that describes itself at the StartPaused stop, lets the run begin and
+                   then only receives until the run ends, with a full tick of every register of the device tree
+                   every 20 ms; and with the server off
 """
 
 import argparse
@@ -726,12 +729,85 @@ def mode_hash_idlebp(args):
           % (args.idle_symbol, line['hash'], line['vblanks']))
 
 
+# The periodic tick of the listening run: every 20 ms, and every one of them full
+LISTENING_KEYS = ['Debugger:TickMs=20', 'Debugger:FullTickEvery=1']
+
+
+def mode_hash_listening(args):
+    """A client that only listens leaves the run alone. Every full tick reads every register of the device tree
+    on the emulator thread: the system bus, the PVR's register file, the register file of the AICA by field, the
+    drive. The periodic tick is made a full one every 20 ms, so that a run of seconds is read hundreds of times."""
+    _, base = hash_run(args, 'off', ['Debugger:Enabled=no'])
+
+    keys = ['config:Exit.AfterVblanks=%d' % args.vblanks, 'config:Exit.StateHash=yes'] + STARTPAUSED + LISTENING_KEYS
+    run = Run(args, 'listening').start(keys)
+    ticks = []
+    try:
+        port = run.port()
+        client = wsclient.Client('127.0.0.1', port)
+        first = client.describe()
+        check(first['executionState'].get('reason') == 'start', 'the emulator is not at its StartPaused stop: %r' % (first['executionState'],), run)
+        with_registers = [node['path'] for node in tree_nodes(client.shape['deviceTree']) if node.get('registers')]
+        registers = sum(len(node['registers']) for node in tree_nodes(client.shape['deviceTree']) if node.get('registers'))
+        check(sorted(first['registers']) == sorted(with_registers), 'the tick behind debugger.describe is not a full one: %d of %d paths'
+              % (len(first['registers']), len(with_registers)), run)
+
+        # the one request behind the describe: the run begins. From here on the client only receives
+        client.call('control.runUntil', {})
+
+        def take(tick):
+            ticks.append(tick)
+            return False
+
+        try:
+            client.wait_tick(take, args.watchdog, 'the end of the run')
+            ended = True
+        except wsclient.Timeout:
+            ended = False
+        except wsclient.Error:
+            # the run ended by its exit key, and the connection with it
+            ended = True
+        check(ended, 'the run with the listening client did not end within %d s' % args.watchdog, run)
+        ended = run.wait(30)
+        check(ended, 'the emulator did not end within 30 s of the end of its connection', run)
+    except wsclient.Error as error:
+        check(False, 'the client: %s' % error, run)
+    finally:
+        if run.alive():
+            run.kill()
+    run.no_bad()
+
+    # running ticks, and behind them the ticks of the end of the run: the host stops the machine and takes it away
+    states = [tick['executionState'] for tick in ticks]
+    last = max([i for i, state in enumerate(states) if state['state'] == 'running'], default=-1)
+    running = ticks[:last + 1]
+    full = [tick for tick in running if sorted(tick['registers']) == sorted(with_registers)]
+    stops = [state for state in states[:last + 1] if state['state'] != 'running']
+    check(not stops, 'the target stopped while the client listened: %d of the ticks in front of the last running one are paused (%r)'
+          % (len(stops), stops[:3]), run)
+    end = [state.get('reason') for state in states[last + 1:]]
+    check(all(reason in ('host-stopped', 'no-game') for reason in end), 'the ticks behind the last running one are not those of the end of '
+          'the run: %r' % (end,), run)
+    check(len(full) >= 10, 'the listening client got %d full ticks while the target ran (%d ticks in all): too few to say anything about a run '
+          'that is read' % (len(full), len(ticks)), run)
+    values = sum(len(entries) for entries in full[-1]['registers'].values())
+    check(values == registers, 'a full running tick has %d register values, the device tree %d registers' % (values, registers), run)
+
+    line = exit_line(run.out)
+    check(line is not None and 'hash' in line, 'the run with the listening client printed no state hash', run)
+    check(run.code == 0, 'exit code %s' % run.code, run)
+    same_hash(base, line, 'the run with a client that only listens and the run with the server off', run)
+    print('a client that only listens, sent %d full ticks of %d registers on %d paths while the target ran, and server off: both runs end in '
+          'hash=%s after %s vblanks' % (len(full), registers, len(with_registers), line['hash'], line['vblanks']))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--emulator', required=True)
     parser.add_argument('--work', required=True)
-    parser.add_argument('--guest', required=True, help='2ndmix.elf; m1, m2, parts: or another program, the guest of the tree')
-    parser.add_argument('--mode', required=True, choices=('m1', 'm2', 'parts', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp'))
+    parser.add_argument('--guest', required=True, help='2ndmix.elf; m1, m2, parts, hash-listening: or another program, the guest of the tree')
+    parser.add_argument('--mode', required=True, choices=('m1', 'm2', 'parts', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp',
+                                                          'hash-listening'))
     parser.add_argument('--engine', default='jit', choices=('jit', 'interp'))
     parser.add_argument('--fallback', action='store_true', help='Debugger:ForceFallback=yes')
     parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, m2, parts, hash-idlebp)')
@@ -779,7 +855,7 @@ def main():
         return 1
 
     modes = {'m1': mode_m1, 'm2': mode_m2, 'parts': mode_parts, 'grace': mode_grace, 'config': mode_config, 'slow': mode_slow,
-             'hash-off': mode_hash_off, 'hash-noclient': mode_hash_noclient, 'hash-idlebp': mode_hash_idlebp}
+             'hash-off': mode_hash_off, 'hash-noclient': mode_hash_noclient, 'hash-idlebp': mode_hash_idlebp, 'hash-listening': mode_hash_listening}
 
     shutil.rmtree(args.work, ignore_errors=True)
     os.makedirs(args.work)

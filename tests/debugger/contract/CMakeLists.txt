@@ -33,6 +33,9 @@
 #	    debugger.contract.slow                          the slow-client rule of the periodic tick
 #	    debugger.contract.hash.off .noclient .idlebp    the state hash of a run with the server off, with the
 #	      each with .interp                             server on and no client, and with an idle breakpoint
+#	    debugger.contract.hash.listening .interp        the state hash of a run with a client that only receives,
+#	    debugger.contract.hash.listening.guest .interp  and is sent every register of the tree every 20 ms: on
+#	                                                    2ndmix, and on the sounding guest of the tree
 #
 #	The runner needs the dreamcast-devtools checkout with its node_modules (NULLDC_DEVTOOLS_DIR) and npm:
 #	without them m1*, m2*, m2arm7*, m2writes* and hash.idlebp* are tests whose data is missing. Everything
@@ -210,3 +213,12 @@ nulldc_debugger_contract(hash.noclient MODE hash-noclient ENGINES jit interp)
 # (README.md has how that was shown: a muted breakpoint reports nothing, and an address that is never
 # executed would pass this test as well)
 nulldc_debugger_contract(hash.idlebp   MODE hash-idlebp   ENGINES jit interp RUNNER IDLE_SYMBOL stars_one_frame)
+
+# A client that describes itself and then only receives, for the whole run: the periodic tick, made a full one
+# every 20 ms for this run, reads every register of the device tree on the emulator thread, and the run ends in
+# the state hash of the run with the server off. On 2ndmix, whose sound side is idle under reios; and on the
+# sounding guest of the tree, where the registers of the AICA, its channels and the interrupt controller of the
+# ARM7 are read while they work
+nulldc_debugger_contract(hash.listening       MODE hash-listening ENGINES jit interp)
+nulldc_debugger_contract(hash.listening.guest MODE hash-listening ENGINES jit interp
+                         GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
