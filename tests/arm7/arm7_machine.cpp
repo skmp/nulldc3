@@ -223,8 +223,28 @@ void arm7m_clear()
 	memset(aica_ctx.regs, 0, sizeof(aica_ctx.regs));
 }
 
+//With ARM7M_STEP=halves in the environment a step is made of the two halves of ARM7Backend::Step, in its
+//order: what the debug loop of the sound burst runs (SoundCPU::RunSample), with nothing between them. Step
+//itself is not made of the halves, so the suites reach them through this switch only (arm7.*.halves)
+static bool step_halves()
+{
+	static const bool halves = [] {
+		const char* how = getenv("ARM7M_STEP");
+
+		return how != nullptr && strcmp(how, "halves") == 0;
+	}();
+
+	return halves;
+}
+
 u32 arm7m_step()
 {
+	if (step_halves())
+	{
+		ARM7Backend::StepIrq(&scpu->ctx);
+		return ARM7Backend::StepExec(&scpu->ctx);
+	}
+
 	return ARM7Backend::Step(&scpu->ctx);
 }
 

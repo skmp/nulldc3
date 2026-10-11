@@ -13,6 +13,11 @@
 #	                      (NULLDC_WREN7_DIR) or without its build outputs. A checkout that lacks anything else
 #	                      fails them
 #
+#	Each of them is registered a second time as <name>.halves, with ARM7M_STEP=halves in its environment: the
+#	machine then makes a step of ARM7Backend::StepIrq and ARM7Backend::StepExec, the two halves that the debug
+#	loop of the sound burst runs in place of ARM7Backend::Step (arm7_machine.cpp). Same program, same
+#	conditions, same baseline.
+#
 #	All of them are gated on baseline.txt, see README.md.
 #
 
@@ -53,8 +58,11 @@ target_compile_definitions(arm7_vendor PRIVATE
 if(NULLDC_HAVE_ARM7_TESTS)
   add_test(NAME arm7.vendor COMMAND arm7_vendor --strict ${nulldc_arm7_require_data})
   set_tests_properties(arm7.vendor PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE ${nulldc_arm7_skip_code})
+  add_test(NAME arm7.vendor.halves COMMAND arm7_vendor --strict ${nulldc_arm7_require_data})
+  set_tests_properties(arm7.vendor.halves PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE ${nulldc_arm7_skip_code} ENVIRONMENT "ARM7M_STEP=halves")
 else()
   nulldc_add_missing_data_test(arm7.vendor "${NULLDC_ARM7_TESTS_MISSING}")
+  nulldc_add_missing_data_test(arm7.vendor.halves "${NULLDC_ARM7_TESTS_MISSING}")
 endif()
 
 
@@ -64,6 +72,8 @@ target_compile_definitions(arm7_directed PRIVATE NULLDC_BASELINE="${nulldc_arm7_
 
 add_test(NAME arm7.directed COMMAND arm7_directed --strict)
 set_tests_properties(arm7.directed PROPERTIES TIMEOUT 60)
+add_test(NAME arm7.directed.halves COMMAND arm7_directed --strict)
+set_tests_properties(arm7.directed.halves PROPERTIES TIMEOUT 60 ENVIRONMENT "ARM7M_STEP=halves")
 
 
 add_executable(arm7_wren7 wren7_main.cpp)
@@ -82,7 +92,11 @@ foreach(suite vendor qemu_diff mulsem bringup)
   if(NULLDC_HAVE_WREN7)
     add_test(NAME arm7.wren7.${suite} COMMAND arm7_wren7 ${suite} --strict ${nulldc_arm7_require_data})
     set_tests_properties(arm7.wren7.${suite} PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE ${nulldc_arm7_skip_code})
+    add_test(NAME arm7.wren7.${suite}.halves COMMAND arm7_wren7 ${suite} --strict ${nulldc_arm7_require_data})
+    set_tests_properties(arm7.wren7.${suite}.halves PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE ${nulldc_arm7_skip_code}
+                         ENVIRONMENT "ARM7M_STEP=halves")
   else()
     nulldc_add_missing_data_test(arm7.wren7.${suite} "${NULLDC_WREN7_MISSING}")
+    nulldc_add_missing_data_test(arm7.wren7.${suite}.halves "${NULLDC_WREN7_MISSING}")
   endif()
 endforeach()
