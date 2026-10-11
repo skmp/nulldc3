@@ -1112,14 +1112,21 @@ DBG_SELFTEST_GUEST(writes_mem_cached, "writes.mem.cached")
 	debugger.selftest.writes.smc). It is no test of the session "writes", which runs in the default
 	configuration: it first holds that this run is not that one. Without the two checks a run that the key
 	Dynarec.SmcCheckLevel=-1 did not reach, or one on the interpreter, would be the default run of the steps
-	under another name, which passes with or without the discard
+	under another name, which passes with or without the discard.
+
+	A build without a recompiler of the SH4 compiles nothing: a write has no block to discard there, and the
+	steps show what an interpreter shows. The test says so and asks for the level alone
 */
 DBG_SELFTEST_GUEST(smcwrites_cached, "smcwrites.cached")
 {
 	// in front of the first step
 	if (m_cached.co.line == 0)
 	{
+#if FEAT_SHREC != DYNAREC_NONE
 		Check(TheEngine().blocks, "the SH4 runs on a recompiler: compiled blocks are kept in a block cache (%s)", TheEngine().name);
+#else
+		Note("this build has no recompiler of the SH4: no code is compiled, a write has no block to discard, and the steps show what an interpreter shows");
+#endif
 		Check(settings.dynarec.SmcCheckLevel == NoCheck, "Dynarec.SmcCheckLevel is %d, and has to be -1: no block of a page that holds data checks its code when it is entered, "
 			"so that a block which a write left in the cache would run as it was compiled", (int)settings.dynarec.SmcCheckLevel);
 	}
