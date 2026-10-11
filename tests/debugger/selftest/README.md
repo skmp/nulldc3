@@ -172,6 +172,10 @@ sound line and state hash have to be those of a run nobody touched: the tests `d
 (A test that the run ends is never named under the prefix of a session: the filter of a session selects by prefix
 and waits for its last test to return.)
 
+A loop of steps in these tests has an end (100000 steps, more than a burst has instructions), and so has the list
+of published states that a test keeps between two looks at it: a machine on which a step ends no ARM phase fails
+the test that waits for one, and takes neither the time of the runner's watchdog nor the memory of the host.
+
 ## The tests of the SH4 breakpoints and steps
 
 `libswirl/debugger/dbg_selftest_sh4bp.cpp`, which `tests/debugger/sh4bp/README.md` describes: the gates of that

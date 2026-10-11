@@ -334,7 +334,10 @@ void NoEventBp()
 }
 
 /*
-	Everything that is published, in the order it was
+	Everything that is published, in the order it was, since the test looked last (TakeSeen). The list has an
+	end: a test that goes wrong can publish without end - every step of the ARM7 is a stop -, and it has to fail
+	by a check of its own, not by the memory of the machine. What a test looks at between two looks is a burst
+	of steps at most, fewer than kStepsMax
 */
 struct Seen {
 	Lifetime lifetime;
@@ -344,6 +347,13 @@ struct Seen {
 	u32 notice;
 };
 
+// More steps of the ARM7 than a sound burst has instructions (32 samples of 256 ticks): a loop of steps that
+// waits for something of its burst ends here at the latest, and fails
+const u32 kStepsMax = 100000;
+
+// What the list keeps: a loop of kStepsMax steps and what is published around it
+const size_t kSeenMax = kStepsMax + 1000;
+
 std::mutex seen_lock;
 std::vector<Seen> seen;
 
@@ -351,7 +361,8 @@ void Observer(const emu::RunState& state)
 {
 	std::lock_guard<std::mutex> lock(seen_lock);
 
-	seen.push_back({ state.lifetime, state.stopId, state.cause, state.breakpointId, state.notice });
+	if (seen.size() < kSeenMax)
+		seen.push_back({ state.lifetime, state.stopId, state.cause, state.breakpointId, state.notice });
 }
 
 std::vector<Seen> TakeSeen()
@@ -789,7 +800,7 @@ bool PauseAfter(const emu::RunState& stop, u32 bursts)
 /*
 	Steps of the ARM7 from a suspended burst until the burst is over: returns true at the stop of the step whose
 	instruction was the last of its burst, or at the first stop that is not what a step of a suspended burst
-	gives. The steps are counted in step_end.steps
+	gives, or behind kStepsMax steps with the burst still suspended. The steps are counted in step_end.steps
 */
 struct {
 	Co co;
@@ -806,7 +817,7 @@ bool StepToBurstEnd(const emu::RunState& stop)
 	step_end.bad = 0;
 	step_end.time = sh4_sched_now64();
 
-	while (Suspended() != SOUND_BURST_NONE && step_end.steps < 100000)
+	while (Suspended() != SOUND_BURST_NONE && step_end.steps < kStepsMax)
 	{
 		if (!StepArm())
 			break;
@@ -3541,6 +3552,7 @@ namespace {
 struct {
 	Co co;
 	u32 phases;			// the ARM phases that had run to their end at the stop behind the burst before
+	u32 steps;
 } st_reads;
 
 bool SameChannel(const AicaChannelDebug& a, const AicaChannelDebug& b)
@@ -3567,7 +3579,9 @@ DBG_SELFTEST_GUEST(arm7_reads_suspended, "arm7.reads.suspended")
 
 	ArmBps({ });
 
-	while (ReadCounts().n[1] - st_reads.phases < 7 && Suspended() == SOUND_BURST_ARM7)
+	// (seven samples are some hundreds of steps. Where a step ends no ARM phase the loop has an end all the same,
+	// and the test fails here)
+	for (st_reads.steps = 0; st_reads.steps < kStepsMax && ReadCounts().n[1] - st_reads.phases < 7 && Suspended() == SOUND_BURST_ARM7; st_reads.steps++)
 	{
 		if (!StepArm())
 			break;
@@ -3575,7 +3589,7 @@ DBG_SELFTEST_GUEST(arm7_reads_suspended, "arm7.reads.suspended")
 	}
 
 	Check(Suspended() == SOUND_BURST_ARM7 && ReadCounts().n[1] - st_reads.phases >= 7 && ReadCounts().n[1] - st_reads.phases < 32,
-		"the stop is inside a burst, behind %u of its samples", ReadCounts().n[1] - st_reads.phases);
+		"the stop is inside a burst, behind %u of its samples (%u steps)", ReadCounts().n[1] - st_reads.phases, st_reads.steps);
 
 	{
 		ArmRegs a = ReadArm(), b = ReadArm();
@@ -4322,6 +4336,7 @@ struct {
 	u32 fromStop, acrossSample, acrossEnd, fiqBehind;
 	u32 steps, runs, bad, other;
 	u32 inRun;				// steps of this run so far
+	bool endless;			// a run of kStepsMax steps did not get to the end of its burst
 	u32 phases[2];			// the ARM phases that had run to their end at the stop before the last step, and at this one
 	u32 pc;
 	u32 wasSuspended;
@@ -4345,6 +4360,7 @@ DBG_SELFTEST_GUEST(arm7n_steps, "arm7n.steps")
 
 	n_steps.fromStop = n_steps.acrossSample = n_steps.acrossEnd = n_steps.fiqBehind = 0;
 	n_steps.steps = n_steps.runs = n_steps.bad = n_steps.other = 0;
+	n_steps.endless = false;
 
 	for (;;)
 	{
@@ -4403,9 +4419,19 @@ DBG_SELFTEST_GUEST(arm7n_steps, "arm7n.steps")
 				n_steps.fiqBehind++;
 
 			n_steps.inRun++;
-		} while (Suspended() != SOUND_BURST_NONE);
+		} while (Suspended() != SOUND_BURST_NONE && n_steps.inRun < kStepsMax);
+
+		// Steps that do not get to the end of their burst end no ARM phase: the test has failed, and leaves the
+		// run to itself (a loop of steps in which no emulated time passes would be ended by nothing but the
+		// watchdog of the runner)
+		if (Suspended() != SOUND_BURST_NONE && n_steps.inRun >= kStepsMax)
+		{
+			n_steps.endless = true;
+			break;
+		}
 	}
 
+	Check(!n_steps.endless, "each of the %u runs of steps got to the end of its burst (the last one in %u steps)", n_steps.runs, n_steps.inRun);
 	Check(n_steps.bad == 0 && n_steps.other == 0, "%u single steps of the ARM7 in %u runs, each run followed by a resume: every stop was a step's", n_steps.steps,
 		n_steps.runs);
 	Check(n_steps.fromStop >= 20, "%u steps from a stop with no burst suspended", n_steps.fromStop);
