@@ -6,6 +6,7 @@
 
 #include "dbg_selftest.h"
 
+#include "dbg_core.h"
 #include "dbg_mem.h"
 #include "dbg_regs.h"
 #include "dbg_regs_private.h"
@@ -29,6 +30,7 @@
 #include "hw/sh4/sh4_sched.h"
 #include "serialize.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
@@ -3065,6 +3067,103 @@ DBG_SELFTEST(regs_rows_pure, "regs.rows.pure")
 	std::vector<u8> after;
 
 	Check(MachineState(&after) && after == machine, "the machine is as it was");
+}
+
+/*
+	regs.tick: what the tree costs a tick. A full tick carries every register of the tree, and every stop, step and
+	write sends one: with no breakpoint and no watch listed it has at most kFullTickBytesMax bytes. The time the
+	emulator thread takes to build one is printed, with the time of the reads alone.
+*/
+namespace {
+
+// M2-ROUND, M2-D27: the budget of a full tick with empty tables
+const size_t kFullTickBytesMax = 192 * 1024;
+
+// The part of a tick's text from `"key":` up to, and without, `"next":`
+size_t PartBytes(const std::string& tick, const char* key, const char* next)
+{
+	const size_t from = tick.find(std::string("\"") + key + "\":");
+	const size_t to = tick.find(std::string(",\"") + next + "\":");
+
+	return from != std::string::npos && to != std::string::npos && to > from ? to - from : 0;
+}
+
+}
+
+DBG_SELFTEST(regs_tick, "regs.tick")
+{
+	typedef std::chrono::steady_clock Clock;
+
+	u32 count;
+	const regs::Node* nodes = regs::Nodes(&count);
+	u32 registers = 0, with_registers = 0;
+
+	for (u32 i = 0; i < count; i++)
+	{
+		registers += nodes[i].registerCount;
+		with_registers += nodes[i].registerCount != 0;
+	}
+
+	const std::string full = core::BuildTickText(true);
+	const std::string base = core::BuildTickText(false);
+
+	const bool empty_tables = full.find("\"breakpoints\":{}") != std::string::npos && full.find("\"watches\":[]") != std::string::npos;
+
+	// every node that has registers is a key of the tick's registers
+	u32 carried = 0;
+
+	for (u32 i = 0; i < count; i++)
+	{
+		if (nodes[i].registerCount != 0 && full.find(std::string("\"") + nodes[i].path + "\":[{\"name\":\"") != std::string::npos)
+			carried++;
+	}
+
+	Check(empty_tables && carried == with_registers, "a full tick with no breakpoint and no watch listed carries the %u nodes that have registers (%u found)",
+		with_registers, carried);
+	Check(full.size() <= kFullTickBytesMax, "it has %zu bytes for %u nodes and %u registers: at most %zu (192 KiB)", full.size(), count, registers,
+		kFullTickBytesMax);
+	Note("of them the registers are %zu bytes and the event log is %zu; a tick with the base paths only has %zu bytes", PartBytes(full, "registers", "breakpoints"),
+		PartBytes(full, "eventLog", "watches"), base.size());
+
+	// the time of a build, on this thread: the fastest and the median of 41
+	{
+		const u32 kRounds = 41;
+		std::vector<double> build_us, read_us;
+		size_t bytes = 0;
+
+		for (u32 round = 0; round < kRounds; round++)
+		{
+			Clock::time_point t0 = Clock::now();
+			const std::string tick = core::BuildTickText(true);
+			Clock::time_point t1 = Clock::now();
+
+			bytes += tick.size();
+
+			// the reads alone, without their text
+			for (u32 i = 0; i < count; i++)
+			{
+				for (u32 r = 0; r < nodes[i].registerCount; r++)
+				{
+					u64 value;
+					char text[128];
+
+					regs::Read(nodes[i], r, &value, text, sizeof(text));
+				}
+			}
+
+			Clock::time_point t2 = Clock::now();
+
+			build_us.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
+			read_us.push_back(std::chrono::duration<double, std::micro>(t2 - t1).count());
+		}
+
+		std::sort(build_us.begin(), build_us.end());
+		std::sort(read_us.begin(), read_us.end());
+
+		Check(bytes != 0, "%u full ticks were built", kRounds);
+		Note("the build of a full tick takes %.0f us at its fastest and %.0f us in the median of %u; reading the %u registers without making their text %.0f us and %.0f us",
+			build_us.front(), build_us[kRounds / 2], kRounds, registers, read_us.front(), read_us[kRounds / 2]);
+	}
 }
 
 /*
