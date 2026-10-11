@@ -2277,7 +2277,7 @@ struct RunningAnswers {
 
 struct StoppedAnswers {
 	bool reached = false;
-	std::string memory, reg, watch, reset, bad_memory, bad_register, bad_watch, unknown_register, unknown_watch, slice;
+	std::string memory, reg, watch, reset, bad_memory, bad_register, bad_watch, unknown_register, unknown_watch, dsp_memory, rom_memory, slice;
 };
 
 struct {
@@ -2325,6 +2325,8 @@ void AskStopped(StoppedAnswers* a, u32 watch)
 	a->reset = Ask("control.reset");
 	a->unknown_register = Ask("state.setRegister", { { "path", "dc.no.such.node" }, { "name", "R0" }, { "value", "0" } });
 	a->unknown_watch = Ask("state.editWatch", { { "watchId", 99999 }, { "value", "0" } });
+	a->dsp_memory = Ask("state.writeMemory", { { "target", "dsp" }, { "address", 0 }, { "data", json::array({ 0 }) } });
+	a->rom_memory = Ask("state.writeMemory", { { "target", "sh4" }, { "address", 0 }, { "data", json::array({ 0 }) } });
 
 	a->slice = Ask("state.getMemorySlice", { { "address", kQuietAddr }, { "length", 4 } });
 }
@@ -2806,6 +2808,9 @@ DBG_SELFTEST_GUEST(core_writes, "core.writes")
 				"%s: state.writeMemory, state.setRegister, state.editWatch and control.reset are %d, in-band (%s)", where, lifetime, a.memory.c_str());
 			Check(InBand(Parsed(a.unknown_register)) == lifetime && InBand(Parsed(a.unknown_watch)) == lifetime,
 				"%s: the lifetime comes in front of what a method finds out itself: a path and a watchId that do not exist are %d as well", where, lifetime);
+			Check(InBand(Parsed(a.dsp_memory)) == lifetime && InBand(Parsed(a.rom_memory)) == lifetime,
+				"%s: and so are state.writeMemory to the target dsp and into the boot ROM, %d: not the -32004 and the -32013 they are when the call is served (%s; %s)", where,
+				lifetime, a.dsp_memory.c_str(), a.rom_memory.c_str());
 		}
 
 		{
