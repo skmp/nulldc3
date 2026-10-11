@@ -1037,8 +1037,8 @@ DBG_SELFTEST(core_tick, "core.tick")
 		emu::Sh4EngineInfo engine;
 		const bool known = emu::GetSh4Engine(&engine);
 
-		Check(caps.count("event-breakpoints") == 1 && caps.count("callstack") == 1 && caps.count("memory-write") == 1 && caps.count("register-write") == 1 && known
-			&& caps.count(engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native") == 1 && caps.size() == 5,
+		Check(caps.count("event-breakpoints") == 1 && caps.count("callstack") == 1 && caps.count("memory-write") == 1 && caps.count("register-write") == 1 && caps.count("reset") == 1 && known
+			&& caps.count(engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native") == 1 && caps.size() == 6,
 			"the capabilities of M1, those of M2 that have their method, and the one of the engine that is selected (%s)", shape["capabilities"].dump().c_str());
 
 		json& targets = shape["targets"];
@@ -1214,7 +1214,7 @@ DBG_SELFTEST(core_tick, "core.tick")
 	Check(core::HandleRequestText(R"({"jsonrpc":"2.0","id":5})") == R"({"jsonrpc":"2.0","id":5,"error":{"code":-32600,"message":"invalid request"}})", "no method: -32600");
 	Check(RpcError(Send("no.such.method")) == kErrMethodNotFound && RpcError(Send("event.tick")) == kErrMethodNotFound, "a method the protocol does not have: -32601");
 	Check(RpcError(Send("state.getTable", { { "id", 5 } })) == kErrNotSupported && RpcError(Send("state.getMemoryBinary")) == kErrNotSupported
-		&& InBand(Send("control.reset")) == kErrNotSupported && InBand(Send("state.recordSgcFrames", { { "frames", "x" } })) == kErrNotSupported,
+		&& InBand(Send("state.recordSgcFrames", { { "frames", "x" } })) == kErrNotSupported,
 		"a method of a later milestone: -32004 on the channel of the method, whatever its parameters are");
 	Check(Ok(json::parse(core::HandleRequestText(R"({"jsonrpc":"2.0","id":9,"method":"state.unwatch","more":1,"params":{"watchIds":[],"other":{"a":null}}})"), nullptr, false)),
 		"a member of the request and a key of params that the protocol does not name are not looked at");
@@ -1751,7 +1751,7 @@ DBG_SELFTEST_GUEST(core_lifetime, "core.lifetime")
 				tick["callstacks"]["sh4"].size());
 		}
 
-		Check(shape.is_object() && shape["deviceTree"][0]["registers"][0]["value"] == "200MHz" && shape["capabilities"].size() == 5, "describe: the tree with its values, and the engine capability (%s)",
+		Check(shape.is_object() && shape["deviceTree"][0]["registers"][0]["value"] == "200MHz" && shape["capabilities"].size() == 6, "describe: the tree with its values, and the engine capability (%s)",
 			shape.is_object() ? shape["capabilities"].dump().c_str() : "no JSON");
 		Check(Ok(Parsed(f.add)) && Ok(Parsed(f.watch)), "bookkeeping works: breakpoints.add and state.watch are answered {} (%s, %s)", f.add.c_str(), f.watch.c_str());
 		Check(Parsed(f.slice).contains("result") && Parsed(f.stack).contains("result") && Parsed(f.disasm).contains("result")
@@ -1870,7 +1870,7 @@ DBG_SELFTEST_GUEST(core_lifetime, "core.lifetime")
 
 			Check(shape.is_object() && nodes.size() == count && problems.empty() && values > 200 && not_na == 0,
 				"describe: the static tree, %u nodes, with every one of its %u values \"n/a\" (%u are not)", count, values, not_na);
-			Check(shape.is_object() && shape["capabilities"] == json::array({ "event-breakpoints", "callstack", "memory-write", "register-write" }) && shape["targets"].size() == 3,
+			Check(shape.is_object() && shape["capabilities"] == json::array({ "event-breakpoints", "callstack", "memory-write", "register-write", "reset" }) && shape["targets"].size() == 3,
 				"no engine capability, and the three targets (%s)", shape.is_object() ? shape["capabilities"].dump().c_str() : "no JSON");
 
 			Check(RpcError(Parsed(f.slice)) == kErrNoGame && RpcError(Parsed(f.stack)) == kErrNoGame && RpcError(Parsed(f.disasm)) == kErrNoGame,

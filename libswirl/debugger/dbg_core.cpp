@@ -944,9 +944,10 @@ std::string BuildDescribe(const emu::RunState& state)
 	w.String("event-breakpoints");
 	w.String("callstack");
 
-	// milestone M2: each with its method (state.writeMemory; state.setRegister and state.editWatch)
+	// milestone M2: each with its method (state.writeMemory; state.setRegister and state.editWatch; control.reset)
 	w.String("memory-write");
 	w.String("register-write");
+	w.String("reset");
 
 	// what executes SH4 breakpoints and steps, once a backend is selected
 	if (machine)
@@ -2451,6 +2452,21 @@ void MethodEditWatch(const Request& req, Outcome& out)
 	});
 }
 
+// No tick of its own: while a stop is in force the stop of the reset is published when the call has returned,
+// with its tick; a machine that runs resets and runs on, and nothing is published
+void MethodReset(const Request&, Outcome& out)
+{
+	auto job = std::make_shared<ExecJob>();
+
+	int rv = RunCall(emu::CC_WRITE, [job] { job->rv = emu::Reset(); });
+
+	if (rv != 0)
+		return Fail(out, rv);
+
+	if (job->rv != 0)
+		return Fail(out, job->rv);
+}
+
 /*
 	Run control (design 2.3.2). A request is answered when it is validated and armed; a tick says what
 	became of it.
@@ -2582,7 +2598,7 @@ const Method kMethods[] = {
 	{ "state.editWatch",               true,  MethodEditWatch },
 	{ "state.writeMemory",             true,  MethodWriteMemory },
 	{ "state.setRegister",             true,  MethodSetRegister },
-	{ "control.reset",                 true,  nullptr },
+	{ "control.reset",                 true,  MethodReset },
 	// milestone M3
 	{ "state.recordSgcFrames",         true,  nullptr },
 	{ "state.getSgcFrameData",         false, nullptr },
