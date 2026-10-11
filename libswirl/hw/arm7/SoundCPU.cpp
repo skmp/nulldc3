@@ -157,6 +157,7 @@ static void DYNACALL scpu_WriteMemArm(u32 addr, T data, Arm7Context* ctx)
 struct SoundCPU_impl : SoundCPU {
 	Arm7Context ctx;
 	unique_ptr<ARM7Backend> arm;
+	bool recompiler = false;		//what arm is: for the debugger (DebugIsRecompiler)
 
 	SoundCPU_impl(AICA* aica, u8* aica_ram, u32 aram_size) {
 		ctx.aica_ram = aica_ram;
@@ -279,11 +280,59 @@ struct SoundCPU_impl : SoundCPU {
 		}
 	}
 
+	//The ARM phase of a sample (SoundCPU.h). A new phase that no debugger looks into is the backend's Run(), as it
+	//was before the burst could be suspended: this is the path of every run, and it is kept to a test and a call.
+	//Everything else is the debug loop
+	bool RunSample(u32 ticks, u32* done, bool checks)
+	{
+		if (likely(*done == 0 && !(checks && dbg_arm7_armed != 0)))
+		{
+			//the phase uses its ticks up: nothing reads the count while it runs
+			*done = ticks;
+			arm->Run(ticks);
+			return true;
+		}
+
+		return RunSampleDebug(ticks, done, checks);
+	}
+
+	//The debug loop (debugger/debugger.h, the ARM7 block): per instruction the entry of a pending FIQ, the
+	//debugger's check, the instruction, and the test of the ticks behind it, which is the sequence of
+	//ARM7Backend::StepMany with the check in it. It runs the interpreter's functions on the context whatever
+	//backend is selected, and it keeps nothing but `used`: a phase that is suspended is gone on with from the
+	//context and from the ticks the caller holds. The pending FIQ is looked at in front of every instruction,
+	//also in front of the first one of a phase that is gone on with: a request can become enterable inside a
+	//sample (an MSR that clears F with a request waiting)
+	NOINLINE bool RunSampleDebug(u32 ticks, u32* done, bool checks)
+	{
+		u32 used = *done;
+
+		for (;;)
+		{
+			ARM7Backend::StepIrq(&ctx);
+
+			if (checks && dbg_arm7_armed != 0 && dbg_arm7_Check(ctx.regs[R15_ARM_NEXT].I))
+			{
+				*done = used;
+				return false;
+			}
+
+			used += ARM7Backend::StepExec(&ctx);
+
+			if (used >= ticks)
+			{
+				*done = used;
+				return true;
+			}
+		}
+	}
+
 	bool setBackend(Arm7Backends backend) {
 
 		if (backend == ARM7BE_INTERPRETER) {
 			arm.reset(ARM7Backend::CreateInterpreter(&ctx));
 			ctx.backend = arm.get();
+			recompiler = false;
 
 			return true;
 		}
@@ -291,6 +340,7 @@ struct SoundCPU_impl : SoundCPU {
 		else if (backend == ARM7BE_DYNAREC) {
 			arm.reset(ARM7Backend::CreateJit(&ctx));
 			ctx.backend = arm.get();
+			recompiler = true;
 
 			return true;
 		}
@@ -361,60 +411,124 @@ struct SoundCPU_impl : SoundCPU {
 			return true;
 		}
 
-		//the banked registers: the index of the live copy for the bank of the mode the core is in
-		u32 live = reg;
+		//the banked registers: the live copy for the bank of the mode the core is in (LiveIndex, below)
+		if ((reg >= R13_IRQ && reg <= SPSR_IRQ) || (reg >= R13_USR && reg <= SPSR_FIQ))
+		{
+			*value = ctx.regs[LiveIndex(reg)].I;
+			return true;
+		}
 
+		return false;
+	}
+
+	//The index of the register that holds reg now: the live copy for the bank of the mode the core is in, the
+	//slot otherwise. For the indices DebugGetReg serves from R13_IRQ on, R8..R12 of the other modes (21..25) apart
+	u32 LiveIndex(u32 reg) {
 		switch (ctx.armMode)
 		{
 		case 0x10:
 		case 0x1F:
 			if (reg == R13_USR || reg == R14_USR)
-				live = reg - R13_USR + 13;
+				return reg - R13_USR + 13;
 			break;
 
 		case 0x11:
 			if (reg >= R8_FIQ && reg <= R14_FIQ)
-				live = reg - R8_FIQ + 8;
-			else if (reg == SPSR_FIQ)
-				live = RN_SPSR;
+				return reg - R8_FIQ + 8;
+			if (reg == SPSR_FIQ)
+				return RN_SPSR;
 			break;
 
 		case 0x12:
 			if (reg == R13_IRQ || reg == R14_IRQ)
-				live = reg - R13_IRQ + 13;
-			else if (reg == SPSR_IRQ)
-				live = RN_SPSR;
+				return reg - R13_IRQ + 13;
+			if (reg == SPSR_IRQ)
+				return RN_SPSR;
 			break;
 
 		case 0x13:
 			if (reg == R13_SVC || reg == R14_SVC)
-				live = reg - R13_SVC + 13;
-			else if (reg == SPSR_SVC)
-				live = RN_SPSR;
+				return reg - R13_SVC + 13;
+			if (reg == SPSR_SVC)
+				return RN_SPSR;
 			break;
 
 		case 0x17:
 			if (reg == R13_ABT || reg == R14_ABT)
-				live = reg - R13_ABT + 13;
-			else if (reg == SPSR_ABT)
-				live = RN_SPSR;
+				return reg - R13_ABT + 13;
+			if (reg == SPSR_ABT)
+				return RN_SPSR;
 			break;
 
 		case 0x1b:
 			if (reg == R13_UND || reg == R14_UND)
-				live = reg - R13_UND + 13;
-			else if (reg == SPSR_UND)
-				live = RN_SPSR;
+				return reg - R13_UND + 13;
+			if (reg == SPSR_UND)
+				return RN_SPSR;
 			break;
+		}
+
+		return reg;
+	}
+
+	//The writer of the debugger (SoundCPU.h): every index DebugGetReg reads, into the place it reads from
+	bool DebugSetReg(u32 reg, u32 value) {
+		if (reg < 15)
+		{
+			ctx.regs[reg].I = value;
+			return true;
+		}
+
+		if (reg == 15)
+		{
+			//as every write of R15 by the core: the fetch does not align the address
+			ctx.regs[R15_ARM_NEXT].I = value & ~3u;
+			return true;
+		}
+
+		if (reg == RN_CPSR)
+		{
+			u32 mode = value & 0x1F;
+
+			//the switch ends the process on any other
+			if (mode != 0x10 && mode != 0x11 && mode != 0x12 && mode != 0x13 && mode != 0x17 && mode != 0x1B && mode != 0x1F)
+				return false;
+
+			//As MSR CPSR does it (gpl/vba-arm/arm-new.h): the banks swap for the mode, then the register is the
+			//value, the flags and the interrupt enables follow it, the pending FIQ is worked out again, and the
+			//register is put together anew, which keeps N Z C V, I, F and the mode. saveState false: the SPSR of
+			//the mode that is entered is that mode's own, not the CPSR that is replaced
+			ARM7Backend::CPUSwitchMode(&ctx, mode, false);
+			ctx.regs[RN_CPSR].I = value;
+			ARM7Backend::CPUUpdateFlags(&ctx);
+			ARM7Backend::CPUUpdateCPSR(&ctx);
+			return true;
+		}
+
+		if (reg == RN_SPSR)
+		{
+			ctx.regs[RN_SPSR].I = value;
+			return true;
+		}
+
+		//R8..R12 of the modes other than FIQ: the live ones, or swapped out
+		if (reg >= 21 && reg <= 25)
+		{
+			ctx.regs[(ctx.armMode == 0x11 ? R8_FIQ : 8) + (reg - 21)].I = value;
+			return true;
 		}
 
 		if ((reg >= R13_IRQ && reg <= SPSR_IRQ) || (reg >= R13_USR && reg <= SPSR_FIQ))
 		{
-			*value = ctx.regs[live].I;
+			ctx.regs[LiveIndex(reg)].I = value;
 			return true;
 		}
 
 		return false;
+	}
+
+	bool DebugIsRecompiler() {
+		return recompiler;
 	}
 
 	//L as arm_ReadReg gives it, without the acknowledge that goes with that read

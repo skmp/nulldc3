@@ -15,6 +15,20 @@ what is written to them, and a sample passes only when a test says so (`arm7_mac
 | `arm7.wren7.qemu_diff` | 4 x 1000 random instructions (data processing, MUL/MLA, LDR/STR, LDM/STM, SWP): registers, flags and memory of every case against the console's | wren7-rtl |
 | `arm7.wren7.mulsem` | 1024 multiplier inputs: MUL(S)/MLA(S) results and flags, and the Rd == Rm forms, against the console's | wren7-rtl |
 | `arm7.wren7.bringup` | a countdown kernel run three times in a row, and one that runs into its timeout: what a reset keeps | wren7-rtl |
+| `arm7.vendor.halves`, `arm7.directed.halves`, `arm7.wren7.<suite>.halves` | each of the six again, with a step made of the two halves of `ARM7Backend::Step` (below) | as its twin |
+
+## The two halves of a step
+
+`ARM7Backend::Step` is what every run of the emulator executes for an instruction of the ARM7. The debugger
+needs a place between the entry of a pending FIQ and the instruction, for its check, so the interpreter has
+the step a second time in two halves, `ARM7Backend::StepIrq` and `ARM7Backend::StepExec`, which the debug loop
+of the sound burst runs (`SoundCPU::RunSample`) and nothing else does: `Step` is not made of them, so that
+what a run pays for an instruction is what it was. The suites step through `arm7m_step()`, which calls `Step`.
+With `ARM7M_STEP=halves` in the environment it calls `StepIrq` and `StepExec` instead, in that order, and every
+suite is registered a second time that way, under the same conditions and on the same `baseline.txt`: the
+`.halves` tests are what holds the two halves to the interpreter's results and to the console's.
+
+    ARM7M_STEP=halves <build dir>/arm7/arm7_directed --strict
 
 ## arm7.vendor
 

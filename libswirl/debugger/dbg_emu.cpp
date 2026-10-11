@@ -31,6 +31,7 @@
 #include "hw/sh4/sh4_dbg.h"
 #include "hw/sh4/sh4_interrupts.h"
 #include "hw/sh4/SuperH4_impl.h"
+#include "hw/arm7/SoundCPU.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -128,17 +129,28 @@ enum Action {
 	ACT_STEP,
 	ACT_STEP_OVER,
 	ACT_STEP_OUT,
+	ACT_ARM7_STEP,
+	ACT_ARM7_STEP_OVER,
+	ACT_ARM7_STEP_OUT,
 };
+
+// What Leave() says when nothing was left: the sound burst it ran on was suspended again, the stop of that is
+// decided and the park loop goes on with it. Never returned by Park()
+const u32 kParkStay = ~0u;
 
 // The emulator thread's own
 struct {
 	bool firstPark;				// Park() has not run on this thread yet
 	bool inPark;				// in the park context: the guest does not execute
-	bool inStep;				// the park loop is executing a step
+	bool inStep;				// a step is executing: the park loop is inside a step of the SH4, or the SH4 runs
+								// towards the sound burst that a step of the ARM7 waits for. The second lasts
+								// across a return of Park(), and ends at the Park() that follows
 	bool stopInForce;			// a debugger stop is published and in force
 	u32 stopPc;					// the pc it was published with
 	bool stepped;				// a step has executed since it was published
 	bool stepFallback;			// the stop that is decided ends a step the interpreter fallback made
+	bool arm7Fallback;			// the stop that comes ends a step, a resume or a run in which the debug loop of the
+								// sound burst stood in for the recompiler of the ARM7
 	bool titled;				// the park loop of this thread has put its title on the window
 	float titledAt;				// last_fps when it last did
 
@@ -168,6 +180,9 @@ struct {
 	bool jit;
 	bool fallback;				// breakpoints and steps of this backend come from the interpreter fallback
 	bool fallbackLoop;			// what Run() was last told to run
+	bool arm7Recompiler;		// the backend that executes the ARM7 is a recompiler: the debug loop of the sound
+								// burst is a fallback with other timing there
+	bool arm7Fallback;			// what was last said of it: the debug loop stands in for that recompiler
 } engine;
 
 // On the emulator thread, or under L while no emulator thread exists
@@ -225,9 +240,15 @@ bool ThreadExists(Lifetime lifetime)
 	return lifetime == Lifetime::Running || lifetime == Lifetime::Parked;
 }
 
+// Does the debug loop of the sound burst stand in for a recompiler of the ARM7 now?
+bool Arm7OnFallback()
+{
+	return engine.arm7Recompiler && dbg_arm7_armed != 0;
+}
+
 u32 CurrentNotice()
 {
-	return engine.fallbackLoop ? (u32)NOTICE_SH4_FALLBACK : 0;
+	return (engine.fallbackLoop ? (u32)NOTICE_SH4_FALLBACK : 0) | (Arm7OnFallback() ? (u32)NOTICE_ARM7_FALLBACK : 0);
 }
 
 // Q held. The published state changes, all of it at once. stop: the state is a new stop
@@ -397,16 +418,57 @@ void SelectLoop()
 	shared.state.notice = CurrentNotice();
 }
 
+// Whether the ARM7 runs on its interpreter fallback has changed: the notice of the published state follows at
+// once, and the change is logged. On the emulator thread, or under L while no emulator thread exists; Q is not
+// held. Where the backend of the ARM7 is its interpreter, which is every x86-64 build, nothing ever changes here
+void SelectArm7()
+{
+	bool fallback = Arm7OnFallback();
+
+	if (fallback == engine.arm7Fallback)
+		return;
+
+	engine.arm7Fallback = fallback;
+
+	if (fallback)
+		DBG_EVENT(EV_DEBUGGER_ENGINE, "the ARM7 runs on the interpreter fallback: its recompiler has no breakpoints");
+	else
+		DBG_EVENT(EV_DEBUGGER_ENGINE, "the ARM7 runs on its recompiler again");
+
+	std::lock_guard<std::mutex> q(queue_lock);
+
+	if (fallback)
+		shared.state.notice |= (u32)NOTICE_ARM7_FALLBACK;
+	else
+		shared.state.notice &= ~(u32)NOTICE_ARM7_FALLBACK;
+}
+
+// The ARM7 is about to execute, or can, with the debug loop of the sound burst in place of its recompiler: a
+// sound burst that the debugger suspended is run on (the rest of a suspended ARM phase is always the debug
+// loop's), or the park context is left with dbg_arm7_armed not 0. The stop that follows says so
+// (NOTICE_ARM7_FALLBACK), whatever is armed when it is published: a step and a temporary breakpoint are gone by
+// then (arm7::OnStop). Asked before the burst is run on, and behind everything that arms for the leave
+void NoteArm7Fallback()
+{
+	if (engine.arm7Recompiler && (dbg_arm7_armed != 0 || virtualDreamcast->SoundBurstSuspended() != SOUND_BURST_NONE))
+		e.arm7Fallback = true;
+}
+
 // The backends of this thread are selected
 void CaptureEngine()
 {
 	SuperH4_impl* cpu = static_cast<SuperH4_impl*>(sh4_cpu);
 	SuperH4Backend* backend = cpu->DebugBackend();
+	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
 
 	engine.jit = cpu->backend_kind == SH4BE_DYNAREC;
 	engine.backend = engine.jit ? JitName() : "interpreter";
 	engine.fallback = engine.jit && (forceFallback || backend == nullptr || !(backend->DebugCaps() & SH4DBG_NATIVE));
+	engine.arm7Recompiler = scpu != nullptr && scpu->DebugIsRecompiler();
 	engine.known = true;
+
+	// a breakpoint that was listed while no thread existed arms the debug loop from the first burst on
+	SelectArm7();
 }
 
 /*
@@ -442,11 +504,9 @@ void EnterStop()
 {
 	StopCause cause = e.want;
 	u32 id = (cause == StopCause::Breakpoint || cause == StopCause::Event) ? e.wantId : 0;
-	u32 notice = CurrentNotice() | (e.stepFallback ? (u32)NOTICE_SH4_FALLBACK : 0);
 
 	e.want = StopCause::NoCause;
 	e.wantId = 0;
-	e.stepFallback = false;
 
 	g_parked = true;
 	p_sh4rcb->cntx.CpuRunning = false;
@@ -454,6 +514,17 @@ void EnterStop()
 	// what the breakpoint state reports is what its helpers gave to LatchStop(), whose record is published
 	sh4::StopInfo info;
 	sh4::OnStop(&info);
+
+	// the temporary breakpoint and a step of the ARM7 end here, also when the stop is the SH4's
+	arm7::OnStop();
+	SelectArm7();
+
+	// The notices of the stop: what holds now, and what held for the step, the resume or the run it ends. A
+	// step and a temporary breakpoint of the ARM7 have just been disarmed: their half is the flag's
+	u32 notice = CurrentNotice() | (e.stepFallback ? (u32)NOTICE_SH4_FALLBACK : 0) | (e.arm7Fallback ? (u32)NOTICE_ARM7_FALLBACK : 0);
+
+	e.stepFallback = false;
+	e.arm7Fallback = false;
 
 	e.stopInForce = true;
 	e.stopPc = p_sh4rcb->cntx.pc;
@@ -487,21 +558,48 @@ void EnterStop()
 	}
 }
 
-// Leaves the park context for Run(). resume: the stop in force ends with it
-u32 Leave(bool resume)
+// The first step of every leave: a sound burst that the debugger suspended is run on before the SH4 executes
+// anything, with the checks of the ARM7. No emulated time passes: it is the rest of the AICA tick that was due.
+// Returns false when a check suspended the burst again: the stop is decided (emu::OnSoundStop has recorded it),
+// nothing is left, and the caller drops what it was leaving for
+bool RunBurstOn()
 {
+	if (virtualDreamcast->SoundBurstSuspended() == SOUND_BURST_NONE)
+		return true;
+
+	NoteArm7Fallback();
+
+	return virtualDreamcast->RunSoundBurst(true);
+}
+
+// Leaves the park context for Run(). resume: the stop in force ends with it. arm7Decided: the resume exemption
+// of the ARM7 has been armed by the caller, for a step-over or a step-out of the ARM7.
+// Returns kParkStay, with nothing left and the thread parked, when a breakpoint of the ARM7 suspended the sound
+// burst again that was run on: the park loop publishes that stop
+u32 Leave(bool resume, bool arm7Decided = false)
+{
+	// Also for the stop that the thread before this one ended in, which nothing has resumed: the instruction
+	// of that stop executes, and its breakpoint does not stop again at once
+	const bool resumes = resume || resumeOwed;
+
+	if (resumes && !arm7Decided)
+		arm7::PrepareResume();
+
+	if (!RunBurstOn())
+		return kParkStay;
+
 	SetLatch(false);
 
 	AcceptDeferred();
 
 	sh4_host_fp_resync();
 
-	// Also for the stop that the thread before this one ended in, which nothing has resumed: the instruction
-	// of that stop executes, and its breakpoint does not stop again at once
-	if (resume || resumeOwed)
+	if (resumes)
 		sh4::PrepareResume();
 
 	SelectLoop();
+	SelectArm7();
+	NoteArm7Fallback();
 
 	// not when the machine is asked to stop: dc_run finds the reason
 	if (!virtualDreamcast->StartCpu(true))
@@ -523,6 +621,16 @@ u32 Leave(bool resume)
 // step is decided and the park loop goes on with it
 bool DoStep(Action action, u32* rv)
 {
+	// The step can let the ARM7 execute: its slice end can start a sound burst, and one that is suspended is
+	// run on first. A breakpoint of the ARM7 that suspends it again is the stop, and the step is dropped
+	arm7::PrepareResume();
+
+	if (!RunBurstOn())
+		return false;
+
+	SelectArm7();
+	NoteArm7Fallback();
+
 	SetLatch(false);
 
 	bool accepted = AcceptDeferred();
@@ -600,6 +708,85 @@ bool DoStep(Action action, u32* rv)
 
 	// the machine may have been asked to stop or to reset while the step ran
 	*rv = PARK_EVALUATE;
+	return true;
+}
+
+// Executes the step of the ARM7 a call armed. Returns true with *rv when Park() returns; false when the park
+// loop goes on with a stop that is decided: the stop of the step, or that of a breakpoint of the ARM7 in the
+// burst that a step-over or a step-out ran on
+bool DoArm7Step(Action action, u32* rv)
+{
+	bool resume = false;
+
+	if (action == ACT_ARM7_STEP_OVER)
+	{
+		resume = arm7::PrepareStepOver();
+	}
+	else if (action == ACT_ARM7_STEP_OUT)
+	{
+		arm7::PrepareStepOut();
+		resume = true;
+	}
+
+	if (resume)
+	{
+		// a resume with one temporary breakpoint: it publishes Running when it leaves
+		*rv = Leave(true, true);
+		return *rv != kParkStay;
+	}
+
+	arm7::PrepareStep();
+
+	if (virtualDreamcast->SoundBurstSuspended() != SOUND_BURST_NONE)
+	{
+		// In the park context: the burst is run on until the check behind the instruction suspends it again,
+		// or the check in front of it does (a FIQ was entered there). No emulated time passes, the SH4 executes
+		// nothing, the latch stays set, nothing is published in between
+		NoteArm7Fallback();
+
+		if (!virtualDreamcast->RunSoundBurst(true))
+			return false;
+
+		// the instruction was the last of its burst: the step is complete at the end of the burst
+		if (arm7::CompleteStepAtBurstEnd())
+			return false;
+
+		// (a step that is armed is the first check of the burst that is run on, so its instruction has executed
+		// when that burst is over. Were it not so, the instruction would be in the next burst, as below)
+	}
+
+	// With no burst suspended the instruction is in the next burst, which only the scheduler starts. The loop
+	// leaves as for a resume and the stop stays in force: nothing is published, g_parked stays set, and the slice
+	// hook treats the run of the SH4 as a step that is executing. The check of that burst, or the burst itself
+	// when it finds the ARM7 held, records the stop of the step, the hook latches it, and the next Park()
+	// publishes it
+	SelectArm7();
+	NoteArm7Fallback();
+
+	SetLatch(false);
+
+	AcceptDeferred();
+
+	sh4_host_fp_resync();
+
+	// for the SH4 this is a resume
+	sh4::PrepareResume();
+
+	SelectLoop();
+
+	if (!virtualDreamcast->StartCpu(false))
+	{
+		*rv = PARK_EVALUATE;
+		return true;
+	}
+
+	e.inPark = false;
+	e.inStep = true;
+
+	// The wait counts as a step that has executed: a thread that ends in it leaves no resume owed
+	e.stepped = true;
+
+	*rv = PARK_RUN;
 	return true;
 }
 
@@ -788,9 +975,20 @@ int Step(Target t, StepKind k, const char** why)
 	if (!OnEmuThread() || !e.inPark || !e.stopInForce || e.armed != ACT_NONE)
 		return kErrNotPaused;
 
-	// the ARM7 and the DSP have no run control of their own
-	if (t != Target::Sh4)
+	// the DSP has no run control
+	if (!TargetSteps(t))
 		return kErrNotSupported;
+
+	if (t == Target::Arm7)
+	{
+		int rv = arm7::StepCheck();
+
+		if (rv != 0)
+			return rv;
+
+		e.armed = k == StepKind::Into ? ACT_ARM7_STEP : k == StepKind::Over ? ACT_ARM7_STEP_OVER : ACT_ARM7_STEP_OUT;
+		return 0;
+	}
 
 	int rv = sh4::StepCheck(why);
 
@@ -812,8 +1010,7 @@ int Step(Target t, StepKind k, const char** why)
 
 bool TargetSteps(Target t)
 {
-	// the stub of header revision 6: the run control of the ARM7 comes with its package
-	return t == Target::Sh4;
+	return t == Target::Sh4 || t == Target::Arm7;
 }
 
 int Reset()
@@ -844,6 +1041,8 @@ void SetSh4Breakpoints(const u32* ids, const u32* addrs, u32 n)
 void SetArm7Breakpoints(const u32* ids, const u32* addrs, u32 n)
 {
 	arm7::SetBreakpoints(ids, addrs, n);
+
+	SelectArm7();
 }
 
 void SetEventBreakpoints(const u32* ids, const u8* events, u32 n)
@@ -868,6 +1067,8 @@ void SetActiveMask(u32 categories)
 
 	sh4::SetActiveMask(categories);
 	arm7::SetActiveMask(categories);
+
+	SelectArm7();
 }
 
 RunState GetRunState()
@@ -893,9 +1094,20 @@ void LatchStop(StopCause cause, u32 breakpointId)
 	Latch();
 }
 
-void OnSoundStop(StopCause, u32)
+void OnSoundStop(StopCause cause, u32 breakpointId)
 {
-	// the stub of header revision 6: no check of the ARM7 stops, so nothing calls it
+	// The park loop runs a suspended burst on: this is the stop it publishes next
+	if (e.inPark)
+	{
+		Merge(e.want, e.wantId, cause, breakpointId);
+		return;
+	}
+
+	// The burst runs in its scheduler callback. The run flag is not looked at: the burst is suspended whatever
+	// the machine is about to do, and the hook latches a freezing cause also for a machine that leaves Run()
+	Merge(e.freeze, e.freezeId, cause, breakpointId);
+
+	g_attn.fetch_or(ATTN_PAUSE);
 }
 
 void OnEvent(EventId id)
@@ -1134,6 +1346,8 @@ void OnThreadExiting(bool guestExit)
 	AcceptDeferred();
 
 	sh4::OnStop(nullptr);
+	arm7::OnStop();
+	SelectArm7();
 
 	// A thread that ends in a debugger stop leaves the resume of that stop to the next one, when the guest is
 	// where the stop was published: no step has executed behind it and nothing has written the pc
@@ -1210,12 +1424,15 @@ void OnGuestStateReplaced()
 	resumeOwed = false;
 
 	sh4::OnPcWritten();
+	arm7::OnPcWritten();
 
 	if (OnEmuThread())
 	{
-		// temporary breakpoints and a step-out end with the state they were made for. Without an emulator
-		// thread there are none: the thread ended them on its way out
+		// temporary breakpoints, a step-out and a step of the ARM7 end with the state they were made for.
+		// Without an emulator thread there are none: the thread ended them on its way out
 		sh4::OnStop(nullptr);
+		arm7::OnStop();
+		SelectArm7();
 
 		// the park loop publishes the stop, if one is in force
 		e.resetSeen = true;
@@ -1236,6 +1453,9 @@ void OnGuestStateReplaced()
 u32 Park()
 {
 	e.inPark = true;
+
+	// The run of the SH4 towards the sound burst that a step of the ARM7 waited for is over, whatever ended it
+	e.inStep = false;
 
 	// In the park context nothing is accepted and no time passes, whatever a call does: an interrupt that a
 	// write lets in is accepted on the way out
@@ -1291,12 +1511,20 @@ u32 Park()
 			Action action = e.armed;
 			e.armed = ACT_NONE;
 
-			if (action == ACT_RESUME)
-				return Leave(true);
-
 			u32 rv;
 
-			if (DoStep(action, &rv))
+			if (action == ACT_RESUME)
+			{
+				rv = Leave(true);
+
+				// a breakpoint of the ARM7 stopped the burst that was run on: that stop is published
+				if (rv == kParkStay)
+					continue;
+
+				return rv;
+			}
+
+			if (action >= ACT_ARM7_STEP ? DoArm7Step(action, &rv) : DoStep(action, &rv))
 				return rv;
 
 			continue;
@@ -1323,7 +1551,12 @@ u32 Park()
 
 			q.unlock();
 
-			return Leave(false);
+			u32 rv = Leave(false);
+
+			if (rv == kParkStay)
+				continue;
+
+			return rv;
 		}
 
 		std::unique_lock<std::mutex> q(queue_lock);

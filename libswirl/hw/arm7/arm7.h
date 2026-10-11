@@ -15,6 +15,13 @@ struct ARM7Backend {
     static u32 DYNACALL Step(Arm7Context* ctx);
     static u32 DYNACALL StepMany(Arm7Context* ctx, u32 minCycles);
 
+    // Step in two halves, for a loop that has something to do between them: the debug loop of the sound burst
+    // (SoundCPU::RunSample), which makes the debugger's check there. StepIrq is the entry of a pending FIQ,
+    // StepExec the instruction; it returns its ticks. StepIrq(ctx); StepExec(ctx); is Step(ctx). Step and
+    // StepMany do not call them: what every run executes for an instruction is what it was
+    static void DYNACALL StepIrq(Arm7Context* ctx);
+    static u32 DYNACALL StepExec(Arm7Context* ctx);
+
     static void DYNACALL CPUSwitchMode(Arm7Context* ctx, int mode, bool saveState);
     static void DYNACALL CPUUpdateFlags(Arm7Context* ctx);
     static void DYNACALL UpdateInterrupts(Arm7Context* ctx);

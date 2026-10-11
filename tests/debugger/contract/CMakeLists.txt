@@ -8,6 +8,13 @@
 #	                                                    UI (npm run contract -- --url ... --profile emulator --elf
 #	                                                    ... --milestone M1), on the JIT, on the interpreter and on
 #	                                                    the JIT with Debugger:ForceFallback=yes
+#	    debugger.contract.m2arm7 .interp .fallback      the part arm7 of the runner's scenario S16, by itself: the
+#	                                                    breakpoints and steps of the ARM7 (--only S00,S16 --parts
+#	                                                    S16:arm7), on the same three
+#	    debugger.contract.m2arm7.guest .interp          the same against the sounding guest of the tree
+#	                                                    (tests/debugger/guest/dsptest), where the run has to have
+#	                                                    found the ARM7 held at its start and stepped over and out
+#	                                                    of a bl (--require-note)
 #	    debugger.contract.grace                         the grace period after the last client left, and the
 #	                                                    client that connects behind it
 #	    debugger.contract.config                        the configuration errors of the server's keys, and a
@@ -17,8 +24,8 @@
 #	      each with .interp                             server on and no client, and with an idle breakpoint
 #
 #	The runner needs the dreamcast-devtools checkout with its node_modules (NULLDC_DEVTOOLS_DIR) and npm:
-#	without them m1* and hash.idlebp* are tests whose data is missing. Everything needs 2ndmix.elf of
-#	NULLDC_ELF_DIR.
+#	without them m1*, m2arm7* and hash.idlebp* are tests whose data is missing. Everything needs 2ndmix.elf of
+#	NULLDC_ELF_DIR, but the tests on the guest of the tree.
 #
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -57,11 +64,14 @@ elseif(NOT NULLDC_NPM)
 endif()
 
 # nulldc_debugger_contract(<name> MODE <mode of contract.py> [ENGINES <jit|interp>...] [RUNNER] [FALLBACK]
-#                          [IDLE_SYMBOL <symbol>] [TIMEOUT <seconds>])
+#                          [IDLE_SYMBOL <symbol>] [TIMEOUT <seconds>] [GUEST <program>]
+#                          [PARTS <scenario>:<part>[+<part>...]] [REQUIRE_NOTE <text>...])
 # makes debugger.contract.<name> (the SH4 on the JIT) and debugger.contract.<name>.interp (on the interpreter).
 # RUNNER: the test runs the contract runner of the devtools UI.
+# GUEST: the emulator boots this program, not 2ndmix.elf: the test does not ask for NULLDC_ELF_DIR.
+# PARTS, REQUIRE_NOTE: for the mode parts, handed to the runner as its --parts and --require-note.
 function(nulldc_debugger_contract name)
-  cmake_parse_arguments(ARG "RUNNER;FALLBACK" "MODE;IDLE_SYMBOL;TIMEOUT" "ENGINES" ${ARGN})
+  cmake_parse_arguments(ARG "RUNNER;FALLBACK" "MODE;IDLE_SYMBOL;TIMEOUT;GUEST;PARTS" "ENGINES;REQUIRE_NOTE" ${ARGN})
 
   if(NOT ARG_ENGINES)
     set(ARG_ENGINES jit)
@@ -81,7 +91,13 @@ function(nulldc_debugger_contract name)
       nulldc_add_skipped_test(${test} "${nulldc_contract_skip}")
       continue()
     endif()
-    if(nulldc_contract_no_elf)
+    if(ARG_GUEST)
+      set(guest "${ARG_GUEST}")
+    else()
+      set(guest "${NULLDC_ELF_DIR}/2ndmix.elf")
+    endif()
+
+    if(nulldc_contract_no_elf AND NOT ARG_GUEST)
       nulldc_add_missing_data_test(${test} "${nulldc_contract_no_elf}")
       continue()
     endif()
@@ -92,7 +108,7 @@ function(nulldc_debugger_contract name)
 
     set(command "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/contract/contract.py"
                 --emulator "${nulldc_contract_emulator}" --work "${CMAKE_BINARY_DIR}/debugger/contract/work/${test}"
-                --guest "${NULLDC_ELF_DIR}/2ndmix.elf" --mode ${ARG_MODE} --engine ${engine})
+                --guest "${guest}" --mode ${ARG_MODE} --engine ${engine})
 
     if(ARG_RUNNER)
       list(APPEND command --devtools "${NULLDC_DEVTOOLS_DIR}" --npm "${NULLDC_NPM}")
@@ -103,6 +119,12 @@ function(nulldc_debugger_contract name)
     if(ARG_IDLE_SYMBOL)
       list(APPEND command --idle-symbol ${ARG_IDLE_SYMBOL})
     endif()
+    if(ARG_PARTS)
+      list(APPEND command --parts ${ARG_PARTS})
+    endif()
+    foreach(note ${ARG_REQUIRE_NOTE})
+      list(APPEND command --require-note "${note}")
+    endforeach()
 
     add_test(NAME ${test} COMMAND ${command})
     # contract.py has a watchdog per run of the emulator and for the runner, this is the one behind them
@@ -114,6 +136,17 @@ endfunction()
 # interpreter, and on the JIT treated as a backend without native breakpoints
 nulldc_debugger_contract(m1          MODE m1 RUNNER ENGINES jit interp)
 nulldc_debugger_contract(m1.fallback MODE m1 RUNNER FALLBACK)
+
+# The part arm7 of the runner's scenario S16 (the breakpoints and steps of the ARM7, design 5.5), by itself: the
+# scenario as a whole is partial until the writes, the reset and the tree of milestone M2 are there, and partial
+# is no pass. On the three engines against 2ndmix, whose ARM7 is released more than once while the program
+# starts; and on the JIT and the interpreter against the sounding guest of the tree, where the run has to have
+# met the ARM7 held at its start and a bl to step over and out of: the runner fails a run that lacks a note
+nulldc_debugger_contract(m2arm7          MODE parts PARTS S16:arm7 RUNNER ENGINES jit interp)
+nulldc_debugger_contract(m2arm7.fallback MODE parts PARTS S16:arm7 RUNNER FALLBACK)
+nulldc_debugger_contract(m2arm7.guest    MODE parts PARTS S16:arm7 RUNNER ENGINES jit interp
+                         GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
+                         REQUIRE_NOTE "arm7: held at the start" "arm7: bl stepped over and out")
 
 # A client leaves watches and a target behind that is stopped at a breakpoint on a function 2ndmix calls once
 # in every frame (the one of hash.idlebp, below): the grace period releases the stop, keeps the tables and

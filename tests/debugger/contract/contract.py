@@ -3,6 +3,7 @@
 
     contract.py --emulator <devcast> --work <dir> --guest <2ndmix.elf> --mode <mode> [--engine jit|interp]
                 [--fallback] [--devtools <dreamcast-devtools checkout>] [--npm <npm>] [--idle-symbol <symbol>]
+                [--parts <scenario>:<part>[+<part>...]] [--require-note <text>]...
 
 Every emulator is run as tests/system runs one: headless, an environment of its own with fresh HOME,
 XDG_CONFIG_HOME and XDG_DATA_HOME under the work directory, no display, the real-time clock pinned, a core file
@@ -10,6 +11,11 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
 
     m1             the gate of milestone M1: the emulator at its StartPaused stop, and the contract runner of the
                    devtools UI against it (npm run contract -- --url ... --profile emulator --elf ... --milestone M1)
+    parts          parts of a scenario of the runner that has parts, by themselves: the same emulator, and the
+                   runner with --only S00,<scenario> --parts <scenario>:<part>[+<part>...], and with every
+                   --require-note handed on to it. A package shows a part of a scenario this way while the
+                   scenario as a whole is still partial, which is no pass. The program is 2ndmix.elf, or the
+                   sounding guest of the tree
     grace          a client leaves the target stopped at a breakpoint that is reached in every frame; 11 s later
                    the target has run on without stopping there, and the breakpoint stops it again, unasked,
                    in front of the next client; the tables as they were, the note of the grace period in the
@@ -269,13 +275,15 @@ def runner_env(args):
 STARTPAUSED = ['Debugger:Enabled=yes', 'Debugger:Port=0', 'Debugger:Required=yes', 'Debugger:StartPaused=yes']
 
 
-def mode_m1(args):
-    """The gate of milestone M1."""
+def run_runner(args, selection, what):
+    """The emulator at its StartPaused stop and the contract runner against it, with the selection of the mode.
+    The runner decides: its exit code, "contract: OK" and a summary in which every selected scenario passed and
+    no invariant was violated. Nothing else of its report is read here."""
     run = Run(args, 'emulator').start(STARTPAUSED)
     try:
         port = run.port()
         log_path = os.path.join(args.work, 'runner.txt')
-        command = runner_command(args, port, ['--milestone', 'M1', '--json-file', os.path.join(args.work, 'summary.json')])
+        command = runner_command(args, port, selection + ['--json-file', os.path.join(args.work, 'summary.json')])
         with open(log_path, 'wb') as log:
             try:
                 code = subprocess.call(command, cwd=args.devtools, env=runner_env(args), stdin=subprocess.DEVNULL, stdout=log,
@@ -289,7 +297,7 @@ def mode_m1(args):
         print(text)
         check(code is not None, 'the contract runner did not end within %d s' % args.watchdog, run)
         check(run.alive(), 'the emulator ended (exit code %s) while the runner was at it' % run.process.poll(), run)
-        check(code == 0, 'the contract runner ended with exit code %d: the gate of M1 did not pass' % code, run)
+        check(code == 0, 'the contract runner ended with exit code %d: %s did not pass' % (code, what), run)
         summary = [line for line in text.splitlines() if ' passed, ' in line and ' failed, ' in line]
         check(summary and 'contract: OK' in text, 'the runner did not say "contract: OK"', run)
         counts = re.match(r'(\d+) passed, (\d+) failed, (\d+) partial, (\d+) not applicable; (\d+) ticks checked, (\d+) invariant violation', summary[-1])
@@ -301,7 +309,23 @@ def mode_m1(args):
         ended = run.terminate()
     run.no_bad()
     check(ended, 'the emulator did not end within 20 s of SIGTERM', run)
-    print('the gate of M1: ' + summary[-1])
+    print('%s: %s' % (what, summary[-1]))
+
+
+def mode_m1(args):
+    """The gate of milestone M1."""
+    run_runner(args, ['--milestone', 'M1'], 'the gate of M1')
+
+
+def mode_parts(args):
+    """Parts of one scenario, by themselves. The runner has the rules: a named part that is not applicable fails,
+    and a note that --require-note asks for and no selected scenario made fails the run. S00 goes with it: the
+    emulator is at its StartPaused stop, which is where the scenario starts from."""
+    scenario = args.parts.split(':', 1)[0]
+    selection = ['--only', 'S00,' + scenario, '--parts', args.parts]
+    for note in args.require_note:
+        selection += ['--require-note', note]
+    run_runner(args, selection, 'the parts %s' % args.parts)
 
 
 # One frame of 59.94 Hz in SH4 cycles, about (README.md: a breakpoint on the function of --idle-symbol stops
@@ -687,13 +711,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--emulator', required=True)
     parser.add_argument('--work', required=True)
-    parser.add_argument('--guest', required=True, help='2ndmix.elf')
-    parser.add_argument('--mode', required=True, choices=('m1', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp'))
+    parser.add_argument('--guest', required=True, help='2ndmix.elf; m1, parts: or another program, the guest of the tree')
+    parser.add_argument('--mode', required=True, choices=('m1', 'parts', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp'))
     parser.add_argument('--engine', default='jit', choices=('jit', 'interp'))
     parser.add_argument('--fallback', action='store_true', help='Debugger:ForceFallback=yes')
-    parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, hash-idlebp)')
+    parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, parts, hash-idlebp)')
     parser.add_argument('--npm', default='npm')
     parser.add_argument('--idle-symbol', default='', help='hash-idlebp, grace: a symbol of the guest that is reached in every frame')
+    parser.add_argument('--parts', default='', help='parts: <scenario>:<part>[+<part>...], as the runner takes it, e.g. S16:arm7')
+    parser.add_argument('--require-note', action='append', default=[], help='parts: a note the run has to have, handed on to the runner')
     parser.add_argument('--vblanks', type=int, default=600, help='Exit.AfterVblanks of the hash runs')
     parser.add_argument('--watchdog', type=int, default=600, help='seconds a run, or the runner, may take')
     parser.add_argument('--config-watchdog', type=int, default=60, help='config: seconds a run may take to end by itself')
@@ -709,7 +735,7 @@ def main():
             print('FAIL: no %s at %s' % (what, path))
             return 1
 
-    if args.mode in ('m1', 'hash-idlebp'):
+    if args.mode in ('m1', 'parts', 'hash-idlebp'):
         args.devtools = os.path.abspath(args.devtools)
         if not os.path.isdir(os.path.join(args.devtools, 'node_modules')):
             print('FAIL: no node_modules in the devtools checkout ' + args.devtools)
@@ -722,8 +748,11 @@ def main():
     if args.mode in ('hash-idlebp', 'grace') and not args.idle_symbol:
         print('FAIL: --idle-symbol is missing')
         return 1
+    if args.mode == 'parts' and not re.match(r'^S\d+:[A-Za-z0-9]+(\+[A-Za-z0-9]+)*$', args.parts):
+        print('FAIL: --parts is missing, or is not <scenario>:<part>[+<part>...]')
+        return 1
 
-    modes = {'m1': mode_m1, 'grace': mode_grace, 'config': mode_config, 'slow': mode_slow, 'hash-off': mode_hash_off,
+    modes = {'m1': mode_m1, 'parts': mode_parts, 'grace': mode_grace, 'config': mode_config, 'slow': mode_slow, 'hash-off': mode_hash_off,
              'hash-noclient': mode_hash_noclient, 'hash-idlebp': mode_hash_idlebp}
 
     shutil.rmtree(args.work, ignore_errors=True)

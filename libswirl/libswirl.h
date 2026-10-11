@@ -20,6 +20,9 @@
     LoadState, SaveState, Reset and Resume are for a machine without an emulator thread; Reset is also what the
     emulator thread itself calls for a guest reset.
 */
+// The phases a sound burst can be suspended in (VirtualDreamcast::SoundBurstSuspended)
+enum : u32 { SOUND_BURST_NONE = 0, SOUND_BURST_ARM7 = 1 };
+
 struct VirtualDreamcast {
     virtual void LoadState() = 0;
     virtual void SaveState() = 0;
@@ -62,6 +65,33 @@ struct VirtualDreamcast {
     // debugger's single step keeps it. Returns whether the CPU runs.
     // The body here is that of a machine without an emulator thread
     virtual bool StartCpu(bool leavePark) { return false; }
+
+    // Emulator thread. Whether a sound burst is suspended, and in which phase: 0 none; SOUND_BURST_ARM7: the
+    // AICA scheduler callback returned in front of an ARM7 instruction because the debugger asked
+    // (dbg_arm7_Check), and the rest of that burst has not run. Not 0 only between such a return and the
+    // moment the park loop, dc_run or Reset() has dealt with it; the stop latch is set for all of that time
+    // but for the slice end in which it happened.
+    // The body here is that of a machine that never suspends
+    virtual u32 SoundBurstSuspended() { return 0; }
+
+    // Emulator thread, the CPU is stopped. Runs a suspended sound burst on, outside the scheduler: no emulated
+    // time passes (it is the rest of the AICA tick that was due), and an interrupt it raises waits for the next
+    // acceptance of the SH4. checks true: the ARM phases use the debugger's check while dbg_arm7_armed is not 0
+    // (the park loop). checks false: nothing can stop it (dc_run, in front of the stop callback of a host stop
+    // or a guest exit). Returns true when the burst ran to its end, the rest of the callback included (the
+    // batch render, the tick of the sound regression harness: once per burst, behind the last sample), and at
+    // once when none is suspended. Returns false when it is suspended again, which it never is with checks false.
+    // The body here is that of a machine that never suspends
+    virtual bool RunSoundBurst(bool checks) { return true; }
+
+    // Emulator thread. What the sound bursts of this machine have done since it was created: out[0] the
+    // bursts the scheduler started (calls of the AICA callback), out[1] the ARM phases that ran to their end
+    // (SoundCPU::RunSample returned true), out[2] the time steps of the AICA that a burst made, out[3] the
+    // tails (the rest of the callback behind the last sample: once per burst, wherever the burst was run on).
+    // The counts wrap, are in no save state and in no hash, and nothing of the guest reads them. For the
+    // selftests of the debugger.
+    // The body here is that of a machine that counts nothing
+    virtual void SoundBurstCounts(u32 out[4]) { out[0] = out[1] = out[2] = out[3] = 0; }
 
     virtual bool HandleFault(unat addr, rei_host_context_t* ctx) = 0;
     virtual ~VirtualDreamcast() { }

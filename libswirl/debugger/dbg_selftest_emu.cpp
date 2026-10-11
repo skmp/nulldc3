@@ -45,6 +45,7 @@
 #include "hw/sh4/sh4_mem.h"
 #include "hw/sh4/sh4_sched.h"
 #include "hw/sh4/sh4_interpreter.h"
+#include "hw/arm7/SoundCPU.h"
 
 #include "../../tests/debugger/selftest/emu_guest.inc"
 
@@ -2761,8 +2762,13 @@ DBG_SELFTEST_GUEST(emu_step, "emu.step")
 
 		Goto(EMU_G_spin);
 
-		Check(emu::Step(Target::Arm7, StepKind::Into) == kErrNotSupported && emu::Step(Target::Dsp, StepKind::Over) == kErrNotSupported,
-			"the ARM7 and the DSP have no steps: -32004");
+		// The ARM7 answers by its state: the guest of this session never releases it. (A step of a clocked ARM7
+		// is armed by the same call: the session "arm7" has those.) The DSP has no run control
+		Check(!sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU)->DebugEnabled() && emu::Step(Target::Arm7, StepKind::Into) == kErrNotClocked
+			&& emu::Step(Target::Arm7, StepKind::Over) == kErrNotClocked && emu::Step(Target::Arm7, StepKind::Out) == kErrNotClocked,
+			"the ARM7 is held in reset: a step, a step over and a step out of it answer -32012");
+		Check(emu::Step(Target::Dsp, StepKind::Into) == kErrNotSupported && emu::Step(Target::Dsp, StepKind::Over) == kErrNotSupported
+			&& emu::Step(Target::Dsp, StepKind::Out) == kErrNotSupported, "the DSP has no steps: -32004");
 
 		const char* why = "";
 		int rv = emu::Step(Target::Sh4, StepKind::Into, &why);
