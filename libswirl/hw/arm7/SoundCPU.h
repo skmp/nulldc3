@@ -88,7 +88,8 @@ struct SoundCPU : MMIODevice {
 	//                                          leaves every register as it read, but RN_SPSR when the mode
 	//                                          it is written from is one of those two, and can leave the
 	//                                          save state different in those slots
-	// No compiled code is dropped: the code cache of the ARM7 is found by address. Returns false, having
+	// No compiled code is dropped here: the code cache of the ARM7 is found by address, and the caller that
+	// moves the PC empties it (dbg::regs::Write, debugger/dbg_regs.h). Returns false, having
 	// changed nothing, for any other index and for a CPSR with other mode bits.
 	virtual bool DebugSetReg(u32 reg, u32 value) { return false; }
 

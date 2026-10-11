@@ -144,7 +144,11 @@ bool Read(const Node& node, uint32_t index, uint64_t* value, char* text, uint32_
 //   dc.aica.arm7   SoundCPU::DebugSetReg (hw/arm7/SoundCPU.h): CPSR through the mode switch (it reads back
 //                  as the core composes it, above); PC as the
 //                  address of the next instruction, stored with bits 0 and 1 clear, which also tells the
-//                  breakpoint state (dbg::arm7::OnPcWritten). Also while the ARM7 is held in reset and while
+//                  breakpoint state (dbg::arm7::OnPcWritten). An accepted write that stores another
+//                  address than the PC had empties the code cache of the ARM7
+//                  (SoundCPU::InvalidateJitCache()): a recompiler of the ARM7 finds its code by the
+//                  address under the wave-memory mask, and the address written can be another mirror
+//                  of one it has compiled. Also while the ARM7 is held in reset and while
 //                  a sound burst is suspended (the ARM7 stands between two instructions then)
 // Returns 0. Returns kErrNotWritable (-32013), having changed nothing, for a register without kRegWritable,
 // for an index out of range, with no machine, and when the device refuses the value (an odd PC of the SH4;
