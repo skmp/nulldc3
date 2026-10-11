@@ -888,11 +888,20 @@ DBG_SELFTEST(core_tables, "core.tables")
 	Check(Ok(Send("state.watch", { { "expressions", json::array({ "dc.sh4.cpu.pc" }) } })) && Tick(false)["watches"][1]["id"] == w0 + 2, "the next watch has a new id: ids are not used twice");
 	Check(InBand(Send("state.unwatch", { { "watchIds", json::array({ "1" }) } })) == kErrInvalidParams && InBand(Send("state.unwatch", { { "watchIds", 1 } })) == kErrInvalidParams, "watchIds that are no numbers: -32602");
 
-	// every register of the tree: the bound of 256 watches counts what would be added
+	// Every register of the tree, 64 expressions a call: the bound of 256 watches counts what a call would add, and
+	// the call that would pass it is refused whole. The tree has more registers than the bound: the bound is reached
 	{
-		u32 count, registers = 0, calls = 0, refused = 0;
+		u32 count, registers = 0, calls = 0, refused = 0, wrong = 0;
 		const regs::Node* nodes = regs::Nodes(&count);
 		json batch = json::array();
+		std::set<std::string> stored;
+		std::string first_wrong;
+
+		// what is stored when the calls begin
+		const json listed_first = Tick(false);
+
+		for (const json& w : listed_first["watches"])
+			stored.insert(w.value("expression", ""));
 
 		auto flush = [&] {
 			if (batch.empty())
@@ -900,10 +909,36 @@ DBG_SELFTEST(core_tables, "core.tables")
 
 			calls++;
 
-			json answer = Send("state.watch", { { "expressions", batch } });
+			// what the call would add: an expression that is stored already is not added again
+			std::set<std::string> added;
 
-			if (!Ok(answer))
+			for (const json& expression : batch)
+			{
+				std::string lower = expression.get<std::string>();
+
+				for (char& ch : lower)
+					ch = (char)tolower((unsigned char)ch);
+
+				if (stored.count(lower) == 0)
+					added.insert(lower);
+			}
+
+			const bool fits = stored.size() + added.size() <= kMaxWatches;
+			const json answer = Send("state.watch", { { "expressions", batch } });
+			const size_t listed = Tick(false)["watches"].size();
+
+			if (fits)
+				stored.insert(added.begin(), added.end());
+			else
 				refused++;
+
+			// taken whole, or refused whole with -32602: the list has what the rule gives, whichever it was
+			if ((fits ? !Ok(answer) : InBand(answer) != kErrInvalidParams) || listed != stored.size())
+			{
+				if (wrong++ == 0)
+					first_wrong = "call " + std::to_string(calls) + " of " + std::to_string(batch.size()) + " expressions, " + std::to_string(added.size())
+						+ " of them new: " + answer.dump() + ", " + std::to_string(listed) + " watches listed, expected " + std::to_string(stored.size());
+			}
 
 			batch = json::array();
 		};
@@ -925,16 +960,12 @@ DBG_SELFTEST(core_tables, "core.tables")
 		flush();
 		tick = Tick(true);
 
-		if (registers <= kMaxWatches)
-		{
-			Check(refused == 0 && tick["watches"].size() == registers, "a watch on each of the %u registers of the tree, in %u calls (%zu listed)", registers, calls, tick["watches"].size());
-			Note("the tree has %u registers: the bound of %u watches cannot be reached, no two watches of state.watch are on one register", registers, kMaxWatches);
-		}
-		else
-		{
-			Check(refused != 0 && tick["watches"].size() <= kMaxWatches && tick["watches"].size() + kMaxWatchExpressionsPerCall > kMaxWatches,
-				"the tree has %u registers: the call that would make more than %u watches is refused whole (%zu listed)", registers, kMaxWatches, tick["watches"].size());
-		}
+		Check(wrong == 0 && tick["watches"].size() == stored.size(), "a watch on each of the %u registers of the tree was asked for, in %u calls: a call that fits is taken "
+			"whole, one that would make more than %u watches is refused whole with -32602 and adds nothing (%u calls were not as the rule has them; %s)", registers, calls,
+			kMaxWatches, wrong, wrong ? first_wrong.c_str() : "none");
+		Check(registers > kMaxWatches && refused != 0 && tick["watches"].size() <= kMaxWatches && tick["watches"].size() + kMaxWatchExpressionsPerCall > kMaxWatches,
+			"the tree has %u registers, more than the bound: %u of the calls were refused, and %zu watches are listed, which is within a call of the %u", registers, refused,
+			tick["watches"].size(), kMaxWatches);
 
 		// in id order, and each one reads what its register reads
 		bool ordered = true, equal = true;
