@@ -2144,7 +2144,7 @@ struct {
 	ArmRegs saved, regs;
 	Rows rows;
 	u32 r3, r7;
-	u32 pc, bursts, tries;
+	u32 pc, bursts, tries, resets;
 	bool done;
 	std::atomic<int> rv { 99 };
 	std::atomic<bool> onEmu { false };
@@ -2305,9 +2305,9 @@ DBG_SELFTEST_GUEST(writes_reg_arm7, "writes.reg.arm7")
 {
 	const regs::Node& node = Arm7Node();
 	Rows now;
-	Tally stored, shown, restored, refused, cpsr;
+	Tally stored, shown, restored, refused, cpsr, emptied;
 	std::string why;
-	u32 writable = 0, c0, m0, other, plain, differs, word0, got;
+	u32 writable = 0, c0, m0, other, plain, differs, word0, got, mirror;
 	int rv, rv2;
 
 	CO_BEGIN(r_arm.co);
@@ -2347,6 +2347,7 @@ DBG_SELFTEST_GUEST(writes_reg_arm7, "writes.reg.arm7")
 
 		const u32 value = 0xA5C30003 ^ (row * 0x01010100u) ^ (u32)r_arm.rows.v[row];
 		const u32 expect = strcmp(name, "PC") == 0 ? value & ~3u : value;
+		const u32 resets = regs::Arm7CacheResets();
 		const int rv = regs::Write(node, row, value);
 		u32 second = 0xDEADBEEF;
 
@@ -2370,6 +2371,10 @@ DBG_SELFTEST_GUEST(writes_reg_arm7, "writes.reg.arm7")
 
 		now = ReadRows(node);
 		restored.Add(back == 0 && RowsDiffer(now, r_arm.rows) == node.registerCount, "%s written back: %d, %s differs", name, back, RowName(node, RowsDiffer(now, r_arm.rows)));
+
+		// the PC was moved twice; no other row is one that compiled code is found by
+		emptied.Add(regs::Arm7CacheResets() - resets == (strcmp(name, "PC") == 0 ? 2u : 0u), "%s written and written back: the code cache of the ARM7 was emptied %u times",
+			name, regs::Arm7CacheResets() - resets);
 	}
 
 	Check(node.registerCount == 41 && writable == 40, "dc.aica.arm7 has 41 rows, and every one of them but ENABLED has a writer (%u, %u)", node.registerCount, writable);
@@ -2377,11 +2382,14 @@ DBG_SELFTEST_GUEST(writes_reg_arm7, "writes.reg.arm7")
 		"the others whole)");
 	shown.Report("the value is in every row that shows the register (the live one for the bank of the active mode), and every other row is as it was");
 	restored.Report("every row written back: all 41 read as at the stop");
+	emptied.Report("the write that moves the PC, and the one that moves it back, each empty the code cache of the ARM7 (SoundCPU::InvalidateJitCache; on this host the count of "
+		"the writer is what shows it); the write of no other row does");
 
 	/*
 		What is refused
 	*/
 	word0 = StoredArmWord(RN_CPSR);
+	r_arm.resets = regs::Arm7CacheResets();
 
 	for (u32 mode = 0; mode < 32; mode++)
 	{
@@ -2463,9 +2471,19 @@ DBG_SELFTEST_GUEST(writes_reg_arm7, "writes.reg.arm7")
 	r_arm.r7 = Arm(7);
 	r_arm.r3 = Arm(3);
 
+	Check(regs::Arm7CacheResets() == r_arm.resets, "no write of the CPSR, taken or refused, and no refused write of ENABLED emptied the code cache of the ARM7");
+
 	rv = SetA("PC", kArmLeaf + 3);
 	got = GetA("PC");
 	Check(rv == 0 && got == kArmLeaf && ArmPc() == kArmLeaf, "the PC written with %08X reads back %08X: bits 0 and 1 are not stored", kArmLeaf + 3, got);
+
+	// A block of the ARM7's recompiler is found by its address under the mask of the wave memory and has the
+	// address it was compiled at in its code: a write that moves the PC empties the code cache, and a write of
+	// the address the PC has moves nothing
+	rv = SetA("PC", kArmLeaf);
+	rv2 = SetA("PC", kArmLeaf + 2);
+	Check(rv == 0 && rv2 == 0 && ArmPc() == kArmLeaf && regs::Arm7CacheResets() - r_arm.resets == 1, "the write moved the PC and emptied the code cache of the ARM7, once; two "
+		"more writes, which store the address the PC has, did not (%u times)", regs::Arm7CacheResets() - r_arm.resets);
 
 	if (!StepArm())
 		break;
@@ -2478,13 +2496,24 @@ DBG_SELFTEST_GUEST(writes_reg_arm7, "writes.reg.arm7")
 	// the top of the address space, and back to where the step ended: the ARM7 goes on from there, through
 	// a_leaf back into its loop
 	r_arm.pc = ArmPc();
+	r_arm.resets = regs::Arm7CacheResets();
 
 	rv = SetA("PC", 0xFFFFFFFF);
 	got = GetA("PC");
 	Check(rv == 0 && got == 0xFFFFFFFC && ArmPc() == 0xFFFFFFFC, "the PC written with FFFFFFFF reads back %08X", got);
 
+	// The same instruction in the next mirror of the wave memory. The address is stored whole: a step goes on in
+	// the mirror, and so does a resume, which finds no block of the other mirror in the cache
+	mirror = r_arm.pc + sh4_cpu->aica_ram.size;
+
+	rv = SetA("PC", mirror);
+	got = GetA("PC");
+	Check(rv == 0 && got == mirror && ArmPc() == mirror, "the PC written into the next mirror of the wave memory, with %08X, reads back %08X: the address is stored under no "
+		"mask", mirror, got);
+
 	rv = SetA("PC", r_arm.pc);
-	Check(rv == 0 && ArmPc() == r_arm.pc, "(and is written back: %08X)", r_arm.pc);
+	Check(rv == 0 && ArmPc() == r_arm.pc && regs::Arm7CacheResets() - r_arm.resets == 3, "(and is written back: %08X.) Each of the three writes moved the PC and emptied the code "
+		"cache of the ARM7 (%u times)", r_arm.pc, regs::Arm7CacheResets() - r_arm.resets);
 
 	/*
 		The rule of the SH4 for a written PC and the breakpoint state: onto another breakpoint it stops there with

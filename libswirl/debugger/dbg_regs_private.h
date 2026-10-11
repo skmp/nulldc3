@@ -113,4 +113,14 @@ bool ReadSh4RegisterAt(uint32_t addr, uint32_t* value, uint32_t* bytes);
 // gives them. False when the slot is no register, is write-only or has no reader, and when no machine exists.
 bool ReadSbRegisterAt(uint32_t addr, uint32_t* value);
 
+/*
+	For the selftests of the writer (dbg_regs.cpp).
+*/
+
+// How often dbg::regs::Write has emptied the code cache of the ARM7: once behind every write of its PC that
+// was taken and stored another address than the PC had (SoundCPU::InvalidateJitCache). On a host without a
+// recompiler of the ARM7 that call does nothing a test could see, and this count is what shows which writes
+// make it. It wraps, is no state of the machine and is in no save state. Emulator thread.
+uint32_t Arm7CacheResets();
+
 } }

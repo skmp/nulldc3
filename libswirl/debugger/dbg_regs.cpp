@@ -331,6 +331,13 @@ static bool ReadArm7(u32 selector, u64* value)
 	return true;
 }
 
+static u32 arm7_cache_resets;
+
+uint32_t Arm7CacheResets()
+{
+	return arm7_cache_resets;
+}
+
 // Through the writer of the sound CPU. Returns 0, or kErrNotWritable, having changed nothing, for ENABLED and for
 // a value the device refuses
 static int WriteArm7(u32 selector, u32 value)
@@ -341,12 +348,29 @@ static int WriteArm7(u32 selector, u32 value)
 	if (scpu == nullptr || selector == kArm7Enabled)
 		return kErrNotWritable;
 
+	u32 replaced = 0, stored = 0;
+	const bool had = selector == kArm7Pc && scpu->DebugGetReg(kArm7Pc, &replaced);
+
 	// the device refuses a CPSR whose mode bits are no mode, and stores a PC with bits 0 and 1 clear
 	if (!scpu->DebugSetReg(selector, value))
 		return kErrNotWritable;
 
 	if (selector == kArm7Pc)
+	{
 		arm7::OnPcWritten();
+
+		// The recompiler of the ARM7 finds a block by its address under the mask of the wave memory, and a block
+		// has the address it was compiled at in its code (the PC it leaves, the link of a bl, what R15 reads):
+		// behind a PC written into another mirror of the wave memory a resume would run the block of the first
+		// mirror and put the PC back there, where a step, which decodes at the PC, goes on in the mirror written.
+		// With the cache empty every block is compiled at the address the ARM7 reaches it by. The device stores
+		// the PC as it is given, bits 0 and 1 apart; a PC written with the value it has moves nothing
+		if (!had || !scpu->DebugGetReg(kArm7Pc, &stored) || stored != replaced)
+		{
+			scpu->InvalidateJitCache();
+			arm7_cache_resets++;
+		}
+	}
 
 	return 0;
 }
