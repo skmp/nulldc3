@@ -106,7 +106,7 @@ u32 Read(Target t, u32 addr, u32 len, u8* out, u8* readableBits);
 // Breakpoints need nothing: no armed address is a patch in memory. An owed remainder of the SH4 is decoded
 // from memory as it is when the park context is left.
 // Returns 0. Returns kErrNotWritable (-32013), having stored nothing, when any byte of the range is not
-// writable and when no machine exists, or kErrNotSupported (-32004) while the writer does not exist.
+// writable and when no machine exists.
 int Write(Target t, u32 addr, u32 len, const u8* data);
 
 // One little-endian word; false when any of its bytes is not readable. Same threads as Read().

@@ -413,6 +413,9 @@ std::vector<ClientEntry>& clients = *new std::vector<ClientEntry>();			// the op
 
 std::atomic<u32> tick_id { 0 };
 
+// For the selftest, whose session has no server: what takes the ticks that would be broadcast (SetTickSinkForTest)
+std::atomic<void (*)(const std::string& tick)> tick_sink { nullptr };
+
 u32 tick_ms = kDefaultTickMs;
 u32 full_tick_every = kDefaultFullTickEvery;
 
@@ -802,7 +805,13 @@ void BroadcastTick(const emu::RunState& state)
 	net::Server* s = server.load();
 
 	if (s == nullptr)
+	{
+		// a session of the selftest: the tick every client would get, to the test that asked for it
+		if (auto sink = tick_sink.load())
+			sink(BuildTick(state, false));
+
 		return;
+	}
 
 	bool full = false;
 
@@ -922,6 +931,9 @@ std::string BuildDescribe(const emu::RunState& state)
 	w.BeginArray();
 	w.String("event-breakpoints");
 	w.String("callstack");
+
+	// milestone M2: each with its method (state.writeMemory)
+	w.String("memory-write");
 
 	// what executes SH4 breakpoints and steps, once a backend is selected
 	if (machine)
@@ -1789,13 +1801,14 @@ void MethodGetCallstack(const Request& req, Outcome& out)
 	tables as they are now is built and broadcast inside it.
 */
 
-// Runs a table closure that returns 0 or an error code with its text in *message, and answers
+// Runs a closure that returns 0 or an error code with its text in *message, as one call of the class, and
+// answers. The lifetime answers are the call's; the method's own errors are the closure's
 template <typename Fn>
-void TableCall(Outcome& out, Fn fn)
+void TickCall(Outcome& out, emu::CallClass cls, Fn fn)
 {
 	auto job = std::make_shared<TextJob>();
 
-	int rv = RunCall(emu::CC_TABLE, [job, fn]() mutable {
+	int rv = RunCall(cls, [job, fn]() mutable {
 		try
 		{
 			job->code = fn(&job->message);
@@ -1816,6 +1829,21 @@ void TableCall(Outcome& out, Fn fn)
 
 	if (job->code != 0)
 		return Fail(out, job->code, job->message);
+}
+
+// A request that changes the tables: served in every lifetime state
+template <typename Fn>
+void TableCall(Outcome& out, Fn fn)
+{
+	TickCall(out, emu::CC_TABLE, fn);
+}
+
+// A request that writes guest state: served while the thread is parked, and in a service excursion while it
+// runs; -32002 without a machine and -32001 while the host has it stopped
+template <typename Fn>
+void WriteCall(Outcome& out, Fn fn)
+{
+	TickCall(out, emu::CC_WRITE, fn);
 }
 
 void MethodBreakpointsAdd(const Request& req, Outcome& out)
@@ -2190,15 +2218,78 @@ void MethodModifyWatchExpression(const Request& req, Outcome& out)
 	});
 }
 
-/*
-	Run control (design 2.3.2). A request is answered when it is validated and armed; a tick says what
-	became of it.
-*/
 struct ExecJob {
 	int rv = 0;
 	const char* why = nullptr;		// a constant string
 };
 
+/*
+	Writes (milestone M2). Each request is one write call: what the request alone shows is checked in front of
+	it (-32602), the lifetime answers are the call's, and the errors of the method itself are decided inside the
+	closure, in the order the method states. The tick that shows what was written is built and broadcast inside
+	the call; a write is no stop, so it has the stop of the moment.
+*/
+void MethodWriteMemory(const Request& req, Outcome& out)
+{
+	const TargetInfo* target;
+	u32 address;
+
+	// the target is required: a read has a default, a write has none
+	if (!ParamTarget(req, out, nullptr, &target) || !ParamAddress(req, out, &address))
+		return;
+
+	const json* given = Param(req, "data");
+
+	if (given == nullptr)
+		return BadParam(out, "data is missing");
+
+	if (!given->is_array())
+		return BadParam(out, "data is not an array");
+
+	if (given->empty() || given->size() > kMaxWriteMemoryBytes)
+		return BadParam(out, "data has " + std::to_string(given->size()) + " entries, outside 1.." + std::to_string(kMaxWriteMemoryBytes));
+
+	auto bytes = std::make_shared<std::vector<u8>>();
+
+	bytes->reserve(given->size());
+
+	for (const json& item : *given)
+	{
+		u64 byte;
+
+		if (!ToUnsigned(item, &byte) || byte > 255)
+			return BadParam(out, "an entry of data is not an integer 0..255");
+
+		bytes->push_back((u8)byte);
+	}
+
+	WriteCall(out, [target, address, bytes](std::string* message) {
+		// one of the method's own errors, as for a read of that target
+		if (!target->memory)
+		{
+			*message = std::string("not supported: target ") + target->id + " has no memory";
+			return (int)kErrNotSupported;
+		}
+
+		// all of the range or nothing of it; a range does not wrap
+		const int rv = mem::Write(target->target, address, (u32)bytes->size(), bytes->data());
+
+		if (rv == kErrNotWritable)
+		{
+			char where[96];
+
+			snprintf(where, sizeof(where), "%zu byte%s at 0x%08X of %s", bytes->size(), bytes->size() == 1 ? "" : "s", address, target->id);
+			*message = std::string("not writable: ") + where;
+		}
+
+		return rv;
+	});
+}
+
+/*
+	Run control (design 2.3.2). A request is answered when it is validated and armed; a tick says what
+	became of it.
+*/
 void MethodPause(const Request& req, Outcome& out)
 {
 	// there is one run state: the target is not looked at, when it is one
@@ -2324,7 +2415,7 @@ const Method kMethods[] = {
 	{ "breakpoints.setCategoryStates", true,  MethodSetCategoryStates },
 	// milestone M2
 	{ "state.editWatch",               true,  nullptr },
-	{ "state.writeMemory",             true,  nullptr },
+	{ "state.writeMemory",             true,  MethodWriteMemory },
 	{ "state.setRegister",             true,  nullptr },
 	{ "control.reset",                 true,  nullptr },
 	// milestone M3
@@ -2974,6 +3065,11 @@ void SetClientCountForTest(u32 count, bool graceExpired)
 u32 ActiveMaskForTest()
 {
 	return last_active_mask;
+}
+
+void SetTickSinkForTest(void (*sink)(const std::string& tick))
+{
+	tick_sink.store(sink);
 }
 
 std::string PrintableAscii(const char* text, size_t length)

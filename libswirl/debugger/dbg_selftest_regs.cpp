@@ -1802,7 +1802,9 @@ DBG_SELFTEST(regs_mem_read, "regs.mem.read")
 		Check(mem::Read16(Target::Sh4, 0x8C010000, &word) && mem::Read32(Target::Sh4, 0x8C010000, &dword) && word == (dword & 0xFFFF) &&
 			!mem::Read16(Target::Sh4, 0x0021FFFF, &word) && !mem::Read32(Target::Sh4, 0x0021FFFE, &dword), "Read16 and Read32 need every byte");
 
-		Check(mem::Write(Target::Sh4, 0x8C010000, 1, buffer) == kErrNotSupported, "Write() says that no writer exists");
+		// what is no memory of a kind that is written is refused (the session "writes" has the writer)
+		Check(mem::Write(Target::Sh4, 0x00000000, 1, buffer) == kErrNotWritable && mem::Write(Target::Sh4, 0xFFFFFFFF, 2, buffer) == kErrNotWritable
+			&& mem::Write(Target::Dsp, 0x8C010000, 1, buffer) == kErrNotWritable, "Write() refuses the boot ROM, a range past the end of the address space and the DSP: -32013");
 	}
 
 	// the 64 KiB around every boundary: every byte readable or not as the map and the registers say
