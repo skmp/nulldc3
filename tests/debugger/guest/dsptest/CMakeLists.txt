@@ -14,6 +14,9 @@
 #	                                                        and it is not a line of silence
 #	    debugger.sound.engines.dsptest.<batch|persample>    the recompiler and the interpreter agree in samples,
 #	                                                        regs, arm7, ticks and cycles
+#	    debugger.sound.release.dsptest.<jit|interp>.<batch|persample>
+#	                                                        a release of the ARM7 that finds a request of the AICA
+#	                                                        latched starts the program of the run without one
 #	    debugger.sound.lines.2ndmix.<jit|interp>.<batch|persample>
 #	                                                        two runs of 40000 ticks of 2ndmix.elf print one line
 #	                                                        (needs NULLDC_ELF_DIR; that program is silent here)
@@ -108,6 +111,11 @@ foreach(render batch persample)
   foreach(engine jit interp)
     nulldc_sound_test(debugger.sound.lines.dsptest.${engine}.${render} "${CMAKE_CURRENT_SOURCE_DIR}/dsptest.elf" ${nulldc_sound_ticks}
                       --mode same --mode sounds --engine ${engine} --render ${render})
+
+    # g_hold_arm7 and g_release_arm7 are there for tests, which hold the ARM7 at a tick of their choice: a_reset
+    # starts the same program whatever request the AICA has latched for the ARM7 by then
+    nulldc_sound_test(debugger.sound.release.dsptest.${engine}.${render} "${CMAKE_CURRENT_SOURCE_DIR}/dsptest.elf" ${nulldc_sound_ticks}
+                      --mode release --fields samples,regs,arm7,ticks,cycles --engine ${engine} --render ${render})
 
     # 2ndmix stays in the matrix: a program of another kind (KallistiOS, a player that waits for a timer). Its
     # ARM7 gets no interrupt under reios, so it plays nothing and has no "sounds"

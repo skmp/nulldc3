@@ -35,6 +35,9 @@ README.md has the modes:
     neutral   the debugger in use changes nothing: a run with -config Debugger:SelfTest=<filter> prints the line
               of the run without it, and ends in its state hash, part for part, at --vblanks; and the session did
               something (see mode_neutral)
+    release   the guest only: a release of the ARM7 starts the same program whatever the AICA holds for it. The
+              line of a copy of the guest whose SH4 leaves a request latched for the ARM7 in front of the release
+              is the line of the guest, in the fields of --fields (see mode_release)
     files     the committed files of the guest are those of its manifest, SHA256SUMS; and where the assemblers
               are, gen.sh --check: they are what the sources give
 """
@@ -45,6 +48,7 @@ import os
 import re
 import resource
 import shutil
+import struct
 import subprocess
 import sys
 
@@ -82,11 +86,12 @@ def check(ok, what, log=None):
 class Run:
     """One run of the emulator. Its output goes to a file of the work directory."""
 
-    def __init__(self, args, name, engine, render):
+    def __init__(self, args, name, engine, render, guest=None):
         self.args = args
         self.name = name
         self.engine = engine
         self.render = render
+        self.guest = guest or args.guest
         self.dir = os.path.join(args.work, name)
         shutil.rmtree(self.dir, ignore_errors=True)
         for sub in ('home', 'cfg', os.path.join('data', 'reicast', 'data')):
@@ -105,7 +110,7 @@ class Run:
             if i:
                 command.append(',')
             command.append(item)
-        command.append(self.args.guest)
+        command.append(self.guest)
         return command
 
     def run(self, keys):
@@ -154,9 +159,9 @@ def exit_line(log):
     return dict(pair.split('=', 1) for pair in lines[-1][len('nulldc-exit: '):].split(' ') if '=' in pair)
 
 
-def line_run(args, name, engine, render, more=()):
+def line_run(args, name, engine, render, more=(), guest=None):
     """A run that the harness ends: the Run, the text of its line and the fields."""
-    run = Run(args, name, engine, render).run(['config:Debug.AicaHash=%d' % args.ticks] + list(more))
+    run = Run(args, name, engine, render, guest).run(['config:Debug.AicaHash=%d' % args.ticks] + list(more))
     found = sound_line(run.log)
     check(found is not None, 'the run %s printed no line of the sound harness, or more than one' % name, run.log)
     check(run.code == 0, 'the run %s ended with exit code %s' % (name, run.code), run.log)
@@ -368,6 +373,119 @@ def mode_neutral(args, lines):
     print('and both runs end in hash=%s after %s vblanks' % (line['hash'], line['vblanks']))
 
 
+def guest_labels(directory):
+    """The labels of the guest: dsptest_labels.inc of its directory."""
+    path = os.path.join(directory, 'dsptest_labels.inc')
+    check(os.path.isfile(path), 'there is no ' + path)
+    found = {}
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in f.read().splitlines():
+            define = re.match(r'#define DSPTEST_(\w+) (0x[0-9A-Fa-f]+|\d+)$', line)
+            if define:
+                found[define.group(1)] = int(define.group(2), 0)
+    return found
+
+
+def file_offset(image, address, what):
+    """Where a byte of the program is in its ELF (32 bits, low byte first): the loaded segment that has the address."""
+    check(image[:6] == b'\x7fELF\x01\x01', 'the program is no ELF of 32 bits, low byte first')
+    table, = struct.unpack_from('<I', image, 0x1C)
+    size, count = struct.unpack_from('<HH', image, 0x2A)
+    for n in range(count):
+        kind, offset, base, physical, length = struct.unpack_from('<5I', image, table + n * size)
+        if kind == 1 and base <= address < base + length:
+            return offset + address - base
+    raise Failed('%s, %08X, is in no loaded segment of the program' % (what, address))
+
+
+# Registers of the AICA at their addresses for the SH4, and the two instructions with which a_reset ends a service
+# of the interrupt. The second of each pair is the same instruction on a word of the wave memory that nothing
+# uses (the loop's variables are at 0x400, 0x404 and 0x408): what it costs the ARM7 stays, what it does goes
+SH4_SCIEB, SH4_SCIPD, SH4_SCILV1 = 0xA070289C, 0xA07028A0, 0xA07028AC
+ARM_READ_L = (0xE5952500, 0xE596200C)     # ldr r2, [r5, #0x500]  ->  ldr r2, [r6, #12]
+ARM_WRITE_M = (0xE5852504, 0xE586200C)    # str r2, [r5, #0x504]  ->  str r2, [r6, #12]
+
+
+def guest_copy(args, labels, name, table=(), arm=()):
+    """A copy of the guest in the work directory: with (address, value) entries in the reserved, empty part of the
+    table that _start writes while it holds the ARM7, and with instructions of a_reset replaced (old word, new
+    word). Returns its path."""
+    with open(args.guest, 'rb') as f:
+        image = bytearray(f.read())
+
+    # the last empty entries of the reserved part, in their order: whoever fills the part starts at its front
+    free = [entry for entry in range(labels['G_TABLE_DSP'], labels['G_TABLE_DSP_END'], 8)
+            if image[file_offset(image, entry, 'an entry of the table'):][:8] == bytes(8)]
+    check(len(free) >= len(table), 'the reserved part of the table of the guest has %d empty entries, the copy %s needs %d' % (len(free), name, len(table)))
+    for entry, (address, value) in zip(free[len(free) - len(table):], table):
+        struct.pack_into('<II', image, file_offset(image, entry, 'an entry of the table'), address, value)
+
+    program = labels['G_ARM7_IMAGE']
+    for old, new in arm:
+        places = [at for at in range(labels['A_RESET'], labels['A_MAIN_LOOP'], 4)
+                  if struct.unpack_from('<I', image, file_offset(image, program + at, 'the ARM7 program'))[0] == old]
+        check(len(places) == 1, 'a_reset of the guest has %d instructions %08X, the copy %s replaces the one there is' % (len(places), old, name))
+        struct.pack_into('<I', image, file_offset(image, program + places[0], 'the ARM7 program'), new)
+
+    os.makedirs(args.work, exist_ok=True)
+    path = os.path.join(args.work, name + '.elf')
+    with open(path, 'wb') as f:
+        f.write(image)
+    return path
+
+
+def mode_release(args, lines):
+    """A release of the ARM7 starts the same program whatever the AICA holds for it (the guest only).
+
+    A release latches a request again that was pending when the ARM7 was held, and a_reset ends its service before
+    it clears F: else the request is entered behind a_reset, an interrupt nobody raised for the program that
+    starts, and every count of the handler is one ahead. A test that sends the SH4 through g_hold_arm7 and
+    g_release_arm7 holds the ARM7 at a tick of its own choice, with the timer's request pending or not.
+
+    The runs are made on copies of the guest that differ from it in data only. "A request latched": three entries
+    in the reserved part of the table, which _start writes while it holds the ARM7 - SCILV1 and SCIEB bit 5, and
+    SCIPD bit 5, the one request a program can raise: it is latched at once, with the level the timer's has, and
+    again by the release. "Without the end of the service": the read of L or the write of M of a_reset goes to a
+    word of the wave memory instead.
+
+        the copy without a change                             the line every other run is compared with
+        a request latched                                     the same line, in the fields of --fields
+        no request, without the read and without the write    the same line: the two are there for a request only
+        a request latched, without the read of L              another arm7 field: the request is entered
+        a request latched, without the write of M             another arm7 field: no request is let in again
+
+    The last two say that the request was there: without them the second run could pass on a copy whose entries
+    the SH4 never wrote. sh4 is in no comparison: the SH4 of a copy has made three more writes when it enters its
+    loop."""
+    names = [f for f in args.fields.split(',') if f]
+    check(names and all(f in LINE_FIELDS for f in names), '--fields takes names of ' + ', '.join(LINE_FIELDS))
+    labels = guest_labels(args.dir)
+    for label in ('G_TABLE_DSP', 'G_TABLE_DSP_END', 'G_ARM7_IMAGE', 'A_RESET', 'A_MAIN_LOOP'):
+        check(label in labels, 'dsptest_labels.inc in %s has no DSPTEST_%s' % (args.dir, label))
+    request = ((SH4_SCILV1, 0x20), (SH4_SCIEB, 0x20), (SH4_SCIPD, 0x20))
+
+    def made(name, table=(), arm=()):
+        return line_run(args, name, args.engine, args.render, guest=guest_copy(args, labels, name, table, arm))
+
+    plain, plain_text, plain_fields = made('plain')
+
+    latched, text, fields = made('latched', request)
+    check(not different(plain_fields, fields, names), 'a release of the ARM7 that finds a request latched does not start the program of the run without one: the lines differ in '
+          + different(plain_fields, fields, names) + '\n' + plain_text + '\n' + text, latched.log)
+
+    without, text, fields = made('without', arm=(ARM_READ_L, ARM_WRITE_M))
+    check(not different(plain_fields, fields, names), 'with no request latched, the read of L and the write of M of a_reset change the run: the lines differ in '
+          + different(plain_fields, fields, names) + '\n' + plain_text + '\n' + text, without.log)
+
+    for name, arm, what in (('latched-no-l', (ARM_READ_L,), 'the read of L'), ('latched-no-m', (ARM_WRITE_M,), 'the write of M')):
+        control, text, fields = made(name, request, arm)
+        check(fields['arm7'] != plain_fields['arm7'], 'the copy with a request latched and without %s of a_reset prints the arm7 field of the guest: '
+              'no request was latched when its ARM7 was released, and the run with the whole a_reset shows nothing\n' % what + plain_text + '\n' + text, control.log)
+
+    print('a release that finds a request latched starts the program of the run without one: ' + ' '.join('%s=%s' % (f, plain_fields[f]) for f in names))
+    print('and the request was there: without the read of L or the write of M of a_reset the arm7 field is another')
+
+
 def mode_files(args, lines):
     directory = os.path.abspath(args.dir)
     path = os.path.join(directory, 'SHA256SUMS')
@@ -401,7 +519,7 @@ def mode_files(args, lines):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     modes = {'same': mode_same, 'sounds': mode_sounds, 'engines': mode_engines, 'record': mode_record, 'compare': mode_compare,
-             'neutral': mode_neutral, 'files': mode_files}
+             'neutral': mode_neutral, 'release': mode_release, 'files': mode_files}
     parser.add_argument('--mode', action='append', required=True, choices=sorted(modes), help='one or more; they share their runs')
     parser.add_argument('--emulator', default='')
     parser.add_argument('--work', default='')
@@ -409,7 +527,7 @@ def main():
     parser.add_argument('--ticks', type=int, default=0, help='N: config:Debug.AicaHash')
     parser.add_argument('--engine', default=None, choices=ENGINES, help='default jit; record, compare: both')
     parser.add_argument('--render', default=None, choices=RENDERS, help='default batch; record, compare: both')
-    parser.add_argument('--fields', default='samples,regs,arm7,ticks,cycles', help='engines: the fields the two lines agree in')
+    parser.add_argument('--fields', default='samples,regs,arm7,ticks,cycles', help='engines, release: the fields the lines agree in')
     parser.add_argument('--file', default='', help='record, compare: the file of lines, outside of the tree')
     parser.add_argument('--note', action='append', default=[], help='record: a comment line for the file (the commit, the build)')
     parser.add_argument('--runs', type=int, default=2, help='record, compare: the runs of each kind in each configuration')
@@ -417,7 +535,7 @@ def main():
     parser.add_argument('--selftest', default='', help='neutral: the filter of the session')
     parser.add_argument('--expect', action='append', default=[], help='neutral: text a line of the session has to have')
     parser.add_argument('--config', action='append', default=[], help='section:key=value, for every run')
-    parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files: the directory of the guest')
+    parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release: the directory of the guest, with its manifest and its labels')
     parser.add_argument('--watchdog', type=int, default=300, help='seconds a run may take')
     parser.add_argument('--keep', action='store_true', help='keep the work directory of a test that passed')
     args = parser.parse_args()

@@ -121,7 +121,8 @@ Every access of a register of the AICA is a word access, on both processors; a b
   service before it clears F. So the first interrupt behind a release is the one of the timer `a_reset` armed, 13
   samples on, and the FIQ entries behind any release that the SH4 makes between two bursts are those of the plain
   run behind its own, entry for entry: the same sample of the same tick counted from the release, the same `Step`,
-  the same return address ("The FIQ entries"). (Without the end of the service the
+  the same return address ("The FIQ entries"). `debugger.sound.release.dsptest.*` holds the first half on a copy
+  of the guest whose SH4 leaves a request latched in front of the release. (Without the end of the service the
   request is entered behind the `msr` that ends `a_reset`, inside the first sample, with the return address
   `a_main_loop + 4`: every count of the handler is one ahead and the timer is armed a second time.) What a release
   does not bring back is what `a_reset` does not write: the registers of the channels, the timers B and C, whose
@@ -183,6 +184,7 @@ config:Exit.StateHash=yes` in place of the harness key: the harness ends the pro
 | `record` | the lines of the four configurations (or of the one `--engine` and `--render` name), and with `--vblanks <V>` their exit lines, into `--file`, each run made `--runs` times (2) and giving one line. For a before / after between two builds |
 | `compare` | the same runs against that file: every line whole, every part of the state hash |
 | `neutral` | `--selftest <filter> [--expect <text>]...`: four runs with the same N, V and keys, the line and the exit line with `Debugger:SelfTest=<filter>` and without. The two lines are equal in every field and the two exit lines in every part of the state hash; and each of the two runs with the session has no `SelfTest:` line with `: FAILED: ` or `: FAIL, `, at least one with `: ok: `, every `--expect` text in a `SelfTest:` line, and **no** summary line `SelfTest: <p> passed, <f> failed`. The session of such a run is one whose test never returns true: the run ends by the harness or by the exit key, and a summary means that the session ended the process before the run was over |
+| `release` | the guest only: a release of the ARM7 that finds a request of the AICA latched starts the program of the run without one. Five runs on copies of the guest, made in the work directory, that differ from it in data. *A request latched*: three entries in the reserved part of the table, which `_start` writes while it holds the ARM7 (`SCILV1` and `SCIEB` bit 5, then `SCIPD` bit 5, the one request a program can raise: it is latched with the level of the timer's, and again by the release). *Without the end of the service*: the read of L or the write of M of `a_reset` goes to a word of the wave memory that nothing uses, at the same cost. The copy without a change gives the line; the copy with a request latched has to print it, in the fields of `--fields` (`sh4` is not among them: that SH4 has made three more writes when it enters its loop); so has the copy with no request and without the read and the write; and each of the two copies with a request latched and without one of the two has to print another `arm7` field, which says that the request was there |
 | `files` | `SHA256SUMS` lists the six files and each has its sum; and, where bash and the sh-elf binutils are, `gen.sh --check` |
 
 **No line is stored in the tree.** The generator's tables come from `pow()`: a line is good for one build on one
@@ -193,6 +195,7 @@ host. A test makes its runs itself; `record` refuses a file among the tests of t
 | `debugger.guest.dsptest.files` | the mode `files` |
 | `debugger.sound.lines.dsptest.<jit\|interp>.<batch\|persample>` | `same` and `sounds` on the guest, N = 2000 (1.45 emulated seconds: the 13 ticks in which the FIQ meets every sample of a tick, and the 26 ticks between two key ons, more than seventy times) |
 | `debugger.sound.engines.dsptest.<batch\|persample>` | `engines` on the guest, N = 2000, fields `samples`, `regs`, `arm7`, `ticks`, `cycles` |
+| `debugger.sound.release.dsptest.<jit\|interp>.<batch\|persample>` | `release` on the guest, N = 2000, fields `samples`, `regs`, `arm7`, `ticks`, `cycles` |
 | `debugger.sound.lines.2ndmix.<jit\|interp>.<batch\|persample>` | `same` on `2ndmix.elf` of `NULLDC_ELF_DIR`, N = 40000; a test whose data is missing without that directory |
 
 `nulldc_sound_neutral(<name> SELFTEST <filter> [EXPECT <text>...] [CONFIG <section:key=value>...] [TIMEOUT
