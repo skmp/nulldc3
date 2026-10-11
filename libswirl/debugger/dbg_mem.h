@@ -18,7 +18,7 @@
 	Read is called on (E) or by a thread that holds L while no emulator thread exists, Write on (E) only. The
 	backing stores are looked up from the machine on every call; no pointer is kept. Video memory and the PVR
 	registers are also written by the renderer's threads while a frame is queued: a read can see a frame in
-	progress.
+	progress, and a write lands under one as a write by the guest does.
 
 	Target::Sh4. An address below 0xE0000000 is first reduced to its low 29 bits.
 
@@ -86,14 +86,27 @@ Region Classify(Target t, u32 addr);
 u32 Read(Target t, u32 addr, u32 len, u8* out, u8* readableBits);
 
 // Writes len bytes at addr. All or nothing: the whole range is checked before the first byte is stored.
-// (E) in the park context only (inside a CC_WRITE call).
-// Writable are main memory, video memory and wave memory. A write to main memory first discards the compiled
-// SH4 blocks of every page it touches: through bm_LockedWrite where the virtual memory layout is in use,
-// through SuperH4Backend::DebugDiscardPage of the active backend where it is not (virt_ram_base is null); a
-// write to video memory first unlocks pages the texture cache locked; a write to wave memory discards the
-// ARM7's compiled code.
-// Returns 0, kErrNotWritable (-32013) when any byte of the range is not writable, or kErrNotSupported
-// (-32004) while the writer does not exist.
+// (E) in the park context only (inside a CC_WRITE call: the park loop, or a service excursion). It waits for
+// nothing but the lock of the texture cache, which a write to video memory takes as a faulting write by the
+// guest does.
+// Writable are main memory, video memory (both views) and wave memory (both targets), every mirror of them;
+// a range may run from one mirror of a store into the next. No other region is writable, and neither is a
+// range that would pass the end of the address space (addr + len > 2^32): a write does not wrap.
+//   main memory    in a build with an SH4 recompiler the compiled blocks of every page the range touches are
+//                  discarded first. Where the virtual memory layout is in use: bm_LockedWrite per page of
+//                  REI_PAGE_SIZE, which also marks the page as data and removes its protection. Where it is
+//                  not (virt_ram_base is null): SuperH4Backend::DebugDiscardPage of the active backend per
+//                  4 KiB page, and the writer removes the protection of the pages itself
+//                  (VLockedMemory::UnLockRegion). A build without a recompiler stores the bytes
+//   video memory   VramLockedWrite first, for every page of REI_PAGE_SIZE of the store that the range
+//                  touches (for the 32-bit view: the pages of pvr_map32 of each byte): textures locked on the
+//                  page are invalidated and its protection goes
+//   wave memory    the bytes are stored, then SoundCPU::InvalidateJitCache() once: the ARM7 recompiler has no
+//                  detection of self-modifying code
+// Breakpoints need nothing: no armed address is a patch in memory. An owed remainder of the SH4 is decoded
+// from memory as it is when the park context is left.
+// Returns 0. Returns kErrNotWritable (-32013), having stored nothing, when any byte of the range is not
+// writable and when no machine exists, or kErrNotSupported (-32004) while the writer does not exist.
 int Write(Target t, u32 addr, u32 len, const u8* data);
 
 // One little-endian word; false when any of its bytes is not readable. Same threads as Read().

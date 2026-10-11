@@ -43,10 +43,13 @@
 	Contexts on (E)
 	  slice hook    inside UpdateSystem(), between two slices of guest code; a block may be on the host stack
 	                (the SLEEP handler calls UpdateSystem() from inside one)
-	  park context  in dc_run after SuperH4::Run() returned and before it is called again: no guest code is on
-	                the host stack, the SH4 context in Sh4cntx is complete. The park loop is the part of it
+	  park context  in dc_run after SuperH4::Run() returned and before it is called again: no code of the SH4
+	                is on the host stack, the SH4 context in Sh4cntx is complete. The park loop is the part of it
 	                that waits while a debugger stop is in force; a service excursion is a visit that only runs
-	                queued calls and goes back into Run()
+	                queued calls and goes back into Run(). One thing of the guest does execute in the park
+	                context: the rest of a sound burst that the debugger suspended (instructions of the ARM7 and
+	                the time steps of the AICA between them), when the park loop or dc_run runs it on. The SH4
+	                executes nothing there and no emulated time passes
 */
 
 // SH4 code addresses are compared with this mask in builds without MMU: 0x0C.., 0x8C.. and 0xAC.. are one
@@ -133,12 +136,15 @@ extern std::atomic<u32> g_attn;
 
 // The stop latch: a debugger stop has been decided and (E) is on its way into the park context, or in it.
 // (E) only. Set by emu::LatchStop() and at the end of a step, cleared when the park context is left.
-// While it is set, emulator code obeys three rules:
+// While it is set, emulator code obeys four rules:
 //   UpdateSystem()  returns 1 behind its test of g_attn (ATTN_LATCHED): no emulated time passes, no scheduler
 //                   callback runs, the slice hook is not called
 //   UpdateINTC()    accepts nothing: sets g_intc_deferred and returns 0
 //   SLEEP handler   tests it in a slice of its wait that reported something and accepted nothing; when set
 //                   it sets g_sleep_cut, leaves the wait and re-executes SLEEP (next_pc -= 2)
+//   AICA callback   starts with a verify that no sound burst is suspended (Dreamcast_impl::AicaUpdate). A
+//                   burst the debugger suspended is run on under the latch: by the park loop before the SH4
+//                   executes anything, and by dc_run in front of the stop callback. Never by the scheduler
 extern bool g_stop_latched;
 
 // (E) only. UpdateINTC() was called under the latch: one interrupt acceptance is owed, and is made when the
@@ -172,19 +178,22 @@ namespace emu {
 // Lifetime Running:
 //   1. runs the queued CC_READ calls (dbg_emu.h), one at a time; a queued CC_EXEC call is completed with
 //      kErrNotPaused
-//   2. latches the stop (emu::LatchStop) if a freezing cause is recorded (event breakpoint, sound
-//      breakpoint), or if g_in_sleep is clear, CpuRunning is set and a pause was requested or a call of
-//      another class is queued. (With CpuRunning clear the machine itself is about to leave Run(), and the
-//      park context that follows takes them.)
+//   2. latches the stop (emu::LatchStop) if a freezing cause is recorded (an event breakpoint; a breakpoint
+//      or a step of the ARM7, which the sound burst of this scheduler tick recorded: emu::OnSoundStop), or
+//      if g_in_sleep is clear, CpuRunning is set and a pause was requested or a call of another class is
+//      queued. (With CpuRunning clear the machine itself is about to leave Run(), and the park context that
+//      follows takes them.)
 //      A pause request or queued call met while g_in_sleep is set stays pending; once it has been pending
 //      for 250 ms of host time it is latched wherever the hook is called from.
 //      For a queued call alone the latch has no cause: Run() returns for a service excursion, which is no
 //      stop and publishes nothing.
-// Lifetime Parked (a step is executing): runs no call; latches the stop if a freezing cause is recorded,
-// which ends the step at this slice boundary.
+// Lifetime Parked (a step is executing: a step of the SH4, or the run of the SH4 towards the sound burst that
+// a step of the ARM7 waits for): runs no call; latches the stop if a freezing cause is recorded, which ends
+// the step at this slice boundary.
 //
 // It never changes the armed breakpoint set and never touches the code cache: a block may be executing.
-// Guest state is only read, and Sh4cntx is complete here only on a backend with SH4DBG_CTX_AT_SLICE.
+// Guest state is only read, and Sh4cntx is complete here only on a backend with SH4DBG_CTX_AT_SLICE. A sound
+// burst can be suspended when the hook runs its calls: the ARM7 then stands between two instructions.
 void SliceHook();
 
 // (E) only: SuperH4_impl::Run() asks it once per entry and runs sh4_fallback_loop() (hw/sh4/sh4_dbg.h)
@@ -207,13 +216,14 @@ void Kick();
 
 	  Init        LifetimeLock; create the machine; OnMachineCreated()                NoMachine -> Stopped
 	  StartGame   LifetimeLock; ...; Reset(); Resume()
-	  Reset       LifetimeLock; reset the machine; OnGuestStateReplaced()
+	  Reset       LifetimeLock; discard a suspended sound burst; reset the machine; OnGuestStateReplaced()
 	  LoadState   LifetimeLock; load; OnGuestStateReplaced()
 	  SaveState   LifetimeLock; save
 	  Resume      join a previous thread; LifetimeLock; OnThreadStarting();           Stopped -> Running
 	              start the thread; wait for emu_started
 	  dc_run      OnThreadEntered(); select the backends; start the cpu; set emu_started;
-	              the loop of Park() below; stop callback; OnThreadExiting()          Running -> Stopped
+	              the loop of Park() below; run a suspended sound burst to its end, without checks;
+	              stop callback; OnThreadExiting()                                    Running -> Stopped
 	  Term        stop and join a live thread; LifetimeLock; OnMachineDestroying();   Stopped -> NoMachine
 	              destroy the machine
 */
@@ -252,19 +262,27 @@ void OnThreadEntered();
 
 // (E), last action of dc_run, after the stop callback ran; no lock held by the caller; lifetime Running
 // or Parked. guestExit: the thread ends because the guest asked for it (reios_exit), not because the host
-// stopped it. Takes L (blocks while (U) holds it, which (U) never does while it waits for this thread);
-// drains the call queue under it: CC_READ and CC_TABLE calls run, CC_WRITE and CC_EXEC calls complete with
-// -32001; drops a pause request that was not honoured; publishes Stopped (reason host-stopped, or
-// guest-exit). After it returns the thread touches no guest state.
+// stopped it. In front of the stop callback dc_run has run a sound burst that the debugger had suspended to
+// its end, without checks (VirtualDreamcast::RunSoundBurst): what the callback sees, and what the exit line
+// of an automated run prints, is the state behind a completed burst.
+// Takes L (blocks while (U) holds it, which (U) never does while it waits for this thread); makes the
+// interrupt acceptance that the latch deferred; ends what belonged to a stop (the temporary breakpoints of
+// both processors, a pending step-out, a step of the ARM7 that is armed); drains the call queue under L:
+// CC_READ and CC_TABLE calls run, CC_WRITE and CC_EXEC calls complete with -32001; drops a pause request that
+// was not honoured; publishes Stopped (reason host-stopped, or guest-exit). After it returns the thread
+// touches no guest state.
 void OnThreadExiting(bool guestExit);
 
 // In Dreamcast_impl::Reset and LoadState, L held, after the new guest state is in place; any lifetime
 // state with a machine: (U) while Stopped, (E) for a guest reset or a reset by the debugger (park context).
 // The debugger drops what belonged to the old state: the owed remainder and resume exemption of the SH4
-// breakpoint mechanism, g_sleep_cut, a deferred interrupt acceptance (g_intc_deferred), temporary breakpoints,
-// a pending step-out, and the resume that a thread exit taken in a debugger stop left owed.
-// On (E) it calls dbg::sh4::OnPcWritten() and OnStop(nullptr). While Stopped it calls OnPcWritten() only: no
-// temporary breakpoint and no step-out exists then, because OnThreadExiting() ended them.
+// breakpoint mechanism, the resume exemption of the ARM7, g_sleep_cut, a deferred interrupt acceptance
+// (g_intc_deferred), the temporary breakpoints of both processors, a pending step-out, a step of the ARM7
+// that is armed, and the resume that a thread exit taken in a debugger stop left owed. A suspended sound
+// burst is the machine's: Dreamcast_impl::Reset has discarded it before this call.
+// On (E) it calls dbg::sh4::OnPcWritten() and OnStop(nullptr), and dbg::arm7::OnPcWritten() and OnStop().
+// While Stopped it calls the two OnPcWritten() only: no temporary breakpoint, no step-out and no armed step
+// exist then, because OnThreadExiting() ended them.
 // While Stopped it publishes a new stop (the stop counter advances) so that clients fetch again; on (E) the
 // stop, if one is in force, is published by Park().
 void OnGuestStateReplaced();
@@ -281,7 +299,8 @@ void OnGuestStateReplaced();
 	        //   guest reset pending:              save ROM files, Reset(), sh4_host_fp_resync(), start the cpu
 	        //   host stop or guest exit pending:  break
 	    }
-	    ...; stop callback; OnThreadExiting(guestExit);
+	    ...; run a suspended sound burst to its end (RunSoundBurst(false)); stop callback;
+	    OnThreadExiting(guestExit);
 
 	dc_run starts the cpu at thread start and after a guest reset, through the machine's own start function,
 	which sets CpuRunning (SuperH4::Start) and leaves the cpu stopped when a stop has been requested; everywhere
@@ -306,28 +325,53 @@ enum : u32 {
 //   start): at the first Park() after OnMachineCreated() when Debugger:StartPaused is set, and at the first
 //   Park() of every emulator thread while a selftest session is active (dbg::selftest::Active()), except for
 //   the threads that the selftest of dbg::emu starts itself.
-//   Entering a stop: g_parked is set, CpuRunning cleared, the SH4 breakpoint state drops its temporary
-//   breakpoints and a pending step-out, the listener is invoked, the window title becomes
-//   "nullDC 3.0.0 [paused by debugger]" (it is put where it is not on the window already and stays until the
-//   running machine writes its frame rate; the emulator thread makes no window call behind its stop
-//   callback). The park loop then waits, without limit, for a call, for a
-//   run-control action that a call armed, or for Kick(); armed steps are executed by the loop itself.
-// - Leaves the park context for a resume and at the end of a service excursion, in this order: clears
-//   g_stop_latched; makes the interrupt acceptance that the latch deferred; calls sh4_host_fp_resync(); for a
-//   resume arms the SH4 resume exemption; sets CpuRunning and clears g_parked, unless a host stop or a guest
-//   exit is pending; for a resume invokes the listener with Running.
+//   Entering a stop: g_parked is set, CpuRunning cleared, the breakpoint state of the SH4 and of the ARM7
+//   drop their temporary breakpoints, a pending step-out and a step that is armed, the listener is invoked,
+//   the window title becomes "nullDC 3.0.0 [paused by debugger]" (it is put where it is not on the window
+//   already and stays until the running machine writes its frame rate; the emulator thread makes no window
+//   call behind its stop callback). The park loop then waits, without limit, for a call, for a run-control
+//   action that a call armed, or for Kick(). Armed steps are executed by the loop itself, with one
+//   exception: a step of the ARM7 asked for while no sound burst is suspended (below).
+// - Leaves the park context for a resume and at the end of a service excursion, in this order: for a
+//   resume decides the resume exemption of the ARM7 (dbg::arm7::PrepareResume); runs a suspended sound
+//   burst on, with the checks of the ARM7 (VirtualDreamcast::RunSoundBurst(true)): if a
+//   breakpoint of the ARM7 suspends it again nothing is left, the thread stays parked, that stop is published
+//   (the stop counter advances) and the resume, or the step of the SH4 the burst was run on for, is dropped;
+//   otherwise clears g_stop_latched; makes the interrupt acceptance that the latch deferred; calls
+//   sh4_host_fp_resync(); for a resume arms the resume exemption of the SH4; sets CpuRunning and clears
+//   g_parked, unless a host stop or a guest exit is pending; for a resume invokes the listener with Running.
+//   No burst is ever suspended at the end of a service excursion: a suspension is followed by a stop.
+// - A step of the ARM7 (emu::Step). With a burst suspended the loop runs the burst on, in the park context,
+//   until the check behind the instruction stops it or the burst ends: no emulated time passes, the SH4
+//   executes nothing, the latch stays set, nothing is published in between. With no burst suspended the
+//   instruction is in the next burst, which only the scheduler starts: the loop leaves as for a resume
+//   (latch, deferred acceptance, FP state, the resume exemption of the SH4, the loop that Run() enters) but
+//   the stop stays in force: g_parked stays set, nothing is published, the listener is not invoked, and the
+//   slice hook treats the run as a step that is executing. The SH4 runs for one period of the AICA callback
+//   at most (145124 cycles and the rest of a slice); the stop of the step is recorded in that callback,
+//   latched in its UpdateSystem() and published by the next Park(). A stop of the SH4 that comes first (a
+//   code breakpoint, an event breakpoint) ends the run with its own cause. A host stop, a guest exit or a
+//   guest reset that comes first is found by dc_run, as behind a step of the SH4: no stop of the step is
+//   published (a reset publishes its own, StopCause::Reset), the armed step ends with it (OnThreadExiting(),
+//   OnGuestStateReplaced()), and the wait counts as a step that has executed, so the thread leaves no resume
+//   owed. The state "a step is executing" ends at the Park() that follows the wait, whatever that Park()
+//   finds. Calls that were queued during the wait (the two of the grace expiry among them) are served behind
+//   the stop of the step, in their order.
 // - The first Park() of a thread that follows a thread exit taken in a debugger stop (the host stopped the
 //   machine while the thread before it was parked) is a resume of that stop: the debugger pause that was in
-//   force before the host stop is not applied again, and dbg::emu calls dbg::sh4::PrepareResume() there, so
-//   that the instruction of the stop executes and its breakpoint does not stop again at once.
+//   force before the host stop is not applied again, and dbg::emu calls dbg::sh4::PrepareResume() and
+//   dbg::arm7::PrepareResume() there, so that the instruction of the stop executes and its breakpoint does
+//   not stop again at once. No sound burst is suspended then: the thread before ran it to its end in front
+//   of its stop callback.
 //   This holds when the guest is where that stop was published: no step has executed since and the pc was
 //   not written. Otherwise nothing is resumed and a breakpoint on the new pc stops.
 //
-// Returns PARK_RUN after leaving, with CpuRunning set and g_stop_latched clear.
+// Returns PARK_RUN after leaving, with CpuRunning set and g_stop_latched clear; g_parked is clear too, but
+// for a step of the ARM7 that waits for its burst.
 // Returns PARK_EVALUATE, with CpuRunning clear, whenever a stop reason of the machine may be pending: after
-// Kick(), after a call that asked for a reset, after a step, and in place of PARK_RUN when a host stop or a
-// guest exit is pending. A debugger stop that was in force stays in force across the evaluation: dc_run
-// does not save ROM files and does not run the stop callback for it.
+// Kick(), after a call that asked for a reset, after a step in which the SH4 executed, and in place of
+// PARK_RUN when a host stop or a guest exit is pending. A debugger stop that was in force stays in force
+// across the evaluation: dc_run does not save ROM files and does not run the stop callback for it.
 u32 Park();
 
 }
@@ -358,7 +402,9 @@ extern std::atomic<u8> g_event_on[EV_ID_COUNT];
 // never takes L, never waits for (E) and may be called with any emulator lock held.
 // On (E) while the guest executes (Running, or a step) it also tests the event breakpoints (emu::OnEvent):
 // a hit asks for a pause, which the slice hook latches in the UpdateSystem() call that is running or the
-// next one. Events raised on other threads, or on (E) in the park context, never stop.
+// next one. Events raised on other threads, or on (E) in the park context, never stop: among them the events
+// of the AICA and of the ARM7 that a suspended sound burst raises while the park loop runs it on. They are
+// logged.
 // The cycles of the entry (metadata.cycles) are sh4_sched_now64() while a machine exists (the lifetime of
 // emu::GetRunState() is not NoMachine) and 0 otherwise: the SH4 context block goes away with the machine.
 void EventSlow(EventId id, const char* fmt, ...) DBG_PRINTF_LIKE(2, 3);
@@ -469,6 +515,52 @@ bool dbg_sh4_StopPending();
 // returns false and leaves both alone. Nothing is owed after the call, whatever it returned.
 bool dbg_sh4_TakeRemainder(u32 pc, u32* end_pc, u32* cycles);
 
+/*
+	ARM7 code breakpoints and steps: what the sound burst calls (dbg_arm7.cpp). Everything is (E) only.
+
+	A sound burst is the work of one AICA scheduler callback (Dreamcast_impl::AicaUpdate): if the ARM7 is
+	clocked, 32 times { the ARM phase of a sample: the ARM7 for its ticks; one time step of the AICA }, then
+	the rest of the callback (the batch render while it exists, the tick of the sound regression harness).
+	The ARM phase runs through the backend's Run() while dbg_arm7_armed is 0, and through the debug loop while
+	it is not. The debug loop is, per instruction: the entry of a pending FIQ (ARM7Backend::StepIrq), the
+	check below, the instruction (ARM7Backend::StepExec); it tests the ticks of the sample behind every
+	instruction, as ARM7Backend::StepMany does, and while every check answers 0 it executes the sequence
+	StepMany executes. It runs the interpreter's functions on the context the backend runs on: native where
+	the backend is the interpreter (every x86-64 build), a fallback with other timing where it is a recompiler
+	(NOTICE_ARM7_FALLBACK, dbg_emu.h).
+	A burst is suspended in front of an ARM7 instruction and nowhere else. A suspended burst is state of the
+	machine (VirtualDreamcast::SoundBurstSuspended, libswirl.h). It is run on by the park loop or by dc_run,
+	never by the scheduler: while a burst is suspended the stop latch is set and the AICA callback cannot run.
+*/
+
+// Not 0 while the ARM phase has to use the debug loop: an enabled listed breakpoint of the ARM7 exists and
+// the active mask has CategoryBit(Category::Arm7), or a temporary breakpoint exists, or a step is armed.
+// Tested once per sample (dbg_arm7_armed != 0); zero keeps the ARM phase to one load and a branch. It changes
+// in the park context, or under L while no emulator thread exists: never while a burst executes.
+extern u32 dbg_arm7_armed;
+
+// The check. From the debug loop only, behind the entry of a pending FIQ and in front of the instruction at
+// pc (the address of the next instruction, regs[R15_ARM_NEXT], as it is: not masked). The ARM7 context is
+// complete and nothing of the instruction has executed. Never blocks.
+// Returns 0 to continue: nothing of the guest was changed.
+// Returns non-zero to suspend the burst in front of the instruction. It has recorded the stop
+// (dbg::emu::OnSoundStop). The caller keeps where the burst is (sample, ticks used) and returns to whoever
+// runs the burst without executing anything more of the ARM7 or the AICA: the scheduler callback returns its
+// period as usual, VirtualDreamcast::RunSoundBurst returns false.
+// What stops: an active listed breakpoint, or the temporary breakpoint, on pc under the address rule
+// (dbg::arm7::MaskAddr), unless the resume exemption covers this check; and, while a step is armed, every
+// check but the one in front of its instruction (dbg::arm7::PrepareStep).
+u32 dbg_arm7_Check(u32 pc);
+
+// From the AICA scheduler callback only, at the start of a burst whose ARM7 is held in reset, while
+// dbg_arm7_armed is not 0: no instruction executes in this burst and no check is made. A step that is armed
+// is complete here with nothing executed: the stop is recorded (dbg::emu::OnSoundStop with StopCause::Step)
+// and the slice hook latches it behind this scheduler tick. The burst is not suspended: the callback goes on
+// with its rest. Breakpoints are left alone. A resume exemption that is armed ends here: a held ARM7 takes its
+// reset exception when it is released, and its first instruction then is not the one the exemption was for.
+// Never blocks.
+void dbg_arm7_OnBurstUnclocked();
+
 #else	// !NULLDC_DEBUGGER
 
 namespace dbg {
@@ -553,5 +645,10 @@ static inline u32 DYNACALL dbg_sh4_CheckFlow(u32) { return 0; }
 static inline void dbg_sh4_OnException() { }
 static inline bool dbg_sh4_StopPending() { return false; }
 static inline bool dbg_sh4_TakeRemainder(u32, u32*, u32*) { return false; }
+
+constexpr dbg::NoCount dbg_arm7_armed{};
+
+static inline u32 dbg_arm7_Check(u32) { return 0; }
+static inline void dbg_arm7_OnBurstUnclocked() { }
 
 #endif

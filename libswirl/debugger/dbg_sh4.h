@@ -91,8 +91,9 @@ void SetActiveMask(u32 categories);
 // pc & 0x1FFFFFFF. Steps and slot breakpoints in translated code are not supported.
 int StepCheck(const char** why);
 
-// Park loop, when the park context is left for a resume or at the first Park() of a thread that follows a
-// thread exit taken in a debugger stop, after the deferred interrupt acceptance and sh4_host_fp_resync().
+// Park loop, when the park context is left for a resume, for a step of the ARM7 that waits for its burst
+// (for the SH4 that is a resume), or at the first Park() of a thread that follows a thread exit taken in a
+// debugger stop, after the deferred interrupt acceptance and sh4_host_fp_resync().
 // Arms the resume exemption iff Sh4cntx.pc has the key of the pc that the last OnStop() recorded and
 // dbg_sh4_WantsCheck is true for it (opcode read through dbg::mem), and a check will be made by what runs
 // next: the active backend has SH4DBG_NATIVE or FallbackWanted() is true. Keeps the owed remainder if
@@ -125,10 +126,12 @@ void PrepareStepOut();
 
 // Entering the park context for a stop, once per published stop and before the listener: after
 // SuperH4::Run() returned with a debugger stop decided, after every step (executed, or complete at a vector),
-// for the start park and for a reset made while paused. Never for a service excursion, which publishes
-// nothing: temporary breakpoints and a pending step-out survive it. Also called when temporary state must end
-// without a stop: for a guest reset and when the emulator thread exits. Never called without an emulator
-// thread.
+// for the start park, for a reset made while paused, and for a stop that the ARM7 check makes while the park
+// loop runs a suspended sound burst on (the SH4 has not executed since the stop before it: its pc is the
+// same, and the owed remainder stays, which is what keeps such a stop invisible to the SH4). Never for a
+// service excursion, which publishes nothing: temporary breakpoints and a pending step-out survive it. Also
+// called when temporary state must end without a stop: for a guest reset and when the emulator thread exits.
+// Never called without an emulator thread.
 // Writes to *out (out may be null) what stopped. *out repeats what the helpers passed to emu::LatchStop for
 // this stop; dbg::emu publishes LatchStop's record and may check it against *out. Then removes every
 // temporary breakpoint, cancels a pending step-out (dbg_sh4_stepout = 0, instrumented blocks discarded),
