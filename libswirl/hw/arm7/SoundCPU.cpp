@@ -280,6 +280,22 @@ struct SoundCPU_impl : SoundCPU {
 		}
 	}
 
+	//The ARM phase of a sample (SoundCPU.h). A new phase that no debugger looks into is the backend's Run(), as it
+	//was before the burst could be suspended: this is the path of every run, and it is kept to a test and a call.
+	//Everything else is the debug loop
+	bool RunSample(u32 ticks, u32* done, bool checks)
+	{
+		if (likely(*done == 0 && !(checks && dbg_arm7_armed != 0)))
+		{
+			//the phase uses its ticks up: nothing reads the count while it runs
+			*done = ticks;
+			arm->Run(ticks);
+			return true;
+		}
+
+		return RunSampleDebug(ticks, done, checks);
+	}
+
 	//The debug loop (debugger/debugger.h, the ARM7 block): per instruction the entry of a pending FIQ, the
 	//debugger's check, the instruction, and the test of the ticks behind it, which is the sequence of
 	//ARM7Backend::StepMany with the check in it. It runs the interpreter's functions on the context whatever
@@ -287,16 +303,9 @@ struct SoundCPU_impl : SoundCPU {
 	//context and from the ticks the caller holds. The pending FIQ is looked at in front of every instruction,
 	//also in front of the first one of a phase that is gone on with: a request can become enterable inside a
 	//sample (an MSR that clears F with a request waiting)
-	bool RunSample(u32 ticks, u32* done, bool checks)
+	NOINLINE bool RunSampleDebug(u32 ticks, u32* done, bool checks)
 	{
 		u32 used = *done;
-
-		if (used == 0 && !(checks && dbg_arm7_armed != 0))
-		{
-			arm->Run(ticks);
-			*done = ticks;
-			return true;
-		}
 
 		for (;;)
 		{

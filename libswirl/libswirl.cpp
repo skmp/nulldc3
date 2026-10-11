@@ -859,12 +859,10 @@ struct Dreamcast_impl : VirtualDreamcast {
     } burst;
 
     // Runs the burst from where it stands to its end. Returns false when the debugger suspended it
-    bool RunBurst(bool checks)
+    bool RunBurst(SoundCPU* scpu, bool checks)
     {
         if (burst.arm_on)
         {
-            SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
-
             for (; burst.i < 32; burst.i++)
             {
                 // 512 cycles of the SH4 a sample, 256 ticks of the ARM7
@@ -896,7 +894,9 @@ struct Dreamcast_impl : VirtualDreamcast {
         // under the stop latch no scheduler callback runs, and a suspended burst is dealt with under it
         verify(!burst.suspended);
 
-        burst.arm_on = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU)->DebugEnabled();
+        SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+
+        burst.arm_on = scpu->DebugEnabled();
         burst.i = 0;
         burst.ticks_done = 0;
         burst.counts[0]++;
@@ -905,7 +905,7 @@ struct Dreamcast_impl : VirtualDreamcast {
         if (!burst.arm_on && dbg_arm7_armed != 0)
             dbg_arm7_OnBurstUnclocked();
 
-        RunBurst(true);
+        RunBurst(scpu, true);
 
         // also when the debugger suspended it: the stop is latched behind this scheduler tick
         return AICA_TICK;
@@ -921,7 +921,7 @@ struct Dreamcast_impl : VirtualDreamcast {
         if (!burst.suspended)
             return true;
 
-        return RunBurst(checks);
+        return RunBurst(sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU), checks);
     }
 
     void SoundBurstCounts(u32 out[4])
