@@ -122,12 +122,13 @@ Every access of a register of the AICA is a word access, on both processors; a b
   service before it clears F. So the first interrupt behind a release is the one of the timer `a_reset` armed, 13
   samples on, and the FIQ entries behind any release that the SH4 makes between two bursts are those of the plain
   run behind its own, entry for entry: the same sample of the same tick counted from the release, the same `Step`,
-  the same return address ("The FIQ entries"). `debugger.sound.release.dsptest.*` holds the first half on a copy
-  of the guest whose SH4 leaves a request latched in front of the release. (Without the end of the service the
-  request is entered behind the `msr` that ends `a_reset`, inside the first sample, with the return address
-  `a_main_loop + 4`: every count of the handler is one ahead and the timer is armed a second time.) What a release
-  does not bring back is what `a_reset` does not write: the registers of the channels, the timers B and C, whose
-  pending bits the loop folds, and the wave memory.
+  the same return address ("The FIQ entries"). `debugger.sound.release.dsptest.*` holds that for the release of
+  the plain run, on a copy of the guest whose SH4 leaves a request latched in front of it; a later hold and
+  release, at each of the thirteen places of the timer, was looked at in the scratch build that counts the
+  entries. (Without the end of the service the request is entered behind the `msr` that ends `a_reset`, inside the
+  first sample, with the return address `a_main_loop + 4`: every count of the handler is one ahead and the timer is
+  armed a second time.) What a release does not bring back is what `a_reset` does not write: the registers of the
+  channels, the timers B and C, whose pending bits the loop folds, and the wave memory.
 - **Everything the SH4 does to the sound is done between the first tick and the second**, but for one write: the
   pan write of `g_irq`, which is made in front of the tick behind the one whose interrupt it answers, on every
   engine. That is why the recompiler and the interpreter agree in `samples`, `regs`, `arm7`, `ticks` and `cycles`
