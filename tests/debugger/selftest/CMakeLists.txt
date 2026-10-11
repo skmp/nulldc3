@@ -132,8 +132,10 @@ nulldc_debugger_selftest(arm7.persample SELFTEST arm7 CONFIG config:aica.NoBatch
 # compiled blocks of its pages would show: with Dynarec.SmcCheckLevel=-1 a block of a page that holds data does
 # not check its code when it is entered. In every other configuration that check, or the fault handler, makes
 # such a write good, and the steps pass with or without the discard. So the run is a test of its own,
-# smcwrites.cached, which is not selected by the session "writes" and which fails when it is not on a recompiler
-# with that level: a key that did not reach the run cannot make this target the default run under another name
+# smcwrites.cached, which is not selected by the session "writes" and which fails when the level of its run is
+# not -1, or when the SH4 does not run on the recompiler of an emulator that has one: a key that did not reach
+# the run cannot make this target the default run under another name. (An emulator built without a recompiler
+# compiles nothing and has no block to discard: there the test asks for the level alone.)
 nulldc_debugger_selftest(writes ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
 nulldc_debugger_selftest(writes.fallback SELFTEST writes ENGINES jit CONFIG Debugger:ForceFallback=yes
                          ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
