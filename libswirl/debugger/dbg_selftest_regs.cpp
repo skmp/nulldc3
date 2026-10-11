@@ -230,6 +230,11 @@ const regs::Register* MmrRow(u32 p4)
 
 	for (u32 i = 0; i < count; i++)
 	{
+		// the on-chip registers are on the nodes of the modules, which have no other rows (the table test holds
+		// that): the nodes of the channels are not walked for every byte of a window
+		if (nodes[i].registerCount == 0 || regs::KeySource(nodes[i].registers[0].key) != regs::kSrcSh4Mmr)
+			continue;
+
 		for (u32 r = 0; r < nodes[i].registerCount; r++)
 		{
 			const regs::Register& reg = nodes[i].registers[r];
@@ -607,12 +612,15 @@ DBG_SELFTEST(regs_slots, "regs.slots")
 	kinds.Report("rows that agree with their slot about a read function");
 	Note("%u on-chip registers of the tables are not emulated: no slot is registered for them", unemulated);
 
-	// the system bus: the rows are registers that can be read; the slots without a row are the tables to come
+	// The system bus: a row is a registered slot, and a slot has one row at most. A slot that refuses a read (it
+	// is write-only) is a row without a reader, and only such a slot is; of the others a slot behind a read
+	// function is a computed row, and only such a slot is
 	SystemBus* sb = sh4_cpu->GetA0H<SystemBus>(A0H_SB);
 	Tally sb_rows;
 	u32 count;
 	const regs::Node* nodes = regs::Nodes(&count);
-	u32 with_row = 0;
+	u32 with_row = 0, write_only_rows = 0;
+	std::vector<u32> rows_of(sb->sb_regs.size(), 0);
 
 	for (u32 i = 0; i < count; i++)
 	{
@@ -623,23 +631,49 @@ DBG_SELFTEST(regs_slots, "regs.slots")
 			if (regs::KeySource(reg.key) != regs::kSrcSb)
 				continue;
 
-			const RegisterStruct& slot = sb->sb_regs[(reg.addr - SB_BASE) / 4];
+			const u32 index = (reg.addr - SB_BASE) / 4;
+			const RegisterStruct& slot = sb->sb_regs[index];
+			const bool write_only = (slot.flags & REG_WO) != 0;
 
 			with_row++;
-			sb_rows.Add(Registered(slot) && !(slot.flags & REG_WO), "%s.%s: slot flags %02X", nodes[i].path, reg.name, slot.flags);
-			sb_rows.Add(((slot.flags & REG_RF) != 0) == ((reg.flags & regs::kRegComputed) != 0), "%s.%s: slot flags %02X, register flags %02X",
+			write_only_rows += write_only;
+			rows_of[index]++;
+
+			sb_rows.Add(Registered(slot), "%s.%s: slot flags %02X: no register", nodes[i].path, reg.name, slot.flags);
+			sb_rows.Add(write_only == ((reg.flags & regs::kRegNoReader) != 0), "%s.%s: slot flags %02X, register flags %02X: write-only and no reader disagree",
+				nodes[i].path, reg.name, slot.flags, reg.flags);
+			sb_rows.Add((!write_only && (slot.flags & REG_RF) != 0) == ((reg.flags & regs::kRegComputed) != 0), "%s.%s: slot flags %02X, register flags %02X",
 				nodes[i].path, reg.name, slot.flags, reg.flags);
 		}
 	}
 
-	sb_rows.Report("system bus rows that are readable registers");
+	sb_rows.Report("system bus rows that agree with their slot: registered, without a reader exactly when write-only, computed exactly when behind a read function");
 
-	u32 registered = 0;
+	// the registered slots without a row are the ten that have no name in sb_regs.h, all of them write-only
+	u32 registered = 0, twice = 0, no_row = 0, no_row_readable = 0;
 
-	for (const RegisterStruct& slot : sb->sb_regs)
-		registered += Registered(slot);
+	for (u32 index = 0; index < sb->sb_regs.size(); index++)
+	{
+		const RegisterStruct& slot = sb->sb_regs[index];
 
-	Note("%u of the %u registered system bus registers have a row", with_row, registered);
+		twice += rows_of[index] > 1;
+
+		if (!Registered(slot))
+			continue;
+
+		registered++;
+
+		if (rows_of[index] == 0)
+		{
+			no_row++;
+			no_row_readable += !(slot.flags & REG_WO);
+		}
+	}
+
+	Check(twice == 0 && with_row == 127 && registered == with_row + no_row && no_row_readable == 0,
+		"%u of the %u registered system bus registers have a row, none has two (%u); the %u without one are write-only (%u are not)", with_row, registered, twice, no_row,
+		no_row_readable);
+	Note("%u system bus rows are on write-only slots and read as n/a", write_only_rows);
 }
 
 /*
@@ -680,6 +714,12 @@ DBG_SELFTEST(regs_read, "regs.read")
 				want = false;
 				by_engine++;
 			}
+
+			// a machine without the GD-ROM drive has no snapshot of it
+			GDRomDebugState drive;
+
+			if (regs::KeySource(reg.key) == regs::kSrcGdrom && !gdrom_DebugGetState(&drive))
+				want = false;
 
 			reads.Add(ok == want, "%s.%s: Read() gives %d, expected %d", node.path, reg.name, ok, want);
 

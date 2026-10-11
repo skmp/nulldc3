@@ -26,6 +26,12 @@ enum Source : uint32_t {
 	kSrcArm7,		// selector: Arm7Reg. The index SoundCPU::DebugGetReg takes, or kArm7Enabled
 	kSrcDsp,		// selector: DspReg
 	kSrcTiming,		// selector: TimingReg
+	kSrcPvr,		// a register of the PVR's register file, Register::addr is its area 0 address. selector: not used
+	kSrcAica,		// bits of the AICA's register file, Register::addr is the area 0 address of their word.
+					// selector: AicaField() or AicaField2()
+	kSrcArm7Intc,	// the interrupt controller in front of the ARM7 (SoundCPU::DebugGetInterrupt). selector: Arm7IntcReg
+	kSrcRtc,		// the clock of the AICA (libAICA_DebugGetRTC). selector: RtcReg
+	kSrcGdrom,		// a member of the snapshot of the GD-ROM drive (gdrom_DebugGetState). selector: GdromReg
 	kSrcCount
 };
 
@@ -78,6 +84,54 @@ enum TimingReg : uint32_t {
 	kTimingSh4Cycles,
 	kTimingSchedNow,
 	kTimingRegCount
+};
+
+/*
+	kSrcAica. The register file of the AICA (hw/aica: 0x8000 bytes, at 0x00700000 for the SH4) has a register of
+	16 bits in the low half of every four bytes. A row is a field of one such word, or a quantity that the file
+	has in two words that follow one another:
+
+	  AicaField(offset, shift)             Register::width bits of the word at `offset`, from bit `shift` up
+	  AicaField2(offset, shift, lowShift)  bits 16 and up of the row are the Register::width - 16 bits of the word
+	                                       at `offset`, from bit `shift` up; its bits 0..15 are the word at
+	                                       `offset + 4`, of which the bits below `lowShift` are no bits of the
+	                                       register and read 0. (The start address of a channel, 7 bits and a
+	                                       whole word; the address of the AICA's own DMA, 7 bits and the word
+	                                       without its bits 0 and 1.)
+
+	`offset` is a multiple of 4 below 0x8000. In the selector: the word (offset / 4) in bits 0..12, `shift` in
+	bits 13..16, bit 17 for a row of two words, `lowShift` in bits 18..21.
+*/
+constexpr uint32_t AicaField(uint32_t offset, uint32_t shift) { return (offset >> 2) | (shift << 13); }
+constexpr uint32_t AicaField2(uint32_t offset, uint32_t shift, uint32_t lowShift) { return AicaField(offset, shift) | (1u << 17) | (lowShift << 18); }
+constexpr uint32_t AicaFieldOffset(uint32_t selector) { return (selector & 0x1FFF) << 2; }
+constexpr uint32_t AicaFieldShift(uint32_t selector) { return (selector >> 13) & 15; }
+constexpr bool AicaFieldTwoWords(uint32_t selector) { return ((selector >> 17) & 1) != 0; }
+constexpr uint32_t AicaFieldLowShift(uint32_t selector) { return (selector >> 18) & 15; }
+constexpr uint32_t kAicaFieldSelectorMask = 0x3FFFFF;	// the bits a selector of kSrcAica can have
+
+enum Arm7IntcReg : uint32_t {
+	kArm7IntcLevel,			// L: the level of the request, as the ARM7 reads it at its 0x00802D00
+	kArm7IntcService,		// M: 1 while a request is in service
+	kArm7IntcRegCount
+};
+
+enum RtcReg : uint32_t {
+	kRtcSeconds,			// the counter, which the guest reads as two halves at 0x00710000 and 0x00710004
+	kRtcWriteEnable,		// the bit the guest writes at 0x00710008, where it reads 0
+	kRtcRegCount
+};
+
+// The members of GDRomDebugState (hw/gdrom/gdromv3.h), in its order; the twelve bytes of the packet are three rows
+enum GdromReg : uint32_t {
+	kGdState, kGdDiscType, kGdStatus, kGdError, kGdInterruptReason, kGdFeatures, kGdSectorCount, kGdSectorNumber, kGdDriveSelect,
+	kGdAtaCommand, kGdByteCount,
+	kGdPacket0, kGdPacket4, kGdPacket8,		// bytes 0..3, 4..7, 8..11: the first of the four is the highest byte of the value
+	kGdSenseKey, kGdSenseAsc, kGdSenseAscq,
+	kGdCddaPlaying, kGdCddaRepeats, kGdCddaCurrent, kGdCddaStart, kGdCddaEnd,
+	kGdReadStartSector, kGdReadRemainingSectors, kGdReadSectorType,
+	kGdPioIndex, kGdPioSize,
+	kGdromRegCount
 };
 
 // The selectors of kSrcArm7 are register indices of hw/arm7/arm7_context.h, which the tables cannot include.
