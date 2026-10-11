@@ -113,6 +113,18 @@ nulldc_debugger_selftest(sh4bp     ELF 2ndmix.elf CONFIG Debugger:StartPaused=ye
 nulldc_debugger_selftest(sh4bpboot ELF 2ndmix.elf CONFIG Debugger:StartPaused=yes)
 nulldc_debugger_selftest(sh4bpbase ELF 2ndmix.elf CONFIG Debugger:StartPaused=yes)
 
+# The sound side: the sound burst that the debugger suspends and runs on, the breakpoints and steps of the ARM7
+# and its register writer (libswirl/debugger/dbg_selftest_arm7.cpp), on the sounding guest of the tree
+# (tests/debugger/guest/dsptest), which needs no NULLDC_ELF_DIR. On the JIT, on the interpreter and on the JIT
+# with the interpreter fallback of the SH4 forced; and on the first two with the sound rendered sample by sample
+# (aica.NoBatch), which is the path that stays when the batch render goes: there a time step of the AICA that
+# runs in the park context renders its sample
+nulldc_debugger_selftest(arm7 ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
+nulldc_debugger_selftest(arm7.fallback SELFTEST arm7 ENGINES jit CONFIG Debugger:ForceFallback=yes
+                         ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
+nulldc_debugger_selftest(arm7.persample SELFTEST arm7 CONFIG config:aica.NoBatch=yes
+                         ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
+
 # What sessions of those have to agree on, and the forced fallback and idleskip off: the script of that
 # directory, whose sessions are headless too
 set(test debugger.selftest.sh4bp.sessions)
