@@ -776,9 +776,6 @@ struct Dreamcast_impl : VirtualDreamcast {
 
                 // not when the machine was asked to stop as well
                 StartCpu(false);
-
-                // the cpu runs again, or the machine is about to stop
-                static_cast<SuperH4_impl*>(sh4_cpu)->resetting = false;
 #ifdef SCRIPTING
                 luabindings_onreset();
 #endif
@@ -814,7 +811,6 @@ struct Dreamcast_impl : VirtualDreamcast {
         static_cast<SuperH4_impl*>(sh4_cpu)->thread_live = false;      // what IsRunning() reads
         p_sh4rcb->cntx.CpuRunning = false;
         dbg::g_parked = false;
-        static_cast<SuperH4_impl*>(sh4_cpu)->stopping = false;
         callback_lock.Unlock();
 
         if (stopped)
@@ -1051,7 +1047,6 @@ struct Dreamcast_impl : VirtualDreamcast {
     void Stopping(u32 reasons)
     {
         stop_reasons |= reasons;
-        static_cast<SuperH4_impl*>(sh4_cpu)->stopping = true;
     }
 
     // The wait is made without the lifetime lock, which the emulator thread takes on its way out
@@ -1139,21 +1134,14 @@ struct Dreamcast_impl : VirtualDreamcast {
     // Called on the emulator thread for soft reset
     void RequestReset()
     {
-        SuperH4_impl* cpu = static_cast<SuperH4_impl*>(sh4_cpu);
-
         callback_lock.Lock();
         stop_reasons |= GUEST_RESET;
+        callback_lock.Unlock();
 
         // The machine goes on counting as running while its cpu is stopped for the reset
         // (SuperH4_impl::thread_live): a host that takes it for stopped ends its user interface under this
-        // thread. That a reset is on its way is recorded, but not when the machine has been asked to stop,
-        // and not behind the end of the thread, which makes no reset any more
-        if (thread_live && !(stop_reasons & (HOST_STOP | GUEST_EXIT)))
-            cpu->resetting = true;
-
-        callback_lock.Unlock();
-
-        cpu->StopForReset();
+        // thread
+        sh4_cpu->Stop();
     }
 
     // Called on the emulator thread when the guest program has ended
