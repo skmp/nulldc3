@@ -426,6 +426,7 @@ enum HandMode {
 	HAND_EXIT_FIRST,			// has the guest end the run there
 	HAND_RESET_FIRST,			// has the guest reset the machine there
 	HAND_HOLD_FIRST,			// holds the first slice, in host time, until hand.release is set
+	HAND_STOP_IN_SLEEP,			// has the host stop the machine in the first slice of a SLEEP wait of the SH4
 	HAND_STOP_SUSPENDED,		// has the host stop the machine in the tick in which a burst was suspended
 	HAND_EXIT_SUSPENDED,
 	HAND_RESET_SUSPENDED,
@@ -501,7 +502,7 @@ int HandTick(void*, int, int, int)
 	case HAND_STOP_SUSPENDED:
 	case HAND_EXIT_SUSPENDED:
 	case HAND_RESET_SUSPENDED:
-		if (!hand.asked && (hand.mode <= HAND_RESET_FIRST || burst != SOUND_BURST_NONE))
+		if (!hand.asked && (hand.mode == HAND_STOP_FIRST || hand.mode == HAND_EXIT_FIRST || hand.mode == HAND_RESET_FIRST || burst != SOUND_BURST_NONE))
 		{
 			hand.asked = true;
 
@@ -511,6 +512,14 @@ int HandTick(void*, int, int, int)
 				virtualDreamcast->RequestExit();
 			else
 				virtualDreamcast->RequestReset();
+		}
+		break;
+
+	case HAND_STOP_IN_SLEEP:
+		if (!hand.asked && g_in_sleep)
+		{
+			hand.asked = true;
+			virtualDreamcast->Stop(HandStopped);
 		}
 		break;
 
@@ -1435,6 +1444,52 @@ DBG_SELFTEST_GUEST(arm7_bp_resume, "arm7.bp.resume")
 	}
 
 	Check(bp_res.done, "a stop inside the F window with a request waiting was found (%u stops)", bp_res.n);
+	ArmBps({ });
+
+	/*
+		The same with no breakpoint on the vector. The first check behind the resume is the one on the vector: it
+		stops nothing, and it ends the exemption all the same, unused. When the handler comes back to the
+		instruction of the stop, its breakpoint stops, and the instruction has not executed. An exemption that
+		only a check at its own PC ended would wait through the handler and run through the instruction then
+	*/
+	bp_res.done = false;
+
+	for (bp_res.n = 0; bp_res.n < 4000 && !bp_res.done; bp_res.n++)
+	{
+		while (!SuspendAt(stop, kLastOfWindow))
+			CO_YIELD(bp_res.co);
+
+		if (!ArmInService() || !(Arm(RN_CPSR) & 0x40))
+			continue;
+
+		Check(SetArm(RN_CPSR, Arm(RN_CPSR) & ~0x40u), "again inside the F window with a request waiting, the debugger clears F; no breakpoint is on the vector");
+
+		bp_res.regs = ReadArm();
+		bp_res.c = ReadCounts();
+
+		if (!Resume())
+			break;
+		CO_YIELD(bp_res.co);
+
+		regs = ReadArm();
+		c = ReadCounts();
+		differs = kArmRegs;
+
+		for (u32 i = 0; i < 8; i++)
+		{
+			if (regs.r[i] != bp_res.regs.r[i] && differs == kArmRegs)
+				differs = i;
+		}
+
+		Check(stop.cause == StopCause::Breakpoint && stop.breakpointId == kAtId && ArmPc() == kLastOfWindow && differs == kArmRegs
+			&& regs.r[R8_FIQ] == bp_res.regs.r[R8_FIQ] + 1 && c.n[0] == bp_res.c.n[0],
+			"the FIQ is entered in front of the instruction, its handler runs once (%u), and the breakpoint stops when it comes back to the instruction, which "
+			"has not executed: the check on the vector ended the exemption (id %u at %08X, R0 to R7 as they were: %s)", regs.r[R8_FIQ] - bp_res.regs.r[R8_FIQ],
+			stop.breakpointId, ArmPc(), differs == kArmRegs ? "yes" : "no");
+		bp_res.done = true;
+	}
+
+	Check(bp_res.done, "a second stop inside the F window with a request waiting was found (%u stops)", bp_res.n);
 	ArmBps({ });
 
 	CO_END(bp_res.co);
@@ -2920,6 +2975,98 @@ bool SuspendedEnding(const emu::RunState& stop, bool exit)
 DBG_SELFTEST_GUEST(arm7_hoststop_suspended, "arm7.hoststop.suspended")
 {
 	return SuspendedEnding(stop, false);
+}
+
+/*
+	arm7.hoststop.insleep: the check of the ARM7 does not look at the run flag. The host stops the machine while
+	the SH4 waits in SLEEP: the cpu is stopped, and the wait runs on to its end, with the bursts that fall into
+	it. A breakpoint of the ARM7 that is hit in one of them suspends its burst as in a run, and the stop is
+	latched in that slice, which ends the wait: the thread goes to its stop callback, in front of which the
+	burst is run to its end. (A check that recorded nothing for a stopped cpu would leave the burst suspended
+	with the wait running on, into the next callback of the AICA.)
+*/
+namespace {
+
+struct {
+	Co co;
+	Counts c;
+	std::atomic<bool> failed { false };
+	std::atomic<u32> burstAtStop { 0 };
+	Counts atStop;
+	emu::RunState stopped;
+} st_sleep_stop;
+
+}
+
+DBG_SELFTEST_GUEST(arm7_hoststop_insleep, "arm7.hoststop.insleep")
+{
+	std::vector<Seen> list;
+	Counts c;
+
+	CO_BEGIN(st_sleep_stop.co);
+
+	while (!Settle(stop))
+		CO_YIELD(st_sleep_stop.co);
+
+	// the SH4 sleeps from its first slice on; the next burst is a period of the AICA callback away
+	GotoSh4(DSPTEST_G_SLEEP_LOOP);
+	ArmBps({ { 85, kMain } });
+
+	st_sleep_stop.c = ReadCounts();
+	st_sleep_stop.failed = false;
+	hand.stopCallbacks = 0;
+	hand.stopSuspended = ~0u;
+	TakeSeen();
+	HandOn(HAND_STOP_IN_SLEEP);
+
+	OtherStart([] {
+		if (!WaitLifetime(Lifetime::Stopped))
+		{
+			st_sleep_stop.failed = true;
+			return;
+		}
+
+		st_sleep_stop.stopped = emu::GetRunState();
+
+		emu::Call(emu::CC_TABLE, [] {
+			st_sleep_stop.burstAtStop = Suspended();
+			st_sleep_stop.atStop = ReadCounts();
+		});
+
+		virtualDreamcast->Resume();
+	});
+
+	if (!Resume())
+		break;
+	CO_YIELD(st_sleep_stop.co);
+
+	OtherJoin();
+	HandOff();
+	list = TakeSeen();
+
+	Check(!st_sleep_stop.failed && hand.asked && hand.stopCallbacks == 1 && st_sleep_stop.stopped.cause == StopCause::HostStopped,
+		"the host stopped the machine in the first slice of a SLEEP wait of the SH4, and the thread ended");
+	Check(hand.suspended == 1 && st_sleep_stop.atStop.n[0] == st_sleep_stop.c.n[0] + 1,
+		"the wait ran on to the next burst, in which the breakpoint of the ARM7 suspended the burst with the cpu stopped; that slice ended the wait (%u slices "
+		"saw a burst suspended, %u bursts)", hand.suspended, st_sleep_stop.atStop.n[0] - st_sleep_stop.c.n[0]);
+	Check(hand.stopSuspended == SOUND_BURST_NONE && st_sleep_stop.burstAtStop == SOUND_BURST_NONE && st_sleep_stop.atStop.n[1] == st_sleep_stop.c.n[1] + 32
+		&& st_sleep_stop.atStop.n[3] == st_sleep_stop.c.n[3] + 1, "the burst is whole in front of the stop callback: 32 ARM phases and its tail");
+	Check(!SeenHas(list, Lifetime::Parked, StopCause::Breakpoint), "and the stop of the breakpoint is not published: %s", SeenText(list).c_str());
+
+	// (out of the sleep loop: a pause that is asked for during a SLEEP wait is taken when it is 250 ms old)
+	ArmBps({ });
+	GotoSh4(DSPTEST_G_MAIN);
+	st_sleep_stop.c = ReadCounts();
+
+	while (!PauseAfter(stop, 3))
+		CO_YIELD(st_sleep_stop.co);
+
+	c = ReadCounts();
+
+	Check(stop.cause == StopCause::Pause && c.n[0] - st_sleep_stop.c.n[0] >= 3 && c.n[3] - st_sleep_stop.c.n[3] == c.n[0] - st_sleep_stop.c.n[0],
+		"the next thread runs on: %u bursts", c.n[0] - st_sleep_stop.c.n[0]);
+
+	CO_END(st_sleep_stop.co);
 }
 
 DBG_SELFTEST_GUEST(arm7_exit_suspended, "arm7.exit.suspended")
