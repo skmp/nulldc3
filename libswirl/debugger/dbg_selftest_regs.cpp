@@ -2673,8 +2673,9 @@ DBG_SELFTEST(regs_rows_aica, "regs.rows.aica")
 				name, at, at < mine.size() ? mine[at] : 0, at < block.size() ? block[at] : 0);
 		};
 
-#define MEMBER(row, member) { CommonData_struct ones; memset(&ones, 0, sizeof(ones)); ones.member = ~0u; compare(row, ones); }
-#define MEMBER2(row, high, low) { CommonData_struct ones; memset(&ones, 0, sizeof(ones)); ones.high = ~0u; ones.low = ~0u; compare(row, ones); }
+// (a member that is 0 and is counted down by one has every one of its bits set)
+#define MEMBER(row, member) { CommonData_struct ones; memset(&ones, 0, sizeof(ones)); ones.member--; compare(row, ones); }
+#define MEMBER2(row, high, low) { CommonData_struct ones; memset(&ones, 0, sizeof(ones)); ones.high--; ones.low--; compare(row, ones); }
 		MEMBER("MVOL", MVOL) MEMBER("VER", VER) MEMBER("DAC18B", DAC18B) MEMBER("MEM8MB", MEM8MB) MEMBER("MONO", Mono)
 		MEMBER("RBP", RBP) MEMBER("RBL", RBL) MEMBER("TESTB0", TESTB0)
 		MEMBER("MIBUF", MIBUF) MEMBER("MIEMP", MIEMP) MEMBER("MIFUL", MIFUL) MEMBER("MIOVF", MIOVF) MEMBER("MOEMP", MOEMP) MEMBER("MOFUL", MOFUL)
