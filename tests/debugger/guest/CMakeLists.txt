@@ -42,11 +42,12 @@ else()
   set(nulldc_guest_emulator "${CMAKE_BINARY_DIR}/system/emulator/devcast")
 endif()
 
-file(GLOB nulldc_guest_entries RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/*")
-list(SORT nulldc_guest_entries)
+# CONFIGURE_DEPENDS: a directory that is added to a tree whose build is configured already is found at the next
+# build, which runs cmake again, and not only at the next configure by hand
+file(GLOB nulldc_guest_lists RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*/CMakeLists.txt")
+list(SORT nulldc_guest_lists)
 
-foreach(entry ${nulldc_guest_entries})
-  if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${entry}" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${entry}/CMakeLists.txt")
-    add_subdirectory(${entry})
-  endif()
+foreach(list ${nulldc_guest_lists})
+  get_filename_component(entry "${list}" DIRECTORY)
+  add_subdirectory(${entry})
 endforeach()
