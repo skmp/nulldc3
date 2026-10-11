@@ -43,6 +43,12 @@
 	they read, and where they compare with what the guest would read they put the machine back as it was. The
 	last, regs.enabled, is a guest test: it runs the booted program and reads at stops of it.
 
+	The rows of the devices (the system bus, the PVR's register file, the AICA's register file by field, its
+	clock, the GD-ROM drive) are read at the machine's own state, which is that of a reset and mostly zero, and
+	at states the tests make up: a value of its own in every word a row reads, so that a row that reads its
+	neighbour's word, another channel's, or another bit of its own shows. A made-up state is put into a device
+	through its save state or its register array, never by running the guest, and the device is put back.
+
 	Where a value has a second source that is not the debugger's (the SH4 context, a save state of a device, a
 	guest read that is known to have no side effect) the two are compared. Guest reads are made by this file
 	only, never by the modules under test (but for the two bytes of the ARM7 that dbg_mem.cpp names), and only
@@ -2116,6 +2122,949 @@ DBG_SELFTEST(regs_pure, "regs.pure")
 		Check(false, "the save state differs at byte %zu of %zu (%02X, then %02X)%s", at, before.size(), at < before.size() ? before[at] : 0,
 			at < after.size() ? after[at] : 0, control == after ? "" : "; it moves without reads as well: run again");
 	}
+}
+
+/*
+	The rows of milestone M2, at states the tests make up.
+*/
+namespace {
+
+// A 32-bit value of its own for every index, and a 16-bit one: an odd factor maps different indices to
+// different values
+u32 Word32(u32 salt, u32 index)
+{
+	return (index + 1) * 0x9E3779B1u + salt * 0x7F4A7C15u;
+}
+
+u32 Word16(u32 salt, u32 index)
+{
+	return ((index + 1) * 0x9E37u + salt * 0x6A09u) & 0xFFFF;
+}
+
+// xorshift, for the bytes of a made-up snapshot
+u32 NextRandom(u32* state)
+{
+	*state ^= *state << 13;
+	*state ^= *state >> 17;
+	*state ^= *state << 5;
+	return *state;
+}
+
+// The devices of the machine, with what each writes into a save state
+struct Devices {
+	std::vector<MMIODevice*> devices;
+	std::vector<std::vector<u8>> states;
+	std::vector<u8> pvr;		// the PVR's register file, which no device has in its state
+};
+
+Devices AllDevices()
+{
+	Devices all;
+
+	for (u32 slot = 0; slot < A0H_MAX; slot++)
+	{
+		MMIODevice* device = sh4_cpu->GetA0Handler((Area0Hanlders)slot);
+
+		if (device == nullptr)
+			continue;
+
+		all.devices.push_back(device);
+		all.states.push_back(DeviceState(device));
+	}
+
+	all.pvr.assign(pvr_regs, pvr_regs + pvr_RegSize);
+	return all;
+}
+
+// The first device whose state is not the one of `before`, as its index, and -1 when every one is; -2 for the
+// PVR's register file
+int FirstChanged(const Devices& before)
+{
+	for (size_t i = 0; i < before.devices.size(); i++)
+	{
+		if (DeviceState(before.devices[i]) != before.states[i])
+			return (int)i;
+	}
+
+	return memcmp(pvr_regs, before.pvr.data(), pvr_RegSize) == 0 ? -1 : -2;
+}
+
+// The value of a row of the AICA's register file in an image of the file, worked out bit by bit from the two
+// forms of a row as dbg_regs_private.h words them
+u64 FieldOf(const regs::Register& reg, const u8* file)
+{
+	const u32 selector = regs::KeySelector(reg.key);
+	const u32 offset = regs::AicaFieldOffset(selector), shift = regs::AicaFieldShift(selector);
+	u64 value = 0;
+
+	auto bit = [file](u32 word_at, u32 n) { return (u64)((file[word_at + n / 8] >> (n % 8)) & 1); };
+
+	if (!regs::AicaFieldTwoWords(selector))
+	{
+		for (u32 b = 0; b < reg.width; b++)
+			value |= bit(offset, shift + b) << b;
+	}
+	else
+	{
+		for (u32 b = 16; b < reg.width; b++)
+			value |= bit(offset, shift + b - 16) << b;
+		for (u32 b = regs::AicaFieldLowShift(selector); b < 16; b++)
+			value |= bit(offset + 4, b) << b;
+	}
+
+	return value;
+}
+
+// The save state of the AICA: three timers of two words, VREG, ARMRST, the 0x8000 bytes of the register file,
+// the sound generator
+const size_t aica_vreg_at = 3 * 8;
+const size_t aica_armrst_at = aica_vreg_at + 4;
+const size_t aica_file_at = aica_armrst_at + 4;
+
+// The words of the register file that a row reads and that the accessor delivers as the file has them: the 18
+// of every channel, and the common block without the three status words, the three level registers and the
+// word of ARMRST and VREG
+bool StoredWord(u32 offset)
+{
+	if (offset < 0x2000)
+		return (offset & 0x7F) < 0x48;
+
+	if (offset == 0x2808 || offset == 0x2810 || offset == 0x2814 || offset == 0x2C00)
+		return false;
+	if (offset >= SCILV0_addr && offset < SCILV2_addr + 4)
+		return false;
+
+	return (offset >= 0x2800 && offset <= 0x2814) || (offset >= 0x2880 && offset <= 0x28BC);
+}
+
+/*
+	A made-up state of the AICA: every word that a row reads has a value of its own, the two words behind the
+	common block where the file has what is not the ARM7's interrupt controller hold values that controller never
+	has, ARMRST and VREG are other than the word of the file at 0x2C00 says, and the channel that MSLC selects
+	has passed its loop end.
+
+	  0x2808   MIEMP and MOEMP are clear in the file: a read has them set
+	  0x280C   AFSET is clear: the guest's read of the status verifies that
+	  0x2810   LP is clear in the file: the status is worked out from the channel, whose loop flag is set
+
+	The loop flag is a byte of the save state behind the two loop points of its channel, which are found by
+	writing two values of their own to LSA and LEA, as the guest does; the device is put back behind that.
+*/
+struct AicaMade {
+	std::vector<u8> state;		// what RestoreDevice() takes
+	const u8* file = nullptr;	// the register file in it
+	u32 armrst = 0, vreg = 0;
+	u32 selected = 0;			// the channel MSLC selects
+	size_t loop_flag_at = 0;
+};
+
+bool MakeAicaState(AICA* aica, const std::vector<u8>& real, u32 salt, AicaMade* made)
+{
+	if (real.size() < aica_file_at + 0x8000)
+		return false;
+
+	made->state = real;
+
+	u8* file = &made->state[aica_file_at];
+
+	auto set = [file](u32 offset, u32 word) {
+		file[offset] = (u8)word;
+		file[offset + 1] = (u8)(word >> 8);
+	};
+
+	for (u32 offset = 0; offset < 0x2D08; offset += 4)
+	{
+		if (StoredWord(offset) || offset == 0x2808 || offset == 0x2810 || offset == 0x2814 || (offset >= SCILV0_addr && offset < SCILV2_addr + 4)
+			|| offset == 0x2C00 || offset == 0x2D00 || offset == 0x2D04)
+			set(offset, Word16(salt, offset / 4));
+	}
+
+	set(0x2808, Word16(salt, 0x2808 / 4) & ~((1u << 8) | (1u << 11)));
+	set(0x280C, Word16(salt, 0x280C / 4) & ~(1u << 14));
+	set(0x2810, Word16(salt, 0x2810 / 4) & 0x7FFF);
+
+	// the level registers hold something, whatever the accessor says of them
+	for (u32 offset = SCILV0_addr; offset < SCILV2_addr + 4; offset += 4)
+		set(offset, Word16(salt, offset / 4) | 0x11);
+
+	// what the file has where the ARM7 reads its interrupt controller: no level and no flag of that controller
+	set(0x2D00, 0xC3A6);
+	set(0x2D04, 0x3C5B);
+
+	made->selected = (file[0x280D] & 0x3F);
+
+	// ARMRST and VREG, which the SH4 reads at 0x2C00, are not the word of the file there
+	made->armrst = (file[0x2C00] & 1) ^ 1;
+	made->vreg = ((file[0x2C01] & 3) + 1) & 3;
+	memcpy(&made->state[aica_vreg_at], &made->vreg, 4);
+	memcpy(&made->state[aica_armrst_at], &made->armrst, 4);
+
+	// where the loop flag of the selected channel is
+	const u32 loop_points[2] = { 0xA55A, 0x5AA5 };
+
+	aica->WriteReg(made->selected * 0x80 + 0x08, loop_points[0], 2);
+	aica->WriteReg(made->selected * 0x80 + 0x0C, loop_points[1], 2);
+
+	std::vector<u8> probe = DeviceState(aica);
+	u32 found = 0;
+
+	for (size_t i = aica_file_at + 0x8000; i + sizeof(loop_points) < probe.size(); i++)
+	{
+		if (memcmp(&probe[i], loop_points, sizeof(loop_points)) == 0)
+		{
+			made->loop_flag_at = i + sizeof(loop_points);
+			found++;
+		}
+	}
+
+	std::vector<u8> back = real;
+
+	RestoreDevice(aica, back);
+
+	if (found != 1 || DeviceState(aica) != real)
+		return false;
+
+	made->state[made->loop_flag_at] = 1;
+	made->file = &made->state[aica_file_at];
+	return true;
+}
+
+// Every field of the register file on the nodes of the tree: the rows of dc.aica.common and of the 64 channels
+template <typename Fn>
+void ForEachAicaRow(Fn fn)
+{
+	u32 count;
+	const regs::Node* nodes = regs::Nodes(&count);
+
+	for (u32 i = 0; i < count; i++)
+	{
+		for (u32 r = 0; r < nodes[i].registerCount; r++)
+		{
+			if (regs::KeySource(nodes[i].registers[r].key) == regs::kSrcAica)
+				fn(nodes[i], r);
+		}
+	}
+}
+
+/*
+	A made-up snapshot of the GD-ROM drive: every byte of the device's save state is 0 or 1, by a generator. (Not
+	any byte: the state has flags the device keeps as bool.) No member of the snapshot then has a value another
+	member cannot have, so one state tells little; the tests use many, and two rows that are equal in every one
+	of them would be two rows of one member.
+*/
+std::vector<u8> MakeGdromState(const std::vector<u8>& real, u32 seed)
+{
+	std::vector<u8> made(real.size());
+	u32 state = seed * 0x9E3779B1u + 0x1234567u;
+
+	for (u8& byte : made)
+		byte = (NextRandom(&state) >> 16) & 1;
+
+	return made;
+}
+
+// A row of the drive's node as the snapshot has its member, by the name of the row
+bool GdromMember(const GDRomDebugState& g, const char* name, u64* value)
+{
+	auto packet = [&g](u32 first) { return (u64)g.packet[first] * 0x1000000u + g.packet[first + 1] * 0x10000u + g.packet[first + 2] * 0x100u + g.packet[first + 3]; };
+
+	const struct { const char* name; u64 value; } members[] = {
+		{ "STATE", g.state }, { "DISC_TYPE", g.discType }, { "STATUS", g.status }, { "ERROR", g.error }, { "INTERRUPT_REASON", g.interruptReason },
+		{ "FEATURES", g.features }, { "SECTOR_COUNT", g.sectorCount }, { "SECTOR_NUMBER", g.sectorNumber }, { "DRIVE_SELECT", g.driveSelect },
+		{ "ATA_COMMAND", g.ataCommand }, { "BYTE_COUNT", g.byteCount }, { "PACKET_0_3", packet(0) }, { "PACKET_4_7", packet(4) }, { "PACKET_8_11", packet(8) },
+		{ "SENSE_KEY", g.senseKey }, { "SENSE_ASC", g.senseAsc }, { "SENSE_ASCQ", g.senseAscq }, { "CDDA_PLAYING", g.cddaPlaying ? 1u : 0u },
+		{ "CDDA_REPEATS", g.cddaRepeats }, { "CDDA_CURRENT", g.cddaCurrent }, { "CDDA_START", g.cddaStart }, { "CDDA_END", g.cddaEnd },
+		{ "READ_START_SECTOR", g.readStartSector }, { "READ_REMAINING_SECTORS", g.readRemainingSectors }, { "READ_SECTOR_TYPE", g.readSectorType },
+		{ "PIO_INDEX", g.pioIndex }, { "PIO_SIZE", g.pioSize },
+	};
+
+	for (const auto& member : members)
+	{
+		if (strcmp(member.name, name) == 0)
+		{
+			*value = member.value;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// The system bus slots that hold a value the guest reads: registered, readable, not behind a read function
+bool DataSlot(const RegisterStruct& slot)
+{
+	return Registered(slot) && !(slot.flags & (REG_WO | REG_RF));
+}
+
+// The registers of the PVR's register file that have a row, as offsets into the file
+std::vector<u32> PvrRowOffsets()
+{
+	std::vector<u32> offsets;
+	u32 count;
+	const regs::Node* nodes = regs::Nodes(&count);
+
+	for (u32 i = 0; i < count; i++)
+	{
+		for (u32 r = 0; r < nodes[i].registerCount; r++)
+		{
+			if (regs::KeySource(nodes[i].registers[r].key) == regs::kSrcPvr)
+				offsets.push_back(nodes[i].registers[r].addr & pvr_RegMask);
+		}
+	}
+
+	return offsets;
+}
+
+}
+
+/*
+	regs.rows.sb: the system bus rows beside the interrupt registers. Against a guest read, for the slots that
+	hold a value (a guest read of such a slot is the value and changes nothing); with a value of its own in every
+	slot, where a row that reads the slot of its neighbour shows; and a write-only slot, which reads "n/a"
+	whatever it holds.
+*/
+DBG_SELFTEST(regs_rows_sb, "regs.rows.sb")
+{
+	SystemBus* sb = sh4_cpu->GetA0H<SystemBus>(A0H_SB);
+	MMIODevice* sb_device = sh4_cpu->GetA0Handler(A0H_SB);
+	std::vector<u8> before = DeviceState(sb_device);
+	u32 count;
+	const regs::Node* nodes = regs::Nodes(&count);
+
+	// the slots as they are, and with a value of its own in each that holds one
+	std::vector<u32> kept(sb->sb_regs.size());
+
+	for (size_t i = 0; i < sb->sb_regs.size(); i++)
+		kept[i] = sb->sb_regs[i].data32;
+
+	for (u32 pass = 0; pass < 3; pass++)
+	{
+		Tally guest, values, refused;
+		u32 data_rows = 0, write_only = 0;
+
+		if (pass != 0)
+		{
+			for (u32 i = 0; i < sb->sb_regs.size(); i++)
+			{
+				RegisterStruct& slot = sb->sb_regs[i];
+
+				// a write-only slot holds what the guest wrote last: its storage is its own as well
+				if (DataSlot(slot) || (Registered(slot) && (slot.flags & REG_WO) && !(slot.flags & REG_RO)))
+					slot.data32 = Word32(pass, i);
+			}
+		}
+
+		for (u32 i = 0; i < count; i++)
+		{
+			for (u32 r = 0; r < nodes[i].registerCount; r++)
+			{
+				const regs::Register& reg = nodes[i].registers[r];
+
+				if (regs::KeySource(reg.key) != regs::kSrcSb)
+					continue;
+
+				const u32 index = (reg.addr - SB_BASE) / 4;
+				const RegisterStruct& slot = sb->sb_regs[index];
+				u64 value = ~(u64)0;
+				const bool ok = regs::Read(nodes[i], r, &value, nullptr, 0);
+
+				if (slot.flags & REG_WO)
+				{
+					u32 word = 0x5EED;
+
+					write_only++;
+					refused.Add(!ok && value == ~(u64)0 && !regs::ReadSbRegisterAt(reg.addr, &word) && word == 0x5EED && (pass == 0 || slot.data32 == Word32(pass, index)),
+						"%s.%s: a write-only register that holds %08X reads %llX", nodes[i].path, reg.name, slot.data32, (unsigned long long)value);
+					continue;
+				}
+
+				if (!DataSlot(slot))
+					continue;
+
+				data_rows++;
+
+				// the guest's own view
+				const u32 read = sb_device->Read(reg.addr, 4);
+
+				guest.Add(ok && value == read, "%s.%s: %llX, a guest read of %08X gives %X", nodes[i].path, reg.name, (unsigned long long)value, reg.addr, read);
+
+				if (pass != 0)
+					values.Add(ok && value == Word32(pass, index), "%s.%s: %llX, its slot was given %08X", nodes[i].path, reg.name, (unsigned long long)value,
+						Word32(pass, index));
+			}
+		}
+
+		if (pass == 0)
+		{
+			guest.Report("system bus rows on slots that hold a value, against a guest read, as the machine stands");
+			refused.Report("system bus rows on write-only slots that read as n/a, as a read by address does");
+			Check(data_rows + write_only + 2 == 127, "%u rows on slots that hold a value, %u on write-only slots, and the two behind a read function: 127", data_rows,
+				write_only);
+		}
+		else
+		{
+			guest.Report("the same with a value of its own in every slot");
+			values.Report("each row reads the value its own slot was given");
+			refused.Report("a write-only register reads as n/a whatever its slot holds");
+		}
+	}
+
+	for (size_t i = 0; i < sb->sb_regs.size(); i++)
+	{
+		if (DataSlot(sb->sb_regs[i]) || (Registered(sb->sb_regs[i]) && (sb->sb_regs[i].flags & REG_WO) && !(sb->sb_regs[i].flags & REG_RO)))
+			sb->sb_regs[i].data32 = kept[i];
+	}
+
+	Check(DeviceState(sb_device) == before, "the system bus is as it was");
+
+	// a read-only register that the emulator never assigns reads 0, not what the slot was made with
+	{
+		u64 value = ~(u64)0;
+		const bool ok = ReadRegister("dc.maple", "SB_MST", &value);
+		const RegisterStruct& slot = sb->sb_regs[(SB_MST_addr - SB_BASE) / 4];
+
+		Check(ok && value == 0 && slot.data32 == 0 && slot.readFunctionAddr == nullptr, "dc.maple.SB_MST, which nothing assigns, reads %llX: its slot holds no address of the host",
+			(unsigned long long)value);
+	}
+}
+
+/*
+	regs.rows.pvr: the rows of the PVR's register file against a guest read, which is the file and changes
+	nothing; as the machine stands, and with a value of its own in every register that has a row.
+*/
+DBG_SELFTEST(regs_rows_pvr, "regs.rows.pvr")
+{
+	MMIODevice* pvr = sh4_cpu->GetA0Handler(A0H_PVR);
+	std::vector<u8> machine;
+
+	if (!Check(WaitQuiescent(&machine), "the machine stands still: no frame is being drawn from the register file"))
+		return;
+
+	std::vector<u8> kept(pvr_regs, pvr_regs + pvr_RegSize);
+	const std::vector<u32> offsets = PvrRowOffsets();
+	u32 count;
+	const regs::Node* nodes = regs::Nodes(&count);
+
+	for (u32 pass = 0; pass < 3; pass++)
+	{
+		Tally guest, values;
+
+		if (pass != 0)
+		{
+			for (u32 offset : offsets)
+			{
+				const u32 word = Word32(pass + 8, offset / 4);
+
+				memcpy(&pvr_regs[offset], &word, 4);
+			}
+		}
+
+		for (u32 i = 0; i < count; i++)
+		{
+			for (u32 r = 0; r < nodes[i].registerCount; r++)
+			{
+				const regs::Register& reg = nodes[i].registers[r];
+
+				if (regs::KeySource(reg.key) != regs::kSrcPvr)
+					continue;
+
+				u64 value = ~(u64)0;
+				const bool ok = regs::Read(nodes[i], r, &value, nullptr, 0);
+				const u32 read = pvr->Read(reg.addr, 4);
+
+				guest.Add(ok && value == read, "%s.%s: %llX, a guest read of %08X gives %X", nodes[i].path, reg.name, (unsigned long long)value, reg.addr, read);
+
+				if (pass != 0)
+					values.Add(ok && value == Word32(pass + 8, (reg.addr & pvr_RegMask) / 4), "%s.%s: %llX, its register was given %08X", nodes[i].path, reg.name,
+						(unsigned long long)value, Word32(pass + 8, (reg.addr & pvr_RegMask) / 4));
+			}
+		}
+
+		if (pass == 0)
+			guest.Report("PVR rows against a guest read, as the machine stands");
+		else
+		{
+			guest.Report("PVR rows against a guest read, with a value of its own in every register");
+			values.Report("each row reads the value its own register was given");
+		}
+	}
+
+	memcpy(pvr_regs, kept.data(), pvr_RegSize);
+
+	std::vector<u8> after;
+
+	Check(offsets.size() == 68 && MachineState(&after) && after == machine, "the %zu registers are as they were, and the machine with them", offsets.size());
+}
+
+/*
+	regs.rows.aica: the fields of the AICA's register file. Every row of dc.aica.common and of the 64 channels
+	against the file as the accessor delivers it, and against the word a guest read gives where that read changes
+	nothing; in two made-up states, where every word has a value of its own: a row with another shift, another
+	width, another word or another channel reads another value. The rows that the accessor works out, the five
+	without a reader, and L and M, which are the sound CPU's.
+*/
+DBG_SELFTEST(regs_rows_aica, "regs.rows.aica")
+{
+	AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
+	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+	std::vector<u8> real = DeviceState(aica);
+	std::vector<u8> cpu = DeviceState(scpu);
+	std::vector<u8> delivered(0x8000);
+
+	bool layout = real.size() > aica_file_at + 0x8000 && aica->DebugReadRegs(0, 0x8000, delivered.data());
+
+	// where the accessor delivers the file as it is, the bytes of the save state are those bytes
+	for (u32 offset = 0; layout && offset < 0x2D08; offset += 4)
+	{
+		if (StoredWord(offset))
+			layout = memcmp(&real[aica_file_at + offset], &delivered[offset], 2) == 0;
+	}
+
+	if (!Check(layout && cpu.size() == scpu_state_size, "the save state of the AICA has the register file at byte %zu, behind the timers, VREG and ARMRST", aica_file_at))
+		return;
+
+	u32 rows = 0, no_reader = 0;
+
+	ForEachAicaRow([&](const regs::Node& node, u32 r) {
+		rows++;
+		no_reader += (node.registers[r].flags & regs::kRegNoReader) != 0;
+	});
+
+	Check(rows == 47 + 64 * 38 && no_reader == 5, "%u fields of the register file are rows, %u of them without a reader (expected 47 and 38 for each channel, and 5)", rows,
+		no_reader);
+
+	for (u32 salt = 1; salt <= 2; salt++)
+	{
+		AicaMade made;
+		const bool is_made = MakeAicaState(aica, real, salt, &made);
+
+		if (!Check(is_made, "made-up state %u: the loop flag of channel %u is found in the save state, once", salt, made.selected))
+			break;
+
+		std::vector<u8> state = made.state;
+
+		RestoreDevice(aica, state);
+		aica->DebugReadRegs(0, 0x8000, delivered.data());
+
+		// the accessor: the stored words as the state has them, and the others as the device has them
+		{
+			bool stored = true;
+
+			for (u32 offset = 0; offset < 0x2D08; offset += 4)
+			{
+				if (StoredWord(offset))
+					stored = stored && memcmp(&delivered[offset], &made.file[offset], 2) == 0;
+			}
+
+			AicaChannelDebug channel;
+			const u32 status = delivered[0x2810] | (delivered[0x2811] << 8);
+			const u32 in_file = made.file[0x2810] | (made.file[0x2811] << 8);
+
+			Check(stored && aica->DebugGetChannel(made.selected, &channel) && channel.looped && (status & 0x8000) != 0 && (in_file & 0x8000) == 0,
+				"made-up state %u is in the device: its words read back, and channel %u, which MSLC selects, has passed its loop end (status %04X, the file has %04X)", salt,
+				made.selected, status, in_file);
+		}
+
+		Tally fields, guest, refused;
+		std::vector<u32> unlike_next(64, 0);
+
+		ForEachAicaRow([&](const regs::Node& node, u32 r) {
+			const regs::Register& reg = node.registers[r];
+			const u32 offset = regs::AicaFieldOffset(regs::KeySelector(reg.key));
+			u64 value = ~(u64)0;
+			const bool ok = regs::Read(node, r, &value, nullptr, 0);
+
+			if (reg.flags & regs::kRegNoReader)
+			{
+				// what the file holds there, and what the accessor delivers for it
+				const u64 held = FieldOf(reg, made.file), given = FieldOf(reg, delivered.data());
+
+				refused.Add(!ok && value == ~(u64)0, "%s.%s: reads %llX, the file holds %llX and the accessor delivers %llX", node.path, reg.name, (unsigned long long)value,
+					(unsigned long long)held, (unsigned long long)given);
+				return;
+			}
+
+			// as the accessor delivers the file
+			const u64 want = FieldOf(reg, delivered.data());
+
+			fields.Add(ok && value == want, "%s.%s: %llX, the register file has %llX in those bits", node.path, reg.name, (unsigned long long)value, (unsigned long long)want);
+
+			// a stored word is the made-up one: the value does not depend on the accessor
+			const bool two = regs::AicaFieldTwoWords(regs::KeySelector(reg.key));
+
+			if (StoredWord(offset) && (!two || StoredWord(offset + 4)))
+			{
+				fields.Add(ok && value == FieldOf(reg, made.file), "%s.%s: %llX, the made-up state has %llX in those bits", node.path, reg.name, (unsigned long long)value,
+					(unsigned long long)FieldOf(reg, made.file));
+
+				// the guest's own view of a channel: a read of its words is the file and changes nothing
+				if (offset < 0x2000)
+				{
+					u8 words[8] = { };
+
+					for (u32 w = 0; w <= (two ? 4u : 0u); w += 4)
+					{
+						const u32 word = aica->ReadReg(offset + w, 2);
+
+						words[w] = (u8)word;
+						words[w + 1] = (u8)(word >> 8);
+					}
+
+					regs::Register at_zero = reg;
+
+					at_zero.key = regs::MakeKey(regs::kSrcAica, regs::KeySelector(reg.key) & ~0x1FFFu);
+					guest.Add(ok && value == FieldOf(at_zero, words), "%s.%s: %llX, guest reads of its words give %llX", node.path, reg.name, (unsigned long long)value,
+						(unsigned long long)FieldOf(at_zero, words));
+
+					// the same field of the channel behind it: another value, but where few bits happen to agree
+					if (offset + 0x80 < 0x2000)
+					{
+						regs::Register next = reg;
+
+						next.key = regs::MakeKey(regs::kSrcAica, regs::KeySelector(reg.key) + 0x80 / 4);
+						unlike_next[offset / 0x80] += FieldOf(next, made.file) != value;
+					}
+				}
+			}
+		});
+
+		fields.Report("fields of the register file in a made-up state: as the accessor delivers them, and as the state was made");
+		guest.Report("fields of the channels against guest reads of their words");
+		refused.Report("the five fields without a reader read as n/a whatever the file holds");
+		{
+			u32 fewest = 38;
+
+			for (u32 channel = 0; channel < 63; channel++)
+				fewest = unlike_next[channel] < fewest ? unlike_next[channel] : fewest;
+
+			Check(fewest >= 10, "every channel has at least %u of its 38 fields unlike the same fields of the channel behind it: a row that reads another channel shows",
+				fewest);
+		}
+
+		// what the accessor works out, by name
+		{
+			u64 ar = 9, vreg = 9, miemp = 9, moemp = 9, lp = 9, mslc = 99;
+			const bool ok = ReadRegister("dc.aica.common", "AR", &ar) && ReadRegister("dc.aica.common", "VREG", &vreg) && ReadRegister("dc.aica.common", "MIEMP", &miemp)
+				&& ReadRegister("dc.aica.common", "MOEMP", &moemp) && ReadRegister("dc.aica.common", "LP", &lp) && ReadRegister("dc.aica.common", "MSLC", &mslc);
+
+			Check(ok && ar == made.armrst && vreg == made.vreg && (made.file[0x2C00] & 1u) != made.armrst && (made.file[0x2C01] & 3u) != made.vreg,
+				"AR is %llX and VREG is %llX: the reset of the ARM7 and the video register as the device has them (%X, %X), not the word of the file at 0x2C00 (%02X%02X)",
+				(unsigned long long)ar, (unsigned long long)vreg, made.armrst, made.vreg, made.file[0x2C01], made.file[0x2C00]);
+			Check(ok && miemp == 1 && moemp == 1 && lp == 1 && mslc == made.selected,
+				"MIEMP and MOEMP read 1 and LP reads 1 for channel %llu, with all three clear in the file: as a read delivers them", (unsigned long long)mslc);
+		}
+
+		// The level registers: the file holds a value, the accessor delivers 0, and the rows say that they do not
+		// know. SCIRE and MCIRE store nothing a guest could read back
+		{
+			u64 value = 0;
+			u32 held = 0, given = 0, read = 0;
+
+			for (u32 offset = SCILV0_addr; offset < SCILV2_addr + 4; offset += 4)
+			{
+				held += made.file[offset] != 0;
+				given += delivered[offset] != 0;
+			}
+
+			for (const char* name : { "SCILV0", "SCILV1", "SCILV2", "SCIRE", "MCIRE" })
+				read += ReadRegister("dc.aica.common", name, &value);
+
+			Check(held == 3 && given == 0 && read == 0, "SCILV0, SCILV1 and SCILV2 hold a value in the file (%u of 3), the accessor delivers 0 for them (%u are not 0), and the "
+				"rows read as n/a, with SCIRE and MCIRE (%u of the five read)", held, given, read);
+		}
+
+		// L and M are the interrupt controller of the sound CPU, in each of four states of it. The words of the file
+		// at 0x2D00 and 0x2D04 hold other values
+		{
+			const struct { u32 level, service; bool out; } controller[] = { { 5, 1, true }, { 7, 1, false }, { 1, 0, true }, { 0, 0, false } };
+			Tally interrupts;
+
+			for (const auto& c : controller)
+			{
+				std::vector<u8> made_cpu = cpu;
+
+				made_cpu[scpu_out_at] = c.out;
+				memcpy(&made_cpu[scpu_level_at], &c.level, 4);
+				memcpy(&made_cpu[scpu_service_at], &c.service, 4);
+				RestoreDevice(scpu, made_cpu);
+
+				u64 level = 99, service = 99;
+				u32 want_level = 98, want_service = 98;
+				const bool ok = ReadRegister("dc.aica.common", "L", &level) && ReadRegister("dc.aica.common", "M", &service)
+					&& scpu->DebugGetInterrupt(&want_level, &want_service);
+				const u32 file_level = delivered[0x2D00], file_service = delivered[0x2D04];
+
+				interrupts.Add(ok && level == c.level && service == c.service && want_level == c.level && want_service == c.service,
+					"L %llX and M %llX, the sound CPU has %X and %X", (unsigned long long)level, (unsigned long long)service, c.level, c.service);
+				interrupts.Add(file_level != c.level && file_service != c.service, "the file has %02X and %02X at 0x2D00 and 0x2D04, which the test meant to differ from %X and %X",
+					file_level, file_service, c.level, c.service);
+			}
+
+			RestoreDevice(scpu, cpu);
+			interrupts.Report("L and M of dc.aica.common are what SoundCPU::DebugGetInterrupt says, in four states of the controller, and not the words of the file");
+		}
+
+		Check(DeviceState(aica) == made.state, "the reads left made-up state %u as it was: no status word was rewritten, the loop flag stands", salt);
+	}
+
+	RestoreDevice(aica, real);
+	Check(DeviceState(aica) == real && DeviceState(scpu) == cpu, "the AICA and the sound CPU are as they were");
+}
+
+/*
+	regs.rows.gdrom: the rows of dc.gdrom are the members of the drive's snapshot, and the two rows of dc.aica.rtc
+	are the clock. As the machine stands, and for the drive in 24 made-up states.
+*/
+DBG_SELFTEST(regs_rows_gdrom, "regs.rows.gdrom")
+{
+	// the clock
+	{
+		MMIODevice* rtc = sh4_cpu->GetA0Handler(A0H_RTC);
+		std::vector<u8> before = DeviceState(rtc);
+		u32 seconds = 0;
+		bool write_enable = true;
+		u64 row_seconds = 1, row_enable = 9;
+
+		bool ok = libAICA_DebugGetRTC(&seconds, &write_enable) && ReadRegister("dc.aica.rtc", "SECONDS", &row_seconds) && ReadRegister("dc.aica.rtc", "WRITE_ENABLE", &row_enable);
+
+		Check(ok && row_seconds == seconds && row_seconds == ((u64)rtc->Read(0x00710000, 4) << 16 | rtc->Read(0x00710004, 4)) && seconds != 0,
+			"dc.aica.rtc.SECONDS is %llu, the counter the guest reads as two halves", (unsigned long long)row_seconds);
+		Check(ok && row_enable == (write_enable ? 1u : 0u), "dc.aica.rtc.WRITE_ENABLE is %llX, as the accessor has it", (unsigned long long)row_enable);
+
+		// the bit set: the save state of the clock is that bit. The guest reads 0 where it writes it
+		if (Check(before.size() == 4, "the save state of the clock is its write enable, %zu bytes", before.size()))
+		{
+			std::vector<u8> made = before;
+			const u32 set = !write_enable;
+
+			memcpy(made.data(), &set, 4);
+			RestoreDevice(rtc, made);
+
+			ok = ReadRegister("dc.aica.rtc", "WRITE_ENABLE", &row_enable) && ReadRegister("dc.aica.rtc", "SECONDS", &row_seconds);
+			Check(ok && row_enable == set && row_seconds == seconds && rtc->Read(0x00710008, 4) == 0, "with the bit %s: WRITE_ENABLE is %llX, a guest read of 0x00710008 gives 0",
+				set ? "set" : "clear", (unsigned long long)row_enable);
+
+			RestoreDevice(rtc, before);
+		}
+
+		Check(DeviceState(rtc) == before, "the clock is as it was");
+	}
+
+	// the drive
+	MMIODevice* gd = sh4_cpu->GetA0Handler(A0H_GDROM);
+	const regs::Node* node = regs::Find("dc.gdrom");
+	GDRomDebugState snapshot;
+
+	memset(&snapshot, 0, sizeof(snapshot));
+
+	if (node == nullptr || !gdrom_DebugGetState(&snapshot))
+	{
+		Note("this machine has no GD-ROM drive: the rows of dc.gdrom read as n/a");
+		return;
+	}
+
+	std::vector<u8> before = DeviceState(gd);
+	const u32 kStates = 24;
+	std::vector<std::vector<u64>> seen(node->registerCount);
+	Tally members;
+
+	for (u32 n = 0; n <= kStates; n++)
+	{
+		// the first round is the drive as the machine has it
+		if (n != 0)
+		{
+			std::vector<u8> made = MakeGdromState(before, n);
+
+			RestoreDevice(gd, made);
+		}
+
+		memset(&snapshot, 0xEE, sizeof(snapshot));
+		gdrom_DebugGetState(&snapshot);
+
+		for (u32 r = 0; r < node->registerCount; r++)
+		{
+			const regs::Register& reg = node->registers[r];
+			u64 value = ~(u64)0, want = 0;
+			const bool ok = regs::Read(*node, r, &value, nullptr, 0);
+			const bool known = GdromMember(snapshot, reg.name, &want);
+
+			members.Add(ok && known && value == (want & WidthMask(reg.width)), "dc.gdrom.%s in state %u: %llX, the snapshot has %llX", reg.name, n, (unsigned long long)value,
+				(unsigned long long)want);
+
+			if (n != 0)
+				seen[r].push_back(value);
+		}
+	}
+
+	RestoreDevice(gd, before);
+	members.Report("the rows of dc.gdrom against the members of the snapshot, as the machine stands and in 24 made-up states of the drive");
+
+	// no two rows had the same values in all of the states: each is a member of its own
+	u32 alike = 0;
+	std::string pair;
+
+	for (u32 a = 0; a < node->registerCount; a++)
+	{
+		for (u32 b = a + 1; b < node->registerCount; b++)
+		{
+			if (seen[a] == seen[b])
+			{
+				alike++;
+				pair = std::string(node->registers[a].name) + " and " + node->registers[b].name;
+			}
+		}
+	}
+
+	Check(alike == 0 && node->registerCount == 27, "the %u rows differ from one another over the made-up states (%u pairs do not: %s)", node->registerCount, alike, pair.c_str());
+	Check(DeviceState(gd) == before, "the GD-ROM drive is as it was");
+}
+
+/*
+	regs.rows.pure: reading the rows changes nothing. Every register of the tree is read a hundred times, and the
+	save state of every device and the PVR's register file are what they were; as the machine stands, and with the
+	made-up states in the devices at once, where a read of the AICA through the guest's read function shows: the
+	status words of the file are not what a read works out, and the selected channel has its loop flag set, which
+	that read clears. (The FIFO status of the system bus counts its guest reads in any state: regs.values.)
+*/
+DBG_SELFTEST(regs_rows_pure, "regs.rows.pure")
+{
+	std::vector<u8> machine;
+	const bool quiescent = WaitQuiescent(&machine);
+
+	if (!Check(quiescent, "the machine stands still: two save states of %zu bytes are equal", machine.size()))
+		return;
+
+	u32 count;
+	const regs::Node* nodes = regs::Nodes(&count);
+
+	auto read_all = [&](u32 times) {
+		u32 reads = 0;
+
+		for (u32 n = 0; n < times; n++)
+		{
+			for (u32 i = 0; i < count; i++)
+			{
+				for (u32 r = 0; r < nodes[i].registerCount; r++)
+				{
+					u64 value;
+					char text[64];
+
+					regs::Read(nodes[i], r, &value, text, sizeof(text));
+					reads++;
+				}
+			}
+		}
+
+		return reads;
+	};
+
+	auto name_of = [](const Devices& devices, int changed) -> std::string {
+		if (changed == -2)
+			return "the PVR's register file";
+		if (changed < 0)
+			return "none";
+
+		for (u32 slot = 0; slot < A0H_MAX; slot++)
+		{
+			if (sh4_cpu->GetA0Handler((Area0Hanlders)slot) == devices.devices[changed])
+				return "the device in slot " + std::to_string(slot);
+		}
+
+		return "a device";
+	};
+
+	// as the machine stands
+	{
+		Devices before = AllDevices();
+		const u32 reads = read_all(100);
+		const int changed = FirstChanged(before);
+		std::vector<u8> after;
+
+		Check(changed == -1 && MachineState(&after) && after == machine, "%u reads, every register a hundred times: the save states of the %zu devices, the PVR's register "
+			"file and the machine are as they were (changed: %s)", reads, before.devices.size(), name_of(before, changed).c_str());
+	}
+
+	// with the made-up states
+	AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
+	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+	SystemBus* sb = sh4_cpu->GetA0H<SystemBus>(A0H_SB);
+	MMIODevice* gd = sh4_cpu->GetA0Handler(A0H_GDROM);
+	MMIODevice* sb_device = sh4_cpu->GetA0Handler(A0H_SB);
+
+	std::vector<u8> real_aica = DeviceState(aica), real_cpu = DeviceState(scpu), real_gd = DeviceState(gd), real_sb = DeviceState(sb_device);
+	std::vector<u8> real_pvr(pvr_regs, pvr_regs + pvr_RegSize);
+	AicaMade made;
+	const bool is_made = MakeAicaState(aica, real_aica, 3, &made);
+
+	if (!Check(is_made && real_cpu.size() == scpu_state_size, "(a made-up state of the AICA, with the loop flag of channel %u set)", made.selected))
+		return;
+
+	{
+		std::vector<u8> state = made.state;
+
+		RestoreDevice(aica, state);
+
+		// a request latched and in service
+		std::vector<u8> cpu = real_cpu;
+		const u32 level = 5, service = 1;
+
+		cpu[scpu_out_at] = 1;
+		memcpy(&cpu[scpu_level_at], &level, 4);
+		memcpy(&cpu[scpu_service_at], &service, 4);
+		RestoreDevice(scpu, cpu);
+
+		GDRomDebugState snapshot;
+
+		if (gdrom_DebugGetState(&snapshot))
+		{
+			std::vector<u8> drive = MakeGdromState(real_gd, 99);
+
+			RestoreDevice(gd, drive);
+		}
+
+		for (u32 i = 0; i < sb->sb_regs.size(); i++)
+		{
+			if (DataSlot(sb->sb_regs[i]))
+				sb->sb_regs[i].data32 = Word32(5, i);
+		}
+
+		for (u32 offset : PvrRowOffsets())
+		{
+			const u32 word = Word32(6, offset / 4);
+
+			memcpy(&pvr_regs[offset], &word, 4);
+		}
+	}
+
+	{
+		Devices before = AllDevices();
+		const u32 reads = read_all(100);
+		const int changed = FirstChanged(before);
+		AicaChannelDebug channel;
+
+		Check(changed == -1, "%u reads with a made-up state in the AICA, the sound CPU, the drive, the system bus and the PVR's register file: the save states of the %zu "
+			"devices and the register file are as they were (changed: %s)", reads, before.devices.size(), name_of(before, changed).c_str());
+		Check(aica->DebugGetChannel(made.selected, &channel) && channel.looped, "the loop flag of channel %u, which a guest read of the status clears, stands", made.selected);
+	}
+
+	// A guest read does show there: the test can tell. The status of the selected channel, read as the guest reads it
+	{
+		std::vector<u8> before = DeviceState(aica);
+
+		aica->ReadReg(0x2810, 2);
+		Check(DeviceState(aica) != before, "(a guest read of the channel status does change that state of the AICA)");
+	}
+
+	// back
+	RestoreDevice(aica, real_aica);
+	RestoreDevice(scpu, real_cpu);
+	RestoreDevice(gd, real_gd);
+	RestoreDevice(sb_device, real_sb);
+	memcpy(pvr_regs, real_pvr.data(), pvr_RegSize);
+
+	std::vector<u8> after;
+
+	Check(MachineState(&after) && after == machine, "the machine is as it was");
 }
 
 /*
