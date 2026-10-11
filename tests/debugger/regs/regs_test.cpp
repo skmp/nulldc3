@@ -55,11 +55,11 @@ namespace
 	// The panel ids of the devtools UI (PanelId of its schema)
 	const char* const panel_ids[] = {
 		"documentation", "sh4-sim", "events", "events-breakpoints", "sh4-disassembly", "sh4-memory", "sh4-breakpoints",
-		"bsc-registers", "ccn-registers", "cpg-registers", "dmac-registers", "intc-registers", "rtc-registers",
-		"sci-registers", "scif-registers", "tmu-registers", "ubc-registers", "sq-contents", "icache-contents",
-		"ocache-contents", "ocram-contents", "tlb-contents", "arm7-disassembly", "arm7-memory", "arm7-breakpoints",
-		"holly-ta", "holly-core", "sgc", "dsp-disassembly", "dsp-breakpoints", "dsp-playground", "device-tree", "watches",
-		"sh4-callstack", "arm7-callstack",
+		"sh4-registers", "bsc-registers", "ccn-registers", "cpg-registers", "dmac-registers", "intc-registers",
+		"rtc-registers", "sci-registers", "scif-registers", "tmu-registers", "ubc-registers", "sq-contents",
+		"icache-contents", "ocache-contents", "ocram-contents", "tlb-contents", "arm7-disassembly", "arm7-memory",
+		"arm7-breakpoints", "arm7-registers", "holly-ta", "holly-core", "sgc", "dsp-disassembly", "dsp-breakpoints",
+		"dsp-playground", "device-tree", "watches", "sh4-callstack", "arm7-callstack",
 	};
 
 	bool IsPanelId(const std::string& id)
