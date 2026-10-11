@@ -279,6 +279,44 @@ struct SoundCPU_impl : SoundCPU {
 		}
 	}
 
+	//The debug loop (debugger/debugger.h, the ARM7 block): per instruction the entry of a pending FIQ, the
+	//debugger's check, the instruction, and the test of the ticks behind it, which is the sequence of
+	//ARM7Backend::StepMany with the check in it. It runs the interpreter's functions on the context whatever
+	//backend is selected, and it keeps nothing but `used`: a phase that is suspended is gone on with from the
+	//context and from the ticks the caller holds. The pending FIQ is looked at in front of every instruction,
+	//also in front of the first one of a phase that is gone on with: a request can become enterable inside a
+	//sample (an MSR that clears F with a request waiting)
+	bool RunSample(u32 ticks, u32* done, bool checks)
+	{
+		u32 used = *done;
+
+		if (used == 0 && !(checks && dbg_arm7_armed != 0))
+		{
+			arm->Run(ticks);
+			*done = ticks;
+			return true;
+		}
+
+		for (;;)
+		{
+			ARM7Backend::StepIrq(&ctx);
+
+			if (checks && dbg_arm7_armed != 0 && dbg_arm7_Check(ctx.regs[R15_ARM_NEXT].I))
+			{
+				*done = used;
+				return false;
+			}
+
+			used += ARM7Backend::StepExec(&ctx);
+
+			if (used >= ticks)
+			{
+				*done = used;
+				return true;
+			}
+		}
+	}
+
 	bool setBackend(Arm7Backends backend) {
 
 		if (backend == ARM7BE_INTERPRETER) {

@@ -20,6 +20,20 @@ struct SoundCPU : MMIODevice {
 
 	virtual void SetResetState(u32 State) = 0;
 	virtual void Update(u32 cycles) = 0;
+
+	// The ARM phase of one sample of a sound burst: the ARM7 executes until `ticks` are used up. Emulator
+	// thread. *done is how many ticks were used when the call returned: the caller passes 0 for a new phase and
+	// what it got back to go on with a suspended one.
+	// A new phase with dbg_arm7_armed (debugger/debugger.h) 0, or with checks false: the backend's Run(ticks);
+	// returns true.
+	// A new phase with checks true and dbg_arm7_armed not 0: the debug loop. Returns false when the debugger
+	// suspended it in front of an instruction (dbg_arm7_Check), with *done below ticks and nothing of the ARM7
+	// changed since the instruction before; true when the ticks are used up.
+	// A suspended phase with *done not 0 is always gone on with by the functions of the debug loop, whatever is
+	// armed then: the backend has no entry for the rest of a phase. With checks false it makes no check. A phase
+	// that was suspended in front of its first instruction (*done 0) is a new phase again: nothing of it has
+	// used a tick, and a FIQ that was entered in front of that instruction stays entered.
+	virtual bool RunSample(u32 ticks, u32* done, bool checks) = 0;
 	virtual void InterruptChange(u32 bits, u32 L) = 0;
 	virtual void InvalidateJitCache() = 0;
 

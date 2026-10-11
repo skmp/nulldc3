@@ -41,6 +41,7 @@
 #include "hw/aica/aica_mmio.h"
 #include "hw/aica/aica_hash.h"
 #include "hw/arm7/SoundCPU.h"
+#include "hw/arm7/arm7.h"
 #include "utils/run_control.h"
 #include "hw/sh4/sh4_dbg.h"
 #include "hw/sh4/SuperH4_impl.h"
@@ -785,6 +786,10 @@ struct Dreamcast_impl : VirtualDreamcast {
                 break;
         }
 
+        // A sound burst that the debugger suspended runs to its end, and nothing can stop it: what the stop
+        // callback sees, and what the exit line of an automated run prints, is the state behind a whole burst
+        RunSoundBurst(false);
+
         SaveRomFiles(get_writable_data_path(DATA_PATH));
 
 #ifdef SCRIPTING
@@ -829,22 +834,100 @@ struct Dreamcast_impl : VirtualDreamcast {
     }
 
 
-    int AicaUpdate(int tag, int c, int j)
+    /*
+        The sound burst: the work of one AICA scheduler callback (debugger/debugger.h, the ARM7 block). With the
+        ARM7 clocked it is 32 times { the ARM phase of a sample, 256 ticks; one time step of the AICA }, and then
+        the tail: the rest of the callback (AICA::Update: the batch render while it exists, the tick of the sound
+        regression harness), once per burst, with the ARM7 clocked or held.
+
+        A debugger can suspend it in front of an ARM7 instruction (SoundCPU::RunSample returns false). Where it
+        stands is kept here, outside the context of the ARM7, whose every word is in the save state and in the
+        hashes: the sample, the ticks its ARM phase has used, and whether the ARM7 was clocked when the burst
+        started, which is asked once. The callback returns its period all the same; the rest of the burst is
+        run on by the debugger's park loop, or by dc_run in front of the stop callback (RunSoundBurst), never
+        by the scheduler, and a reset discards it.
+    */
+    struct {
+        bool suspended = false;
+        bool arm_on = false;        // the ARM7 was clocked when the burst started
+        u32 i = 0;                  // the sample, 0..31
+        u32 ticks_done = 0;         // of the ARM phase of that sample; 0 between two phases
+
+        // SoundBurstCounts(): bursts started, ARM phases that ran to their end, time steps, tails. In no save
+        // state and no hash
+        u32 counts[4] = { 0, 0, 0, 0 };
+    } burst;
+
+    // Runs the burst from where it stands to its end. Returns false when the debugger suspended it
+    bool RunBurst(bool checks)
     {
-        //gpc_counter=0;
-        //bm_Periodical_14k();
-
-        //static int aica_sample_cycles=0;
-        //aica_sample_cycles+=14336*AICA_SAMPLE_GCM;
-
-        //if (aica_sample_cycles>=AICA_SAMPLE_CYCLES)
+        if (burst.arm_on)
         {
-            sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU)->Update(512 * 32);
-            sh4_cpu->GetA0H<AICA>(A0H_AICA)->Update(1 * 32);
-            //aica_sample_cycles-=AICA_SAMPLE_CYCLES;
+            SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+
+            for (; burst.i < 32; burst.i++)
+            {
+                // 512 cycles of the SH4 a sample, 256 ticks of the ARM7
+                if (!scpu->RunSample(512 / arm_sh4_bias, &burst.ticks_done, checks))
+                {
+                    burst.suspended = true;
+                    return false;
+                }
+
+                burst.counts[1]++;
+                burst.ticks_done = 0;
+
+                libAICA_TimeStep();
+                burst.counts[2]++;
+            }
         }
 
+        burst.suspended = false;
+
+        // the tail, on every path
+        sh4_cpu->GetA0H<AICA>(A0H_AICA)->Update(1 * 32);
+        burst.counts[3]++;
+
+        return true;
+    }
+
+    int AicaUpdate(int tag, int c, int j)
+    {
+        // under the stop latch no scheduler callback runs, and a suspended burst is dealt with under it
+        verify(!burst.suspended);
+
+        burst.arm_on = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU)->DebugEnabled();
+        burst.i = 0;
+        burst.ticks_done = 0;
+        burst.counts[0]++;
+
+        // no instruction of the ARM7 executes in this burst: a step that waits for one is complete
+        if (!burst.arm_on && dbg_arm7_armed != 0)
+            dbg_arm7_OnBurstUnclocked();
+
+        RunBurst(true);
+
+        // also when the debugger suspended it: the stop is latched behind this scheduler tick
         return AICA_TICK;
+    }
+
+    u32 SoundBurstSuspended()
+    {
+        return burst.suspended ? SOUND_BURST_ARM7 : SOUND_BURST_NONE;
+    }
+
+    bool RunSoundBurst(bool checks)
+    {
+        if (!burst.suspended)
+            return true;
+
+        return RunBurst(checks);
+    }
+
+    void SoundBurstCounts(u32 out[4])
+    {
+        for (int n = 0; n < 4; n++)
+            out[n] = burst.counts[n];
     }
 
 
@@ -868,6 +951,11 @@ struct Dreamcast_impl : VirtualDreamcast {
     void Reset()
     {
         dbg::emu::LifetimeLock lifetime;
+
+        // a sound burst that the debugger suspended is discarded: its rest belongs to the state that goes
+        burst.suspended = false;
+        burst.i = 0;
+        burst.ticks_done = 0;
 
         plugins_Reset(false);
 
