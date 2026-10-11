@@ -465,9 +465,9 @@ def mode_release(args, lines):
 
     The runs are made on copies of the guest that differ from it in data only. "A request latched": three entries
     in the reserved part of the table, which _start writes while it holds the ARM7 - SCILV1 and SCIEB bit 5, and
-    SCIPD bit 5, the one request a program can raise: it is latched at once, with the level the timer's has, and
-    again by the release. "Without the end of the service": the read of L or the write of M of a_reset goes to a
-    word of the wave memory instead.
+    SCIPD bit 5, the one request a program can raise: it is latched at once, with the level of the timer's
+    request, and again by the release. "Without the end of the service": the read of L or the write of M of
+    a_reset goes to a word of the wave memory instead, at the same cost.
 
         the copy without a change                             the line every other run is compared with
         a request latched                                     the same line, in the fields of --fields
