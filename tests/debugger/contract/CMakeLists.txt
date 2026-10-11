@@ -156,8 +156,8 @@ endfunction()
 nulldc_debugger_contract(m1          MODE m1 RUNNER ENGINES jit interp)
 nulldc_debugger_contract(m1.fallback MODE m1 RUNNER FALLBACK)
 
-# The part arm7 of the runner's scenario S16 (the breakpoints and steps of the ARM7, design 5.5), by itself: the
-# scenario as a whole is partial until the tree of milestone M2 is there, and partial is no pass. On the three
+# The part arm7 of the runner's scenario S16 (the breakpoints and steps of the ARM7, design 5.5), by itself (the
+# scenario as a whole is in the gate of milestone M2, below). On the three
 # engines against 2ndmix, whose ARM7 is released more than once while the program starts; and on the JIT and the
 # interpreter against the sounding guest of the tree, where the run has to have met the ARM7 held at its start and
 # a bl to step over and out of: the runner fails a run that lacks a note
@@ -168,7 +168,7 @@ nulldc_debugger_contract(m2arm7.guest    MODE parts PARTS S16:arm7 RUNNER ENGINE
                          REQUIRE_NOTE "arm7: held at the start" "arm7: bl stepped over and out")
 
 # The four parts of S16 that the emulator has behind the writes and the reset: arm7, writeMemory, setRegister and
-# reset (the fifth, tree, comes with the M2 rows of the device tree). On the three engines against 2ndmix, and on
+# reset (the fifth, tree, is in the gate of milestone M2, below). On the three engines against 2ndmix, and on
 # the JIT and the interpreter against the sounding guest of the tree, where the write side differs: the scratch
 # address below a stack at the top of main memory and its two mirrors, the 64 KiB written back over the guest's own
 # code, the register banks under the handler of the AICA's interrupt, the reset of a program that reios loads again

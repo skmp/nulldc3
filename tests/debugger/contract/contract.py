@@ -17,9 +17,9 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
                    and every --require-note is handed on to the runner: a run without the note is no pass
     parts          parts of a scenario of the runner that has parts, by themselves: the same emulator, and the
                    runner with --only S00,<scenario> --parts <scenario>:<part>[+<part>...], and with every
-                   --require-note handed on to it. A package shows a part of a scenario this way while the
-                   scenario as a whole is still partial, which is no pass. The program is 2ndmix.elf, or the
-                   sounding guest of the tree
+                   --require-note handed on to it. The packages of milestone M2 showed their parts of S16 this
+                   way before the emulator had the scenario whole, which the mode m2 holds now. The program is
+                   2ndmix.elf, or the sounding guest of the tree
     grace          a client leaves the target stopped at a breakpoint that is reached in every frame; 11 s later
                    the target has run on without stopping there, and the breakpoint stops it again, unasked,
                    in front of the next client; the tables as they were, the note of the grace period in the
