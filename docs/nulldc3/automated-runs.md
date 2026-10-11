@@ -25,6 +25,7 @@ A complete headless run:
 | `config:Debug.FixedRtc` | N, seconds since 1970 | The same pin under a second key. When both keys are there and this one is not 0, this one is taken. |
 | `<product id>:Dreamcast.RTC`, `<product id>:Debug.FixedRtc` | as above | The two keys in the section of a game (`[T1234N]` in `emu.cfg`, the product number of the disc). Like every setting of a game they go over the keys of that name in section `config` for that game, 0 included; between the two keys the rule is the same: `Debug.FixedRtc`, when it is not 0, is taken. |
 | `config:Debug.BlockOnFault` | `yes` | A fatal fault blocks the process for a native debugger instead of ending it. Linux. See "Faults". |
+| `config:Debug.AicaHash` | N | The sound regression harness: the run ends behind the N-th tick of the AICA with one line of hashes, and with no exit line. See "The sound line". |
 
 Keys that were there before and that a headless run usually wants: `audio:backend=none` (no audio device is opened;
 with a backend and `config:aica.LimitFPS`, the default, the run is held at real time), `config:Debug.SerialConsoleEnabled=yes`
@@ -81,6 +82,43 @@ The hash is defined for both SH4 engines, and it is the same every time for a ru
 program: the two charge time differently (the interpreter per instruction, the JIT per block and with its own
 costs), so interrupts reach the program at different instructions. A program that does not depend on time leaves the
 same `sh4`, `ram`, `vram`, `aram` and `arm7` in both, and a different `sched`.
+
+## The sound line
+
+`config:Debug.AicaHash=<N>` is the sound regression harness (`libswirl/hw/aica/aica_hash.h`). A tick of the AICA is
+one scheduler callback, 32 samples (145124 SH4 cycles); the first one comes at the end of the first slice of the
+SH4, 448 cycles behind the start of the machine. Behind the N-th tick the emulator prints one line on stdout
+
+    AicaHash: samples=<16 hex digits> regs=<16> arm7=<16> sh4=<16> ticks=<N> cycles=<decimal>
+
+and **ends the process there**, on the emulator thread, with exit code 0 and without the shutdown of a run: nothing
+is saved and **no `nulldc-exit:` line is printed**. A run gives the sound line or the state hash of
+`Exit.StateHash`, not both; whoever wants both makes two runs. The line is printed with no newline in front of it:
+with `config:Debug.SerialConsoleEnabled=yes` a guest that leaves the cursor in the middle of a line puts its text
+in front of `AicaHash:`.
+
+| field | meaning |
+|---|---|
+| `samples` | 64-bit FNV-1a of every pair handed to the audio stream: right then left, two bytes each, low byte first |
+| `regs` | the same hash over the `0x8000` bytes of the register file of the AICA, at every tick |
+| `arm7` | over what the sound CPU writes into a save state (its registers of every mode, the interrupt latches, the reset state), at every tick |
+| `sh4` | over PC, R0-R15, PR, SR and FPSCR of the SH4, at every tick, on a backend whose context is complete inside a scheduler callback (the interpreter and the x64 recompiler); on any other it stays the offset basis `cbf29ce484222325` |
+| `ticks` | N |
+| `cycles` | scheduler time behind the N-th tick, in SH4 cycles |
+
+The line has no field for wave memory, main memory or the scheduler: those are in the state hash of the exit line.
+
+Two runs of one binary with the same program and keys print the same line when the run does not depend on the
+host, which takes what every deterministic run takes: `audio:backend=none`, the clock pinned (`Dreamcast.RTC` or
+`Debug.FixedRtc`) and no host input (`Headless`). `config:aica.NoBatch=yes` renders sample by sample instead of in
+batches of 32, which is another `samples` (and no pair at all while the ARM7 is held in reset); the SH4 engine
+(`config:Dynarec.Enabled`) is another `sh4`, and for a program whose SH4 reaches the sound at times of its own
+another everything. A line is good for one build on one host (the generator's tables come from `pow()`), so no
+line is stored in the tree: a test compares runs it makes itself.
+
+A program that plays nothing has a `samples` field too: the hash of `k * 32` pairs of zeroes, one value for each
+`k`. `tests/debugger/guest/dsptest/` has a program that does play (`dsptest.elf`, part of the tree), the script
+that makes these runs and compares their lines (`soundlines.py`), and the tests `debugger.sound.*`.
 
 ## Headless mode
 
