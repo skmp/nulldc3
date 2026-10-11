@@ -311,3 +311,22 @@ u32 DYNACALL ARM7Backend::StepMany(Arm7Context* ctx, u32 minCycles) {
 
 	return clockTicks;
 }
+
+//The two halves of Step, in the order Step has them (arm7.h). They are functions of their own and Step is not
+//made of them: Step is what StepMany runs for every instruction of every run, and stays the one body it was
+void DYNACALL ARM7Backend::StepIrq(Arm7Context* ctx) {
+	if (reg[INTR_PEND].I)
+	{
+		CPUFiq(ctx);
+	}
+}
+
+u32 DYNACALL ARM7Backend::StepExec(Arm7Context* ctx) {
+	u32 clockTicks = 0;
+
+	reg[15].I = armNextPC + 8;
+
+	#include "gpl/vba-arm/arm-new.h"
+
+	return clockTicks;
+}
