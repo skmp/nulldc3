@@ -116,6 +116,10 @@ batches of 32, which is another `samples` (and no pair at all while the ARM7 is 
 another everything. A line is good for one build on one host (the generator's tables come from `pow()`), so no
 line is stored in the tree: a test compares runs it makes itself.
 
+`config:Dynarec.Enabled=yes` is a wish: an emulator without a recompiler, or one whose recompiler cannot be set
+up, runs the SH4 on its interpreter, prints `Using MCPU Interpreter` where the other prints `Using MCPU Recompiler`,
+and ends like any other run. Whoever compares the lines of the two engines looks for that line first.
+
 A program that plays nothing has a `samples` field too: the hash of `k * 32` pairs of zeroes, one value for each
 `k`. `tests/debugger/guest/dsptest/` has a program that does play (`dsptest.elf`, part of the tree), the script
 that makes these runs and compares their lines (`soundlines.py`), and the tests `debugger.sound.*`.

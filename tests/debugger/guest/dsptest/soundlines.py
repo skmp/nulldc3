@@ -10,7 +10,15 @@ A run is the emulator on the program, headless, with no audio device (audio:back
 pinned, the SH4 on the recompiler or on the interpreter (--engine) and the sound rendered in batches of 32
 samples or sample by sample (--render: config:aica.NoBatch no or yes), in an environment of its own: fresh HOME,
 XDG_CONFIG_HOME and XDG_DATA_HOME under the work directory, no display, a core file size limit of 1 byte, and a
-watchdog. A process this script starts is ended by its pid. There are two kinds of run:
+watchdog. A process this script starts is ended by its pid.
+
+Every run has to be made on the engine it was asked for. The emulator takes config:Dynarec.Enabled=yes for a wish:
+a build without a recompiler, or one whose recompiler cannot be set up, goes on with the interpreter and says
+"Using MCPU Interpreter" where the other says "Using MCPU Recompiler". A run whose output does not have the line
+of its engine, or has the other one, fails: the line of a run on the interpreter is no line of the recompiler,
+and two of them agree in every field.
+
+There are two kinds of run:
 
     the line        config:Debug.AicaHash=<N>: after N ticks of the AICA (a tick is 32 samples) the emulator prints
                         AicaHash: samples=<hex> regs=<hex> arm7=<hex> sh4=<hex> ticks=<N> cycles=<decimal>
@@ -63,6 +71,10 @@ HASH_FIELDS = ('reason', 'vblanks', 'hash', 'sh4', 'sched', 'ram', 'vram', 'aram
 
 ENGINES = ('jit', 'interp')
 RENDERS = ('batch', 'persample')
+
+# what the emulator thread prints when it has chosen the engine of the SH4 (dc_run of libswirl/libswirl.cpp)
+ENGINE_SAYS = {'jit': 'Using MCPU Recompiler', 'interp': 'Using MCPU Interpreter'}
+ENGINE_NAMES = {'jit': 'the recompiler', 'interp': 'the interpreter'}
 
 # what SHA256SUMS lists, in this order, and nothing else
 MANIFEST = ('dsptest.s', 'arm7.s', 'gen.sh', 'dsptest.elf', 'arm7.bin', 'dsptest_labels.inc')
@@ -138,6 +150,15 @@ class Run:
         check(self.code is not None, 'the run did not end within %d s: %s' % (self.args.watchdog, ' '.join(self.cmdline)), self.log)
         for bad in BAD:
             check(bad not in self.log, 'the output has "%s"' % bad, self.log)
+
+        # the engine that ran is the engine that was asked for: the emulator goes on with the interpreter when it
+        # has no recompiler, and such a run would pass for one of the recompiler
+        other = 'interp' if self.engine == 'jit' else 'jit'
+        asked = '%s (config:Dynarec.Enabled=%s)' % (ENGINE_NAMES[self.engine], 'yes' if self.engine == 'jit' else 'no')
+        check(ENGINE_SAYS[other] not in self.log, 'the run %s was asked for %s and was made on %s: the output has "%s"'
+              % (self.name, asked, ENGINE_NAMES[other], ENGINE_SAYS[other]), self.log)
+        check(ENGINE_SAYS[self.engine] in self.log, 'the run %s was asked for %s and does not say that it was made on it: the output has no "%s"'
+              % (self.name, asked, ENGINE_SAYS[self.engine]), self.log)
         return self
 
 

@@ -28,6 +28,7 @@ four pitches, a step every 0.15 s, while it starts over and changes sides 53 tim
 | `dsptest_labels.inc` | every label of the two programs as a `#define` (`DSPTEST_G_MAIN_LOOP`, `DSPTEST_A_FIQ`, ...), for the selftests of the emulator | `gen.sh` |
 | `SHA256SUMS` | the manifest of the six files above, and of nothing else | `gen.sh` |
 | `soundlines.py` | the runner of the sound lines (below) | hand |
+| `soundlines_test.py` | the runner on stand-ins for the emulator: it fails a run that was not made on the engine it asked for | hand |
 | `CMakeLists.txt` | the tests of this directory, and `nulldc_sound_neutral` for the directories behind it | hand |
 
 The emulator and every test build and run without an assembler. `gen.sh` needs the sh-elf binutils (`SH_ELF_BIN`,
@@ -39,8 +40,8 @@ that an assembler could encode in two ways, and clang 18 gives the same 352 byte
 keeps `arm7.bin` and the ARM7 labels as they are, so that a change of `dsptest.s` needs no ARM assembler. Nothing in
 the outputs depends on the machine, the user, the date or a path.
 
-`SHA256SUMS` does not list `soundlines.py`, `CMakeLists.txt` and this file on purpose: they change without the
-guest changing.
+`SHA256SUMS` does not list `soundlines.py`, `soundlines_test.py`, `CMakeLists.txt` and this file on purpose: they
+change without the guest changing.
 
 ## What it does
 
@@ -176,6 +177,16 @@ environment of its own, and parses the line of the harness:
 kind of run gives the exit line of the same program with its state hash (`config:Exit.AfterVblanks=<V> ,
 config:Exit.StateHash=yes` in place of the harness key: the harness ends the process without an exit line).
 
+**Every run has to be made on the engine it was asked for.** The emulator takes `config:Dynarec.Enabled=yes` for a
+wish: a build without a recompiler (`-DTARGET_NO_REC=ON`, a generic host), or one whose recompiler cannot be set
+up, goes on with the interpreter and prints `Using MCPU Interpreter` where the other prints `Using MCPU Recompiler`.
+The runner looks for the line of the engine in the output of every run, of either kind and with or without a
+session, and fails a run that has the other one or none: without that, `engines` compares the interpreter with
+itself and every `.jit.` test is a copy of its `.interp.` test. So on an emulator without a recompiler
+(`-DNULLDC_EMULATOR=`) the `.jit.` tests and `debugger.sound.engines.*` fail, as `system.guest_exit.jit` and
+`system.boot.*.jit` do there; the `.interp.` tests pass. `soundlines_test.py` (`debugger.sound.runner`) holds the
+check on stand-ins for the emulator, scripts that print the line of one engine whatever they are asked for.
+
 | mode | what has to hold |
 |---|---|
 | `same` | two runs with the same keys print the same line, field for field. Every line of every mode has to have `ticks=<N>` |
@@ -197,6 +208,7 @@ host. A test makes its runs itself; `record` refuses a file among the tests of t
 | `debugger.sound.engines.dsptest.<batch\|persample>` | `engines` on the guest, N = 2000, fields `samples`, `regs`, `arm7`, `ticks`, `cycles` |
 | `debugger.sound.release.dsptest.<jit\|interp>.<batch\|persample>` | `release` on the guest, N = 2000, fields `samples`, `regs`, `arm7`, `ticks`, `cycles` |
 | `debugger.sound.lines.2ndmix.<jit\|interp>.<batch\|persample>` | `same` on `2ndmix.elf` of `NULLDC_ELF_DIR`, N = 40000; a test whose data is missing without that directory |
+| `debugger.sound.runner` | `soundlines_test.py`: fifteen calls of the runner on stand-ins for the emulator; no emulator is run |
 
 `nulldc_sound_neutral(<name> SELFTEST <filter> [EXPECT <text>...] [CONFIG <section:key=value>...] [TIMEOUT
 <seconds>])`, defined in `CMakeLists.txt` for the directories behind this one, makes

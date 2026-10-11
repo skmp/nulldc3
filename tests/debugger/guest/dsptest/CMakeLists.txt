@@ -20,6 +20,13 @@
 #	    debugger.sound.lines.2ndmix.<jit|interp>.<batch|persample>
 #	                                                        two runs of 40000 ticks of 2ndmix.elf print one line
 #	                                                        (needs NULLDC_ELF_DIR; that program is silent here)
+#	    debugger.sound.runner                               soundlines.py fails a run that was not made on the SH4
+#	                                                        engine it was asked for (soundlines_test.py, on
+#	                                                        stand-ins for the emulator: no emulator is run)
+#
+#	Every run of these tests has to say that it was made on the engine it was asked for. An emulator without a
+#	recompiler (-DNULLDC_EMULATOR= with a TARGET_NO_REC build, or a generic host) runs config:Dynarec.Enabled=yes
+#	on its interpreter: its .jit. and engines tests fail, as system.guest_exit.jit and system.boot.*.jit do.
 #
 #	For the directories behind this one:
 #
@@ -86,6 +93,16 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(debugger.guest.dsptest.files PROPERTIES TIMEOUT 120)
 else()
   nulldc_add_skipped_test(debugger.guest.dsptest.files "no python3 to run tests/debugger/guest/dsptest/soundlines.py with")
+endif()
+
+# The runner against stand-ins for the emulator: python, and a host that runs a script by its first line
+if(Python3_Interpreter_FOUND AND ${HOST_OS} EQUAL ${OS_LINUX})
+  add_test(NAME debugger.sound.runner
+           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/soundlines_test.py"
+                   --work "${CMAKE_BINARY_DIR}/debugger/guest/work/debugger.sound.runner")
+  set_tests_properties(debugger.sound.runner PROPERTIES TIMEOUT 300)
+else()
+  nulldc_add_skipped_test(debugger.sound.runner "tests/debugger/guest/dsptest/soundlines_test.py needs python3 on a Linux host")
 endif()
 
 # nulldc_sound_test(<test> <program> <ticks> <arguments of soundlines.py>...)

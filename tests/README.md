@@ -88,6 +88,7 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `debugger.sound.lines.dsptest.jit.batch` `.jit.persample` `.interp.batch` `.interp.persample` | the sound line of the guest (`-config config:Debug.AicaHash=2000`, headless, `docs/nulldc3/automated-runs.md`) on the JIT and on the interpreter, rendered in batches and sample by sample (`config:aica.NoBatch`): two runs print one line, it has `ticks=2000`, and its `samples` is none of the 2001 hashes of silence (`debugger/guest/dsptest/README.md` has the script, `soundlines.py`, and every test of these rows) | none |
 | `debugger.sound.engines.dsptest.batch` `.persample` | the line of the JIT and the line of the interpreter agree in `samples`, `regs`, `arm7`, `ticks` and `cycles`: everything the guest's SH4 does to the sound falls between the same two ticks of the AICA on both | none |
 | `debugger.sound.release.dsptest.jit.batch` `.jit.persample` `.interp.batch` `.interp.persample` | a release of the guest's ARM7 starts the same program whatever request of the AICA is latched for it: the line of a copy of the guest whose SH4 leaves a request latched in front of the release is the line of the guest in `samples`, `regs`, `arm7`, `ticks` and `cycles`, and copies whose ARM7 reset routine lacks the read of L or the write of M print another `arm7`, which says that the request was there. The copies are made by the test, in its work directory | none |
+| `debugger.sound.runner` | the runner of the sound lines on stand-ins for the emulator (`debugger/guest/dsptest/soundlines_test.py`; no emulator is run): a run that was not made on the SH4 engine it was asked for fails, in every mode, with or without a session | none |
 | `debugger.sound.lines.2ndmix.jit.batch` `.jit.persample` `.interp.batch` `.interp.persample` | the sound line of 2ndmix at 40000 ticks, the program the harness was accepted with: two runs print one line (it plays nothing under reios, so no more is asked) | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `aica.dsp.api` | the AICA DSP core (`libswirl/hw/aica/dsp_core`) on itself: a sample in one go against its 128 steps from every step, state out and in, two cores in turns, its registers, fields that hold more than their registers' bits, a wave RAM of 4, 8 and 16 MB; and its known-answer programs: the shifter, the address of a memory step on 2 to 16 MB, the ring, the read latch rules, the MIXS banks | none |
 | `aica.dsp.diff.random` `aica.dsp.diff.sparse` `aica.dsp.diff.directed` | the AICA DSP core against the DSP of the caique sample model on generated programs, compared behind every step | a caique-rtl checkout |
@@ -100,7 +101,7 @@ The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_W
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
 and the `debugger.selftest.*`, `debugger.contract.*` and `debugger.sound.*` tests run on Linux hosts with python3;
 the latter three are skipped where there is no emulator to run (`-DNULLDC_SYSTEM_TESTS=OFF` without
-`-DNULLDC_EMULATOR=`).
+`-DNULLDC_EMULATOR=`), but for `debugger.sound.runner`, which runs none.
 The `aica.dsp.diff.*` and `aica.dsp.case.*` tests need `-DNULLDC_CAIQUE_DIR=<path to caique-rtl>` unless caique-rtl
 sits next to the repository; they compile its sample model and its DSP programs (C) from there and read its console
 captures.
@@ -113,7 +114,8 @@ handler, so without nvmem; on an x86-64 machine `-DCMAKE_SYSTEM_NAME=Linux -DCMA
 configures it. The system tests take such a binary with `-DNULLDC_EMULATOR=`. On a `TARGET_NO_REC` build every case
 passes but `guest_exit.jit`, `boot.2ndmix.jit` and `boot.hello.jit`, which have to see the recompiler, and
 `fault.guest`, whose faults are the recompiler's; without the fault handler the `fault.*` cases have nothing to wait
-for either.
+for either. The `debugger.sound.*` tests ask of every run that it was made on the engine it was asked for: with
+such a binary their `.jit.` tests and `debugger.sound.engines.*` fail, and their `.interp.` tests pass.
 
 Every test of this table but `common.selftest`, `sh4.core`, the `debugger.sh4bp.*`, `debugger.selftest.*` and
 `debugger.contract.*` tests, `cfg.overrides`, `runctl.guest_exit.*`, the system tests, `aica.dsp.capi` and the `aica.dsp.wasm` tests is
