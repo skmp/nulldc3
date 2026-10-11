@@ -2758,6 +2758,118 @@ DBG_SELFTEST_GUEST(arm7_step_wait_grace, "arm7.step.wait.grace")
 }
 
 /*
+	arm7.step.wait.sh4: for the SH4 the leave of a step that waits is a resume. Two things of a resume that only
+	the SH4 can show:
+
+	  - the resume exemption. From a stop at a breakpoint of the SH4 (on the handler of the AICA's interrupt,
+	    which the guest enters every twenty-six bursts or so) the step runs the SH4 through that breakpoint to
+	    the next burst, and its stop is the step's. A leave that armed no exemption would stop on the
+	    breakpoint again, with nothing executed, at every try;
+	  - the interrupt acceptance that the latch held back. The burst in which the ARM7 raises the AICA's
+	    interrupt to the SH4 is stepped to its end in the park context: no burst is suspended, the interrupt is
+	    pending and the SH4 has not executed since. A step from there waits; with a breakpoint on the handler it
+	    is the SH4 that stops, come from the PC of the stop with no time passed. A leave that accepted nothing
+	    would let the SH4 run a slice first
+*/
+namespace {
+
+struct {
+	Co co;
+	u32 sh4pc, r8;
+	u64 time;
+	Counts c;
+} st_wsh4;
+
+}
+
+DBG_SELFTEST_GUEST(arm7_step_wait_sh4, "arm7.step.wait.sh4")
+{
+	std::vector<Seen> list;
+	Counts c;
+
+	CO_BEGIN(st_wsh4.co);
+
+	while (!Settle(stop))
+		CO_YIELD(st_wsh4.co);
+
+	// the exemption
+	Sh4Bps({ { 61, DSPTEST_G_IRQ } });
+
+	if (!Resume())
+		break;
+	CO_YIELD(st_wsh4.co);
+
+	if (!Check(stop.cause == StopCause::Breakpoint && stop.breakpointId == 61 && Ctx().pc == DSPTEST_G_IRQ && Suspended() == SOUND_BURST_NONE && ArmClocked(),
+		"a stop at a breakpoint of the SH4 on the handler of the AICA's interrupt, with no burst suspended (\"%s\" id %u, pc %08X)", StopCauseName(stop.cause),
+		stop.breakpointId, Ctx().pc))
+	{
+		Sh4Bps({ });
+		break;
+	}
+
+	st_wsh4.c = ReadCounts();
+	TakeSeen();
+
+	if (!StepArm())
+		break;
+	CO_YIELD(st_wsh4.co);
+
+	list = TakeSeen();
+	c = ReadCounts();
+
+	Check(stop.cause == StopCause::Step && c.n[0] == st_wsh4.c.n[0] + 1 && Suspended() == SOUND_BURST_ARM7 && Ctx().pc != DSPTEST_G_IRQ
+		&& SeenIs(list, { { Lifetime::Parked, StopCause::Step } }),
+		"a step of the ARM7 from there runs the SH4 through the breakpoint it stands on, to the next burst, and its stop is the step's: \"%s\" id %u, %u burst(s) "
+		"started since, the SH4 at %08X, published %s", StopCauseName(stop.cause), stop.breakpointId, c.n[0] - st_wsh4.c.n[0], Ctx().pc, SeenText(list).c_str());
+
+	Sh4Bps({ });
+
+	// the acceptance
+	while (!Settle(stop))
+		CO_YIELD(st_wsh4.co);
+
+	while (!SuspendAt(stop, kRaise))
+		CO_YIELD(st_wsh4.co);
+
+	ArmBps({ });
+
+	while (!StepToBurstEnd(stop))
+		CO_YIELD(st_wsh4.co);
+
+	if (!Check(stop.cause == StopCause::Step && Suspended() == SOUND_BURST_NONE && Ctx().sr.BL == 0 && Ctx().pc >= DSPTEST_G_MAIN_LOOP
+		&& Ctx().pc < DSPTEST_G_SLEEP_LOOP,
+		"the burst in which the ARM7 raises the AICA's interrupt to the SH4 was stepped to its end in the park context: none is suspended, and the SH4 is in its "
+		"loop with its interrupts open (\"%s\", burst %u, pc %08X)", StopCauseName(stop.cause), Suspended(), Ctx().pc))
+		break;
+
+	st_wsh4.sh4pc = Ctx().pc;
+	st_wsh4.r8 = Ctx().r[8];
+	st_wsh4.time = sh4_sched_now64();
+	st_wsh4.c = ReadCounts();
+
+	Sh4Bps({ { 62, DSPTEST_G_IRQ } });
+
+	if (!StepArm())
+		break;
+	CO_YIELD(st_wsh4.co);
+
+	c = ReadCounts();
+
+	Check(stop.cause == StopCause::Breakpoint && stop.breakpointId == 62 && Ctx().pc == DSPTEST_G_IRQ,
+		"a step of the ARM7 from there waits, and the SH4 stops on the first instruction of its handler: \"%s\" id %u, pc %08X", StopCauseName(stop.cause),
+		stop.breakpointId, Ctx().pc);
+	Check(Ctx().spc == st_wsh4.sh4pc && Ctx().r[8] == st_wsh4.r8 && sh4_sched_now64() == st_wsh4.time && c.n[0] == st_wsh4.c.n[0],
+		"the leave accepted the interrupt before the first instruction of the SH4: it comes from the PC of the stop (%08X, the stop was at %08X), the loop has not "
+		"counted, %llu cycles have passed and %u bursts started", Ctx().spc, st_wsh4.sh4pc, (unsigned long long)(sh4_sched_now64() - st_wsh4.time),
+		c.n[0] - st_wsh4.c.n[0]);
+	Check(dbg_arm7_armed == 0 && !arm7::test::GetState().step, "and the step that the stop of the SH4 ended is armed no more");
+
+	Sh4Bps({ });
+
+	CO_END(st_wsh4.co);
+}
+
+/*
 	arm7.stepover.bl, arm7.stepover.plain, arm7.stepout: resumes with one temporary breakpoint. They execute the
 	instruction they are asked from, also with a listed breakpoint on it and from a stop the ARM7 did not decide:
 	the test puts the ARM7 there by a PC write at a stop behind a burst
