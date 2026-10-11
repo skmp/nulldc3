@@ -24,8 +24,8 @@ struct SoundCPU : MMIODevice {
 	virtual void InvalidateJitCache() = 0;
 
 	/*
-		Debugger access. Called on the emulator thread between two instructions of the ARM7 — outside a sound
-		burst, or while the debugger has one suspended (in the slice hook and in the park context) —, or by a
+		Debugger access. Called on the emulator thread between two instructions of the ARM7 - outside a sound
+		burst, or while the debugger has one suspended (in the slice hook and in the park context) -, or by a
 		thread that holds the debugger's lifetime lock while no emulator thread exists; the setter on the
 		emulator thread only. The defaults are those of a device that gives the debugger nothing.
 	*/

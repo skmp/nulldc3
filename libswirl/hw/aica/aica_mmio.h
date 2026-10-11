@@ -48,9 +48,9 @@ struct AICA : MMIODevice {
 	virtual void TimeStep() = 0;
 
 	/*
-		Debugger access. Called on the emulator thread outside Update() and TimeStep() — between two sound
+		Debugger access. Called on the emulator thread outside Update() and TimeStep() - between two sound
 		bursts, or while the debugger has one suspended in front of an ARM7 instruction, where the sound
-		generator stands between two samples —, or by a thread that holds the debugger's lifetime lock while
+		generator stands between two samples -, or by a thread that holds the debugger's lifetime lock while
 		no emulator thread exists; DebugWriteReg on the emulator thread only. Update() and TimeStep()
 		themselves also run in the debugger's park context, when a suspended burst is run on. The defaults are
 		those of a device that gives the debugger nothing.
