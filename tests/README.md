@@ -27,7 +27,8 @@ of a few instructions that are part of the suite, so a run without the option bo
 frame and compares no state hash between runs. The selftests of the debugger that boot `2ndmix.elf` are skipped
 with them, nineteen tests: `debugger.selftest.core`, `.regs`, `.sh4bp`, `.sh4bpboot`, `.sh4bpbase`,
 `.emurun.reads`, `.emurun.pending`, `.emurun.pauses` and `.hostcycles`, each with its `.interp`, and
-`debugger.selftest.sh4bp.sessions`. And so are the twelve `debugger.contract.*` tests, which all boot it.
+`debugger.selftest.sh4bp.sessions`. And so are the twelve `debugger.contract.*` tests, which all boot it, and the
+four `debugger.sound.lines.2ndmix.*` tests.
 
 A skipped test has not run and is not a pass: `ctest` exits with 0 when everything that did run passes, also
 when that is only the tests that need no data. With `-DNULLDC_TESTS_REQUIRE_DATA=ON` missing data fails its
@@ -83,6 +84,10 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `debugger.contract.slow` | the slow-client rule: a client that has stopped reading and is 10 MiB of ticks behind is queued none of the periodic ticks of 3 s, every tick that a request caused, and a full tick next | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.contract.hash.off` `.hash.noclient`, each with `.interp` | 2ndmix for 600 vblanks, twice: the same state hash with no `Debugger:` key and with `Debugger:Enabled=no` (and no server without the key: the default of an automated run); the same with the server on and no client and with the server off | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.contract.hash.idlebp` `.interp` | the same state hash with a client connected and a muted breakpoint on a function 2ndmix calls in every frame (the runner's `--idle-breakpoint`), and with the server off | `2ndmix.elf` of `NULLDC_ELF_DIR`, a dreamcast-devtools checkout with `node_modules`, npm |
+| `debugger.guest.dsptest.files` | the sounding guest of the tree (`debugger/guest/dsptest`: a bare-metal SH4 program with an ARM7 program inside it): its six committed files are those of its manifest `SHA256SUMS`, and what `gen.sh` makes of the two sources, byte for byte (`gen.sh --check`) | none; an sh-elf binutils, and an arm-eabi binutils or clang, for the second half |
+| `debugger.sound.lines.dsptest.jit.batch` `.jit.persample` `.interp.batch` `.interp.persample` | the sound line of the guest (`-config config:Debug.AicaHash=2000`, headless, `docs/nulldc3/automated-runs.md`) on the JIT and on the interpreter, rendered in batches and sample by sample (`config:aica.NoBatch`): two runs print one line, it has `ticks=2000`, and its `samples` is none of the 2001 hashes of silence (`debugger/guest/dsptest/README.md` has the script, `soundlines.py`, and every test of these rows) | none |
+| `debugger.sound.engines.dsptest.batch` `.persample` | the line of the JIT and the line of the interpreter agree in `samples`, `regs`, `arm7`, `ticks` and `cycles`: everything the guest's SH4 does to the sound falls between the same two ticks of the AICA on both | none |
+| `debugger.sound.lines.2ndmix.jit.batch` `.jit.persample` `.interp.batch` `.interp.persample` | the sound line of 2ndmix at 40000 ticks, the program the harness was accepted with: two runs print one line (it plays nothing under reios, so no more is asked) | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `aica.dsp.api` | the AICA DSP core (`libswirl/hw/aica/dsp_core`) on itself: a sample in one go against its 128 steps from every step, state out and in, two cores in turns, its registers, fields that hold more than their registers' bits, a wave RAM of 4, 8 and 16 MB; and its known-answer programs: the shifter, the address of a memory step on 2 to 16 MB, the ring, the read latch rules, the MIXS banks | none |
 | `aica.dsp.diff.random` `aica.dsp.diff.sparse` `aica.dsp.diff.directed` | the AICA DSP core against the DSP of the caique sample model on generated programs, compared behind every step | a caique-rtl checkout |
 | `aica.dsp.case.dsp_basic` `.dsp_mem` `.dsp_mem2` `.dsp_mem3` `.dsp_wslot` `.dsp_unpack` `.dsp_pack` `.dsp_temp` `.dsp_coll` `.sh4_latch` `.mdec_hold` | the DSP programs caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
@@ -92,8 +97,9 @@ The build includes two builds of the emulator for the system tests, about a minu
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
-and the `debugger.selftest.*` and `debugger.contract.*` tests run on Linux hosts with python3; the latter two are
-skipped where there is no emulator to run (`-DNULLDC_SYSTEM_TESTS=OFF` without `-DNULLDC_EMULATOR=`).
+and the `debugger.selftest.*`, `debugger.contract.*` and `debugger.sound.*` tests run on Linux hosts with python3;
+the latter three are skipped where there is no emulator to run (`-DNULLDC_SYSTEM_TESTS=OFF` without
+`-DNULLDC_EMULATOR=`).
 The `aica.dsp.diff.*` and `aica.dsp.case.*` tests need `-DNULLDC_CAIQUE_DIR=<path to caique-rtl>` unless caique-rtl
 sits next to the repository; they compile its sample model and its DSP programs (C) from there and read its console
 captures.
@@ -456,5 +462,7 @@ directory each, with its sources, its committed image and the tests that run the
 two, and adds every subdirectory that has a `CMakeLists.txt`, in the order of the names: a guest is registered by
 putting its directory there. A function that one of those directories defines for the ones behind it uses these
 two variables, python as it was found there, `nulldc_tests_path` and cache variables, and nothing its own
-`CMakeLists.txt` sets: it runs in the scope of its caller. No guest is there yet, and the directory registers no
-test.
+`CMakeLists.txt` sets: it runs in the scope of its caller. The directories are found again at every build, so a
+new one needs no configure by hand. One guest is there: `dsptest`, the sounding guest, with the runner of the sound
+lines, the tests `debugger.guest.dsptest.files` and `debugger.sound.*` above, and the function
+`nulldc_sound_neutral` for the directories behind it (`debugger/guest/dsptest/README.md`).
