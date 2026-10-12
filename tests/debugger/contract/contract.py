@@ -732,6 +732,22 @@ def mode_hash_idlebp(args):
 # The periodic tick of the listening run: every 20 ms, and every one of them full
 LISTENING_KEYS = ['Debugger:TickMs=20', 'Debugger:FullTickEvery=1']
 
+# The node whose registers are the context of the SH4. A running machine is read where the SH4 gives up its
+# slice, and the context is complete there on the interpreter and on a recompiler that says so, which the one for
+# x64 does. On any other recompiler every running tick says registersStale and leaves this node out (design 2.8;
+# the runner has the same rule in its invariant I5)
+SH4_CONTEXT_PATH = 'dc.sh4.cpu'
+
+
+def full_running_tick(tick, counts):
+    """Is a running tick a full one, and how many register values does a full one of its kind carry? counts has
+    the number of registers of every path of the device tree that has registers. A full tick carries every one of
+    these paths, no other; one that says registersStale carries every one of them but dc.sh4.cpu."""
+    paths = dict(counts)
+    if tick['executionState'].get('registersStale'):
+        paths.pop(SH4_CONTEXT_PATH, None)
+    return sorted(tick['registers']) == sorted(paths), sum(paths.values())
+
 
 def mode_hash_listening(args):
     """A client that only listens leaves the run alone. Every full tick reads every register of the device tree
@@ -747,10 +763,10 @@ def mode_hash_listening(args):
         client = wsclient.Client('127.0.0.1', port)
         first = client.describe()
         check(first['executionState'].get('reason') == 'start', 'the emulator is not at its StartPaused stop: %r' % (first['executionState'],), run)
-        with_registers = [node['path'] for node in tree_nodes(client.shape['deviceTree']) if node.get('registers')]
-        registers = sum(len(node['registers']) for node in tree_nodes(client.shape['deviceTree']) if node.get('registers'))
-        check(sorted(first['registers']) == sorted(with_registers), 'the tick behind debugger.describe is not a full one: %d of %d paths'
-              % (len(first['registers']), len(with_registers)), run)
+        counts = {node['path']: len(node['registers']) for node in tree_nodes(client.shape['deviceTree']) if node.get('registers')}
+        # at a stop the context of the SH4 is complete, whatever the engine: every path
+        check(sorted(first['registers']) == sorted(counts), 'the tick behind debugger.describe is not a full one: %d of %d paths'
+              % (len(first['registers']), len(counts)), run)
 
         # the one request behind the describe: the run begins. From here on the client only receives
         client.call('control.runUntil', {})
@@ -781,7 +797,7 @@ def mode_hash_listening(args):
     states = [tick['executionState'] for tick in ticks]
     last = max([i for i, state in enumerate(states) if state['state'] == 'running'], default=-1)
     running = ticks[:last + 1]
-    full = [tick for tick in running if sorted(tick['registers']) == sorted(with_registers)]
+    full = [tick for tick in running if full_running_tick(tick, counts)[0]]
     stops = [state for state in states[:last + 1] if state['state'] != 'running']
     check(not stops, 'the target stopped while the client listened: %d of the ticks in front of the last running one are paused (%r)'
           % (len(stops), stops[:3]), run)
@@ -791,14 +807,19 @@ def mode_hash_listening(args):
     check(len(full) >= 10, 'the listening client got %d full ticks while the target ran (%d ticks in all): too few to say anything about a run '
           'that is read' % (len(full), len(ticks)), run)
     values = sum(len(entries) for entries in full[-1]['registers'].values())
-    check(values == registers, 'a full running tick has %d register values, the device tree %d registers' % (values, registers), run)
+    registers = full_running_tick(full[-1], counts)[1]
+    check(values == registers, 'a full running tick has %d register values, the device tree %d registers on its %d paths'
+          % (values, registers, len(full[-1]['registers'])), run)
+    stale = sum(1 for tick in full if tick['executionState'].get('registersStale'))
 
     line = exit_line(run.out)
     check(line is not None and 'hash' in line, 'the run with the listening client printed no state hash', run)
     check(run.code == 0, 'exit code %s' % run.code, run)
     same_hash(base, line, 'the run with a client that only listens and the run with the server off', run)
-    print('a client that only listens, sent %d full ticks of %d registers on %d paths while the target ran, and server off: both runs end in '
-          'hash=%s after %s vblanks' % (len(full), registers, len(with_registers), line['hash'], line['vblanks']))
+    print('a client that only listens, sent %d full ticks of %d registers on %d paths while the target ran%s, and server off: both runs end in '
+          'hash=%s after %s vblanks' % (len(full), registers, len(full[-1]['registers']),
+                                        ' (%d of them say registersStale and are without %s)' % (stale, SH4_CONTEXT_PATH) if stale else '',
+                                        line['hash'], line['vblanks']))
 
 
 def main():
