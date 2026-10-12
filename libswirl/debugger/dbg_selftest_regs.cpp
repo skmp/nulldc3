@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -231,29 +232,40 @@ bool Registered(const RegisterStruct& slot)
 	return (slot.flags & access) != (u32)RIO_NO_ACCESS;
 }
 
+// The rows of the tables for the on-chip registers by address (P4), from one walk over every row of every node.
+// Which nodes have such rows is not asked: dbg::regs answers that for the walk of its own (the nodes of the
+// modules, known by their first row), and this is what that walk is compared with
+const std::map<u32, const regs::Register*>& MmrRows()
+{
+	static const std::map<u32, const regs::Register*> rows = [] {
+		std::map<u32, const regs::Register*> by_address;
+		u32 count;
+		const regs::Node* nodes = regs::Nodes(&count);
+
+		for (u32 i = 0; i < count; i++)
+		{
+			for (u32 r = 0; r < nodes[i].registerCount; r++)
+			{
+				const regs::Register& reg = nodes[i].registers[r];
+
+				// the first row of an address, in the order of the tables
+				if (regs::KeySource(reg.key) == regs::kSrcSh4Mmr)
+					by_address.emplace(reg.addr, &reg);
+			}
+		}
+
+		return by_address;
+	}();
+
+	return rows;
+}
+
 // The row of the tables for an on-chip register address (P4), null when there is none.
 const regs::Register* MmrRow(u32 p4)
 {
-	u32 count;
-	const regs::Node* nodes = regs::Nodes(&count);
+	const auto row = MmrRows().find(p4);
 
-	for (u32 i = 0; i < count; i++)
-	{
-		// the on-chip registers are on the nodes of the modules, which have no other rows (the table test holds
-		// that): the nodes of the channels are not walked for every byte of a window
-		if (nodes[i].registerCount == 0 || regs::KeySource(nodes[i].registers[0].key) != regs::kSrcSh4Mmr)
-			continue;
-
-		for (u32 r = 0; r < nodes[i].registerCount; r++)
-		{
-			const regs::Register& reg = nodes[i].registers[r];
-
-			if (regs::KeySource(reg.key) == regs::kSrcSh4Mmr && reg.addr == p4)
-				return &reg;
-		}
-	}
-
-	return nullptr;
+	return row == MmrRows().end() ? nullptr : row->second;
 }
 
 bool ReadRegister(const char* path, const char* name, u64* value)
