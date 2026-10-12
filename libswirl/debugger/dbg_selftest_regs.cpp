@@ -202,7 +202,7 @@ size_t FirstDifference(const std::vector<u8>& a, const std::vector<u8>& b)
 struct ModuleSlots {
 	const char* path;
 	u32 base;					// P4
-	const RegisterStruct* slots;
+	RegisterStruct* slots;		// not const: regs.mem.read gives the slots values of its own, and puts them back
 	size_t count;
 };
 
@@ -266,6 +266,45 @@ const regs::Register* MmrRow(u32 p4)
 	const auto row = MmrRows().find(p4);
 
 	return row == MmrRows().end() ? nullptr : row->second;
+}
+
+// The slot that holds the value of an on-chip register: of a row that is plain data, when the slot is registered
+// and not behind a read function (a slot behind one holds the address of that function). Null for any other row.
+RegisterStruct* MmrDataSlot(const regs::Register& reg)
+{
+	if (regs::KeySource(reg.key) != regs::kSrcSh4Mmr || regs::KeySelector(reg.key) != regs::kMmrData)
+		return nullptr;
+
+	for (const ModuleSlots& module : Modules())
+	{
+		const u32 index = (reg.addr - module.base) / 4;
+
+		if (reg.addr < module.base || index >= module.count)
+			continue;
+
+		RegisterStruct* slot = &module.slots[index];
+
+		return Registered(*slot) && !(slot->flags & REG_RF) ? slot : nullptr;
+	}
+
+	return nullptr;
+}
+
+// What the on-chip modules write into a save state: the on-chip RAM, every slot of every module, and what each
+// module keeps beside its slots.
+std::vector<u8> OnChipState()
+{
+	SuperH4Mmr* mmr = sh4_cpu->sh4mmr.get();
+	void* data = nullptr;
+	unsigned int size = 0;
+	mmr->serialize(&data, &size);
+
+	std::vector<u8> state(size);
+	data = state.data();
+	size = 0;
+	mmr->serialize(&data, &size);
+
+	return state;
 }
 
 bool ReadRegister(const char* path, const char* name, u64* value)
@@ -1858,6 +1897,110 @@ DBG_SELFTEST(regs_mem_read, "regs.mem.read")
 			none.Add(mem::Read(Target::Sh4, addr, 4, buffer, nullptr) == 0, "%08X is readable", addr);
 
 		none.Report("the FIFO registers of the SCIF, PDTRA and addresses without a register are not readable");
+	}
+
+	// Every on-chip register, at its P4 address and at its address in area 7: as many bytes as its width has, and
+	// no byte of a row without a reader. The rows are those of a walk over every row of the tree; the memory view
+	// finds them by a walk of its own, over the nodes of the modules alone, and a module it does not walk reads as
+	// nothing. As the machine stands the bytes are what the row's reader gives, which behind a reset is 0 for
+	// most rows; then every slot that holds the value of a row is given a value of its own, and the bytes are that
+	// value: a view that takes the slot of another register shows
+	{
+		const std::vector<u8> before = OnChipState();
+		std::vector<std::pair<RegisterStruct*, u32>> kept;
+		u32 count;
+		const regs::Node* nodes = regs::Nodes(&count);
+
+		// different addresses, different values, and different low bytes for neighbours: the factor is odd
+		auto own = [](u32 p4) { return ((p4 >> 2) + 1) * 0x9E3779B1u + 0x7F4A7C15u; };
+
+		for (u32 pass = 0; pass < 2; pass++)
+		{
+			Tally view, given;
+			u32 rows = 0, with_rows = 0, no_reader = 0;
+
+			if (pass != 0)
+			{
+				for (u32 i = 0; i < count; i++)
+				{
+					for (u32 r = 0; r < nodes[i].registerCount; r++)
+					{
+						const regs::Register& reg = nodes[i].registers[r];
+						RegisterStruct* slot = MmrDataSlot(reg);
+
+						if (slot == nullptr)
+							continue;
+
+						kept.push_back({ slot, slot->data32 });
+						slot->data32 = own(reg.addr);
+					}
+				}
+			}
+
+			for (u32 i = 0; i < count; i++)
+			{
+				u32 of_node = 0;
+
+				for (u32 r = 0; r < nodes[i].registerCount; r++)
+				{
+					const regs::Register& reg = nodes[i].registers[r];
+
+					if (regs::KeySource(reg.key) != regs::kSrcSh4Mmr)
+						continue;
+
+					of_node++;
+
+					const bool reader = !(reg.flags & regs::kRegNoReader);
+					const u32 want = reader ? (reg.width + 7) / 8 : 0;
+					u64 value = 0;
+					const bool reads = regs::Read(nodes[i], r, &value, nullptr, 0);
+
+					no_reader += !reader;
+					view.Add(reads == reader, "%s.%s: Read() gives %d, the row has %s reader", nodes[i].path, reg.name, reads, reader ? "a" : "no");
+
+					if (pass != 0 && regs::KeySelector(reg.key) == regs::kMmrData)
+					{
+						const u64 mine = own(reg.addr) & WidthMask(reg.width);
+
+						given.Add(MmrDataSlot(reg) != nullptr && reads && value == mine, "%s.%s: %llX, its slot was given %08X", nodes[i].path, reg.name,
+							(unsigned long long)value, own(reg.addr));
+						value = mine;
+					}
+
+					for (u32 addr : { reg.addr, reg.addr & 0x1FFFFFFF })
+					{
+						u8 bytes[4] = { 0xEE, 0xEE, 0xEE, 0xEE };
+						u8 readable = 0xEE;
+						const u32 n = mem::Read(Target::Sh4, addr, 4, bytes, &readable);
+						const u32 word = bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | ((u32)bytes[3] << 24);
+
+						view.Add(n == want && readable == (1u << want) - 1 && word == (reader ? value : 0),
+							"%s.%s at %08X: %u of 4 bytes readable (bits %02X) holding %08X, expected %u holding %08llX", nodes[i].path, reg.name, addr, n, readable, word,
+							want, (unsigned long long)(reader ? value : 0));
+					}
+				}
+
+				rows += of_node;
+				with_rows += of_node != 0;
+			}
+
+			if (pass == 0)
+			{
+				view.Report("every on-chip register through memory, at its P4 address and in area 7: the bytes of its width holding what its reader gives, none without a reader");
+				Check(with_rows == Modules().size() && no_reader != 0 && no_reader < rows, "%u on-chip registers on %u nodes, the %zu modules; %u of them have no reader", rows,
+					with_rows, Modules().size(), no_reader);
+			}
+			else
+			{
+				view.Report("the same with a value of its own in the slot of every register that is plain data");
+				given.Report("the row of each of these reads the value its own slot was given");
+			}
+		}
+
+		for (const auto& slot : kept)
+			slot.first->data32 = slot.second;
+
+		Check(!kept.empty() && OnChipState() == before, "the %zu slots hold what they held, and the on-chip modules are as they were", kept.size());
 	}
 
 	// ends: nothing, the end of the address space, no bitmap
