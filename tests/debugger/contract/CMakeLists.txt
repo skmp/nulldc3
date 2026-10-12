@@ -36,10 +36,13 @@
 #	    debugger.contract.hash.listening .interp        the state hash of a run with a client that only receives,
 #	    debugger.contract.hash.listening.guest .interp  and is sent every register of the tree every 20 ms: on
 #	                                                    2ndmix, and on the sounding guest of the tree
+#	    debugger.contract.hash.listening.rule           what these four take for a full running tick, on ticks
+#	                                                    that are made up: no emulator is run
 #
 #	The runner needs the dreamcast-devtools checkout with its node_modules (NULLDC_DEVTOOLS_DIR) and npm:
 #	without them m1*, m2*, m2arm7*, m2writes* and hash.idlebp* are tests whose data is missing. Everything
-#	needs 2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree.
+#	needs 2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree and hash.listening.rule, which
+#	needs python3 and nothing else.
 #
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -222,3 +225,16 @@ nulldc_debugger_contract(hash.idlebp   MODE hash-idlebp   ENGINES jit interp RUN
 nulldc_debugger_contract(hash.listening       MODE hash-listening ENGINES jit interp)
 nulldc_debugger_contract(hash.listening.guest MODE hash-listening ENGINES jit interp
                          GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
+
+# What the four tests above take for a full running tick, on ticks that are made up. The context of the SH4 is not
+# complete where a running machine is read on a recompiler that does not say it is (hw/sh4/sh4_if.h,
+# SH4DBG_CTX_AT_SLICE): every running tick of such a server says registersStale and is without dc.sh4.cpu, and is
+# a full one with every other path. The interpreter and the x64 recompiler send no such tick, so on an x64 host
+# no run of the four shows what they make of one. No emulator is run: the test is there wherever python3 is
+if(Python3_Interpreter_FOUND)
+  add_test(NAME debugger.contract.hash.listening.rule
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/contract/contract.py" --mode hash-listening-rule)
+  set_tests_properties(debugger.contract.hash.listening.rule PROPERTIES TIMEOUT 60)
+else()
+  nulldc_add_skipped_test(debugger.contract.hash.listening.rule "no python3 to run tests/debugger/contract/contract.py with")
+endif()

@@ -4,6 +4,7 @@
     contract.py --emulator <devcast> --work <dir> --guest <2ndmix.elf> --mode <mode> [--engine jit|interp]
                 [--fallback] [--devtools <dreamcast-devtools checkout>] [--npm <npm>] [--idle-symbol <symbol>]
                 [--parts <scenario>:<part>[+<part>...]] [--only <scenario>[,<scenario>...]] [--require-note <text>]...
+    contract.py --mode hash-listening-rule
 
 Every emulator is run as tests/system runs one: headless, an environment of its own with fresh HOME,
 XDG_CONFIG_HOME and XDG_DATA_HOME under the work directory, no display, the real-time clock pinned, a core file
@@ -38,6 +39,9 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
     hash-listening the state hash with a client that describes itself at the StartPaused stop, lets the run begin and
                    then only receives until the run ends, with a full tick of every register of the device tree
                    every 20 ms; and with the server off
+    hash-listening-rule
+                   what the mode hash-listening takes for a full running tick, on ticks that are made up: no
+                   emulator is run, and --emulator, --work and --guest are not asked for
 """
 
 import argparse
@@ -822,13 +826,52 @@ def mode_hash_listening(args):
                                         line['hash'], line['vblanks']))
 
 
+def mode_hash_listening_rule():
+    """What full_running_tick() makes of ticks that are made up. The tick without dc.sh4.cpu is what a recompiler
+    sends whose SH4 context is not complete at the end of a slice. The one for x64 is not of that kind and the
+    interpreter is not either, so no run on an x64 host has such a tick: the rule for it is held here."""
+    counts = {'dc.sh4.cpu': 69, 'dc.aica.arm7': 41, 'dc.aica.dsp': 9, 'dc.timing': 5, 'dc.holly.spg': 9, 'dc.aica.sgc.0': 38}
+    every = sorted(counts)
+    base = ['dc.aica.arm7', 'dc.aica.dsp', 'dc.sh4.cpu', 'dc.timing']
+    all_of_them = sum(counts.values())
+
+    def without(paths, *left_out):
+        return [path for path in paths if path not in left_out]
+
+    def tick(paths, stale=None):
+        state = {'state': 'running'}
+        if stale is not None:
+            state['registersStale'] = stale
+        return {'executionState': state, 'registers': {path: [{'name': 'R%d' % n} for n in range(counts[path])] for path in paths}}
+
+    # (what the tick is, the tick, is it full, the register values of a full tick of its kind)
+    cases = [
+        ('every path', tick(every), True, all_of_them),
+        ('every path, registersStale false', tick(every, False), True, all_of_them),
+        ('registersStale, every path but dc.sh4.cpu', tick(without(every, 'dc.sh4.cpu'), True), True, all_of_them - 69),
+        ('every path but dc.sh4.cpu, and no registersStale', tick(without(every, 'dc.sh4.cpu')), False, all_of_them),
+        ('registersStale, and dc.sh4.cpu all the same', tick(every, True), False, all_of_them - 69),
+        ('registersStale, without dc.sh4.cpu and without dc.holly.spg', tick(without(every, 'dc.sh4.cpu', 'dc.holly.spg'), True), False, all_of_them - 69),
+        ('every path but dc.aica.sgc.0', tick(without(every, 'dc.aica.sgc.0')), False, all_of_them),
+        ('the four paths of every running tick', tick(base), False, all_of_them),
+        ('registersStale, the three of them that are left', tick(without(base, 'dc.sh4.cpu'), True), False, all_of_them - 69),
+    ]
+    for what, made_up, full, values in cases:
+        got = full_running_tick(made_up, counts)
+        check(got == (full, values), 'a running tick with %s is taken for %s with %d register values in a full tick of its kind; it is %s, with %d'
+              % (what, 'a full one' if got[0] else 'one that is not full', got[1], 'a full one' if full else 'not full', values))
+    print('%d made-up running ticks, each taken for what it is: a tick that says registersStale is a full one without %s and only without it, any '
+          'other with every path that has registers' % (len(cases), SH4_CONTEXT_PATH))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--emulator', required=True)
-    parser.add_argument('--work', required=True)
-    parser.add_argument('--guest', required=True, help='2ndmix.elf; m1, m2, parts, hash-listening: or another program, the guest of the tree')
+    parser.add_argument('--emulator', default='', help='every mode but hash-listening-rule')
+    parser.add_argument('--work', default='', help='every mode but hash-listening-rule')
+    parser.add_argument('--guest', default='', help='every mode but hash-listening-rule: 2ndmix.elf; m1, m2, parts, hash-listening: or another '
+                                                    'program, the guest of the tree')
     parser.add_argument('--mode', required=True, choices=('m1', 'm2', 'parts', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp',
-                                                          'hash-listening'))
+                                                          'hash-listening', 'hash-listening-rule'))
     parser.add_argument('--engine', default='jit', choices=('jit', 'interp'))
     parser.add_argument('--fallback', action='store_true', help='Debugger:ForceFallback=yes')
     parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, m2, parts, hash-idlebp)')
@@ -842,6 +885,20 @@ def main():
     parser.add_argument('--config-watchdog', type=int, default=60, help='config: seconds a run may take to end by itself')
     parser.add_argument('--keep', action='store_true', help='keep the work directory of a test that passed')
     args = parser.parse_args()
+
+    if args.mode == 'hash-listening-rule':
+        # nothing is run, and nothing is written
+        try:
+            mode_hash_listening_rule()
+        except Failed as failure:
+            print('FAIL: %s' % failure)
+            return 1
+        print('PASS')
+        return 0
+
+    missing = ['--' + name for name in ('emulator', 'work', 'guest') if not getattr(args, name)]
+    if missing:
+        parser.error('the following arguments are required: ' + ', '.join(missing))
 
     args.emulator = os.path.abspath(args.emulator)
     args.work = os.path.abspath(args.work)
