@@ -605,7 +605,8 @@ std::string BuildTick(const emu::RunState& state, bool full)
 
 	JsonOut w;
 
-	w.text.reserve(full ? 48 * 1024 : 12 * 1024);
+	// the 2940 registers of the tree are 124 KiB of a full tick, the four base paths 6 KiB
+	w.text.reserve(full ? 144 * 1024 : 12 * 1024);
 
 	w.BeginObject();
 	w.Key("jsonrpc");
@@ -915,7 +916,8 @@ std::string BuildDescribe(const emu::RunState& state)
 
 	JsonOut w;
 
-	w.text.reserve(64 * 1024);
+	// the tree is 136 KiB
+	w.text.reserve(160 * 1024);
 
 	w.BeginObject();
 

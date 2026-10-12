@@ -2,8 +2,8 @@
 	Test driver for the device tree tables (libswirl/debugger/dbg_regs_tables.cpp).
 
 	regs_test tables              the tables by themselves
-	regs_test sources LIBSWIRL    the on-chip module rows against hw/sh4/sh4_mmr.h and the system bus rows
-	                              against hw/holly/sb_regs.h, both read as text
+	regs_test sources LIBSWIRL    the on-chip module rows against hw/sh4/sh4_mmr.h, the system bus rows against
+	                              hw/holly/sb_regs.h and the PVR rows against hw/pvr/pvr_regs.h, all read as text
 	regs_test panels SCHEMA       the panel ids against PANEL_IDS of the devtools UI (src/lib/debuggerSchema.ts)
 	regs_test dump                prints the tree: one line per node and per register
 
@@ -13,6 +13,7 @@
 #include "dbg_regs_private.h"
 #include "dbg_events.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
@@ -74,8 +75,9 @@ namespace
 	}
 
 	/*
-		The paths clients rely on: the 29 of the tree every client was written against, with their labels and
-		panels, and the nodes this tree adds.
+		The nodes: the 29 paths of the tree every client was written against, with their labels and panels; the
+		five that milestone M1 added; the eight that milestone M2 adds, and the channels 2 to 63 of the sound
+		generator, which the test counts out. 104 nodes, and no other.
 	*/
 	struct Anchor {
 		const char* path;
@@ -87,7 +89,7 @@ namespace
 	const Anchor anchors[] = {
 		{ "dc",             nullptr,       "Dreamcast",      "" },
 		{ "dc.sh4",         "dc",          "SH4",            "" },
-		{ "dc.sh4.cpu",     "dc.sh4",      "Core",           "sh4-disassembly sh4-memory" },
+		{ "dc.sh4.cpu",     "dc.sh4",      "Core",           "sh4-disassembly sh4-memory sh4-registers" },
 		{ "dc.sh4.pbus",    "dc.sh4",      "PBUS",           "" },
 		{ "dc.sh4.bsc",     "dc.sh4.pbus", "BSC",            "bsc-registers" },
 		{ "dc.sh4.ccn",     "dc.sh4.pbus", "CCN",            "ccn-registers" },
@@ -109,7 +111,7 @@ namespace
 		{ "dc.holly.ta",    "dc.holly",    "TA",             "holly-ta" },
 		{ "dc.holly.core",  "dc.holly",    "CORE",           "holly-core" },
 		{ "dc.aica",        "dc",          "AICA",           "" },
-		{ "dc.aica.arm7",   "dc.aica",     "ARM7",           "arm7-disassembly arm7-memory" },
+		{ "dc.aica.arm7",   "dc.aica",     "ARM7",           "arm7-disassembly arm7-memory arm7-registers" },
 		{ "dc.aica.sgc",    "dc.aica",     "SGC",            "sgc" },
 		{ "dc.aica.sgc.0",  "dc.aica.sgc", "Channel 0",      "" },
 		{ "dc.aica.sgc.1",  "dc.aica.sgc", "Channel 1",      "" },
@@ -123,6 +125,265 @@ namespace
 		{ "dc.maple",       "dc.system",   "Maple",          "" },
 		{ "dc.timing",      "dc.system",   "Timing",         "" },
 	};
+
+	const Anchor added_m2[] = {
+		{ "dc.holly.sb",      "dc.holly",    "System Bus",   "" },
+		{ "dc.holly.sb.g1",   "dc.holly.sb", "G1",           "" },
+		{ "dc.holly.sb.g2",   "dc.holly.sb", "G2",           "" },
+		{ "dc.holly.sb.pvr",  "dc.holly.sb", "PVR",          "" },
+		{ "dc.holly.sb.misc", "dc.holly.sb", "Misc",         "" },
+		{ "dc.holly.spg",     "dc.holly",    "SPG",          "" },
+		{ "dc.aica.common",   "dc.aica",     "Common",       "" },
+		{ "dc.aica.rtc",      "dc.aica",     "RTC",          "" },
+	};
+
+	const uint32_t kChannels = 64;
+
+	// The registers of every node that has some (M2-ROUND 3.6.1), the 64 channels apart: 38 each
+	const struct { const char* path; uint32_t registers; } node_rows[] = {
+		{ "dc", 2 }, { "dc.sh4.cpu", 69 },
+		{ "dc.sh4.bsc", 16 }, { "dc.sh4.ccn", 16 }, { "dc.sh4.cpg", 5 }, { "dc.sh4.dmac", 17 }, { "dc.sh4.intc", 5 }, { "dc.sh4.rtc", 16 },
+		{ "dc.sh4.sci", 8 }, { "dc.sh4.scif", 10 }, { "dc.sh4.tmu", 12 }, { "dc.sh4.ubc", 9 },
+		{ "dc.holly.intc", 12 }, { "dc.holly.dmac", 60 }, { "dc.holly.sb.g1", 11 }, { "dc.holly.sb.g2", 6 }, { "dc.holly.sb.pvr", 11 },
+		{ "dc.holly.sb.misc", 15 }, { "dc.holly.ta", 14 }, { "dc.holly.core", 45 }, { "dc.holly.spg", 9 },
+		{ "dc.aica.arm7", 41 }, { "dc.aica.dsp", 4 }, { "dc.aica.common", 49 }, { "dc.aica.rtc", 2 },
+		{ "dc.gdrom", 27 }, { "dc.maple", 12 }, { "dc.timing", 5 },
+	};
+
+	const uint32_t kChannelRows = 38;
+
+	// The twelve register panels: a panel shows the node that offers its id, so each is the action of one node
+	const struct { const char* id; const char* path; } register_panels[] = {
+		{ "sh4-registers", "dc.sh4.cpu" }, { "arm7-registers", "dc.aica.arm7" },
+		{ "bsc-registers", "dc.sh4.bsc" }, { "ccn-registers", "dc.sh4.ccn" }, { "cpg-registers", "dc.sh4.cpg" }, { "dmac-registers", "dc.sh4.dmac" },
+		{ "intc-registers", "dc.sh4.intc" }, { "rtc-registers", "dc.sh4.rtc" }, { "sci-registers", "dc.sh4.sci" }, { "scif-registers", "dc.sh4.scif" },
+		{ "tmu-registers", "dc.sh4.tmu" }, { "ubc-registers", "dc.sh4.ubc" },
+	};
+
+	/*
+		The register file of the AICA as the structs of hw/aica have it (CommonData_struct in aica.h,
+		ChannelCommonData in sgc_if.cpp), written out again in the notation of a data sheet: for every word the rows
+		that have bits in it, NAME<high:low> for the bits of the word. A row that the file has in two words stands in
+		both, with the bits of the row in front: SA=22:16<6:0> is the bits 22 to 16 of SA in the bits 6 to 0 of the
+		word. '!' marks a row without a reader. The tables are compared with this bit for bit.
+	*/
+	struct WordSpec {
+		uint32_t offset;
+		const char* rows;
+	};
+
+	const WordSpec common_spec[] = {
+		{ 0x2800, "MONO<15:15> MEM8MB<9:9> DAC18B<8:8> VER<7:4> MVOL<3:0>" },
+		{ 0x2804, "TESTB0<15:15> RBL<14:13> RBP<11:0>" },
+		{ 0x2808, "MOFUL<12:12> MOEMP<11:11> MIOVF<10:10> MIFUL<9:9> MIEMP<8:8> MIBUF<7:0>" },
+		{ 0x280C, "AFSET<14:14> MSLC<13:8> MOBUF<7:0>" },
+		{ 0x2810, "LP<15:15> SGC<14:13> EG<12:0>" },
+		{ 0x2814, "CA<15:0>" },
+		{ 0x2880, "DMEA=22:16<15:9> TSCD<7:5> T<4:4> MRWINH<3:0>" },
+		{ 0x2884, "DMEA=15:2<15:2>" },
+		{ 0x2888, "DGATE<15:15> DRGA<14:2>" },
+		{ 0x288C, "DDIR<15:15> DLG<14:2> DEXE<0:0>" },
+		{ 0x2890, "TACTL<10:8> TIMA<7:0>" },
+		{ 0x2894, "TBCTL<10:8> TIMB<7:0>" },
+		{ 0x2898, "TCCTL<10:8> TIMC<7:0>" },
+		{ 0x289C, "SCIEB<10:0>" },
+		{ 0x28A0, "SCIPD<10:0>" },
+		{ 0x28A4, "!SCIRE<10:0>" },
+		{ 0x28A8, "!SCILV0<7:0>" },
+		{ 0x28AC, "!SCILV1<7:0>" },
+		{ 0x28B0, "!SCILV2<7:0>" },
+		{ 0x28B4, "MCIEB<10:0>" },
+		{ 0x28B8, "MCIPD<10:0>" },
+		{ 0x28BC, "!MCIRE<10:0>" },
+		{ 0x2C00, "VREG<9:8> AR<0:0>" },
+	};
+
+	// offsets from the start of a channel, which is at channel * 0x80 of the file
+	const WordSpec channel_spec[] = {
+		{ 0x00, "KYONEX<15:15> KYONB<14:14> SSCTL<10:10> LPCTL<9:9> PCMS<8:7> SA=22:16<6:0>" },
+		{ 0x04, "SA=15:0<15:0>" },
+		{ 0x08, "LSA<15:0>" },
+		{ 0x0C, "LEA<15:0>" },
+		{ 0x10, "D2R<15:11> D1R<10:6> AR<4:0>" },
+		{ 0x14, "LPSLNK<14:14> KRS<13:10> DL<9:5> RR<4:0>" },
+		{ 0x18, "OCT<14:11> FNS<9:0>" },
+		{ 0x1C, "LFORE<15:15> LFOF<14:10> PLFOWS<9:8> PLFOS<7:5> ALFOWS<4:3> ALFOS<2:0>" },
+		{ 0x20, "IMXL<7:4> ISEL<3:0>" },
+		{ 0x24, "DISDL<11:8> DIPAN<4:0>" },
+		{ 0x28, "TL<15:8> Q<4:0>" },
+		{ 0x2C, "FLV0<12:0>" },
+		{ 0x30, "FLV1<12:0>" },
+		{ 0x34, "FLV2<12:0>" },
+		{ 0x38, "FLV3<12:0>" },
+		{ 0x3C, "FLV4<12:0>" },
+		{ 0x40, "FAR<12:8> FD1R<4:0>" },
+		{ 0x44, "FD2R<12:8> FRR<4:0>" },
+	};
+
+	// One bit of a row: where it is in the file, and which bit of the row's value it is
+	struct Bit {
+		uint32_t offset;	// of the word
+		uint32_t word_bit;
+		uint32_t value_bit;
+
+		bool operator<(const Bit& other) const
+		{
+			if (offset != other.offset)
+				return offset < other.offset;
+			if (word_bit != other.word_bit)
+				return word_bit < other.word_bit;
+			return value_bit < other.value_bit;
+		}
+
+		bool operator==(const Bit& other) const { return offset == other.offset && word_bit == other.word_bit && value_bit == other.value_bit; }
+	};
+
+	struct SpecRow {
+		std::vector<Bit> bits;
+		bool no_reader = false;
+		uint32_t first_offset = 0xFFFFFFFF;
+	};
+
+	// The rows of a list of words, by name, in the order they first occur word by word from the low bits up
+	std::map<std::string, SpecRow> ParseSpec(const WordSpec* words, size_t count, uint32_t base, std::vector<std::string>* order)
+	{
+		std::map<std::string, SpecRow> rows;
+
+		for (size_t w = 0; w < count; w++)
+		{
+			std::istringstream stream(words[w].rows);
+			std::vector<std::string> items;
+			std::string item;
+
+			while (stream >> item)
+				items.push_back(item);
+
+			// the lists are written from bit 15 down; the rows of a node stand from bit 0 up
+			for (size_t i = items.size(); i-- > 0; )
+			{
+				item = items[i];
+
+				bool no_reader = item[0] == '!';
+
+				if (no_reader)
+					item = item.substr(1);
+
+				size_t open = item.find('<'), equals = item.find('=');
+				std::string name = item.substr(0, equals != std::string::npos ? equals : open);
+				unsigned high = 0, low = 0, value_high = 0, value_low = 0;
+
+				sscanf(item.c_str() + open, "<%u:%u>", &high, &low);
+
+				if (equals != std::string::npos)
+					sscanf(item.c_str() + equals, "=%u:%u", &value_high, &value_low);
+				else
+					value_high = high - low;
+
+				SpecRow& row = rows[name];
+
+				if (row.bits.empty())
+					order->push_back(name);
+
+				row.no_reader = row.no_reader || no_reader;
+				if (row.first_offset == 0xFFFFFFFF)
+					row.first_offset = base + words[w].offset;
+
+				for (uint32_t b = 0; b <= high - low; b++)
+					row.bits.push_back({ base + words[w].offset, low + b, value_low + b });
+
+				Check(high >= low && high <= 15 && value_high - value_low == high - low, "the list of the test: %s", items[i].c_str());
+			}
+		}
+
+		for (auto& entry : rows)
+			std::sort(entry.second.bits.begin(), entry.second.bits.end());
+
+		return rows;
+	}
+
+	// The bits of a row of the AICA's register file, as its key gives them (dbg_regs_private.h)
+	std::vector<Bit> KeyBits(const Register& reg)
+	{
+		const uint32_t selector = KeySelector(reg.key);
+		const uint32_t offset = AicaFieldOffset(selector), shift = AicaFieldShift(selector);
+		std::vector<Bit> bits;
+
+		if (!AicaFieldTwoWords(selector))
+		{
+			for (uint32_t b = 0; b < reg.width; b++)
+				bits.push_back({ offset, shift + b, b });
+		}
+		else
+		{
+			for (uint32_t b = 16; b < reg.width; b++)
+				bits.push_back({ offset, shift + b - 16, b });
+			for (uint32_t b = AicaFieldLowShift(selector); b < 16; b++)
+				bits.push_back({ offset + 4, b, b });
+		}
+
+		std::sort(bits.begin(), bits.end());
+		return bits;
+	}
+
+	// The rows of a node against the rows of a list of words
+	void CheckAicaNode(const char* path, const WordSpec* words, size_t count, uint32_t base, uint32_t others)
+	{
+		const Node* node = Find(path);
+		std::vector<std::string> order;
+		std::map<std::string, SpecRow> spec = ParseSpec(words, count, base, &order);
+
+		if (!Check(node != nullptr, "%s is missing", path))
+			return;
+
+		Check(node->registerCount == spec.size() + others, "%s has %u registers, the register file has %zu fields there%s", path, node->registerCount, spec.size(),
+			others ? " and the node two that are not in the file" : "");
+
+		std::map<uint32_t, uint32_t> used;		// word offset -> bits that a row has
+		uint32_t at = 0;
+
+		for (uint32_t r = 0; r < node->registerCount; r++)
+		{
+			const Register& reg = node->registers[r];
+
+			if (KeySource(reg.key) != kSrcAica)
+				continue;
+
+			// in the order of the file
+			if (at < order.size())
+				Check(order[at] == reg.name, "%s: field %u is %s, the register file has %s there", path, at, reg.name, order[at].c_str());
+			at++;
+
+			std::vector<Bit> bits = KeyBits(reg);
+
+			// inside its word, and no bit of a word in two rows
+			for (const Bit& bit : bits)
+			{
+				Check(bit.word_bit <= 15 && bit.value_bit < reg.width, "%s.%s: bit %u of the word at %04X, bit %u of %u", path, reg.name, bit.word_bit, bit.offset,
+					bit.value_bit, reg.width);
+				Check((used[bit.offset] & (1u << (bit.word_bit & 15))) == 0, "%s.%s: bit %u of the word at %04X is in another row as well", path, reg.name, bit.word_bit,
+					bit.offset);
+				used[bit.offset] |= 1u << (bit.word_bit & 15);
+			}
+
+			auto found = spec.find(reg.name);
+
+			if (!Check(found != spec.end(), "%s.%s: the register file has no such field", path, reg.name))
+				continue;
+
+			const SpecRow& want = found->second;
+
+			Check(bits == want.bits, "%s.%s: its bits are not those of the register file (%zu bits from bit %u of the word at %04X; expected %zu from bit %u of %04X)", path,
+				reg.name, bits.size(), bits.empty() ? 0 : bits[0].word_bit, bits.empty() ? 0 : bits[0].offset, want.bits.size(), want.bits[0].word_bit, want.bits[0].offset);
+			const uint32_t top = std::max_element(want.bits.begin(), want.bits.end(), [](const Bit& a, const Bit& b) { return a.value_bit < b.value_bit; })->value_bit;
+
+			Check(reg.width == top + 1, "%s.%s: width %u, the highest bit of the register is bit %u", path, reg.name, reg.width, top);
+			Check(reg.addr == 0x00700000 + want.first_offset, "%s.%s: address %08X, its word is at %08X", path, reg.name, reg.addr, 0x00700000 + want.first_offset);
+			Check(((reg.flags & kRegNoReader) != 0) == want.no_reader, "%s.%s: flags %02X, %s", path, reg.name, reg.flags,
+				want.no_reader ? "the register has no reader" : "the register reads");
+		}
+
+		Check(at == spec.size(), "%s has %u fields of the register file, expected %zu", path, at, spec.size());
+	}
 
 	std::string Actions(const Node& node)
 	{
@@ -229,6 +490,49 @@ namespace
 			Check(reg.width == 32, "%s.%s: a system bus register is 32 bits wide", path, name);
 			Check(reg.addr >= 0x005F6800 && reg.addr <= 0x005F7CFC && (reg.addr & 3) == 0, "%s.%s: address %08X", path, name, reg.addr);
 			Check(reg.addr < 0x005F7000 || reg.addr > 0x005F70FF, "%s.%s: address %08X is in the GD-ROM block", path, name, reg.addr);
+			Check(selector == 0, "%s.%s: a system bus register has no selector", path, name);
+			break;
+
+		case kSrcPvr:
+			Check(reg.width == 32 && reg.flags == 0 && selector == 0, "%s.%s: a PVR register is 32 bits wide, plain data and has no selector", path, name);
+			Check(reg.addr >= 0x005F8000 && reg.addr <= 0x005F9FFC && (reg.addr & 3) == 0, "%s.%s: address %08X", path, name, reg.addr);
+			break;
+
+		case kSrcAica:
+		{
+			const uint32_t offset = AicaFieldOffset(selector), shift = AicaFieldShift(selector);
+
+			Check((selector & ~kAicaFieldSelectorMask) == 0, "%s.%s: selector %06X", path, name, selector);
+			Check((reg.flags & ~kRegNoReader) == 0, "%s.%s: a field of the AICA's register file is plain data, or has no reader (flags %02X)", path, name, reg.flags);
+			Check(reg.addr == 0x00700000 + offset, "%s.%s: address %08X, its word is at offset %04X of the file", path, name, reg.addr, offset);
+
+			if (AicaFieldTwoWords(selector))
+			{
+				Check(reg.width > 16 && shift + (reg.width - 16) <= 16 && offset + 4 < 0x8000, "%s.%s: %u bits of two words, from bit %u of the first", path, name, reg.width,
+					shift);
+			}
+			else
+			{
+				Check(reg.width >= 1 && shift + reg.width <= 16, "%s.%s: %u bits from bit %u of a word of 16", path, name, reg.width, shift);
+				Check(AicaFieldLowShift(selector) == 0, "%s.%s: a field of one word with the selector of a second", path, name);
+			}
+			break;
+		}
+
+		case kSrcArm7Intc:
+			Check(selector < kArm7IntcRegCount && strcmp(path, "dc.aica.common") == 0, "%s.%s: a register of the ARM7's interrupt controller (selector %u)", path, name,
+				selector);
+			Check(reg.width == 8 && reg.addr == kNoAddr && reg.flags == kRegComputed, "%s.%s: 8 bits, no address, computed", path, name);
+			break;
+
+		case kSrcRtc:
+			Check(selector < kRtcRegCount && strcmp(path, "dc.aica.rtc") == 0, "%s.%s: a register of the clock (selector %u)", path, name, selector);
+			Check(reg.flags == kRegComputed && (reg.addr & 0xFFFFFFF3) == 0x00710000, "%s.%s: computed, at 0x00710000", path, name);
+			break;
+
+		case kSrcGdrom:
+			Check(selector < kGdromRegCount && strcmp(path, "dc.gdrom") == 0, "%s.%s: a member of the drive's snapshot (selector %u)", path, name, selector);
+			Check(reg.flags == kRegComputed && reg.addr == kNoAddr && reg.width >= 1 && reg.width <= 32, "%s.%s: computed, no address, up to 32 bits", path, name);
 			break;
 
 		case kSrcArm7:
@@ -266,8 +570,10 @@ namespace
 		uint32_t count = 0;
 		const Node* nodes = Nodes(&count);
 
-		Check(nodes != nullptr && count == sizeof(anchors) / sizeof(anchors[0]) + sizeof(added) / sizeof(added[0]),
-			"%u nodes, expected %zu", count, sizeof(anchors) / sizeof(anchors[0]) + sizeof(added) / sizeof(added[0]));
+		// 29 + 5 + 8, and the channels 2 to 63: 0 and 1 are among the 29
+		const size_t expected_nodes = sizeof(anchors) / sizeof(anchors[0]) + sizeof(added) / sizeof(added[0]) + sizeof(added_m2) / sizeof(added_m2[0]) + kChannels - 2;
+
+		Check(nodes != nullptr && count == expected_nodes && expected_nodes == 104, "%u nodes, expected %zu, which is 104", count, expected_nodes);
 		if (nodes == nullptr)
 			return;
 
@@ -396,15 +702,31 @@ namespace
 				Check(listed[(size_t)id] == 1, "event %s is listed %d times", EventTable()[id].name, listed[(size_t)id]);
 		}
 
-		// the paths clients rely on
-		for (const Anchor* list : { anchors, added })
+		// the paths clients rely on, and with them every node of the tree: its parent, its label, its actions
 		{
-			size_t n = list == anchors ? sizeof(anchors) / sizeof(anchors[0]) : sizeof(added) / sizeof(added[0]);
+			std::vector<Anchor> all(anchors, anchors + sizeof(anchors) / sizeof(anchors[0]));
+			std::vector<std::string> channel_paths(kChannels), channel_labels(kChannels);
 
-			for (size_t i = 0; i < n; i++)
+			all.insert(all.end(), added, added + sizeof(added) / sizeof(added[0]));
+			all.insert(all.end(), added_m2, added_m2 + sizeof(added_m2) / sizeof(added_m2[0]));
+
+			for (uint32_t channel = 0; channel < kChannels; channel++)
 			{
-				const Anchor& anchor = list[i];
+				channel_paths[channel] = "dc.aica.sgc." + std::to_string(channel);
+				channel_labels[channel] = "Channel " + std::to_string(channel);
+
+				// the first two are among the 29
+				if (channel >= 2)
+					all.push_back({ channel_paths[channel].c_str(), "dc.aica.sgc", channel_labels[channel].c_str(), "" });
+			}
+
+			std::set<std::string> known;
+
+			for (const Anchor& anchor : all)
+			{
 				const Node* node = Find(anchor.path);
+
+				Check(known.insert(anchor.path).second, "the list of the test has %s twice", anchor.path);
 
 				if (!Check(node != nullptr, "%s is missing", anchor.path))
 					continue;
@@ -414,6 +736,62 @@ namespace
 				Check((node->parent == nullptr) == (anchor.parent == nullptr) && (anchor.parent == nullptr || strcmp(node->parent, anchor.parent) == 0),
 					"%s: parent %s", anchor.path, node->parent ? node->parent : "(none)");
 			}
+
+			for (uint32_t i = 0; i < count; i++)
+				Check(known.count(nodes[i].path) == 1, "%s is a node the test does not know", nodes[i].path);
+
+			// the channels stand one behind the other, in their order, each with the label and the description of its number
+			const Node* first = Find("dc.aica.sgc.0");
+
+			for (uint32_t channel = 0; first != nullptr && channel < kChannels; channel++)
+			{
+				const bool inside = first + channel < nodes + count;
+
+				Check(inside && channel_paths[channel] == first[channel].path && "SGC " + channel_labels[channel] == first[channel].description,
+					"the node %u behind dc.aica.sgc.0 is %s (\"%s\")", channel, inside ? first[channel].path : "none", inside ? first[channel].description : "");
+			}
+		}
+
+		// how many registers a node has: the table of the round, and no register on any other node
+		{
+			std::map<std::string, uint32_t> expected;
+			uint32_t total = 0;
+
+			for (const auto& row : node_rows)
+				expected[row.path] = row.registers;
+			for (uint32_t channel = 0; channel < kChannels; channel++)
+				expected["dc.aica.sgc." + std::to_string(channel)] = kChannelRows;
+
+			for (uint32_t i = 0; i < count; i++)
+			{
+				const uint32_t want = expected.count(nodes[i].path) ? expected[nodes[i].path] : 0;
+
+				Check(nodes[i].registerCount == want, "%s has %u registers, expected %u", nodes[i].path, nodes[i].registerCount, want);
+				total += nodes[i].registerCount;
+			}
+
+			Check(total == 2940, "the tree has %u registers, expected 2940", total);
+		}
+
+		// a register panel is the action of one node
+		for (const auto& panel : register_panels)
+		{
+			uint32_t offered = 0;
+			std::string by;
+
+			for (uint32_t i = 0; i < count; i++)
+			{
+				for (uint32_t a = 0; a < nodes[i].actionCount; a++)
+				{
+					if (strcmp(nodes[i].actions[a], panel.id) == 0)
+					{
+						offered++;
+						by = nodes[i].path;
+					}
+				}
+			}
+
+			Check(offered == 1 && by == panel.path, "the panel %s is offered by %u nodes (%s), expected by %s alone", panel.id, offered, by.c_str(), panel.path);
 		}
 
 		// the two levels a client shows unfolded carry no registers, except for the root
@@ -435,6 +813,15 @@ namespace
 			{ "dc.timing", "SH4_BACKEND", 0 }, { "dc.timing", "SH4_DEBUG_ENGINE", 0 },
 			{ "dc", "SYSCLK", 0 }, { "dc", "BUILD", 0 },
 			{ "dc.holly.intc", "SB_ISTNRM", 32 }, { "dc.holly.intc", "SB_IML6ERR", 32 },
+			// milestone M2
+			{ "dc.holly.dmac", "SB_C2DST", 32 }, { "dc.holly.dmac", "SB_DDLEND", 32 }, { "dc.holly.sb.misc", "SB_FFST", 32 }, { "dc.maple", "SB_MDST", 32 },
+			{ "dc.holly.ta", "TA_LIST_INIT", 32 }, { "dc.holly.core", "ID", 32 }, { "dc.holly.core", "STARTRENDER", 32 }, { "dc.holly.spg", "SPG_STATUS", 32 },
+			{ "dc.aica.common", "MVOL", 4 }, { "dc.aica.common", "MONO", 1 }, { "dc.aica.common", "T", 1 }, { "dc.aica.common", "TSCD", 3 },
+			{ "dc.aica.common", "DMEA", 23 }, { "dc.aica.common", "SCIPD", 11 }, { "dc.aica.common", "SCILV0", 8 }, { "dc.aica.common", "AR", 1 },
+			{ "dc.aica.common", "L", 8 }, { "dc.aica.common", "M", 8 }, { "dc.aica.common", "RBP", 12 }, { "dc.aica.common", "RBL", 2 },
+			{ "dc.aica.rtc", "SECONDS", 32 }, { "dc.aica.rtc", "WRITE_ENABLE", 1 },
+			{ "dc.aica.sgc.0", "SA", 23 }, { "dc.aica.sgc.0", "KYONB", 1 }, { "dc.aica.sgc.63", "AR", 5 }, { "dc.aica.sgc.63", "FD2R", 5 },
+			{ "dc.gdrom", "STATUS", 8 }, { "dc.gdrom", "PACKET_8_11", 32 },
 		};
 
 		for (const auto& want : named)
@@ -512,7 +899,89 @@ namespace
 
 			Check(sh4_rows == 69 && arm7_rows == 40, "kRegWritable is on the 69 rows of dc.sh4.cpu and on the 40 rows of dc.aica.arm7 that are not ENABLED (%u, %u)", sh4_rows,
 				arm7_rows);
-			Check(other_rows == 0, "no other row has kRegWritable (%u have, the first is %s)", other_rows, first_other.c_str());
+			Check(other_rows == 0, "no other row has kRegWritable: no register of a device has a writer (%u have, the first is %s)", other_rows, first_other.c_str());
+		}
+
+		// The register file of the AICA: the fields of the common block and of every channel, bit for bit; the two
+		// rows of dc.aica.common that are not in the file; and no field of the file on any other node
+		{
+			CheckAicaNode("dc.aica.common", common_spec, sizeof(common_spec) / sizeof(common_spec[0]), 0, 2);
+
+			for (uint32_t channel = 0; channel < kChannels; channel++)
+				CheckAicaNode(("dc.aica.sgc." + std::to_string(channel)).c_str(), channel_spec, sizeof(channel_spec) / sizeof(channel_spec[0]), channel * 0x80, 0);
+
+			const Node* common = Find("dc.aica.common");
+			const Register* level = RegisterOf("dc.aica.common", "L");
+			const Register* service = RegisterOf("dc.aica.common", "M");
+
+			Check(level && level->key == MakeKey(kSrcArm7Intc, kArm7IntcLevel) && service && service->key == MakeKey(kSrcArm7Intc, kArm7IntcService),
+				"L and M of dc.aica.common are the two registers of the ARM7's interrupt controller");
+			Check(common && common->registerCount >= 2 && level == &common->registers[common->registerCount - 2] && service == &common->registers[common->registerCount - 1],
+				"and stand behind the fields of the register file");
+
+			// what the file has at 0x2D00 and 0x2D04 is no row
+			uint32_t elsewhere = 0, controller_words = 0;
+
+			for (uint32_t i = 0; i < count; i++)
+			{
+				std::string path = nodes[i].path;
+				const bool aica_node = path == "dc.aica.common" || path.rfind("dc.aica.sgc.", 0) == 0;
+
+				for (uint32_t r = 0; r < nodes[i].registerCount; r++)
+				{
+					const Register& reg = nodes[i].registers[r];
+
+					if (KeySource(reg.key) != kSrcAica)
+						continue;
+
+					elsewhere += !aica_node;
+
+					for (const Bit& bit : KeyBits(reg))
+						controller_words += bit.offset >= 0x2D00;
+				}
+			}
+
+			Check(elsewhere == 0, "%u fields of the AICA's register file are on other nodes than dc.aica.common and the channels", elsewhere);
+			Check(controller_words == 0, "%u bits of rows are in the words of the file at 0x2D00 and above", controller_words);
+		}
+
+		// The rows of the snapshots: every member once, in the order of the snapshot
+		{
+			const struct { const char* path; Source source; uint32_t members; } snapshots[] = {
+				{ "dc.gdrom", kSrcGdrom, kGdromRegCount }, { "dc.aica.rtc", kSrcRtc, kRtcRegCount },
+			};
+
+			for (const auto& snapshot : snapshots)
+			{
+				const Node* node = Find(snapshot.path);
+				bool in_order = node != nullptr && node->registerCount == snapshot.members;
+
+				for (uint32_t r = 0; in_order && r < node->registerCount; r++)
+					in_order = node->registers[r].key == MakeKey(snapshot.source, r);
+
+				Check(in_order, "%s has the %u members of its snapshot, each once and in its order", snapshot.path, snapshot.members);
+			}
+
+			const struct { const char* name; uint32_t width; } gdrom[] = {
+				{ "STATE", 32 }, { "DISC_TYPE", 32 }, { "STATUS", 8 }, { "ERROR", 8 }, { "INTERRUPT_REASON", 8 }, { "FEATURES", 8 }, { "SECTOR_COUNT", 8 },
+				{ "SECTOR_NUMBER", 8 }, { "DRIVE_SELECT", 8 }, { "ATA_COMMAND", 8 }, { "BYTE_COUNT", 16 }, { "PACKET_0_3", 32 }, { "PACKET_4_7", 32 },
+				{ "PACKET_8_11", 32 }, { "SENSE_KEY", 8 }, { "SENSE_ASC", 8 }, { "SENSE_ASCQ", 8 }, { "CDDA_PLAYING", 1 }, { "CDDA_REPEATS", 32 },
+				{ "CDDA_CURRENT", 32 }, { "CDDA_START", 32 }, { "CDDA_END", 32 }, { "READ_START_SECTOR", 32 }, { "READ_REMAINING_SECTORS", 32 },
+				{ "READ_SECTOR_TYPE", 32 }, { "PIO_INDEX", 32 }, { "PIO_SIZE", 32 },
+			};
+			const Node* drive = Find("dc.gdrom");
+
+			for (uint32_t r = 0; drive != nullptr && r < drive->registerCount && r < sizeof(gdrom) / sizeof(gdrom[0]); r++)
+			{
+				Check(strcmp(drive->registers[r].name, gdrom[r].name) == 0 && drive->registers[r].width == gdrom[r].width, "dc.gdrom: register %u is %s, %u bits; expected %s, %u",
+					r, drive->registers[r].name, drive->registers[r].width, gdrom[r].name, gdrom[r].width);
+			}
+
+			const Register* seconds = RegisterOf("dc.aica.rtc", "SECONDS");
+			const Register* enable = RegisterOf("dc.aica.rtc", "WRITE_ENABLE");
+
+			Check(seconds && seconds->width == 32 && seconds->addr == 0x00710000 && seconds->key == MakeKey(kSrcRtc, kRtcSeconds), "dc.aica.rtc.SECONDS is the 32 bits of the counter");
+			Check(enable && enable->width == 1 && enable->addr == 0x00710008 && enable->key == MakeKey(kSrcRtc, kRtcWriteEnable), "dc.aica.rtc.WRITE_ENABLE is one bit");
 		}
 
 		// the nodes of a running tick
@@ -568,7 +1037,13 @@ namespace
 			{ "dc.sh4.tmu", "TCPR2", kRegComputed }, { "dc.sh4.intc", "IPRD", kRegComputed }, { "dc.sh4.ccn", "CPU_VERSION", kRegComputed },
 			{ "dc.sh4.ccn", "PRR", kRegComputed }, { "dc.sh4.scif", "SCFDR2", kRegComputed },
 			{ "dc.sh4.scif", "SCFSR2", kRegNoReader }, { "dc.sh4.scif", "SCFRDR2", kRegNoReader }, { "dc.sh4.bsc", "PDTRA", kRegNoReader },
-			{ "dc.holly.intc", "SB_ISTNRM", kRegComputed },
+			{ "dc.holly.intc", "SB_ISTNRM", kRegComputed }, { "dc.holly.sb.misc", "SB_FFST", kRegComputed },
+			// the system bus registers that are write-only as the emulator has them
+			{ "dc.holly.sb.g1", "SB_G1RRC", kRegNoReader }, { "dc.holly.sb.g1", "SB_G1RWC", kRegNoReader }, { "dc.holly.sb.g1", "SB_G1FRC", kRegNoReader },
+			{ "dc.holly.sb.g1", "SB_G1FWC", kRegNoReader }, { "dc.holly.sb.g1", "SB_G1CRC", kRegNoReader }, { "dc.holly.sb.g1", "SB_G1CWC", kRegNoReader },
+			{ "dc.holly.sb.g1", "SB_G1GDRC", kRegNoReader }, { "dc.holly.sb.g1", "SB_G1GDWC", kRegNoReader }, { "dc.holly.sb.g1", "SB_G1CRDYC", kRegNoReader },
+			{ "dc.holly.sb.g1", "SB_GDAPRO", kRegNoReader }, { "dc.holly.sb.g2", "SB_G2APRO", kRegNoReader }, { "dc.holly.sb.pvr", "SB_PDAPRO", kRegNoReader },
+			{ "dc.holly.sb.misc", "SB_SFRES", kRegNoReader }, { "dc.maple", "SB_MDAPRO", kRegNoReader },
 			// the SCI is not emulated
 			{ "dc.sh4.sci", "SCSMR1", kRegNoReader }, { "dc.sh4.sci", "SCBRR1", kRegNoReader }, { "dc.sh4.sci", "SCSCR1", kRegNoReader },
 			{ "dc.sh4.sci", "SCTDR1", kRegNoReader }, { "dc.sh4.sci", "SCSSR1", kRegNoReader }, { "dc.sh4.sci", "SCRDR1", kRegNoReader },
@@ -625,13 +1100,18 @@ namespace
 		    //CCN PTEH 0xFF000000 0x1F000000 32 ...
 		    #define CCN_PTEH_addr 0x1F000000
 
-		in sh4_mmr.h and
+		in sh4_mmr.h,
 
 		    //0x005F6900    SB_ISTNRM   RW  Normal interrupt status
 		    #define SB_ISTNRM_addr 0x005F6900
 
-		in sb_regs.h.
+		in sb_regs.h and
+
+		    #define SPG_STATUS_addr         0x0000010C // R   Sync pulse generator status
+
+		in pvr_regs.h.
 	*/
+
 	bool ReadLines(const std::string& path, std::vector<std::string>* lines)
 	{
 		std::ifstream file(path);
@@ -660,6 +1140,39 @@ namespace
 			words.push_back(word);
 
 		return words;
+	}
+
+	// The system bus registers of every node that has some, in its order (M2-ROUND 3.6.1). "G2:<ch>" stands for the
+	// eleven registers of a DMA channel of the G2 bus
+	const struct { const char* path; const char* registers; } sb_nodes[] = {
+		{ "dc.holly.intc", "SB_ISTNRM SB_ISTEXT SB_ISTERR SB_IML2NRM SB_IML2EXT SB_IML2ERR SB_IML4NRM SB_IML4EXT SB_IML4ERR SB_IML6NRM SB_IML6EXT SB_IML6ERR" },
+		{ "dc.holly.dmac", "SB_C2DSTAT SB_C2DLEN SB_C2DST SB_SDSTAW SB_SDBAAW SB_SDWLT SB_SDLAS SB_SDST SB_SDDIV "
+		                   "SB_GDSTAR SB_GDLEN SB_GDDIR SB_GDEN SB_GDST SB_GDSTARD SB_GDLEND G2:AD G2:E1 G2:E2 G2:DD" },
+		{ "dc.holly.sb.g1", "SB_G1RRC SB_G1RWC SB_G1FRC SB_G1FWC SB_G1CRC SB_G1CWC SB_G1GDRC SB_G1GDWC SB_G1SYSM SB_G1CRDYC SB_GDAPRO" },
+		{ "dc.holly.sb.g2", "SB_G2ID SB_G2DSTO SB_G2TRTO SB_G2MDMTO SB_G2MDMW SB_G2APRO" },
+		{ "dc.holly.sb.pvr", "SB_PDSTAP SB_PDSTAR SB_PDLEN SB_PDDIR SB_PDTSEL SB_PDEN SB_PDST SB_PDAPRO SB_PDSTAPD SB_PDSTARD SB_PDLEND" },
+		{ "dc.holly.sb.misc", "SB_DBREQM SB_BAVLWC SB_C2DPRYC SB_C2DMAXL SB_TFREM SB_LMMODE0 SB_LMMODE1 SB_FFST SB_SFRES SB_SBREV SB_RBSPLT SB_PDTNRM SB_PDTEXT "
+		                      "SB_G2DTNRM SB_G2DTEXT" },
+		{ "dc.maple", "SB_MDSTAR SB_MDTSEL SB_MDEN SB_MDST SB_MSYS SB_MST SB_MSHTCL SB_MDAPRO SB_MMSEL SB_MTXDAD SB_MRXDAD SB_MRXDBD" },
+	};
+
+	std::vector<std::string> SbNames(const char* list)
+	{
+		std::vector<std::string> names;
+
+		for (const std::string& word : Words(list))
+		{
+			if (word.rfind("G2:", 0) != 0)
+			{
+				names.push_back(word);
+				continue;
+			}
+
+			for (const char* part : { "STAG", "STAR", "LEN", "DIR", "TSEL", "EN", "ST", "SUSP", "STAGD", "STARD", "LEND" })
+				names.push_back("SB_" + word.substr(3) + part);
+		}
+
+		return names;
 	}
 
 	void TestSources(const std::string& libswirl)
@@ -783,12 +1296,127 @@ namespace
 		// the interrupt registers of the system bus: three status registers and three masks for each of three levels
 		const Node* intc = Find("dc.holly.intc");
 
-		Check(intc != nullptr && intc->registerCount == 12 && sb_rows == 12, "dc.holly.intc has the 12 interrupt registers, and no other node has system bus registers");
+		Check(intc != nullptr && intc->registerCount == 12, "dc.holly.intc has the 12 interrupt registers");
 
 		for (const auto& entry : sb)
 		{
 			if (entry.first.rfind("SB_IST", 0) == 0 || entry.first.rfind("SB_IML", 0) == 0)
 				Check(RegisterOf("dc.holly.intc", entry.first.c_str()) != nullptr, "dc.holly.intc has no %s", entry.first.c_str());
+		}
+
+		// Every register of sb_regs.h is a row, of one node: the nodes that have system bus registers have these, in
+		// this order, and nothing else; no other node has one
+		std::map<std::string, uint32_t> rows_of;
+		std::set<std::string> sb_paths;
+
+		for (const auto& group : sb_nodes)
+		{
+			const Node* node = Find(group.path);
+			const std::vector<std::string> names = SbNames(group.registers);
+
+			sb_paths.insert(group.path);
+
+			if (!Check(node != nullptr, "%s is missing", group.path))
+				continue;
+
+			Check(node->registerCount == names.size(), "%s has %u registers, expected the %zu system bus registers of its group", group.path, node->registerCount,
+				names.size());
+
+			for (uint32_t r = 0; r < node->registerCount; r++)
+			{
+				const Register& reg = node->registers[r];
+
+				Check(KeySource(reg.key) == kSrcSb, "%s.%s is no system bus register", group.path, reg.name);
+				if (r < names.size())
+					Check(names[r] == reg.name, "%s: register %u is %s, expected %s", group.path, r, reg.name, names[r].c_str());
+				rows_of[reg.name]++;
+			}
+		}
+
+		for (uint32_t i = 0; i < count; i++)
+		{
+			for (uint32_t r = 0; r < nodes[i].registerCount && sb_paths.count(nodes[i].path) == 0; r++)
+				Check(KeySource(nodes[i].registers[r].key) != kSrcSb, "%s.%s: a system bus register on a node that has none", nodes[i].path, nodes[i].registers[r].name);
+		}
+
+		for (const auto& entry : sb)
+			Check(rows_of[entry.first] == 1, "%s of sb_regs.h is a row %u times", entry.first.c_str(), rows_of[entry.first]);
+
+		Check(sb.size() == 127 && sb_rows == 127, "sb_regs.h defines %zu registers and the tree has %u system bus rows: 127 each, the 12 interrupt registers and 115 more",
+			sb.size(), sb_rows);
+
+		// the PVR's register file: every NAME_addr of pvr_regs.h but the bounds of its three tables is a row, with
+		// that name and 0x005F8000 + its offset as address, on the node its prefix gives, in the order of the header
+		lines.clear();
+
+		if (!Check(ReadLines(libswirl + "/hw/pvr/pvr_regs.h", &lines), "cannot read %s/hw/pvr/pvr_regs.h", libswirl.c_str()))
+			return;
+
+		std::map<std::string, std::vector<std::pair<std::string, uint32_t>>> pvr;		// by node
+		std::vector<std::string> tables;
+		uint32_t pvr_defs = 0;
+
+		for (const std::string& line : lines)
+		{
+			std::vector<std::string> define = Words(line);
+
+			if (define.size() < 3 || define[0] != "#define" || define[1].size() < 6 || define[1].compare(define[1].size() - 5, 5, "_addr") != 0)
+				continue;
+
+			std::string symbol = define[1].substr(0, define[1].size() - 5);
+
+			// the fog table, the object list pointers and the palette are no rows
+			if ((symbol.size() > 6 && symbol.compare(symbol.size() - 6, 6, "_START") == 0) || (symbol.size() > 4 && symbol.compare(symbol.size() - 4, 4, "_END") == 0))
+			{
+				tables.push_back(symbol);
+				continue;
+			}
+
+			const char* path = symbol.rfind("TA_", 0) == 0 ? "dc.holly.ta" : symbol.rfind("SPG_", 0) == 0 ? "dc.holly.spg" : "dc.holly.core";
+
+			pvr[path].push_back({ symbol, (uint32_t)strtoul(define[2].c_str(), nullptr, 16) });
+			pvr_defs++;
+		}
+
+		Check(pvr_defs == 68 && tables.size() == 6, "pvr_regs.h defines %u registers and the bounds of %zu / 2 tables, expected 68 and 3", pvr_defs, tables.size());
+
+		uint32_t pvr_rows = 0;
+
+		for (uint32_t i = 0; i < count; i++)
+		{
+			for (uint32_t r = 0; r < nodes[i].registerCount; r++)
+			{
+				if (KeySource(nodes[i].registers[r].key) != kSrcPvr)
+					continue;
+
+				pvr_rows++;
+				Check(pvr.count(nodes[i].path) == 1, "%s.%s: a PVR register on a node that has none", nodes[i].path, nodes[i].registers[r].name);
+			}
+		}
+
+		Check(pvr_rows == pvr_defs, "the tree has %u PVR rows, pvr_regs.h defines %u registers", pvr_rows, pvr_defs);
+
+		const struct { const char* path; uint32_t registers; } pvr_nodes[] = { { "dc.holly.ta", 14 }, { "dc.holly.core", 45 }, { "dc.holly.spg", 9 } };
+
+		for (const auto& group : pvr_nodes)
+		{
+			const Node* node = Find(group.path);
+			const std::vector<std::pair<std::string, uint32_t>>& header = pvr[group.path];
+
+			if (!Check(node != nullptr, "%s is missing", group.path))
+				continue;
+
+			Check(node->registerCount == header.size() && header.size() == group.registers, "%s has %u registers, pvr_regs.h defines %zu for it, expected %u", group.path,
+				node->registerCount, header.size(), group.registers);
+
+			for (uint32_t r = 0; r < node->registerCount && r < header.size(); r++)
+			{
+				const Register& reg = node->registers[r];
+
+				Check(KeySource(reg.key) == kSrcPvr, "%s.%s is no PVR register", group.path, reg.name);
+				Check(header[r].first == reg.name, "%s: register %u is %s, pvr_regs.h has %s there", group.path, r, reg.name, header[r].first.c_str());
+				Check(0x005F8000 + header[r].second == reg.addr, "%s.%s: address %08X, pvr_regs.h has the offset %04X", group.path, reg.name, reg.addr, header[r].second);
+			}
 		}
 	}
 

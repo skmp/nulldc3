@@ -729,6 +729,12 @@ struct SystemBus_impl final : SystemBus {
 		}
 		else if (flags == RIO_CONST)
 		{
+			//A read-only slot (RIO_RO and RIO_CONST are one kind) holds its value where a slot without access
+			//holds its read function, which the constructor has put into every slot before this call: a
+			//read-only register that nothing assigns reads 0, not the low half of that function's address
+			sb_regs[idx].readFunctionAddr = nullptr;
+			sb_regs[idx].data32 = 0;
+
 			sb_regs[idx].writeFunctionAddr = STATIC_FORWARD(SystemBus_impl, sbio_write_const);
 		}
 		else

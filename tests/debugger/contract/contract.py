@@ -3,7 +3,8 @@
 
     contract.py --emulator <devcast> --work <dir> --guest <2ndmix.elf> --mode <mode> [--engine jit|interp]
                 [--fallback] [--devtools <dreamcast-devtools checkout>] [--npm <npm>] [--idle-symbol <symbol>]
-                [--parts <scenario>:<part>[+<part>...]] [--require-note <text>]...
+                [--parts <scenario>:<part>[+<part>...]] [--only <scenario>[,<scenario>...]] [--require-note <text>]...
+    contract.py --mode hash-listening-rule
 
 Every emulator is run as tests/system runs one: headless, an environment of its own with fresh HOME,
 XDG_CONFIG_HOME and XDG_DATA_HOME under the work directory, no display, the real-time clock pinned, a core file
@@ -11,11 +12,15 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
 
     m1             the gate of milestone M1: the emulator at its StartPaused stop, and the contract runner of the
                    devtools UI against it (npm run contract -- --url ... --profile emulator --elf ... --milestone M1)
+    m2             the gate of milestone M2: the same emulator, and the runner with --milestone M2, which selects
+                   the scenarios of M1 and of M2 and requires each of them to pass whole. With --only it is the
+                   second run of that gate, against the sounding guest of the tree (--milestone M2 --only S00,S16),
+                   and every --require-note is handed on to the runner: a run without the note is no pass
     parts          parts of a scenario of the runner that has parts, by themselves: the same emulator, and the
                    runner with --only S00,<scenario> --parts <scenario>:<part>[+<part>...], and with every
-                   --require-note handed on to it. A package shows a part of a scenario this way while the
-                   scenario as a whole is still partial, which is no pass. The program is 2ndmix.elf, or the
-                   sounding guest of the tree
+                   --require-note handed on to it. The packages of milestone M2 showed their parts of S16 this
+                   way before the emulator had the scenario whole, which the mode m2 holds now. The program is
+                   2ndmix.elf, or the sounding guest of the tree
     grace          a client leaves the target stopped at a breakpoint that is reached in every frame; 11 s later
                    the target has run on without stopping there, and the breakpoint stops it again, unasked,
                    in front of the next client; the tables as they were, the note of the grace period in the
@@ -31,6 +36,12 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
     hash-noclient  the state hash with the server on and no client, and with the server off
     hash-idlebp    the state hash with a client connected and a muted breakpoint on a hot address, and with the
                    server off
+    hash-listening the state hash with a client that describes itself at the StartPaused stop, lets the run begin and
+                   then only receives until the run ends, with a full tick of every register of the device tree
+                   every 20 ms; and with the server off
+    hash-listening-rule
+                   what the mode hash-listening takes for a full running tick, on ticks that are made up: no
+                   emulator is run, and --emulator, --work and --guest are not asked for
 """
 
 import argparse
@@ -315,6 +326,21 @@ def run_runner(args, selection, what):
 def mode_m1(args):
     """The gate of milestone M1."""
     run_runner(args, ['--milestone', 'M1'], 'the gate of M1')
+
+
+def mode_m2(args):
+    """The gate of milestone M2: the scenarios of M1 and S16 with its five parts, each of them whole. With --only,
+    its second run, which the emulator makes with the sounding guest of the tree: there the ARM7 is held at the
+    anchor and has a bl and an interrupt handler, and the runner fails a run that lacks a note --require-note asks
+    for."""
+    selection = ['--milestone', 'M2']
+    what = 'the gate of M2'
+    if args.only:
+        selection += ['--only', args.only]
+        what = 'the gate of M2, %s' % args.only
+    for note in args.require_note:
+        selection += ['--require-note', note]
+    run_runner(args, selection, what)
 
 
 def mode_parts(args):
@@ -707,24 +733,172 @@ def mode_hash_idlebp(args):
           % (args.idle_symbol, line['hash'], line['vblanks']))
 
 
+# The periodic tick of the listening run: every 20 ms, and every one of them full
+LISTENING_KEYS = ['Debugger:TickMs=20', 'Debugger:FullTickEvery=1']
+
+# The node whose registers are the context of the SH4. A running machine is read where the SH4 gives up its
+# slice, and the context is complete there on the interpreter and on a recompiler that says so, which the one for
+# x64 does. On any other recompiler every running tick says registersStale and leaves this node out (design 2.8;
+# the runner has the same rule in its invariant I5)
+SH4_CONTEXT_PATH = 'dc.sh4.cpu'
+
+
+def full_running_tick(tick, counts):
+    """Is a running tick a full one, and how many register values does a full one of its kind carry? counts has
+    the number of registers of every path of the device tree that has registers. A full tick carries every one of
+    these paths, no other; one that says registersStale carries every one of them but dc.sh4.cpu."""
+    paths = dict(counts)
+    if tick['executionState'].get('registersStale'):
+        paths.pop(SH4_CONTEXT_PATH, None)
+    return sorted(tick['registers']) == sorted(paths), sum(paths.values())
+
+
+def mode_hash_listening(args):
+    """A client that only listens leaves the run alone. Every full tick reads every register of the device tree
+    on the emulator thread: the system bus, the PVR's register file, the register file of the AICA by field, the
+    drive. The periodic tick is made a full one every 20 ms, so that a run of seconds is read hundreds of times."""
+    _, base = hash_run(args, 'off', ['Debugger:Enabled=no'])
+
+    keys = ['config:Exit.AfterVblanks=%d' % args.vblanks, 'config:Exit.StateHash=yes'] + STARTPAUSED + LISTENING_KEYS
+    run = Run(args, 'listening').start(keys)
+    ticks = []
+    try:
+        port = run.port()
+        client = wsclient.Client('127.0.0.1', port)
+        first = client.describe()
+        check(first['executionState'].get('reason') == 'start', 'the emulator is not at its StartPaused stop: %r' % (first['executionState'],), run)
+        counts = {node['path']: len(node['registers']) for node in tree_nodes(client.shape['deviceTree']) if node.get('registers')}
+        # at a stop the context of the SH4 is complete, whatever the engine: every path
+        check(sorted(first['registers']) == sorted(counts), 'the tick behind debugger.describe is not a full one: %d of %d paths'
+              % (len(first['registers']), len(counts)), run)
+
+        # the one request behind the describe: the run begins. From here on the client only receives
+        client.call('control.runUntil', {})
+
+        def take(tick):
+            ticks.append(tick)
+            return False
+
+        try:
+            client.wait_tick(take, args.watchdog, 'the end of the run')
+            ended = True
+        except wsclient.Timeout:
+            ended = False
+        except wsclient.Error:
+            # the run ended by its exit key, and the connection with it
+            ended = True
+        check(ended, 'the run with the listening client did not end within %d s' % args.watchdog, run)
+        ended = run.wait(30)
+        check(ended, 'the emulator did not end within 30 s of the end of its connection', run)
+    except wsclient.Error as error:
+        check(False, 'the client: %s' % error, run)
+    finally:
+        if run.alive():
+            run.kill()
+    run.no_bad()
+
+    # running ticks, and behind them the ticks of the end of the run: the host stops the machine and takes it away
+    states = [tick['executionState'] for tick in ticks]
+    last = max([i for i, state in enumerate(states) if state['state'] == 'running'], default=-1)
+    running = ticks[:last + 1]
+    full = [tick for tick in running if full_running_tick(tick, counts)[0]]
+    stops = [state for state in states[:last + 1] if state['state'] != 'running']
+    check(not stops, 'the target stopped while the client listened: %d of the ticks in front of the last running one are paused (%r)'
+          % (len(stops), stops[:3]), run)
+    end = [state.get('reason') for state in states[last + 1:]]
+    check(all(reason in ('host-stopped', 'no-game') for reason in end), 'the ticks behind the last running one are not those of the end of '
+          'the run: %r' % (end,), run)
+    check(len(full) >= 10, 'the listening client got %d full ticks while the target ran (%d ticks in all): too few to say anything about a run '
+          'that is read' % (len(full), len(ticks)), run)
+    values = sum(len(entries) for entries in full[-1]['registers'].values())
+    registers = full_running_tick(full[-1], counts)[1]
+    check(values == registers, 'a full running tick has %d register values, the device tree %d registers on its %d paths'
+          % (values, registers, len(full[-1]['registers'])), run)
+    stale = sum(1 for tick in full if tick['executionState'].get('registersStale'))
+
+    line = exit_line(run.out)
+    check(line is not None and 'hash' in line, 'the run with the listening client printed no state hash', run)
+    check(run.code == 0, 'exit code %s' % run.code, run)
+    same_hash(base, line, 'the run with a client that only listens and the run with the server off', run)
+    print('a client that only listens, sent %d full ticks of %d registers on %d paths while the target ran%s, and server off: both runs end in '
+          'hash=%s after %s vblanks' % (len(full), registers, len(full[-1]['registers']),
+                                        ' (%d of them say registersStale and are without %s)' % (stale, SH4_CONTEXT_PATH) if stale else '',
+                                        line['hash'], line['vblanks']))
+
+
+def mode_hash_listening_rule():
+    """What full_running_tick() makes of ticks that are made up. The tick without dc.sh4.cpu is what a recompiler
+    sends whose SH4 context is not complete at the end of a slice. The one for x64 is not of that kind and the
+    interpreter is not either, so no run on an x64 host has such a tick: the rule for it is held here."""
+    counts = {'dc.sh4.cpu': 69, 'dc.aica.arm7': 41, 'dc.aica.dsp': 9, 'dc.timing': 5, 'dc.holly.spg': 9, 'dc.aica.sgc.0': 38}
+    every = sorted(counts)
+    base = ['dc.aica.arm7', 'dc.aica.dsp', 'dc.sh4.cpu', 'dc.timing']
+    all_of_them = sum(counts.values())
+
+    def without(paths, *left_out):
+        return [path for path in paths if path not in left_out]
+
+    def tick(paths, stale=None):
+        state = {'state': 'running'}
+        if stale is not None:
+            state['registersStale'] = stale
+        return {'executionState': state, 'registers': {path: [{'name': 'R%d' % n} for n in range(counts[path])] for path in paths}}
+
+    # (what the tick is, the tick, is it full, the register values of a full tick of its kind)
+    cases = [
+        ('every path', tick(every), True, all_of_them),
+        ('every path, registersStale false', tick(every, False), True, all_of_them),
+        ('registersStale, every path but dc.sh4.cpu', tick(without(every, 'dc.sh4.cpu'), True), True, all_of_them - 69),
+        ('every path but dc.sh4.cpu, and no registersStale', tick(without(every, 'dc.sh4.cpu')), False, all_of_them),
+        ('registersStale, and dc.sh4.cpu all the same', tick(every, True), False, all_of_them - 69),
+        ('registersStale, without dc.sh4.cpu and without dc.holly.spg', tick(without(every, 'dc.sh4.cpu', 'dc.holly.spg'), True), False, all_of_them - 69),
+        ('every path but dc.aica.sgc.0', tick(without(every, 'dc.aica.sgc.0')), False, all_of_them),
+        ('the four paths of every running tick', tick(base), False, all_of_them),
+        ('registersStale, the three of them that are left', tick(without(base, 'dc.sh4.cpu'), True), False, all_of_them - 69),
+    ]
+    for what, made_up, full, values in cases:
+        got = full_running_tick(made_up, counts)
+        check(got == (full, values), 'a running tick with %s is taken for %s with %d register values in a full tick of its kind; it is %s, with %d'
+              % (what, 'a full one' if got[0] else 'one that is not full', got[1], 'a full one' if full else 'not full', values))
+    print('%d made-up running ticks, each taken for what it is: a tick that says registersStale is a full one without %s and only without it, any '
+          'other with every path that has registers' % (len(cases), SH4_CONTEXT_PATH))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--emulator', required=True)
-    parser.add_argument('--work', required=True)
-    parser.add_argument('--guest', required=True, help='2ndmix.elf; m1, parts: or another program, the guest of the tree')
-    parser.add_argument('--mode', required=True, choices=('m1', 'parts', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp'))
+    parser.add_argument('--emulator', default='', help='every mode but hash-listening-rule')
+    parser.add_argument('--work', default='', help='every mode but hash-listening-rule')
+    parser.add_argument('--guest', default='', help='every mode but hash-listening-rule: 2ndmix.elf; m1, m2, parts, hash-listening: or another '
+                                                    'program, the guest of the tree')
+    parser.add_argument('--mode', required=True, choices=('m1', 'm2', 'parts', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp',
+                                                          'hash-listening', 'hash-listening-rule'))
     parser.add_argument('--engine', default='jit', choices=('jit', 'interp'))
     parser.add_argument('--fallback', action='store_true', help='Debugger:ForceFallback=yes')
-    parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, parts, hash-idlebp)')
+    parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, m2, parts, hash-idlebp)')
     parser.add_argument('--npm', default='npm')
     parser.add_argument('--idle-symbol', default='', help='hash-idlebp, grace: a symbol of the guest that is reached in every frame')
     parser.add_argument('--parts', default='', help='parts: <scenario>:<part>[+<part>...], as the runner takes it, e.g. S16:arm7')
-    parser.add_argument('--require-note', action='append', default=[], help='parts: a note the run has to have, handed on to the runner')
+    parser.add_argument('--only', default='', help='m2: the scenarios of its second run, as the runner takes them, e.g. S00,S16')
+    parser.add_argument('--require-note', action='append', default=[], help='m2, parts: a note the run has to have, handed on to the runner')
     parser.add_argument('--vblanks', type=int, default=600, help='Exit.AfterVblanks of the hash runs')
     parser.add_argument('--watchdog', type=int, default=600, help='seconds a run, or the runner, may take')
     parser.add_argument('--config-watchdog', type=int, default=60, help='config: seconds a run may take to end by itself')
     parser.add_argument('--keep', action='store_true', help='keep the work directory of a test that passed')
     args = parser.parse_args()
+
+    if args.mode == 'hash-listening-rule':
+        # nothing is run, and nothing is written
+        try:
+            mode_hash_listening_rule()
+        except Failed as failure:
+            print('FAIL: %s' % failure)
+            return 1
+        print('PASS')
+        return 0
+
+    missing = ['--' + name for name in ('emulator', 'work', 'guest') if not getattr(args, name)]
+    if missing:
+        parser.error('the following arguments are required: ' + ', '.join(missing))
 
     args.emulator = os.path.abspath(args.emulator)
     args.work = os.path.abspath(args.work)
@@ -735,7 +909,7 @@ def main():
             print('FAIL: no %s at %s' % (what, path))
             return 1
 
-    if args.mode in ('m1', 'parts', 'hash-idlebp'):
+    if args.mode in ('m1', 'm2', 'parts', 'hash-idlebp'):
         args.devtools = os.path.abspath(args.devtools)
         if not os.path.isdir(os.path.join(args.devtools, 'node_modules')):
             print('FAIL: no node_modules in the devtools checkout ' + args.devtools)
@@ -751,9 +925,15 @@ def main():
     if args.mode == 'parts' and not re.match(r'^S\d+:[A-Za-z0-9]+(\+[A-Za-z0-9]+)*$', args.parts):
         print('FAIL: --parts is missing, or is not <scenario>:<part>[+<part>...]')
         return 1
+    if args.only and (args.mode != 'm2' or not re.match(r'^S\d+(,S\d+)*$', args.only)):
+        print('FAIL: --only is for the mode m2, and is <scenario>[,<scenario>...]')
+        return 1
+    if args.require_note and args.mode not in ('m2', 'parts'):
+        print('FAIL: --require-note is for the modes m2 and parts')
+        return 1
 
-    modes = {'m1': mode_m1, 'parts': mode_parts, 'grace': mode_grace, 'config': mode_config, 'slow': mode_slow, 'hash-off': mode_hash_off,
-             'hash-noclient': mode_hash_noclient, 'hash-idlebp': mode_hash_idlebp}
+    modes = {'m1': mode_m1, 'm2': mode_m2, 'parts': mode_parts, 'grace': mode_grace, 'config': mode_config, 'slow': mode_slow,
+             'hash-off': mode_hash_off, 'hash-noclient': mode_hash_noclient, 'hash-idlebp': mode_hash_idlebp, 'hash-listening': mode_hash_listening}
 
     shutil.rmtree(args.work, ignore_errors=True)
     os.makedirs(args.work)

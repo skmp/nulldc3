@@ -20,6 +20,12 @@
 #	                                                    same three
 #	    debugger.contract.m2writes.guest .interp        the same four parts against the sounding guest of the tree,
 #	                                                    with the two notes
+#	    debugger.contract.m2 .m2.interp .m2.fallback    the gate of milestone M2 (--milestone M2): the scenarios
+#	                                                    of M1 and S16 whole, with its fifth part, the device tree
+#	                                                    of M2, on the same three
+#	    debugger.contract.m2.guest .interp              the second run of that gate, against the sounding guest
+#	                                                    of the tree (--milestone M2 --only S00,S16), with the two
+#	                                                    notes
 #	    debugger.contract.grace                         the grace period after the last client left, and the
 #	                                                    client that connects behind it
 #	    debugger.contract.config                        the configuration errors of the server's keys, and a
@@ -27,10 +33,16 @@
 #	    debugger.contract.slow                          the slow-client rule of the periodic tick
 #	    debugger.contract.hash.off .noclient .idlebp    the state hash of a run with the server off, with the
 #	      each with .interp                             server on and no client, and with an idle breakpoint
+#	    debugger.contract.hash.listening .interp        the state hash of a run with a client that only receives,
+#	    debugger.contract.hash.listening.guest .interp  and is sent every register of the tree every 20 ms: on
+#	                                                    2ndmix, and on the sounding guest of the tree
+#	    debugger.contract.hash.listening.rule           what these four take for a full running tick, on ticks
+#	                                                    that are made up: no emulator is run
 #
 #	The runner needs the dreamcast-devtools checkout with its node_modules (NULLDC_DEVTOOLS_DIR) and npm:
-#	without them m1*, m2arm7*, m2writes* and hash.idlebp* are tests whose data is missing. Everything needs
-#	2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree.
+#	without them m1*, m2*, m2arm7*, m2writes* and hash.idlebp* are tests whose data is missing. Everything
+#	needs 2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree and hash.listening.rule, which
+#	needs python3 and nothing else.
 #
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -70,13 +82,15 @@ endif()
 
 # nulldc_debugger_contract(<name> MODE <mode of contract.py> [ENGINES <jit|interp>...] [RUNNER] [FALLBACK]
 #                          [IDLE_SYMBOL <symbol>] [TIMEOUT <seconds>] [GUEST <program>]
-#                          [PARTS <scenario>:<part>[+<part>...]] [REQUIRE_NOTE <text>...])
+#                          [PARTS <scenario>:<part>[+<part>...]] [ONLY <scenario>[,<scenario>...]]
+#                          [REQUIRE_NOTE <text>...])
 # makes debugger.contract.<name> (the SH4 on the JIT) and debugger.contract.<name>.interp (on the interpreter).
 # RUNNER: the test runs the contract runner of the devtools UI.
 # GUEST: the emulator boots this program, not 2ndmix.elf: the test does not ask for NULLDC_ELF_DIR.
-# PARTS, REQUIRE_NOTE: for the mode parts, handed to the runner as its --parts and --require-note.
+# PARTS: for the mode parts, handed to the runner as its --parts. ONLY: for the mode m2, as its --only.
+# REQUIRE_NOTE: for the modes parts and m2, as its --require-note.
 function(nulldc_debugger_contract name)
-  cmake_parse_arguments(ARG "RUNNER;FALLBACK" "MODE;IDLE_SYMBOL;TIMEOUT;GUEST;PARTS" "ENGINES;REQUIRE_NOTE" ${ARGN})
+  cmake_parse_arguments(ARG "RUNNER;FALLBACK" "MODE;IDLE_SYMBOL;TIMEOUT;GUEST;PARTS;ONLY" "ENGINES;REQUIRE_NOTE" ${ARGN})
 
   if(NOT ARG_ENGINES)
     set(ARG_ENGINES jit)
@@ -127,6 +141,9 @@ function(nulldc_debugger_contract name)
     if(ARG_PARTS)
       list(APPEND command --parts ${ARG_PARTS})
     endif()
+    if(ARG_ONLY)
+      list(APPEND command --only ${ARG_ONLY})
+    endif()
     foreach(note ${ARG_REQUIRE_NOTE})
       list(APPEND command --require-note "${note}")
     endforeach()
@@ -142,8 +159,8 @@ endfunction()
 nulldc_debugger_contract(m1          MODE m1 RUNNER ENGINES jit interp)
 nulldc_debugger_contract(m1.fallback MODE m1 RUNNER FALLBACK)
 
-# The part arm7 of the runner's scenario S16 (the breakpoints and steps of the ARM7, design 5.5), by itself: the
-# scenario as a whole is partial until the tree of milestone M2 is there, and partial is no pass. On the three
+# The part arm7 of the runner's scenario S16 (the breakpoints and steps of the ARM7, design 5.5), by itself (the
+# scenario as a whole is in the gate of milestone M2, below). On the three
 # engines against 2ndmix, whose ARM7 is released more than once while the program starts; and on the JIT and the
 # interpreter against the sounding guest of the tree, where the run has to have met the ARM7 held at its start and
 # a bl to step over and out of: the runner fails a run that lacks a note
@@ -154,13 +171,25 @@ nulldc_debugger_contract(m2arm7.guest    MODE parts PARTS S16:arm7 RUNNER ENGINE
                          REQUIRE_NOTE "arm7: held at the start" "arm7: bl stepped over and out")
 
 # The four parts of S16 that the emulator has behind the writes and the reset: arm7, writeMemory, setRegister and
-# reset (the fifth, tree, comes with the M2 rows of the device tree). On the three engines against 2ndmix, and on
+# reset (the fifth, tree, is in the gate of milestone M2, below). On the three engines against 2ndmix, and on
 # the JIT and the interpreter against the sounding guest of the tree, where the write side differs: the scratch
 # address below a stack at the top of main memory and its two mirrors, the 64 KiB written back over the guest's own
 # code, the register banks under the handler of the AICA's interrupt, the reset of a program that reios loads again
 nulldc_debugger_contract(m2writes          MODE parts PARTS S16:arm7+writeMemory+setRegister+reset RUNNER ENGINES jit interp)
 nulldc_debugger_contract(m2writes.fallback MODE parts PARTS S16:arm7+writeMemory+setRegister+reset RUNNER FALLBACK)
 nulldc_debugger_contract(m2writes.guest    MODE parts PARTS S16:arm7+writeMemory+setRegister+reset RUNNER ENGINES jit interp
+                         GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
+                         REQUIRE_NOTE "arm7: held at the start" "arm7: bl stepped over and out")
+
+# The gate of milestone M2 (M2-ROUND 3.6, 3.10): --milestone M2 selects the scenarios of M1 and S16, and each has
+# to pass whole. S16 has its fifth part from the tree of this milestone on: the M2 nodes with their parents, the
+# two register panels of the processors, a register on every node whose registers are M2's, and each of the twelve
+# register panels the action of one node. And S08 reaches the bound of 256 watches on a tree of 2940 registers.
+# On the three engines against 2ndmix; and the second run of the gate on the JIT and the interpreter against the
+# sounding guest of the tree, where the arm7 part has to have met the ARM7 held at its start and a bl
+nulldc_debugger_contract(m2          MODE m2 RUNNER ENGINES jit interp)
+nulldc_debugger_contract(m2.fallback MODE m2 RUNNER FALLBACK)
+nulldc_debugger_contract(m2.guest    MODE m2 ONLY S00,S16 RUNNER ENGINES jit interp
                          GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
                          REQUIRE_NOTE "arm7: held at the start" "arm7: bl stepped over and out")
 
@@ -187,3 +216,25 @@ nulldc_debugger_contract(hash.noclient MODE hash-noclient ENGINES jit interp)
 # (README.md has how that was shown: a muted breakpoint reports nothing, and an address that is never
 # executed would pass this test as well)
 nulldc_debugger_contract(hash.idlebp   MODE hash-idlebp   ENGINES jit interp RUNNER IDLE_SYMBOL stars_one_frame)
+
+# A client that describes itself and then only receives, for the whole run: the periodic tick, made a full one
+# every 20 ms for this run, reads every register of the device tree on the emulator thread, and the run ends in
+# the state hash of the run with the server off. On 2ndmix, whose sound side is idle under reios; and on the
+# sounding guest of the tree, where the registers of the AICA, its channels and the interrupt controller of the
+# ARM7 are read while they work
+nulldc_debugger_contract(hash.listening       MODE hash-listening ENGINES jit interp)
+nulldc_debugger_contract(hash.listening.guest MODE hash-listening ENGINES jit interp
+                         GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
+
+# What the four tests above take for a full running tick, on ticks that are made up. The context of the SH4 is not
+# complete where a running machine is read on a recompiler that does not say it is (hw/sh4/sh4_if.h,
+# SH4DBG_CTX_AT_SLICE): every running tick of such a server says registersStale and is without dc.sh4.cpu, and is
+# a full one with every other path. The interpreter and the x64 recompiler send no such tick, so on an x64 host
+# no run of the four shows what they make of one. No emulator is run: the test is there wherever python3 is
+if(Python3_Interpreter_FOUND)
+  add_test(NAME debugger.contract.hash.listening.rule
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/contract/contract.py" --mode hash-listening-rule)
+  set_tests_properties(debugger.contract.hash.listening.rule PROPERTIES TIMEOUT 60)
+else()
+  nulldc_add_skipped_test(debugger.contract.hash.listening.rule "no python3 to run tests/debugger/contract/contract.py with")
+endif()

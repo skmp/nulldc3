@@ -15,7 +15,9 @@
 #include "hw/aica/dsp.h"
 #include "hw/arm7/SoundCPU.h"
 #include "hw/arm7/arm7_context.h"
+#include "hw/gdrom/gdromv3.h"
 #include "hw/holly/sb.h"
+#include "hw/pvr/pvr_regs.h"
 #include "hw/sh4/sh4_dbg.h"
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_interpreter.h"
@@ -34,7 +36,8 @@
 
 	The register writers, behind the readers of their source: the registers of the two processors, and no
 	other. A write is a store into the context of its processor together with what the processor itself does
-	when it loads the register (dbg_regs.h has the list); no write function of a register is called.
+	when it loads the register (dbg_regs.h has the list); no write function of a register is called. The
+	registers of the devices have no writer.
 
 	The machine is looked up on every call (sh4_cpu and its devices); nothing is kept between two calls.
 */
@@ -402,6 +405,130 @@ static bool ReadDsp(u32 selector, u64* value)
 	return true;
 }
 
+// The register file of the PVR is an array, and a guest read of it is the array (PVRDevice::Read)
+static bool ReadPvr(const Register& reg, u64* value)
+{
+	u32 word;
+
+	memcpy(&word, &pvr_regs[reg.addr & pvr_RegMask], sizeof(word));
+
+	*value = word;
+	return true;
+}
+
+// Bits of the register file of the AICA (dbg_regs_private.h has the two forms of a row), from the accessor that
+// gives the file as a read by the SH4 delivers it and changes nothing. The guest's own read function is no
+// substitute: it rewrites the status words in the file and clears the loop flag of the selected channel
+static bool ReadAica(const Register& reg, u64* value)
+{
+	AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
+	const u32 selector = KeySelector(reg.key);
+	const bool two = AicaFieldTwoWords(selector);
+	u8 bytes[6];
+
+	// a word is the low half of four bytes: two words are six bytes
+	if (aica == nullptr || !aica->DebugReadRegs(AicaFieldOffset(selector), two ? 6 : 2, bytes))
+		return false;
+
+	const u32 word = bytes[0] | (bytes[1] << 8);
+
+	if (!two)
+	{
+		*value = word >> AicaFieldShift(selector);
+		return true;
+	}
+
+	// the field of the first word above the second word, whose lowest bits are none of the register
+	const u32 low = (bytes[4] | (bytes[5] << 8)) & ~((1u << AicaFieldLowShift(selector)) - 1);
+
+	*value = ((u64)(word >> AicaFieldShift(selector)) << 16) | low;
+	return true;
+}
+
+// The interrupt controller in front of the ARM7 is state of the sound CPU. The words of the AICA's register
+// file at 0x2D00 and 0x2D04 are not it
+static bool ReadArm7Intc(u32 selector, u64* value)
+{
+	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+	u32 level, in_service;
+
+	if (scpu == nullptr || !scpu->DebugGetInterrupt(&level, &in_service))
+		return false;
+
+	switch (selector)
+	{
+	case kArm7IntcLevel:   *value = level; return true;
+	case kArm7IntcService: *value = in_service; return true;
+	}
+
+	return false;
+}
+
+static bool ReadRtc(u32 selector, u64* value)
+{
+	u32 seconds;
+	bool write_enable;
+
+	if (!libAICA_DebugGetRTC(&seconds, &write_enable))
+		return false;
+
+	switch (selector)
+	{
+	case kRtcSeconds:     *value = seconds; return true;
+	case kRtcWriteEnable: *value = write_enable ? 1 : 0; return true;
+	}
+
+	return false;
+}
+
+// A member of the snapshot of the GD-ROM drive. A machine without the drive has no snapshot
+static bool ReadGdrom(u32 selector, u64* value)
+{
+	GDRomDebugState state;
+
+	if (!gdrom_DebugGetState(&state))
+		return false;
+
+	auto packet = [&state](u32 first) {
+		return ((u32)state.packet[first] << 24) | ((u32)state.packet[first + 1] << 16) | ((u32)state.packet[first + 2] << 8) | state.packet[first + 3];
+	};
+
+	switch (selector)
+	{
+	case kGdState:                *value = state.state; break;
+	case kGdDiscType:             *value = state.discType; break;
+	case kGdStatus:               *value = state.status; break;
+	case kGdError:                *value = state.error; break;
+	case kGdInterruptReason:      *value = state.interruptReason; break;
+	case kGdFeatures:             *value = state.features; break;
+	case kGdSectorCount:          *value = state.sectorCount; break;
+	case kGdSectorNumber:         *value = state.sectorNumber; break;
+	case kGdDriveSelect:          *value = state.driveSelect; break;
+	case kGdAtaCommand:           *value = state.ataCommand; break;
+	case kGdByteCount:            *value = state.byteCount; break;
+	case kGdPacket0:              *value = packet(0); break;
+	case kGdPacket4:              *value = packet(4); break;
+	case kGdPacket8:              *value = packet(8); break;
+	case kGdSenseKey:             *value = state.senseKey; break;
+	case kGdSenseAsc:             *value = state.senseAsc; break;
+	case kGdSenseAscq:            *value = state.senseAscq; break;
+	case kGdCddaPlaying:          *value = state.cddaPlaying ? 1 : 0; break;
+	case kGdCddaRepeats:          *value = state.cddaRepeats; break;
+	case kGdCddaCurrent:          *value = state.cddaCurrent; break;
+	case kGdCddaStart:            *value = state.cddaStart; break;
+	case kGdCddaEnd:              *value = state.cddaEnd; break;
+	case kGdReadStartSector:      *value = state.readStartSector; break;
+	case kGdReadRemainingSectors: *value = state.readRemainingSectors; break;
+	case kGdReadSectorType:       *value = state.readSectorType; break;
+	case kGdPioIndex:             *value = state.pioIndex; break;
+	case kGdPioSize:              *value = state.pioSize; break;
+	default:
+		return false;
+	}
+
+	return true;
+}
+
 static bool ReadTiming(u32 selector, u64* value)
 {
 	if (p_sh4rcb == nullptr)
@@ -502,6 +629,11 @@ bool Read(const Node& node, uint32_t index, uint64_t* value, char* text, uint32_
 	case kSrcArm7:   ok = ReadArm7(selector, &result); break;
 	case kSrcDsp:    ok = ReadDsp(selector, &result); break;
 	case kSrcTiming: ok = ReadTiming(selector, &result); break;
+	case kSrcPvr:    ok = ReadPvr(reg, &result); break;
+	case kSrcAica:   ok = ReadAica(reg, &result); break;
+	case kSrcArm7Intc: ok = ReadArm7Intc(selector, &result); break;
+	case kSrcRtc:    ok = ReadRtc(selector, &result); break;
+	case kSrcGdrom:  ok = ReadGdrom(selector, &result); break;
 	default: break;
 	}
 
@@ -558,6 +690,10 @@ bool ReadSh4RegisterAt(uint32_t addr, uint32_t* value, uint32_t* bytes)
 	for (u32 i = 0; i < count; i++)
 	{
 		const Node& node = nodes[i];
+
+		// the on-chip registers are the rows of the ten module nodes, which have no other rows
+		if (node.registerCount == 0 || KeySource(node.registers[0].key) != kSrcSh4Mmr)
+			continue;
 
 		for (u32 j = 0; j < node.registerCount; j++)
 		{
