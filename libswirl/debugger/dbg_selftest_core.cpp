@@ -238,6 +238,9 @@ void Watch()
 
 	if (!host.owns_lock())
 	{
+		// said before the wait: the start park of the machine that thread starts can come before the lock is free
+		CutAsk("nothing: a thread of the test that held the machine started it");
+
 		if (!host.try_lock_for(std::chrono::milliseconds(step)))
 		{
 			printf("SelfTest: %s: FAILED: the stop the test waited for did not come within the bound of the session, %d s, and a thread of the test that "
@@ -248,14 +251,14 @@ void Watch()
 		}
 
 		// that thread has started the machine: its thread parks at its start
-		CutAsk("nothing: a thread of the test that held the machine had started it");
-
 		if (CutUntil(step, false))
 			return;
 	}
 
 	if (CutTaken())
 		return;
+
+	CutAsk("a start of the host");
 
 	if (emu::GetRunState().lifetime != Lifetime::Stopped && virtualDreamcast)
 	{
