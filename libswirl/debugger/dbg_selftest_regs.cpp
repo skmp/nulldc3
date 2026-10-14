@@ -2620,10 +2620,12 @@ std::vector<u32> PvrRowOffsets()
 }
 
 /*
-	regs.rows.sb: the system bus rows beside the interrupt registers. Against a guest read, for the slots that
-	hold a value (a guest read of such a slot is the value and changes nothing); with a value of its own in every
-	slot, where a row that reads the slot of its neighbour shows; and a write-only slot, which reads "n/a"
-	whatever it holds.
+	regs.rows.sb: the 115 system bus rows of M2 beside the twelve interrupt registers of dc.holly.intc: 100 on
+	slots that hold a value, 14 on write-only slots, and SB_FFST behind a read function. Against a guest read,
+	for the 111 rows on slots that hold a value, those 100 and eleven of dc.holly.intc (a guest read of such a
+	slot is the value and changes nothing); with a value of its own in every slot, where a row that reads the slot
+	of its neighbour shows; and a write-only slot, which reads "n/a" whatever it holds. The two rows behind a
+	read function are SB_FFST and SB_ISTNRM of dc.holly.intc: 111 + 14 + 2 = 127 rows of the system bus.
 */
 DBG_SELFTEST(regs_rows_sb, "regs.rows.sb")
 {
