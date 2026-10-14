@@ -2509,7 +2509,40 @@ void ForEachAicaRow(Fn fn)
 	any byte: the state has flags the device keeps as bool.) No member of the snapshot then has a value another
 	member cannot have, so one state tells little; the tests use many, and two rows that are equal in every one
 	of them would be two rows of one member.
+
+	But for two members, which the device keeps in an enum: the state of its command state machine (gd_states) and
+	the type of the disc (DiscType). A word of bytes that are 0 or 1 is no value of either, and the snapshot loads
+	them as what they are; they get enumerators of their own, by the seed. They are the two words in front of the
+	nine members that the device's save state ends with, which are of the types of gdromv3.h; where the drive has
+	them is held by the snapshot, which has to read what was put there (GdromEnumsAt, GdromEnumsMade)
 */
+const gd_states kGdStates[] = { gds_waitcmd, gds_procata, gds_waitpacket, gds_procpacket, gds_pio_send_data, gds_pio_get_data, gds_pio_end, gds_procpacketdone,
+	gds_readsector_pio, gds_readsector_dma, gds_process_set_mode };
+const DiscType kDiscTypes[] = { CdDA, CdRom, CdRom_XA, CdRom_Extra, CdRom_CDI, GdRom, NoDisk, Open, Busy };
+
+// Where the state and the disc type are in the save state of the drive: behind them data_write_mode and DriveSel
+// (u32 each), then Error, IntReason, Features, SecCount, SecNumber, GDStatus and ByteCount. False when the state is
+// too short for that
+bool GdromEnumsAt(size_t size, size_t* state_at, size_t* disc_at)
+{
+	const size_t tail = 4 + 4 + sizeof(GD_ErrRegT) + sizeof(GD_InterruptReasonT) + sizeof(GD_FeaturesT) + sizeof(GD_SecCountT) + sizeof(GD_SecNumbT)
+		+ sizeof(GD_StatusT) + sizeof(ByteCount_t);
+
+	if (size < tail + sizeof(DiscType) + sizeof(gd_states))
+		return false;
+
+	*disc_at = size - tail - sizeof(DiscType);
+	*state_at = *disc_at - sizeof(gd_states);
+	return true;
+}
+
+// The enumerators that the made-up state of a seed has
+void GdromEnumsMade(u32 seed, gd_states* state, DiscType* disc)
+{
+	*state = kGdStates[seed % (sizeof(kGdStates) / sizeof(kGdStates[0]))];
+	*disc = kDiscTypes[(seed * 5 + 3) % (sizeof(kDiscTypes) / sizeof(kDiscTypes[0]))];
+}
+
 std::vector<u8> MakeGdromState(const std::vector<u8>& real, u32 seed)
 {
 	std::vector<u8> made(real.size());
@@ -2517,6 +2550,17 @@ std::vector<u8> MakeGdromState(const std::vector<u8>& real, u32 seed)
 
 	for (u8& byte : made)
 		byte = (NextRandom(&state) >> 16) & 1;
+
+	size_t state_at, disc_at;
+	gd_states gd_state;
+	DiscType disc;
+
+	if (GdromEnumsAt(made.size(), &state_at, &disc_at))
+	{
+		GdromEnumsMade(seed, &gd_state, &disc);
+		memcpy(&made[state_at], &gd_state, sizeof(gd_state));
+		memcpy(&made[disc_at], &disc, sizeof(disc));
+	}
 
 	return made;
 }
@@ -3093,7 +3137,7 @@ DBG_SELFTEST(regs_rows_gdrom, "regs.rows.gdrom")
 	std::vector<u8> before = DeviceState(gd);
 	const u32 kStates = 24;
 	std::vector<std::vector<u64>> seen(node->registerCount);
-	Tally members;
+	Tally members, enums;
 
 	for (u32 n = 0; n <= kStates; n++)
 	{
@@ -3107,6 +3151,17 @@ DBG_SELFTEST(regs_rows_gdrom, "regs.rows.gdrom")
 
 		memset(&snapshot, 0xEE, sizeof(snapshot));
 		gdrom_DebugGetState(&snapshot);
+
+		// the two members the device keeps in an enum hold the enumerators the made-up state put there
+		if (n != 0)
+		{
+			gd_states state;
+			DiscType disc;
+
+			GdromEnumsMade(n, &state, &disc);
+			enums.Add(snapshot.state == (u32)state && snapshot.discType == (u32)disc, "made-up state %u: the drive's state is %u and its disc type %X, the state put %u and %X there",
+				n, snapshot.state, snapshot.discType, (u32)state, (u32)disc);
+		}
 
 		for (u32 r = 0; r < node->registerCount; r++)
 		{
@@ -3124,6 +3179,8 @@ DBG_SELFTEST(regs_rows_gdrom, "regs.rows.gdrom")
 	}
 
 	RestoreDevice(gd, before);
+	enums.Report("in every made-up state the state of the drive's command state machine and the type of its disc are enumerators of their enums, the ones the state was "
+		"made with (no other value is loaded from them)");
 	members.Report("the rows of dc.gdrom against the members of the snapshot, as the machine stands and in 24 made-up states of the drive");
 
 	// no two rows had the same values in all of the states: each is a member of its own
