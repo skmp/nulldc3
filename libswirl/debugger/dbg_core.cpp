@@ -1876,6 +1876,11 @@ void MethodBreakpointsAdd(const Request& req, Outcome& out)
 	if (has_kind && kind != "code" && kind != "event")
 		return BadParam(out, "kind is not one of code, event");
 
+	// No name of an event or of a target has a NUL in it, and the look-up of an event compares C strings, which
+	// end at the first one: a name with one is none of them, whatever stands in front of the NUL
+	if (event.find('\0') != std::string::npos)
+		return BadParam(out, "event " + PrintableAscii(event.data(), std::min<size_t>(event.size(), 96)) + " has a NUL in it: no event or target is named so");
+
 	if (!has_enabled)
 		enabled = true;
 

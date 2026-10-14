@@ -56,6 +56,8 @@ function(disasm_oracle_test name available reason)
   set(name "${NULLDC_TEST_PREFIX}${name}")
   if(available)
     add_test(NAME ${name} COMMAND ${ARGN})
+    # an oracle that is a script of this directory writes no bytecode into the source tree
+    set_tests_properties(${name} PROPERTIES ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
   else()
     add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -E echo "SKIP: ${reason}")
   endif()

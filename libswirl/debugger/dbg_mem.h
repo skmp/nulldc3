@@ -86,9 +86,9 @@ Region Classify(Target t, u32 addr);
 u32 Read(Target t, u32 addr, u32 len, u8* out, u8* readableBits);
 
 // Writes len bytes at addr. All or nothing: the whole range is checked before the first byte is stored.
-// (E) in the park context only (inside a CC_WRITE call: the park loop, or a service excursion). It waits for
-// nothing but the lock of the texture cache, which a write to video memory takes as a faulting write by the
-// guest does.
+// (E) in the park context (inside a CC_WRITE call: the park loop, or a service excursion), or a thread that
+// holds L while no emulator thread exists, as for Read(). It waits for nothing but the lock of the texture
+// cache, which a write to video memory takes as a faulting write by the guest does.
 // Writable are main memory, video memory (both views) and wave memory (both targets), every mirror of them;
 // a range may run from one mirror of a store into the next. No other region is writable, and neither is a
 // range that would pass the end of the address space (addr + len > 2^32): a write does not wrap.

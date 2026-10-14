@@ -359,10 +359,12 @@ enum : u32 {
 //   the stop of the step, in their order.
 // - The first Park() of a thread that follows a thread exit taken in a debugger stop (the host stopped the
 //   machine while the thread before it was parked) is a resume of that stop: the debugger pause that was in
-//   force before the host stop is not applied again, and dbg::emu calls dbg::sh4::PrepareResume() and
-//   dbg::arm7::PrepareResume() there, so that the instruction of the stop executes and its breakpoint does
-//   not stop again at once. No sound burst is suspended then: the thread before ran it to its end in front
-//   of its stop callback.
+//   force before the host stop is not applied again, and dbg::emu calls dbg::sh4::PrepareResume() there, so
+//   that the instruction of the stop executes and its breakpoint does not stop again at once. The ARM7 has no
+//   part in it: no sound burst is suspended then, because the thread before ran it to its end in front of its
+//   stop callback, and so the instruction of a stop of the ARM7 has executed. The dbg::arm7::PrepareResume()
+//   that dbg::emu calls there as well arms nothing: OnThreadExiting() has ended the stop for the breakpoint
+//   state of the ARM7 (dbg::arm7::OnStop()).
 //   This holds when the guest is where that stop was published: no step has executed since and the pc was
 //   not written. Otherwise nothing is resumed and a breakpoint on the new pc stops.
 //

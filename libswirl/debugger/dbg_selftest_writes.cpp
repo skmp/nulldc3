@@ -64,17 +64,27 @@
 
 #include "../../tests/debugger/guest/dsptest/dsptest_labels.inc"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+
+namespace dbg { namespace emu { namespace test {
+
+// dbg_emu.cpp: the threads of the session start without a start park
+extern bool plainStart;
+
+} } }
 
 namespace {
 
@@ -128,6 +138,11 @@ Sh4Context& Ctx()
 double MsSince(Clock::time_point t0)
 {
 	return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+}
+
+void Nap(int ms)
+{
+	std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 
 /*
@@ -788,6 +803,201 @@ void OtherJoin()
 	}
 }
 
+/*
+	The bound of a wait. A test that has armed something, or that waits for what another thread does, returns
+	false and is handed the next stop. Where the machine never gives that stop the session would wait until the
+	watchdog of its runner ended the process, with no summary. So every wait has a bound, kBoundMs, the one
+	constant of the bound in this file: a thread of the session, the watch, looks at the wait that is in
+	progress and cuts one that is older than the bound. It then asks for a stop that the machine can still give,
+	each for a tenth of the bound, in this order:
+	  - a pause, where the published state is Running;
+	  - a stop of the host; where the thread stays parked through that, a call that resumes it (the leave finds
+	    the stop of the host pending, and the thread ends);
+	  - once the machine is stopped, a start of the host: the next thread parks at its start, as every thread of
+	    a session does.
+	The test is handed that stop, fails by a check that says so, and ends. Every test behind it in the session
+	fails at once with one check, arming nothing: the machine stands where no test begins. The driver then prints
+	its summary. A machine that gives no stop through all of that has the watch print the failed check itself and
+	end the process.
+	A bound is generous: a test says its longest wait in a note, and a session that passes waits about a
+	millisecond for any of its stops where the bound is half a minute. The last wait of the test that the run ends (writesrun.neutral)
+	has no bound.
+*/
+const int kBoundMs = 30000;
+
+// How long a test waits on the emulator thread for another thread to queue a call
+const int kHoldMs = kBoundMs / 12;
+
+struct Bound {
+	std::mutex lock;
+	const char* test = nullptr;		// the test that runs, or waits
+	bool waiting = false;			// it has returned false: it waits for a stop
+	bool unbounded = false;			// that wait is one the run ends
+	Clock::time_point since;
+	double longest = 0;				// ms: the longest wait of the test (emulator thread only)
+	const char* cut = nullptr;		// the test whose wait the watch cut
+	bool taken = false;				// the stop behind the cut was handed to that test
+	const char* how = "";			// what the watch asked the machine for
+	std::thread* watch = nullptr;
+};
+
+// Never destroyed: the watch runs until the process ends
+Bound& bound = *new Bound();
+
+// The host starts the stopped machine again; the next thread parks at its start
+bool Restart()
+{
+	if (emu::GetRunState().lifetime != Lifetime::Stopped)
+		return false;
+
+	emu::test::plainStart = false;
+	virtualDreamcast->Resume();
+	return true;
+}
+
+bool CutTaken()
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	return bound.taken;
+}
+
+// Until the test whose wait was cut is handed a stop, or the machine is stopped, for ms at most
+bool CutUntil(int ms, bool stopped)
+{
+	for (Clock::time_point t0 = Clock::now(); MsSince(t0) < ms; Nap(2))
+	{
+		if (CutTaken() || (stopped && emu::GetRunState().lifetime == Lifetime::Stopped))
+			return true;
+	}
+
+	return false;
+}
+
+void CutAsk(const char* how)
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.how = how;
+}
+
+void Watch()
+{
+	const int step = kBoundMs / 10;
+	const char* test = nullptr;
+
+	while (test == nullptr)
+	{
+		Nap(20);
+
+		std::lock_guard<std::mutex> l(bound.lock);
+
+		if (bound.waiting && !bound.unbounded && MsSince(bound.since) > kBoundMs)
+			bound.cut = test = bound.test;
+	}
+
+	if (emu::GetRunState().lifetime == Lifetime::Running)
+	{
+		CutAsk("a pause");
+		emu::RequestPause();
+
+		if (CutUntil(step, false))
+			return;
+	}
+
+	if (emu::GetRunState().lifetime != Lifetime::Stopped)
+	{
+		CutAsk("a stop and a start of the host");
+		virtualDreamcast->Stop([] { });
+
+		if (!CutUntil(step, true))
+		{
+			CutAsk("a stop of the host, a call that resumes the thread that stayed parked, and a start of the host");
+			emu::Call(emu::CC_EXEC, [] { emu::Resume(); });
+			CutUntil(step, true);
+		}
+	}
+
+	if (CutTaken() || (Restart() && CutUntil(step, false)))
+		return;
+
+	printf("SelfTest: %s: FAILED: the stop the test waited for did not come within the bound of the session, %d s, and the machine gave none for a pause, "
+		"a stop and a start of the host either: the session ends here, with no summary\n", test, kBoundMs / 1000);
+	fflush(stdout);
+	std::_Exit(1);
+}
+
+// A test whose last wait the run ends: it has no bound
+void Unbounded()
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.unbounded = true;
+}
+
+// A guest test of this file, with the bound of its waits
+bool Bounded(const emu::RunState& stop, const char* name, bool (*test)(const emu::RunState& stop))
+{
+	const char* cut;
+	const char* how;
+
+	{
+		std::lock_guard<std::mutex> l(bound.lock);
+
+		if (bound.test != name)
+		{
+			bound.test = name;
+			bound.unbounded = false;
+			bound.longest = 0;
+		}
+
+		if (bound.waiting && bound.cut == nullptr)
+			bound.longest = std::max(bound.longest, MsSince(bound.since));
+
+		bound.waiting = false;
+		cut = bound.cut;
+		how = bound.how;
+
+		if (cut == name)
+			bound.taken = true;
+	}
+
+	if (cut != nullptr && cut != name)
+	{
+		Check(false, "not run: a wait of %s did not end within the bound of the session, %d s, and the machine stands where no test begins", cut, kBoundMs / 1000);
+		return true;
+	}
+
+	if (cut != nullptr)
+	{
+		Check(false, "the stop the test waited for did not come within the bound of the session, %d s: the session asked the machine for %s, and was handed a stop "
+			"with \"%s\"; the test ends here", kBoundMs / 1000, how, StopCauseName(stop.cause));
+		return true;
+	}
+
+	if (bound.watch == nullptr)
+		bound.watch = new std::thread(Watch);
+
+	if (test(stop))
+	{
+		Note("the longest wait of the test for a stop: %.1f ms (the bound of a wait is %d s)", bound.longest, kBoundMs / 1000);
+		return true;
+	}
+
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.since = Clock::now();
+	bound.waiting = true;
+	return false;
+}
+
+// DBG_SELFTEST_GUEST with the bound of its waits: every guest test of this file
+#define BOUNDED_GUEST_TEST(ident, name) \
+	static bool ident(const dbg::emu::RunState& stop); \
+	static bool ident##_bounded(const dbg::emu::RunState& stop) { return Bounded(stop, name, ident); } \
+	static dbg::selftest::Test ident##_selftest(name, nullptr, ident##_bounded); \
+	static bool ident(const dbg::emu::RunState& stop)
+
 }
 
 /*
@@ -801,7 +1011,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_ram, "writes.mem.ram")
+BOUNDED_GUEST_TEST(writes_mem_ram, "writes.mem.ram")
 {
 	static const u32 bases[3] = { 0x0C000000, 0x8C000000, 0xAC000000 };
 	u8 saved[32], pattern[16], seen[16], low[8], high[8];
@@ -904,7 +1114,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_code, "writes.mem.code")
+BOUNDED_GUEST_TEST(writes_mem_code, "writes.mem.code")
 {
 	u32 end = 0, cycles = 0;
 
@@ -999,10 +1209,13 @@ DBG_SELFTEST_GUEST(writes_mem_code, "writes.mem.code")
 	The stops are latched at slice ends: nothing is owed, and the resume enters the block of the loop from the
 	cache. The first write makes the page of the loop a page that holds data: from then on its blocks are not
 	write-protected. The run to the next stop compiles the block of the loop again. The second write puts an
-	instruction into the slot of the loop's branch, and the next stop reads what it left. A third write is one
-	range over three pages, with the page of the loop in the middle: it begins in the page in front of it and
-	ends in the page behind it, and the slot is where it differs from what is there. A writer that discarded
-	the blocks of the first page of a range alone, or of its first and its last, would leave the loop's.
+	instruction into the slot of the loop's branch, and the next stop reads what it left. Then three ranges of
+	more than one page, each with the slot among its bytes and the bytes that are there everywhere else, so that
+	every page of a range is witnessed in one of them: one over three pages with the page of the loop in the
+	middle, one of two pages that ends in the page of the loop, and one of two pages that begins in it. A writer
+	that discarded the blocks of the first page of a range alone, or of its first and its last, leaves the loop's
+	block behind the first of them; one that leaves out the last page of a range, behind the second; one that
+	leaves out the first page, behind the third.
 
 	What a writer without the discard would do depends on the configuration. With Dynarec.SmcCheckLevel at its
 	default every block of a page that holds data compares its code bytes when it is entered and discards itself:
@@ -1017,7 +1230,49 @@ struct {
 	Co co;
 	u16 slot;
 	u32 r12;
+	u32 range;				// of kRanges
 } m_cached;
+
+// The ranges of more than one page, each with the slot of the loop's branch among its bytes: where it begins and
+// where it ends, by the page of the loop and REI_PAGE_SIZE, and the immediate of the mov that is put into the slot
+struct CachedRange {
+	const char* what;
+	u32 from, to;			// [from, to)
+	u32 imm;
+};
+
+CachedRange Range(u32 which)
+{
+	const u32 page = kSlot & ~(u32)(REI_PAGE_SIZE - 1);
+
+	switch (which)
+	{
+	case 0:
+		return { "begins in the page in front of the loop's and ends in the page behind it: the blocks of a page in the middle of the range were discarded",
+			page - 16, page + REI_PAGE_SIZE + 16, 0x5D };
+	case 1:
+		return { "begins in the page in front of the loop's and ends in the loop's, behind the slot: the blocks of the last page of the range were discarded",
+			page - 16, kSlot + 2, 0x5E };
+	default:
+		return { "begins in the loop's page, at the slot, and ends in the page behind it: the blocks of the first page of the range were discarded",
+			kSlot, page + REI_PAGE_SIZE + 16, 0x5F };
+	}
+}
+
+const u32 kRanges = 3;
+
+// One write of a range: the bytes that are there, but for mov #imm, r12 in the slot; r12 cleared in front of it
+bool WriteRange(const CachedRange& range)
+{
+	const u32 n = range.to - range.from;
+	std::vector<u8> bytes(n);
+	const bool read = Peek(Target::Sh4, range.from, n, bytes.data());
+
+	bytes[kSlot - range.from] = (u8)MovImm(12, range.imm);
+	bytes[kSlot - range.from + 1] = (u8)(MovImm(12, range.imm) >> 8);
+
+	return read && SetS("R12", 0) == 0 && mem::Write(Target::Sh4, range.from, n, bytes.data()) == 0 && Peek16(kSlot) == MovImm(12, range.imm);
+}
 
 // The steps of writes.mem.cached and of smcwrites.cached
 bool CachedWitness(const emu::RunState& stop)
@@ -1063,37 +1318,34 @@ bool CachedWitness(const emu::RunState& stop)
 
 	Check(Ctx().r[12] == 0x77 && Peek16(kSlot) == kNop, "behind the next resume r12 is %08X: the instruction that was taken out no longer runs", Ctx().r[12]);
 
-	// The third write: one range over three pages, the loop's in the middle. Its bytes are the ones that are there,
-	// but for the slot
+	// Three writes of a range of more than one page: over three pages with the loop's in the middle, of two pages
+	// that end in the loop's, and of two pages that begin in it. Each holds the bytes that are there, but for the
+	// slot
+	for (m_cached.range = 0; m_cached.range < kRanges; m_cached.range++)
 	{
-		const u32 page = kSlot & ~(u32)(REI_PAGE_SIZE - 1);
-		const u32 from = page - 16, n = REI_PAGE_SIZE + 32;
-		std::vector<u8> bytes(n);
-		const bool read = Peek(Target::Sh4, from, n, bytes.data());
+		{
+			const CachedRange range = Range(m_cached.range);
 
-		bytes[kSlot - from] = (u8)MovImm(12, 0x5D);
-		bytes[kSlot - from + 1] = (u8)(MovImm(12, 0x5D) >> 8);
+			if (TheEngine().blocks)
+				Check(BlockCached(kLoop), "the block of the loop is in the block cache, compiled with the nop in its slot");
 
-		if (TheEngine().blocks)
-			Check(BlockCached(kLoop), "the block of the loop is in the block cache, compiled with the nop in its slot");
+			Check(WriteRange(range), "r12 is cleared, and one write of %u bytes from %08X to %08X puts mov #0x%02X, r12 into the slot", range.to - range.from, range.from,
+				range.to - 1, range.imm);
+		}
 
-		Check(read && SetS("R12", 0) == 0 && mem::Write(Target::Sh4, from, n, bytes.data()) == 0 && Peek16(kSlot) == MovImm(12, 0x5D),
-			"r12 is cleared, and one write of %u bytes from %08X on, which begins in the page in front of the loop's and ends in the page behind it, puts mov #0x5D, r12 "
-			"into the slot", n, from);
+		while (!LoopStop(stop))
+			CO_YIELD(m_cached.co);
+
+		Check(Ctx().r[12] == Range(m_cached.range).imm, "behind a resume that entered the loop from the block cache, r12 is %08X: the write of the range that %s",
+			Ctx().r[12], Range(m_cached.range).what);
+
+		Check(Poke16(kSlot, kNop) == 0 && SetS("R12", 0x77) == 0, "(the nop is written back, and r12 set to 0x77)");
+
+		while (!LoopStop(stop))
+			CO_YIELD(m_cached.co);
+
+		Check(Ctx().r[12] == 0x77 && Peek16(kSlot) == kNop, "(behind the next resume r12 is %08X)", Ctx().r[12]);
 	}
-
-	while (!LoopStop(stop))
-		CO_YIELD(m_cached.co);
-
-	Check(Ctx().r[12] == 0x5D, "behind a resume that entered the loop from the block cache, r12 is %08X: the blocks of a page in the middle of the range were discarded as "
-		"those of its first page are", Ctx().r[12]);
-
-	Check(Poke16(kSlot, kNop) == 0 && SetS("R12", 0x77) == 0, "(the nop is written back, and r12 set to 0x77)");
-
-	while (!LoopStop(stop))
-		CO_YIELD(m_cached.co);
-
-	Check(Ctx().r[12] == 0x77 && Peek16(kSlot) == kNop, "(behind the next resume r12 is %08X)", Ctx().r[12]);
 
 	SetS("R12", m_cached.r12);
 
@@ -1102,7 +1354,7 @@ bool CachedWitness(const emu::RunState& stop)
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_cached, "writes.mem.cached")
+BOUNDED_GUEST_TEST(writes_mem_cached, "writes.mem.cached")
 {
 	return CachedWitness(stop);
 }
@@ -1117,7 +1369,7 @@ DBG_SELFTEST_GUEST(writes_mem_cached, "writes.mem.cached")
 	A build without a recompiler of the SH4 compiles nothing: a write has no block to discard there, and the
 	steps show what an interpreter shows. The test says so and asks for the level alone
 */
-DBG_SELFTEST_GUEST(smcwrites_cached, "smcwrites.cached")
+BOUNDED_GUEST_TEST(smcwrites_cached, "smcwrites.cached")
 {
 	// in front of the first step
 	if (m_cached.co.line == 0)
@@ -1147,7 +1399,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_bppage, "writes.mem.bppage")
+BOUNDED_GUEST_TEST(writes_mem_bppage, "writes.mem.bppage")
 {
 	CO_BEGIN(m_bp.co);
 
@@ -1206,7 +1458,7 @@ u32 StoreOfView32(u32 offset32)
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_vram, "writes.mem.vram")
+BOUNDED_GUEST_TEST(writes_mem_vram, "writes.mem.vram")
 {
 	u8 saved[64], pattern[16], seen[64], expect[64];
 	Tally views;
@@ -1302,7 +1554,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_aram, "writes.mem.aram")
+BOUNDED_GUEST_TEST(writes_mem_aram, "writes.mem.aram")
 {
 	u8 saved[8], pattern[8], seen[8];
 	Tally views;
@@ -1408,7 +1660,7 @@ const Refusal refusals[] = {
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_refused, "writes.mem.refused")
+BOUNDED_GUEST_TEST(writes_mem_refused, "writes.mem.refused")
 {
 	std::vector<u8> before, after;
 	u8 data[8];
@@ -1531,7 +1783,7 @@ u32 Sh4Stored(const char* name, u32 value)
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_sh4, "writes.reg.sh4")
+BOUNDED_GUEST_TEST(writes_reg_sh4, "writes.reg.sh4")
 {
 	const regs::Node& node = Sh4Node();
 	Rows start, now;
@@ -1612,7 +1864,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_pc, "writes.reg.pc")
+BOUNDED_GUEST_TEST(writes_reg_pc, "writes.reg.pc")
 {
 	const Engine engine = TheEngine();
 	u32 end = 0, cycles = 0;
@@ -1771,7 +2023,7 @@ bool AicaAsksSh4()
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_sr, "writes.reg.sr")
+BOUNDED_GUEST_TEST(writes_reg_sr, "writes.reg.sr")
 {
 	bool swapped, back;
 	int rv;
@@ -1998,7 +2250,7 @@ bool StepPast(const emu::RunState& stop, u32 at)
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_fpscr, "writes.reg.fpscr")
+BOUNDED_GUEST_TEST(writes_reg_fpscr, "writes.reg.fpscr")
 {
 	const Engine engine = TheEngine();
 	bool swapped;
@@ -2308,7 +2560,7 @@ u32 CpsrWrite(u32 value, std::string* why)
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_arm7, "writes.reg.arm7")
+BOUNDED_GUEST_TEST(writes_reg_arm7, "writes.reg.arm7")
 {
 	const regs::Node& node = Arm7Node();
 	Rows now;
@@ -2601,7 +2853,7 @@ DBG_SELFTEST_GUEST(writes_reg_arm7, "writes.reg.arm7")
 		});
 
 		// until the call is in the queue
-		for (Clock::time_point t0 = Clock::now(); !(g_attn.load() & ATTN_CALL) && MsSince(t0) < 5000; )
+		for (Clock::time_point t0 = Clock::now(); !(g_attn.load() & ATTN_CALL) && MsSince(t0) < kHoldMs; )
 			std::this_thread::yield();
 
 		if (!Resume())
@@ -2669,7 +2921,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_readonly, "writes.reg.readonly")
+BOUNDED_GUEST_TEST(writes_reg_readonly, "writes.reg.readonly")
 {
 	std::vector<u8> before, after;
 	Tally refused, edges;
@@ -2734,7 +2986,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_width, "writes.reg.width")
+BOUNDED_GUEST_TEST(writes_reg_width, "writes.reg.width")
 {
 	u32 r12, pc, r1, got;
 	int rv, rv2;
@@ -2911,7 +3163,7 @@ void NeutralMemory(bool by_request, u32 addr, const u8* other, u32 n)
 
 }
 
-DBG_SELFTEST_GUEST(writesrun_neutral, "writesrun.neutral")
+BOUNDED_GUEST_TEST(writesrun_neutral, "writesrun.neutral")
 {
 	bool by_request;
 	u8 bytes[16];
@@ -3003,7 +3255,9 @@ DBG_SELFTEST_GUEST(writesrun_neutral, "writesrun.neutral")
 	Check(neutral.requests == kNeutralStops / 2 * 2 * 18, "%u of the writes and restores were requests of a client, state.writeMemory and state.setRegister", neutral.requests);
 
 	// The run has gone on behind what the test had to do. Nothing stops it any more; a stop that comes all the
-	// same is a failure, and is resumed
+	// same is a failure, and is resumed. The run ends the wait: it has no bound
+	Unbounded();
+
 	for (;;)
 	{
 		if (!Resume())

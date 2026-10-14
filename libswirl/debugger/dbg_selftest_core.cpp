@@ -62,6 +62,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
@@ -92,6 +93,263 @@ const u32 kScratchAddr = 0x8C00F000;		// inside the 64 KiB that a boot of reios 
 const char* const kHotSymbol = "_stars_one_frame";	// 2ndmix calls it once in every frame
 
 typedef std::chrono::steady_clock Clock;
+
+double MsSince(Clock::time_point t0)
+{
+	return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+}
+
+void Nap(int ms)
+{
+	std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+
+/*
+	The bound of a wait. A test that has armed something, or that waits for what another thread does, returns
+	false and is handed the next stop. Where the machine never gives that stop the session would wait until the
+	watchdog of its runner ended the process, with no summary. So every wait has a bound, kBoundMs, the one
+	constant of the bound in this file: a thread of the session, the watch, looks at the wait that is in
+	progress and cuts one that is older than the bound. It then asks for a stop that the machine can still give,
+	each for a tenth of the bound, in this order:
+	  - a pause, where the published state is Running;
+	  - a stop of the host; where the thread stays parked through that, a call that resumes it (the leave finds
+	    the stop of the host pending, and the thread ends);
+	  - once the machine is stopped, a start of the host: the next thread parks at its start, as every thread of
+	    a session does.
+	The test is handed that stop, fails by a check that says so, and ends. Every test behind it in the session
+	fails at once with one check, arming nothing: the machine stands where no test begins. The driver then prints
+	its summary. A machine that gives no stop through all of that has the watch print the failed check itself and
+	end the process.
+	A bound is generous: a test says its longest wait in a note, and a session that passes waits about a second at
+	most (the boot of 2ndmix on the interpreter, in core.guest) where the bound is a minute. The waits of the
+	threads that the tests start have the same bound.
+	The machine is the host's, and the host is one thread at a time: bound.restart. The watch holds it for the
+	stop and the start it asks for; Restart() holds it; and a thread of a test that takes the machine apart and
+	makes it again (core.lifetime, core.writes) holds it from the moment it lets go of the machine until the new
+	one has started. So the watch never calls a machine that is being taken apart, nor starts one that such a
+	thread starts. Where it had to wait for bound.restart it first waits, a tenth of the bound, for the start park
+	of the machine that the thread which held it has started; then it goes on as above. A thread that holds the
+	machine for a tenth of the bound beyond the cut has the watch end the process as above.
+*/
+const int kBoundMs = 60000;
+
+struct Bound {
+	std::mutex lock;
+	const char* test = nullptr;		// the test that runs, or waits
+	bool waiting = false;			// it has returned false: it waits for a stop
+	Clock::time_point since;
+	double longest = 0;				// ms: the longest wait of the test (emulator thread only)
+	const char* cut = nullptr;		// the test whose wait the watch cut
+	bool taken = false;				// the stop behind the cut was handed to that test
+	const char* how = "";			// what the watch asked the machine for
+	std::thread* watch = nullptr;
+	std::timed_mutex restart;		// the host: what calls, starts, takes apart or makes the machine (above)
+};
+
+// Never destroyed: the watch runs until the process ends
+Bound& bound = *new Bound();
+
+bool WaitLifetime(Lifetime want, int timeout_ms = kBoundMs)
+{
+	Clock::time_point t0 = Clock::now();
+
+	while (emu::GetRunState().lifetime != want)
+	{
+		if (MsSince(t0) > timeout_ms)
+			return false;
+
+		std::this_thread::sleep_for(std::chrono::microseconds(100));
+	}
+
+	return true;
+}
+
+// The host starts the stopped machine again: the next thread parks at its start, as every thread of a session.
+// False when the machine is not stopped: the watch and a thread of a test can both find it stopped, and only one
+// starts it. The caller holds bound.restart
+bool RestartHeld()
+{
+	if (emu::GetRunState().lifetime != Lifetime::Stopped || !virtualDreamcast)
+		return false;
+
+	virtualDreamcast->Resume();
+	return true;
+}
+
+bool Restart()
+{
+	std::lock_guard<std::timed_mutex> l(bound.restart);
+
+	return RestartHeld();
+}
+
+bool CutTaken()
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	return bound.taken;
+}
+
+// Until the test whose wait was cut is handed a stop, or the machine is stopped, for ms at most
+bool CutUntil(int ms, bool stopped)
+{
+	for (Clock::time_point t0 = Clock::now(); MsSince(t0) < ms; Nap(2))
+	{
+		if (CutTaken() || (stopped && emu::GetRunState().lifetime == Lifetime::Stopped))
+			return true;
+	}
+
+	return false;
+}
+
+void CutAsk(const char* how)
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.how = how;
+}
+
+void Watch()
+{
+	const int step = kBoundMs / 10;
+	const char* test = nullptr;
+
+	while (test == nullptr)
+	{
+		Nap(20);
+
+		std::lock_guard<std::mutex> l(bound.lock);
+
+		if (bound.waiting && MsSince(bound.since) > kBoundMs)
+			bound.cut = test = bound.test;
+	}
+
+	if (emu::GetRunState().lifetime == Lifetime::Running)
+	{
+		CutAsk("a pause");
+		emu::RequestPause();
+
+		if (CutUntil(step, false))
+			return;
+	}
+
+	// The machine is the host's from here on (bound.restart)
+	std::unique_lock<std::timed_mutex> host(bound.restart, std::try_to_lock);
+
+	if (!host.owns_lock())
+	{
+		// said before the wait: the start park of the machine that thread starts can come before the lock is free
+		CutAsk("nothing: a thread of the test that held the machine started it");
+
+		if (!host.try_lock_for(std::chrono::milliseconds(step)))
+		{
+			printf("SelfTest: %s: FAILED: the stop the test waited for did not come within the bound of the session, %d s, and a thread of the test that "
+				"takes the machine apart and makes it again held the machine for a tenth of the bound more: the session ends here, with no summary\n",
+				test, kBoundMs / 1000);
+			fflush(stdout);
+			std::_Exit(1);
+		}
+
+		// that thread has started the machine: its thread parks at its start
+		if (CutUntil(step, false))
+			return;
+	}
+
+	if (CutTaken())
+		return;
+
+	CutAsk("a start of the host");
+
+	if (emu::GetRunState().lifetime != Lifetime::Stopped && virtualDreamcast)
+	{
+		CutAsk("a stop and a start of the host");
+		virtualDreamcast->Stop([] { });
+
+		if (!CutUntil(step, true))
+		{
+			CutAsk("a stop of the host, a call that resumes the thread that stayed parked, and a start of the host");
+			emu::Call(emu::CC_EXEC, [] { emu::Resume(); });
+			CutUntil(step, true);
+		}
+	}
+
+	if (CutTaken())
+		return;
+
+	const bool restarted = RestartHeld();
+
+	host.unlock();
+
+	if (restarted && CutUntil(step, false))
+		return;
+
+	printf("SelfTest: %s: FAILED: the stop the test waited for did not come within the bound of the session, %d s, and the machine gave none for a pause, "
+		"a stop and a start of the host either: the session ends here, with no summary\n", test, kBoundMs / 1000);
+	fflush(stdout);
+	std::_Exit(1);
+}
+
+// A guest test of this file, with the bound of its waits
+bool Bounded(const emu::RunState& stop, const char* name, bool (*test)(const emu::RunState& stop))
+{
+	const char* cut;
+	const char* how;
+
+	{
+		std::lock_guard<std::mutex> l(bound.lock);
+
+		if (bound.test != name)
+		{
+			bound.test = name;
+			bound.longest = 0;
+		}
+
+		if (bound.waiting && bound.cut == nullptr)
+			bound.longest = std::max(bound.longest, MsSince(bound.since));
+
+		bound.waiting = false;
+		cut = bound.cut;
+		how = bound.how;
+
+		if (cut == name)
+			bound.taken = true;
+	}
+
+	if (cut != nullptr && cut != name)
+	{
+		Check(false, "not run: a wait of %s did not end within the bound of the session, %d s, and the machine stands where no test begins", cut, kBoundMs / 1000);
+		return true;
+	}
+
+	if (cut != nullptr)
+	{
+		Check(false, "the stop the test waited for did not come within the bound of the session, %d s: the session asked the machine for %s, and was handed a stop "
+			"with \"%s\"; the test ends here", kBoundMs / 1000, how, StopCauseName(stop.cause));
+		return true;
+	}
+
+	if (bound.watch == nullptr)
+		bound.watch = new std::thread(Watch);
+
+	if (test(stop))
+	{
+		Note("the longest wait of the test for a stop: %.1f ms (the bound of a wait is %d s)", bound.longest, kBoundMs / 1000);
+		return true;
+	}
+
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.since = Clock::now();
+	bound.waiting = true;
+	return false;
+}
+
+// DBG_SELFTEST_GUEST with the bound of its waits: every guest test of this file
+#define BOUNDED_GUEST_TEST(ident, name) \
+	static bool ident(const dbg::emu::RunState& stop); \
+	static bool ident##_bounded(const dbg::emu::RunState& stop) { return Bounded(stop, name, ident); } \
+	static dbg::selftest::Test ident##_selftest(name, nullptr, ident##_bounded); \
+	static bool ident(const dbg::emu::RunState& stop)
 
 /*
 	Requests and what comes back
@@ -769,6 +1027,21 @@ DBG_SELFTEST(core_tables, "core.tables")
 		&& InBand(Send("breakpoints.add", { { "event", "dc.no.such.event" }, { "enabled", 1 } })) == kErrInvalidParams
 		&& InBand(Send("breakpoints.add", { { "event", "dc.no.such.event" }, { "address", 4294967296.0 } })) == kErrInvalidParams,
 		"a mistyped event, kind, address or enabled, and an address above 32 bits: -32602, before the event is looked at");
+
+	{
+		// A name is compared whole: what stands in front of a NUL is not the name. Sent as a client sends it, with
+		// the escape \u0000 in the JSON text: an event that the tree lists, and the event of a target's code
+		// breakpoints, each with a NUL behind it
+		const std::string vblank_nul("dc.holly.core.vblank\0x", 22), pc_nul("dc.sh4.cpu.pc\0x", 15);
+		const json as_event = Send("breakpoints.add", { { "event", vblank_nul }, { "kind", "event" } });
+		const json no_kind = Send("breakpoints.add", { { "event", vblank_nul } });
+		const json as_code = Send("breakpoints.add", { { "event", pc_nul }, { "address", 0x8C010000u } });
+
+		Check(InBand(as_event) == kErrInvalidParams && InBand(no_kind) == kErrInvalidParams && InBand(as_code) == kErrInvalidParams,
+			"an event name with a NUL behind the name of an event, or of the event of a target's code breakpoints (\"dc.holly.core.vblank\\u0000x\", "
+			"\"dc.sh4.cpu.pc\\u0000x\"), is none of them: -32602, with kind event, without kind and as a code breakpoint (%s)", as_event.dump().c_str());
+	}
+
 	Check(Tick(false)["breakpoints"].size() == 3, "a refused request adds nothing");
 
 	// the event gates
@@ -1424,7 +1697,7 @@ void CheckSh4(json tick, const char* where)
 
 }
 
-DBG_SELFTEST_GUEST(core_guest, "core.guest")
+BOUNDED_GUEST_TEST(core_guest, "core.guest")
 {
 	const u32 pc = p_sh4rcb->cntx.pc;
 
@@ -1669,21 +1942,6 @@ void HostJoin()
 	}
 }
 
-bool WaitLifetime(Lifetime want, int timeout_ms = 20000)
-{
-	const Clock::time_point t0 = Clock::now();
-
-	while (emu::GetRunState().lifetime != want)
-	{
-		if (std::chrono::duration<double, std::milli>(Clock::now() - t0).count() > timeout_ms)
-			return false;
-
-		std::this_thread::sleep_for(std::chrono::microseconds(200));
-	}
-
-	return true;
-}
-
 // What the host thread found in one state. Texts: it does not check, the test does, on the emulator thread
 struct Found {
 	bool reached = false;
@@ -1755,7 +2013,7 @@ json TickOf(const std::string& text)
 
 }
 
-DBG_SELFTEST_GUEST(core_lifetime, "core.lifetime")
+BOUNDED_GUEST_TEST(core_lifetime, "core.lifetime")
 {
 	switch (lt.phase)
 	{
@@ -1784,7 +2042,7 @@ DBG_SELFTEST_GUEST(core_lifetime, "core.lifetime")
 			Look(&lt.stopped, true);
 
 			// and starts it again
-			virtualDreamcast->Resume();
+			Restart();
 		});
 		return false;
 
@@ -1845,7 +2103,9 @@ DBG_SELFTEST_GUEST(core_lifetime, "core.lifetime")
 
 			Look(&lt.exited, false);
 
-			// the host takes the machine apart
+			// the host takes the machine apart, and has it until the new one has started (the watch of the bound)
+			std::lock_guard<std::timed_mutex> owns(bound.restart);
+
 			virtualDreamcast.reset();
 
 			Look(&lt.none, false);
@@ -2089,7 +2349,7 @@ std::string TablesOf(const json& tick)
 
 }
 
-DBG_SELFTEST_GUEST(core_reset, "core.reset")
+BOUNDED_GUEST_TEST(core_reset, "core.reset")
 {
 	const u32 pc = p_sh4rcb->cntx.pc;
 
@@ -2171,7 +2431,16 @@ DBG_SELFTEST_GUEST(core_reset, "core.reset")
 		// (it has no parameters: a key it does not name is not looked at)
 		json answer = Send("control.reset", { { "target", 5 } });
 
-		Check(Ok(answer), "control.reset at the stop of a breakpoint is answered {} (%s)", answer.dump().c_str());
+		if (!Check(Ok(answer), "control.reset at the stop of a breakpoint is answered {} (%s)", answer.dump().c_str()))
+		{
+			// no reset was made, and no stop comes for it: the test ends here
+			emu::test::observer = nullptr;
+			core::SetTickSinkForTest(nullptr);
+			rs.phase = 0;
+			CleanTables();
+			return true;
+		}
+
 		Check(TakeTicks().empty(), "and broadcasts no tick of its own: the stop of the reset is its tick");
 		return false;
 	}
@@ -2240,8 +2509,9 @@ DBG_SELFTEST_GUEST(core_reset, "core.reset")
 			rs.answer = Ask("control.reset");
 			rs.asked = true;
 
-			// a machine that is not reset never comes back to its entry: the test is given a stop all the same
-			if (!WaitLifetime(Lifetime::Parked, 30000))
+			// a machine that is not reset never comes back to its entry: the test is given a stop all the same, in
+			// half the bound of a wait
+			if (!WaitLifetime(Lifetime::Parked, kBoundMs / 2))
 			{
 				rs.timed_out = true;
 				emu::RequestPause();
@@ -2364,7 +2634,7 @@ void AskStopped(StoppedAnswers* a, u32 watch)
 
 }
 
-DBG_SELFTEST_GUEST(core_writes, "core.writes")
+BOUNDED_GUEST_TEST(core_writes, "core.writes")
 {
 	Sh4Context& ctx = p_sh4rcb->cntx;
 
@@ -2827,6 +3097,9 @@ DBG_SELFTEST_GUEST(core_writes, "core.writes")
 			}
 
 			AskStopped(&wr.stopped, wr.watch_dbr);
+
+			// the host takes the machine apart, and has it until the new one has started (the watch of the bound)
+			std::lock_guard<std::timed_mutex> owns(bound.restart);
 
 			virtualDreamcast.reset();
 

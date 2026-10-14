@@ -32,7 +32,9 @@
 #	                breakpoint of the ARM7 suspended, on thirteen addresses in turn, and starts it again: the
 #	                thread that ends runs the rest of the burst in front of its stop callback (dc_run), from
 #	                inside a sample. The sessions of debugger.selftest.arm7* hold that path to its counts; what
-#	                the rest of the burst executed is held here
+#	                the rest of the burst executed is held here. At least five of the stops are taken where
+#	                the rest of the sample has a FIQ to enter (on the msr that ends the F window of the
+#	                guest's loop, or in front of it, with a request of the AICA latched): that loop enters it
 #
 #	README.md of ../dsptest has the guest; tests/debugger/selftest/README.md has the tests of the session.
 #
@@ -51,4 +53,5 @@ nulldc_sound_neutral(steps     SELFTEST arm7n.steps
 
 nulldc_sound_neutral(hoststop  SELFTEST arm7n.hoststop
                      EXPECT "the host stopped the machine 60 times while the thread was parked on a burst"
-                            "each of the 60 stop callbacks found the burst whole")
+                            "each of the 60 stop callbacks found the burst whole"
+                            "of the stops of the host were taken where the rest of the sample had a FIQ to enter")

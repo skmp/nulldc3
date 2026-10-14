@@ -89,8 +89,9 @@ function(nulldc_debugger_selftest name)
     endforeach()
 
     add_test(NAME ${test} COMMAND ${command} ${ARG_ARGS})
-    # selftest.py has a watchdog per run of the emulator, this is the one behind it
-    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
+    # selftest.py has a watchdog per run of the emulator, this is the one behind it. Python writes no bytecode
+    # into the source tree
+    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
   endforeach()
 endfunction()
 

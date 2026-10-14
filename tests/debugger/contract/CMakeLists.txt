@@ -149,8 +149,9 @@ function(nulldc_debugger_contract name)
     endforeach()
 
     add_test(NAME ${test} COMMAND ${command})
-    # contract.py has a watchdog per run of the emulator and for the runner, this is the one behind them
-    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
+    # contract.py has a watchdog per run of the emulator and for the runner, this is the one behind them. Python
+    # writes no bytecode into the source tree
+    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
   endforeach()
 endfunction()
 
@@ -234,7 +235,7 @@ nulldc_debugger_contract(hash.listening.guest MODE hash-listening ENGINES jit in
 if(Python3_Interpreter_FOUND)
   add_test(NAME debugger.contract.hash.listening.rule
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/contract/contract.py" --mode hash-listening-rule)
-  set_tests_properties(debugger.contract.hash.listening.rule PROPERTIES TIMEOUT 60)
+  set_tests_properties(debugger.contract.hash.listening.rule PROPERTIES TIMEOUT 60 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 else()
   nulldc_add_skipped_test(debugger.contract.hash.listening.rule "no python3 to run tests/debugger/contract/contract.py with")
 endif()
