@@ -112,7 +112,8 @@ void FormatValue(uint32_t width, uint64_t value, char* out);
 bool Read(const Node& node, uint32_t index, uint64_t* value, char* text, uint32_t n);
 
 // Writes register `index` of the node; bits of value above its width are ignored. (E) in the park context
-// only (inside a CC_WRITE call: the park loop, or a service excursion of a running machine). Never blocks.
+// (inside a CC_WRITE call: the park loop, or a service excursion of a running machine), or a thread that holds
+// L while no emulator thread exists, as for Read(). Never blocks.
 // Writable are the rows with kRegWritable: in M2 the registers of dc.sh4.cpu and those of dc.aica.arm7 but
 // ENABLED. No other row has a writer.
 //   dc.sh4.cpu     a store into the SH4 context. PC: a value with bit 0 set is refused (nothing executes at an
