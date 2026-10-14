@@ -77,8 +77,9 @@ function(nulldc_sound_neutral name)
       endforeach()
 
       add_test(NAME ${test} COMMAND ${command})
-      # soundlines.py has a watchdog per run of the emulator, this is the one behind it
-      set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
+      # soundlines.py has a watchdog per run of the emulator, this is the one behind it. Python writes no bytecode
+      # into the source tree
+      set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
     endforeach()
   endforeach()
 endfunction()
@@ -90,7 +91,7 @@ set(nulldc_sound_runner "${CMAKE_CURRENT_SOURCE_DIR}/soundlines.py")
 if(Python3_Interpreter_FOUND)
   add_test(NAME debugger.guest.dsptest.files
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_sound_runner}" --mode files --dir "${CMAKE_CURRENT_SOURCE_DIR}")
-  set_tests_properties(debugger.guest.dsptest.files PROPERTIES TIMEOUT 120)
+  set_tests_properties(debugger.guest.dsptest.files PROPERTIES TIMEOUT 120 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 else()
   nulldc_add_skipped_test(debugger.guest.dsptest.files "no python3 to run tests/debugger/guest/dsptest/soundlines.py with")
 endif()
@@ -100,7 +101,7 @@ if(Python3_Interpreter_FOUND AND ${HOST_OS} EQUAL ${OS_LINUX})
   add_test(NAME debugger.sound.runner
            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/soundlines_test.py"
                    --work "${CMAKE_BINARY_DIR}/debugger/guest/work/debugger.sound.runner")
-  set_tests_properties(debugger.sound.runner PROPERTIES TIMEOUT 300)
+  set_tests_properties(debugger.sound.runner PROPERTIES TIMEOUT 300 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 else()
   nulldc_add_skipped_test(debugger.sound.runner "tests/debugger/guest/dsptest/soundlines_test.py needs python3 on a Linux host")
 endif()
@@ -115,7 +116,7 @@ function(nulldc_sound_test test program ticks)
   add_test(NAME ${test}
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_sound_runner}" --emulator "${nulldc_guest_emulator}"
                    --work "${CMAKE_BINARY_DIR}/debugger/guest/work/${test}" --guest "${program}" --ticks ${ticks} ${ARGN})
-  set_tests_properties(${test} PROPERTIES TIMEOUT 900)
+  set_tests_properties(${test} PROPERTIES TIMEOUT 900 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 endfunction()
 
 set(nulldc_sound_no_2ndmix "")
