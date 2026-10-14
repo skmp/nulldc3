@@ -999,10 +999,13 @@ DBG_SELFTEST_GUEST(writes_mem_code, "writes.mem.code")
 	The stops are latched at slice ends: nothing is owed, and the resume enters the block of the loop from the
 	cache. The first write makes the page of the loop a page that holds data: from then on its blocks are not
 	write-protected. The run to the next stop compiles the block of the loop again. The second write puts an
-	instruction into the slot of the loop's branch, and the next stop reads what it left. A third write is one
-	range over three pages, with the page of the loop in the middle: it begins in the page in front of it and
-	ends in the page behind it, and the slot is where it differs from what is there. A writer that discarded
-	the blocks of the first page of a range alone, or of its first and its last, would leave the loop's.
+	instruction into the slot of the loop's branch, and the next stop reads what it left. Then three ranges of
+	more than one page, each with the slot among its bytes and the bytes that are there everywhere else, so that
+	every page of a range is witnessed in one of them: one over three pages with the page of the loop in the
+	middle, one of two pages that ends in the page of the loop, and one of two pages that begins in it. A writer
+	that discarded the blocks of the first page of a range alone, or of its first and its last, leaves the loop's
+	block behind the first of them; one that leaves out the last page of a range, behind the second; one that
+	leaves out the first page, behind the third.
 
 	What a writer without the discard would do depends on the configuration. With Dynarec.SmcCheckLevel at its
 	default every block of a page that holds data compares its code bytes when it is entered and discards itself:
@@ -1017,7 +1020,49 @@ struct {
 	Co co;
 	u16 slot;
 	u32 r12;
+	u32 range;				// of kRanges
 } m_cached;
+
+// The ranges of more than one page, each with the slot of the loop's branch among its bytes: where it begins and
+// where it ends, by the page of the loop and REI_PAGE_SIZE, and the immediate of the mov that is put into the slot
+struct CachedRange {
+	const char* what;
+	u32 from, to;			// [from, to)
+	u32 imm;
+};
+
+CachedRange Range(u32 which)
+{
+	const u32 page = kSlot & ~(u32)(REI_PAGE_SIZE - 1);
+
+	switch (which)
+	{
+	case 0:
+		return { "begins in the page in front of the loop's and ends in the page behind it: the blocks of a page in the middle of the range were discarded",
+			page - 16, page + REI_PAGE_SIZE + 16, 0x5D };
+	case 1:
+		return { "begins in the page in front of the loop's and ends in the loop's, behind the slot: the blocks of the last page of the range were discarded",
+			page - 16, kSlot + 2, 0x5E };
+	default:
+		return { "begins in the loop's page, at the slot, and ends in the page behind it: the blocks of the first page of the range were discarded",
+			kSlot, page + REI_PAGE_SIZE + 16, 0x5F };
+	}
+}
+
+const u32 kRanges = 3;
+
+// One write of a range: the bytes that are there, but for mov #imm, r12 in the slot; r12 cleared in front of it
+bool WriteRange(const CachedRange& range)
+{
+	const u32 n = range.to - range.from;
+	std::vector<u8> bytes(n);
+	const bool read = Peek(Target::Sh4, range.from, n, bytes.data());
+
+	bytes[kSlot - range.from] = (u8)MovImm(12, range.imm);
+	bytes[kSlot - range.from + 1] = (u8)(MovImm(12, range.imm) >> 8);
+
+	return read && SetS("R12", 0) == 0 && mem::Write(Target::Sh4, range.from, n, bytes.data()) == 0 && Peek16(kSlot) == MovImm(12, range.imm);
+}
 
 // The steps of writes.mem.cached and of smcwrites.cached
 bool CachedWitness(const emu::RunState& stop)
@@ -1063,37 +1108,34 @@ bool CachedWitness(const emu::RunState& stop)
 
 	Check(Ctx().r[12] == 0x77 && Peek16(kSlot) == kNop, "behind the next resume r12 is %08X: the instruction that was taken out no longer runs", Ctx().r[12]);
 
-	// The third write: one range over three pages, the loop's in the middle. Its bytes are the ones that are there,
-	// but for the slot
+	// Three writes of a range of more than one page: over three pages with the loop's in the middle, of two pages
+	// that end in the loop's, and of two pages that begin in it. Each holds the bytes that are there, but for the
+	// slot
+	for (m_cached.range = 0; m_cached.range < kRanges; m_cached.range++)
 	{
-		const u32 page = kSlot & ~(u32)(REI_PAGE_SIZE - 1);
-		const u32 from = page - 16, n = REI_PAGE_SIZE + 32;
-		std::vector<u8> bytes(n);
-		const bool read = Peek(Target::Sh4, from, n, bytes.data());
+		{
+			const CachedRange range = Range(m_cached.range);
 
-		bytes[kSlot - from] = (u8)MovImm(12, 0x5D);
-		bytes[kSlot - from + 1] = (u8)(MovImm(12, 0x5D) >> 8);
+			if (TheEngine().blocks)
+				Check(BlockCached(kLoop), "the block of the loop is in the block cache, compiled with the nop in its slot");
 
-		if (TheEngine().blocks)
-			Check(BlockCached(kLoop), "the block of the loop is in the block cache, compiled with the nop in its slot");
+			Check(WriteRange(range), "r12 is cleared, and one write of %u bytes from %08X to %08X puts mov #0x%02X, r12 into the slot", range.to - range.from, range.from,
+				range.to - 1, range.imm);
+		}
 
-		Check(read && SetS("R12", 0) == 0 && mem::Write(Target::Sh4, from, n, bytes.data()) == 0 && Peek16(kSlot) == MovImm(12, 0x5D),
-			"r12 is cleared, and one write of %u bytes from %08X on, which begins in the page in front of the loop's and ends in the page behind it, puts mov #0x5D, r12 "
-			"into the slot", n, from);
+		while (!LoopStop(stop))
+			CO_YIELD(m_cached.co);
+
+		Check(Ctx().r[12] == Range(m_cached.range).imm, "behind a resume that entered the loop from the block cache, r12 is %08X: the write of the range that %s",
+			Ctx().r[12], Range(m_cached.range).what);
+
+		Check(Poke16(kSlot, kNop) == 0 && SetS("R12", 0x77) == 0, "(the nop is written back, and r12 set to 0x77)");
+
+		while (!LoopStop(stop))
+			CO_YIELD(m_cached.co);
+
+		Check(Ctx().r[12] == 0x77 && Peek16(kSlot) == kNop, "(behind the next resume r12 is %08X)", Ctx().r[12]);
 	}
-
-	while (!LoopStop(stop))
-		CO_YIELD(m_cached.co);
-
-	Check(Ctx().r[12] == 0x5D, "behind a resume that entered the loop from the block cache, r12 is %08X: the blocks of a page in the middle of the range were discarded as "
-		"those of its first page are", Ctx().r[12]);
-
-	Check(Poke16(kSlot, kNop) == 0 && SetS("R12", 0x77) == 0, "(the nop is written back, and r12 set to 0x77)");
-
-	while (!LoopStop(stop))
-		CO_YIELD(m_cached.co);
-
-	Check(Ctx().r[12] == 0x77 && Peek16(kSlot) == kNop, "(behind the next resume r12 is %08X)", Ctx().r[12]);
 
 	SetS("R12", m_cached.r12);
 
