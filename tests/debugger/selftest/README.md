@@ -28,9 +28,11 @@ it runs; a stop of the host, with a call that resumes a thread that stays parked
 host, whose new thread parks at its start as every thread of a session does. The test is handed that stop and
 fails by a check that says so, every test behind it in the session fails at once with one check (the machine
 stands where no test begins), and the session prints its summary, long before the watchdog of the runner. Each
-test says its longest wait in a note: in a session that passes it is a tenth of a second at most, but in
-`core.guest` (the boot of 2ndmix, about a second on the interpreter). The last wait of a test that the run ends
-has no bound.
+test says its longest wait in a note: in a session that passes it is under a tenth of a second in `arm7` and
+`writes`, and under a second in `core`: `core.guest` (the boot of 2ndmix, about 0.9 s on the interpreter),
+`core.reset` (about 0.3 s: its host thread lets the machine run 300 ms before it asks for the reset) and
+`core.writes` (about 0.1 s: its host thread lets the machine run 100 ms before it sends its requests). The last
+wait of a test that the run ends has no bound.
 
 ## The tests of dbg::emu
 
