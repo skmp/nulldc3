@@ -50,8 +50,11 @@
 
 #include "../../tests/debugger/guest/dsptest/dsptest_labels.inc"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
@@ -443,7 +446,50 @@ void OtherJoin()
 	}
 }
 
-bool WaitLifetime(Lifetime want, int timeout_ms = 20000)
+/*
+	The bound of a wait. A test that has armed something, or that waits for what another thread does, returns
+	false and is handed the next stop. Where the machine never gives that stop the session would wait until the
+	watchdog of its runner ended the process, with no summary. So every wait has a bound, kBoundMs, the one
+	constant of the bound in this file: a thread of the session, the watch, looks at the wait that is in
+	progress and cuts one that is older than the bound. It then asks for a stop that the machine can still give,
+	each for a tenth of the bound, in this order:
+	  - a pause, where the published state is Running;
+	  - a stop of the host; where the thread stays parked through that, a call that resumes it (the leave finds
+	    the stop of the host pending, and the thread ends);
+	  - once the machine is stopped, a start of the host: the next thread parks at its start, as every thread of
+	    a session does.
+	The test is handed that stop, fails by a check that says so, and ends. Every test behind it in the session
+	fails at once with one check, arming nothing: the machine stands where no test begins. The driver then prints
+	its summary. A machine that gives no stop through all of that has the watch print the failed check itself and
+	end the process.
+	A bound is generous: a test says its longest wait in a note, and a session that passes waits less than a tenth
+	of a second for any of its stops where the bound is half a minute. The waits of the threads that the tests
+	start have the same bound, and the host starts the machine on one thread at a time (Restart). The last wait
+	of a test that the run ends (arm7n.*, NEUTRAL_END) has no bound.
+*/
+const int kBoundMs = 30000;
+
+// How long a test holds a slice of the machine, or waits on the emulator thread for another thread to queue a call
+const int kHoldMs = kBoundMs / 12;
+
+struct Bound {
+	std::mutex lock;
+	const char* test = nullptr;		// the test that runs, or waits
+	bool waiting = false;			// it has returned false: it waits for a stop
+	bool unbounded = false;			// that wait is one the run ends
+	Clock::time_point since;
+	double longest = 0;				// ms: the longest wait of the test (emulator thread only)
+	const char* cut = nullptr;		// the test whose wait the watch cut
+	bool taken = false;				// the stop behind the cut was handed to that test
+	const char* how = "";			// what the watch asked the machine for
+	std::thread* watch = nullptr;
+	std::mutex restart;				// one start of the host at a time
+};
+
+// Never destroyed: the watch runs until the process ends
+Bound& bound = *new Bound();
+
+bool WaitLifetime(Lifetime want, int timeout_ms = kBoundMs)
 {
 	Clock::time_point t0 = Clock::now();
 
@@ -457,6 +503,163 @@ bool WaitLifetime(Lifetime want, int timeout_ms = 20000)
 
 	return true;
 }
+
+// The host starts the stopped machine again; the next thread parks at its start unless plain. False when the
+// machine is not stopped: the watch and a thread of a test can both find it stopped, and only one starts it
+bool Restart(bool plain)
+{
+	std::lock_guard<std::mutex> l(bound.restart);
+
+	if (emu::GetRunState().lifetime != Lifetime::Stopped)
+		return false;
+
+	emu::test::plainStart = plain;
+	virtualDreamcast->Resume();
+	return true;
+}
+
+bool CutTaken()
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	return bound.taken;
+}
+
+// Until the test whose wait was cut is handed a stop, or the machine is stopped, for ms at most
+bool CutUntil(int ms, bool stopped)
+{
+	for (Clock::time_point t0 = Clock::now(); MsSince(t0) < ms; Nap(2))
+	{
+		if (CutTaken() || (stopped && emu::GetRunState().lifetime == Lifetime::Stopped))
+			return true;
+	}
+
+	return false;
+}
+
+void CutAsk(const char* how)
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.how = how;
+}
+
+void Watch()
+{
+	const int step = kBoundMs / 10;
+	const char* test = nullptr;
+
+	while (test == nullptr)
+	{
+		Nap(20);
+
+		std::lock_guard<std::mutex> l(bound.lock);
+
+		if (bound.waiting && !bound.unbounded && MsSince(bound.since) > kBoundMs)
+			bound.cut = test = bound.test;
+	}
+
+	if (emu::GetRunState().lifetime == Lifetime::Running)
+	{
+		CutAsk("a pause");
+		emu::RequestPause();
+
+		if (CutUntil(step, false))
+			return;
+	}
+
+	if (emu::GetRunState().lifetime != Lifetime::Stopped)
+	{
+		CutAsk("a stop and a start of the host");
+		virtualDreamcast->Stop([] { });
+
+		if (!CutUntil(step, true))
+		{
+			CutAsk("a stop of the host, a call that resumes the thread that stayed parked, and a start of the host");
+			emu::Call(emu::CC_EXEC, [] { emu::Resume(); });
+			CutUntil(step, true);
+		}
+	}
+
+	if (CutTaken() || (Restart(false) && CutUntil(step, false)))
+		return;
+
+	printf("SelfTest: %s: FAILED: the stop the test waited for did not come within the bound of the session, %d s, and the machine gave none for a pause, "
+		"a stop and a start of the host either: the session ends here, with no summary\n", test, kBoundMs / 1000);
+	fflush(stdout);
+	std::_Exit(1);
+}
+
+// A test whose last wait the run ends: it has no bound
+void Unbounded()
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.unbounded = true;
+}
+
+// A guest test of this file, with the bound of its waits
+bool Bounded(const emu::RunState& stop, const char* name, bool (*test)(const emu::RunState& stop))
+{
+	const char* cut;
+	const char* how;
+
+	{
+		std::lock_guard<std::mutex> l(bound.lock);
+
+		if (bound.test != name)
+		{
+			bound.test = name;
+			bound.unbounded = false;
+			bound.longest = 0;
+		}
+
+		if (bound.waiting && bound.cut == nullptr)
+			bound.longest = std::max(bound.longest, MsSince(bound.since));
+
+		bound.waiting = false;
+		cut = bound.cut;
+		how = bound.how;
+
+		if (cut == name)
+			bound.taken = true;
+	}
+
+	if (cut != nullptr && cut != name)
+	{
+		Check(false, "not run: a wait of %s did not end within the bound of the session, %d s, and the machine stands where no test begins", cut, kBoundMs / 1000);
+		return true;
+	}
+
+	if (cut != nullptr)
+	{
+		Check(false, "the stop the test waited for did not come within the bound of the session, %d s: the session asked the machine for %s, and was handed a stop "
+			"with \"%s\"; the test ends here", kBoundMs / 1000, how, StopCauseName(stop.cause));
+		return true;
+	}
+
+	if (bound.watch == nullptr)
+		bound.watch = new std::thread(Watch);
+
+	if (test(stop))
+	{
+		Note("the longest wait of the test for a stop: %.1f ms (the bound of a wait is %d s)", bound.longest, kBoundMs / 1000);
+		return true;
+	}
+
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.since = Clock::now();
+	bound.waiting = true;
+	return false;
+}
+
+// DBG_SELFTEST_GUEST with the bound of its waits: every guest test of this file
+#define BOUNDED_GUEST_TEST(ident, name) \
+	static bool ident(const dbg::emu::RunState& stop); \
+	static bool ident##_bounded(const dbg::emu::RunState& stop) { return Bounded(stop, name, ident); } \
+	static dbg::selftest::Test ident##_selftest(name, nullptr, ident##_bounded); \
+	static bool ident(const dbg::emu::RunState& stop)
 
 /*
 	The hand: a scheduler callback of the tests, in every slice in which emulated time passes while it is on. It
@@ -576,7 +779,7 @@ int HandTick(void*, int, int, int)
 			// until the other threads have queued their calls, and never for long
 			Clock::time_point t0 = Clock::now();
 
-			while (!hand.release && MsSince(t0) < 5000)
+			while (!hand.release && MsSince(t0) < kHoldMs)
 				std::this_thread::sleep_for(std::chrono::microseconds(200));
 
 			hand.sawCall = (g_attn.load() & ATTN_CALL) != 0;
@@ -849,7 +1052,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_burst_plain, "arm7.burst.plain")
+BOUNDED_GUEST_TEST(arm7_burst_plain, "arm7.burst.plain")
 {
 	Counts c;
 	u32 d[4];
@@ -915,7 +1118,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_bp_hit, "arm7.bp.hit")
+BOUNDED_GUEST_TEST(arm7_bp_hit, "arm7.bp.hit")
 {
 	Counts c;
 	std::vector<Seen> list;
@@ -1003,7 +1206,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_bp_context, "arm7.bp.context")
+BOUNDED_GUEST_TEST(arm7_bp_context, "arm7.bp.context")
 {
 	std::vector<u8> state;
 
@@ -1047,7 +1250,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_bp_lowestid, "arm7.bp.lowestid")
+BOUNDED_GUEST_TEST(arm7_bp_lowestid, "arm7.bp.lowestid")
 {
 	CO_BEGIN(bp_lowest.co);
 
@@ -1082,7 +1285,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_bp_mask, "arm7.bp.mask")
+BOUNDED_GUEST_TEST(arm7_bp_mask, "arm7.bp.mask")
 {
 	Counts c;
 
@@ -1146,7 +1349,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_bp_mirror, "arm7.bp.mirror")
+BOUNDED_GUEST_TEST(arm7_bp_mirror, "arm7.bp.mirror")
 {
 	const u32 size = sh4_cpu->aica_ram.size;
 
@@ -1191,7 +1394,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_bp_fiqvector, "arm7.bp.fiqvector")
+BOUNDED_GUEST_TEST(arm7_bp_fiqvector, "arm7.bp.fiqvector")
 {
 	CO_BEGIN(bp_fiq.co);
 
@@ -1278,7 +1481,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_bp_resume, "arm7.bp.resume")
+BOUNDED_GUEST_TEST(arm7_bp_resume, "arm7.bp.resume")
 {
 	ArmRegs regs;
 	Counts c;
@@ -1383,7 +1586,7 @@ DBG_SELFTEST_GUEST(arm7_bp_resume, "arm7.bp.resume")
 		});
 
 		// until the call is in the queue
-		for (Clock::time_point t0 = Clock::now(); !(g_attn.load() & ATTN_CALL) && MsSince(t0) < 5000; )
+		for (Clock::time_point t0 = Clock::now(); !(g_attn.load() & ATTN_CALL) && MsSince(t0) < kHoldMs; )
 			std::this_thread::yield();
 
 		TakeSeen();
@@ -1608,7 +1811,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_bp_completion, "arm7.bp.completion")
+BOUNDED_GUEST_TEST(arm7_bp_completion, "arm7.bp.completion")
 {
 	std::vector<Seen> list;
 
@@ -1685,7 +1888,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_bp_insleep, "arm7.bp.insleep")
+BOUNDED_GUEST_TEST(arm7_bp_insleep, "arm7.bp.insleep")
 {
 	Counts c;
 
@@ -1741,7 +1944,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_suspended, "arm7.step.suspended")
+BOUNDED_GUEST_TEST(arm7_step_suspended, "arm7.step.suspended")
 {
 	std::vector<Seen> list;
 	Counts c;
@@ -1834,7 +2037,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_sample, "arm7.step.sample")
+BOUNDED_GUEST_TEST(arm7_step_sample, "arm7.step.sample")
 {
 	Counts c;
 
@@ -1900,7 +2103,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_burstend, "arm7.step.burstend")
+BOUNDED_GUEST_TEST(arm7_step_burstend, "arm7.step.burstend")
 {
 	Counts c;
 	std::vector<Seen> list;
@@ -1966,7 +2169,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_frompause, "arm7.step.frompause")
+BOUNDED_GUEST_TEST(arm7_step_frompause, "arm7.step.frompause")
 {
 	std::vector<Seen> list;
 	Counts c;
@@ -2040,7 +2243,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_fiq, "arm7.step.fiq")
+BOUNDED_GUEST_TEST(arm7_step_fiq, "arm7.step.fiq")
 {
 	ArmRegs regs;
 	u32 differs;
@@ -2115,7 +2318,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_fiqbehind, "arm7.step.fiqbehind")
+BOUNDED_GUEST_TEST(arm7_step_fiqbehind, "arm7.step.fiqbehind")
 {
 	Counts c;
 
@@ -2231,7 +2434,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_unclocked, "arm7.step.unclocked")
+BOUNDED_GUEST_TEST(arm7_step_unclocked, "arm7.step.unclocked")
 {
 	Counts c;
 	std::vector<Seen> list;
@@ -2282,7 +2485,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_notclocked, "arm7.step.notclocked")
+BOUNDED_GUEST_TEST(arm7_step_notclocked, "arm7.step.notclocked")
 {
 	CO_BEGIN(st_notcl.co);
 
@@ -2327,7 +2530,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_sh4first, "arm7.step.sh4first")
+BOUNDED_GUEST_TEST(arm7_step_sh4first, "arm7.step.sh4first")
 {
 	Counts c;
 	std::vector<Seen> list;
@@ -2386,7 +2589,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_breakpointed, "arm7.step.breakpointed")
+BOUNDED_GUEST_TEST(arm7_step_breakpointed, "arm7.step.breakpointed")
 {
 	Counts c;
 
@@ -2515,8 +2718,7 @@ void WaitEnded()
 	if (rv != 0)
 		st_wait.failed = true;
 
-	emu::test::plainStart = true;
-	virtualDreamcast->Resume();
+	Restart(true);
 }
 
 bool WaitEnding(const emu::RunState& stop, HandMode mode, const char* what, StopCause ended)
@@ -2574,7 +2776,7 @@ bool WaitEnding(const emu::RunState& stop, HandMode mode, const char* what, Stop
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_wait_hoststop, "arm7.step.wait.hoststop")
+BOUNDED_GUEST_TEST(arm7_step_wait_hoststop, "arm7.step.wait.hoststop")
 {
 	if (!WaitEnding(stop, HAND_STOP_FIRST, "the host stopped the machine", StopCause::HostStopped))
 		return false;
@@ -2583,7 +2785,7 @@ DBG_SELFTEST_GUEST(arm7_step_wait_hoststop, "arm7.step.wait.hoststop")
 	return true;
 }
 
-DBG_SELFTEST_GUEST(arm7_step_wait_exit, "arm7.step.wait.exit")
+BOUNDED_GUEST_TEST(arm7_step_wait_exit, "arm7.step.wait.exit")
 {
 	return WaitEnding(stop, HAND_EXIT_FIRST, "the guest ended the run", StopCause::GuestExit);
 }
@@ -2601,7 +2803,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_wait_reset, "arm7.step.wait.reset")
+BOUNDED_GUEST_TEST(arm7_step_wait_reset, "arm7.step.wait.reset")
 {
 	std::vector<Seen> list;
 
@@ -2651,7 +2853,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_wait_grace, "arm7.step.wait.grace")
+BOUNDED_GUEST_TEST(arm7_step_wait_grace, "arm7.step.wait.grace")
 {
 	std::vector<Seen> list;
 
@@ -2670,8 +2872,14 @@ DBG_SELFTEST_GUEST(arm7_step_wait_grace, "arm7.step.wait.grace")
 	HandOn(HAND_HOLD_FIRST);
 
 	OtherStart([] {
-		while (!hand.holding)
-			std::this_thread::yield();
+		for (Clock::time_point t0 = Clock::now(); !hand.holding; std::this_thread::yield())
+		{
+			if (MsSince(t0) > kBoundMs)
+			{
+				st_grace.failed = true;
+				return;
+			}
+		}
 
 		st_grace.calledMask = true;
 		st_grace.rvMask = emu::Call(emu::CC_TABLE, [] {
@@ -2682,8 +2890,15 @@ DBG_SELFTEST_GUEST(arm7_step_wait_grace, "arm7.step.wait.grace")
 	});
 
 	st_grace.second = new std::thread([] {
-		while (!hand.holding || !st_grace.calledMask || !(g_attn.load() & ATTN_CALL))
-			std::this_thread::yield();
+		for (Clock::time_point t0 = Clock::now(); !hand.holding || !st_grace.calledMask || !(g_attn.load() & ATTN_CALL); std::this_thread::yield())
+		{
+			if (MsSince(t0) > kBoundMs)
+			{
+				st_grace.failed = true;
+				hand.release = true;
+				return;
+			}
+		}
 
 		// behind the first in the queue
 		Nap(20);
@@ -2711,7 +2926,7 @@ DBG_SELFTEST_GUEST(arm7_step_wait_grace, "arm7.step.wait.grace")
 
 		Nap(20);
 
-		for (Clock::time_point t0 = Clock::now(); MsSince(t0) < 20000; )
+		for (Clock::time_point t0 = Clock::now(); MsSince(t0) < kBoundMs; )
 		{
 			emu::RunState s = emu::GetRunState();
 
@@ -2782,7 +2997,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_step_wait_sh4, "arm7.step.wait.sh4")
+BOUNDED_GUEST_TEST(arm7_step_wait_sh4, "arm7.step.wait.sh4")
 {
 	std::vector<Seen> list;
 	Counts c;
@@ -2907,7 +3122,7 @@ bool QuietBehindBurst(const emu::RunState& stop)
 
 }
 
-DBG_SELFTEST_GUEST(arm7_stepover_bl, "arm7.stepover.bl")
+BOUNDED_GUEST_TEST(arm7_stepover_bl, "arm7.stepover.bl")
 {
 	std::vector<Seen> list;
 	Counts c;
@@ -2981,7 +3196,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_stepover_plain, "arm7.stepover.plain")
+BOUNDED_GUEST_TEST(arm7_stepover_plain, "arm7.stepover.plain")
 {
 	std::vector<Seen> list;
 
@@ -3020,7 +3235,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_stepout, "arm7.stepout")
+BOUNDED_GUEST_TEST(arm7_stepout, "arm7.stepout")
 {
 	std::vector<Seen> list;
 	Counts c;
@@ -3134,7 +3349,7 @@ bool SuspendedEnding(const emu::RunState& stop, bool exit)
 			st_susp_end.atStop = ReadCounts();
 		});
 
-		virtualDreamcast->Resume();
+		Restart(false);
 	});
 
 	// as the host, and as the exit hook of reios, ask the machine
@@ -3180,7 +3395,7 @@ bool SuspendedEnding(const emu::RunState& stop, bool exit)
 
 }
 
-DBG_SELFTEST_GUEST(arm7_hoststop_suspended, "arm7.hoststop.suspended")
+BOUNDED_GUEST_TEST(arm7_hoststop_suspended, "arm7.hoststop.suspended")
 {
 	return SuspendedEnding(stop, false);
 }
@@ -3206,7 +3421,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_hoststop_insleep, "arm7.hoststop.insleep")
+BOUNDED_GUEST_TEST(arm7_hoststop_insleep, "arm7.hoststop.insleep")
 {
 	std::vector<Seen> list;
 	Counts c;
@@ -3241,7 +3456,7 @@ DBG_SELFTEST_GUEST(arm7_hoststop_insleep, "arm7.hoststop.insleep")
 			st_sleep_stop.atStop = ReadCounts();
 		});
 
-		virtualDreamcast->Resume();
+		Restart(false);
 	});
 
 	if (!Resume())
@@ -3277,7 +3492,7 @@ DBG_SELFTEST_GUEST(arm7_hoststop_insleep, "arm7.hoststop.insleep")
 	CO_END(st_sleep_stop.co);
 }
 
-DBG_SELFTEST_GUEST(arm7_exit_suspended, "arm7.exit.suspended")
+BOUNDED_GUEST_TEST(arm7_exit_suspended, "arm7.exit.suspended")
 {
 	return SuspendedEnding(stop, true);
 }
@@ -3292,7 +3507,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_reset_suspended, "arm7.reset.suspended")
+BOUNDED_GUEST_TEST(arm7_reset_suspended, "arm7.reset.suspended")
 {
 	std::vector<Seen> list;
 	Counts c;
@@ -3393,7 +3608,7 @@ bool SameSliceEnding(const emu::RunState& stop, bool exit)
 			st_same.atStop = ReadCounts();
 		});
 
-		virtualDreamcast->Resume();
+		Restart(false);
 	});
 
 	if (!Resume())
@@ -3435,12 +3650,12 @@ bool SameSliceEnding(const emu::RunState& stop, bool exit)
 
 }
 
-DBG_SELFTEST_GUEST(arm7_sameslice_hoststop, "arm7.sameslice.hoststop")
+BOUNDED_GUEST_TEST(arm7_sameslice_hoststop, "arm7.sameslice.hoststop")
 {
 	return SameSliceEnding(stop, false);
 }
 
-DBG_SELFTEST_GUEST(arm7_sameslice_exit, "arm7.sameslice.exit")
+BOUNDED_GUEST_TEST(arm7_sameslice_exit, "arm7.sameslice.exit")
 {
 	return SameSliceEnding(stop, true);
 }
@@ -3455,7 +3670,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_sameslice_reset, "arm7.sameslice.reset")
+BOUNDED_GUEST_TEST(arm7_sameslice_reset, "arm7.sameslice.reset")
 {
 	std::vector<Seen> list;
 	Counts c;
@@ -3522,7 +3737,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_intc_order, "arm7.intc.order")
+BOUNDED_GUEST_TEST(arm7_intc_order, "arm7.intc.order")
 {
 	std::vector<Seen> list;
 	Counts c;
@@ -3595,7 +3810,7 @@ u64 LastEventSeq()
 
 }
 
-DBG_SELFTEST_GUEST(arm7_events_park, "arm7.events.park")
+BOUNDED_GUEST_TEST(arm7_events_park, "arm7.events.park")
 {
 	std::vector<Seen> list;
 	std::vector<events::Entry> log;
@@ -3676,7 +3891,7 @@ bool SameChannel(const AicaChannelDebug& a, const AicaChannelDebug& b)
 
 }
 
-DBG_SELFTEST_GUEST(arm7_reads_suspended, "arm7.reads.suspended")
+BOUNDED_GUEST_TEST(arm7_reads_suspended, "arm7.reads.suspended")
 {
 	CO_BEGIN(st_reads.co);
 
@@ -3902,7 +4117,7 @@ bool QuietSuspended(const emu::RunState& stop)
 
 }
 
-DBG_SELFTEST_GUEST(arm7_setreg_classes, "arm7.setreg.classes")
+BOUNDED_GUEST_TEST(arm7_setreg_classes, "arm7.setreg.classes")
 {
 	u32 count, good;
 
@@ -3940,7 +4155,7 @@ DBG_SELFTEST_GUEST(arm7_setreg_classes, "arm7.setreg.classes")
 	CO_END(st_set.co);
 }
 
-DBG_SELFTEST_GUEST(arm7_setreg_cpsr, "arm7.setreg.cpsr")
+BOUNDED_GUEST_TEST(arm7_setreg_cpsr, "arm7.setreg.cpsr")
 {
 	ArmRegs regs, pre;
 	u32 refused, differs, c1;
@@ -4059,7 +4274,7 @@ DBG_SELFTEST_GUEST(arm7_setreg_cpsr, "arm7.setreg.cpsr")
 	CO_END(st_set.co);
 }
 
-DBG_SELFTEST_GUEST(arm7_setreg_pc, "arm7.setreg.pc")
+BOUNDED_GUEST_TEST(arm7_setreg_pc, "arm7.setreg.pc")
 {
 	CO_BEGIN(st_set.co);
 
@@ -4126,7 +4341,7 @@ u32 Arm7Notice(u32 notice)
 
 }
 
-DBG_SELFTEST_GUEST(arm7_notice, "arm7.notice")
+BOUNDED_GUEST_TEST(arm7_notice, "arm7.notice")
 {
 	const bool recompiler = Scpu()->DebugIsRecompiler();
 	const u32 want = recompiler ? (u32)NOTICE_ARM7_FALLBACK : 0;
@@ -4205,7 +4420,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7_grace, "arm7.grace")
+BOUNDED_GUEST_TEST(arm7_grace, "arm7.grace")
 {
 	std::vector<Seen> list;
 	Counts c;
@@ -4278,8 +4493,9 @@ namespace {
 const u32 kNeutralEvent = 950;
 
 // The run has gone on behind what the test had to do. Nothing stops it any more; a stop that comes all the same
-// is a failure, and is resumed
+// is a failure, and is resumed. The run ends the wait: it has no bound
 #define NEUTRAL_END(co) \
+	Unbounded(); \
 	for (;;) \
 	{ \
 		if (!Resume()) \
@@ -4306,7 +4522,7 @@ const u32 kIdleLate = 900;
 	arm7n.idlebp: an active breakpoint of the ARM7 on an address that the guest never executes. The debug loop
 	runs every ARM phase of the run in place of the backend's Run(), and stops nowhere
 */
-DBG_SELFTEST_GUEST(arm7n_idlebp, "arm7n.idlebp")
+BOUNDED_GUEST_TEST(arm7n_idlebp, "arm7n.idlebp")
 {
 	Counts c;
 	u32 bursts, checks;
@@ -4324,12 +4540,16 @@ DBG_SELFTEST_GUEST(arm7n_idlebp, "arm7n.idlebp")
 
 	// A thread looks at the run, with calls that only read, and lists the event breakpoint when the run is late
 	OtherStart([] {
-		for (;;)
+		for (Clock::time_point t0 = Clock::now(); ; )
 		{
 			emu::Call(emu::CC_READ, [] { n_idle.bursts = ReadCounts().n[0]; });
 
 			if (n_idle.bursts - n_idle.c.n[0] >= kIdleLate)
 				break;
+
+			// a run that does not get that far: the breakpoint is not listed, and the wait of the test is cut
+			if (MsSince(t0) > kBoundMs)
+				return;
 
 			std::this_thread::sleep_for(std::chrono::microseconds(500));
 		}
@@ -4378,7 +4598,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(arm7n_hitresume, "arm7n.hitresume")
+BOUNDED_GUEST_TEST(arm7n_hitresume, "arm7n.hitresume")
 {
 	u32 burst;
 
@@ -4474,7 +4694,7 @@ bool StepsDone()
 
 }
 
-DBG_SELFTEST_GUEST(arm7n_steps, "arm7n.steps")
+BOUNDED_GUEST_TEST(arm7n_steps, "arm7n.steps")
 {
 	Counts c;
 
@@ -4635,7 +4855,7 @@ bool NeutralHostWhole()
 
 }
 
-DBG_SELFTEST_GUEST(arm7n_hoststop, "arm7n.hoststop")
+BOUNDED_GUEST_TEST(arm7n_hoststop, "arm7n.hoststop")
 {
 	CO_BEGIN(n_host.co);
 
@@ -4669,8 +4889,7 @@ DBG_SELFTEST_GUEST(arm7n_hoststop, "arm7n.hoststop")
 				}
 
 				// as a thread without a session starts: with no start park
-				emu::test::plainStart = true;
-				virtualDreamcast->Resume();
+				Restart(true);
 			});
 
 			virtualDreamcast->Stop(NeutralHostStopped);

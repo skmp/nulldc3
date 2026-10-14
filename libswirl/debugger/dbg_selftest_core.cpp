@@ -62,6 +62,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
@@ -92,6 +93,219 @@ const u32 kScratchAddr = 0x8C00F000;		// inside the 64 KiB that a boot of reios 
 const char* const kHotSymbol = "_stars_one_frame";	// 2ndmix calls it once in every frame
 
 typedef std::chrono::steady_clock Clock;
+
+double MsSince(Clock::time_point t0)
+{
+	return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+}
+
+void Nap(int ms)
+{
+	std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+
+/*
+	The bound of a wait. A test that has armed something, or that waits for what another thread does, returns
+	false and is handed the next stop. Where the machine never gives that stop the session would wait until the
+	watchdog of its runner ended the process, with no summary. So every wait has a bound, kBoundMs, the one
+	constant of the bound in this file: a thread of the session, the watch, looks at the wait that is in
+	progress and cuts one that is older than the bound. It then asks for a stop that the machine can still give,
+	each for a tenth of the bound, in this order:
+	  - a pause, where the published state is Running;
+	  - a stop of the host; where the thread stays parked through that, a call that resumes it (the leave finds
+	    the stop of the host pending, and the thread ends);
+	  - once the machine is stopped, a start of the host: the next thread parks at its start, as every thread of
+	    a session does.
+	The test is handed that stop, fails by a check that says so, and ends. Every test behind it in the session
+	fails at once with one check, arming nothing: the machine stands where no test begins. The driver then prints
+	its summary. A machine that gives no stop through all of that has the watch print the failed check itself and
+	end the process.
+	A bound is generous: a test says its longest wait in a note, and a session that passes waits about a second at
+	most (the boot of 2ndmix on the interpreter, in core.guest) where the bound is a minute. The waits of the
+	threads that the tests start have the same bound, and the host starts the machine on one thread at a time
+	(Restart). While a thread of a test takes the machine apart and makes it again (core.lifetime, core.writes)
+	there may be no machine to ask: a wait cut then has the watch end the process as above.
+*/
+const int kBoundMs = 60000;
+
+struct Bound {
+	std::mutex lock;
+	const char* test = nullptr;		// the test that runs, or waits
+	bool waiting = false;			// it has returned false: it waits for a stop
+	Clock::time_point since;
+	double longest = 0;				// ms: the longest wait of the test (emulator thread only)
+	const char* cut = nullptr;		// the test whose wait the watch cut
+	bool taken = false;				// the stop behind the cut was handed to that test
+	const char* how = "";			// what the watch asked the machine for
+	std::thread* watch = nullptr;
+	std::mutex restart;				// one start of the host at a time
+};
+
+// Never destroyed: the watch runs until the process ends
+Bound& bound = *new Bound();
+
+bool WaitLifetime(Lifetime want, int timeout_ms = kBoundMs)
+{
+	Clock::time_point t0 = Clock::now();
+
+	while (emu::GetRunState().lifetime != want)
+	{
+		if (MsSince(t0) > timeout_ms)
+			return false;
+
+		std::this_thread::sleep_for(std::chrono::microseconds(100));
+	}
+
+	return true;
+}
+
+// The host starts the stopped machine again: the next thread parks at its start, as every thread of a session.
+// False when the machine is not stopped: the watch and a thread of a test can both find it stopped, and only one
+// starts it
+bool Restart()
+{
+	std::lock_guard<std::mutex> l(bound.restart);
+
+	if (emu::GetRunState().lifetime != Lifetime::Stopped || !virtualDreamcast)
+		return false;
+
+	virtualDreamcast->Resume();
+	return true;
+}
+
+bool CutTaken()
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	return bound.taken;
+}
+
+// Until the test whose wait was cut is handed a stop, or the machine is stopped, for ms at most
+bool CutUntil(int ms, bool stopped)
+{
+	for (Clock::time_point t0 = Clock::now(); MsSince(t0) < ms; Nap(2))
+	{
+		if (CutTaken() || (stopped && emu::GetRunState().lifetime == Lifetime::Stopped))
+			return true;
+	}
+
+	return false;
+}
+
+void CutAsk(const char* how)
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.how = how;
+}
+
+void Watch()
+{
+	const int step = kBoundMs / 10;
+	const char* test = nullptr;
+
+	while (test == nullptr)
+	{
+		Nap(20);
+
+		std::lock_guard<std::mutex> l(bound.lock);
+
+		if (bound.waiting && MsSince(bound.since) > kBoundMs)
+			bound.cut = test = bound.test;
+	}
+
+	if (emu::GetRunState().lifetime == Lifetime::Running)
+	{
+		CutAsk("a pause");
+		emu::RequestPause();
+
+		if (CutUntil(step, false))
+			return;
+	}
+
+	if (emu::GetRunState().lifetime != Lifetime::Stopped && virtualDreamcast)
+	{
+		CutAsk("a stop and a start of the host");
+		virtualDreamcast->Stop([] { });
+
+		if (!CutUntil(step, true))
+		{
+			CutAsk("a stop of the host, a call that resumes the thread that stayed parked, and a start of the host");
+			emu::Call(emu::CC_EXEC, [] { emu::Resume(); });
+			CutUntil(step, true);
+		}
+	}
+
+	if (CutTaken() || (Restart() && CutUntil(step, false)))
+		return;
+
+	printf("SelfTest: %s: FAILED: the stop the test waited for did not come within the bound of the session, %d s, and the machine gave none for a pause, "
+		"a stop and a start of the host either: the session ends here, with no summary\n", test, kBoundMs / 1000);
+	fflush(stdout);
+	std::_Exit(1);
+}
+
+// A guest test of this file, with the bound of its waits
+bool Bounded(const emu::RunState& stop, const char* name, bool (*test)(const emu::RunState& stop))
+{
+	const char* cut;
+	const char* how;
+
+	{
+		std::lock_guard<std::mutex> l(bound.lock);
+
+		if (bound.test != name)
+		{
+			bound.test = name;
+			bound.longest = 0;
+		}
+
+		if (bound.waiting && bound.cut == nullptr)
+			bound.longest = std::max(bound.longest, MsSince(bound.since));
+
+		bound.waiting = false;
+		cut = bound.cut;
+		how = bound.how;
+
+		if (cut == name)
+			bound.taken = true;
+	}
+
+	if (cut != nullptr && cut != name)
+	{
+		Check(false, "not run: a wait of %s did not end within the bound of the session, %d s, and the machine stands where no test begins", cut, kBoundMs / 1000);
+		return true;
+	}
+
+	if (cut != nullptr)
+	{
+		Check(false, "the stop the test waited for did not come within the bound of the session, %d s: the session asked the machine for %s, and was handed a stop "
+			"with \"%s\"; the test ends here", kBoundMs / 1000, how, StopCauseName(stop.cause));
+		return true;
+	}
+
+	if (bound.watch == nullptr)
+		bound.watch = new std::thread(Watch);
+
+	if (test(stop))
+	{
+		Note("the longest wait of the test for a stop: %.1f ms (the bound of a wait is %d s)", bound.longest, kBoundMs / 1000);
+		return true;
+	}
+
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.since = Clock::now();
+	bound.waiting = true;
+	return false;
+}
+
+// DBG_SELFTEST_GUEST with the bound of its waits: every guest test of this file
+#define BOUNDED_GUEST_TEST(ident, name) \
+	static bool ident(const dbg::emu::RunState& stop); \
+	static bool ident##_bounded(const dbg::emu::RunState& stop) { return Bounded(stop, name, ident); } \
+	static dbg::selftest::Test ident##_selftest(name, nullptr, ident##_bounded); \
+	static bool ident(const dbg::emu::RunState& stop)
 
 /*
 	Requests and what comes back
@@ -1439,7 +1653,7 @@ void CheckSh4(json tick, const char* where)
 
 }
 
-DBG_SELFTEST_GUEST(core_guest, "core.guest")
+BOUNDED_GUEST_TEST(core_guest, "core.guest")
 {
 	const u32 pc = p_sh4rcb->cntx.pc;
 
@@ -1684,21 +1898,6 @@ void HostJoin()
 	}
 }
 
-bool WaitLifetime(Lifetime want, int timeout_ms = 20000)
-{
-	const Clock::time_point t0 = Clock::now();
-
-	while (emu::GetRunState().lifetime != want)
-	{
-		if (std::chrono::duration<double, std::milli>(Clock::now() - t0).count() > timeout_ms)
-			return false;
-
-		std::this_thread::sleep_for(std::chrono::microseconds(200));
-	}
-
-	return true;
-}
-
 // What the host thread found in one state. Texts: it does not check, the test does, on the emulator thread
 struct Found {
 	bool reached = false;
@@ -1770,7 +1969,7 @@ json TickOf(const std::string& text)
 
 }
 
-DBG_SELFTEST_GUEST(core_lifetime, "core.lifetime")
+BOUNDED_GUEST_TEST(core_lifetime, "core.lifetime")
 {
 	switch (lt.phase)
 	{
@@ -1799,7 +1998,7 @@ DBG_SELFTEST_GUEST(core_lifetime, "core.lifetime")
 			Look(&lt.stopped, true);
 
 			// and starts it again
-			virtualDreamcast->Resume();
+			Restart();
 		});
 		return false;
 
@@ -2104,7 +2303,7 @@ std::string TablesOf(const json& tick)
 
 }
 
-DBG_SELFTEST_GUEST(core_reset, "core.reset")
+BOUNDED_GUEST_TEST(core_reset, "core.reset")
 {
 	const u32 pc = p_sh4rcb->cntx.pc;
 
@@ -2186,7 +2385,16 @@ DBG_SELFTEST_GUEST(core_reset, "core.reset")
 		// (it has no parameters: a key it does not name is not looked at)
 		json answer = Send("control.reset", { { "target", 5 } });
 
-		Check(Ok(answer), "control.reset at the stop of a breakpoint is answered {} (%s)", answer.dump().c_str());
+		if (!Check(Ok(answer), "control.reset at the stop of a breakpoint is answered {} (%s)", answer.dump().c_str()))
+		{
+			// no reset was made, and no stop comes for it: the test ends here
+			emu::test::observer = nullptr;
+			core::SetTickSinkForTest(nullptr);
+			rs.phase = 0;
+			CleanTables();
+			return true;
+		}
+
 		Check(TakeTicks().empty(), "and broadcasts no tick of its own: the stop of the reset is its tick");
 		return false;
 	}
@@ -2255,8 +2463,9 @@ DBG_SELFTEST_GUEST(core_reset, "core.reset")
 			rs.answer = Ask("control.reset");
 			rs.asked = true;
 
-			// a machine that is not reset never comes back to its entry: the test is given a stop all the same
-			if (!WaitLifetime(Lifetime::Parked, 30000))
+			// a machine that is not reset never comes back to its entry: the test is given a stop all the same, in
+			// half the bound of a wait
+			if (!WaitLifetime(Lifetime::Parked, kBoundMs / 2))
 			{
 				rs.timed_out = true;
 				emu::RequestPause();
@@ -2379,7 +2588,7 @@ void AskStopped(StoppedAnswers* a, u32 watch)
 
 }
 
-DBG_SELFTEST_GUEST(core_writes, "core.writes")
+BOUNDED_GUEST_TEST(core_writes, "core.writes")
 {
 	Sh4Context& ctx = p_sh4rcb->cntx;
 

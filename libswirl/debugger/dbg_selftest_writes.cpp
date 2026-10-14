@@ -64,17 +64,27 @@
 
 #include "../../tests/debugger/guest/dsptest/dsptest_labels.inc"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+
+namespace dbg { namespace emu { namespace test {
+
+// dbg_emu.cpp: the threads of the session start without a start park
+extern bool plainStart;
+
+} } }
 
 namespace {
 
@@ -128,6 +138,11 @@ Sh4Context& Ctx()
 double MsSince(Clock::time_point t0)
 {
 	return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+}
+
+void Nap(int ms)
+{
+	std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 
 /*
@@ -788,6 +803,201 @@ void OtherJoin()
 	}
 }
 
+/*
+	The bound of a wait. A test that has armed something, or that waits for what another thread does, returns
+	false and is handed the next stop. Where the machine never gives that stop the session would wait until the
+	watchdog of its runner ended the process, with no summary. So every wait has a bound, kBoundMs, the one
+	constant of the bound in this file: a thread of the session, the watch, looks at the wait that is in
+	progress and cuts one that is older than the bound. It then asks for a stop that the machine can still give,
+	each for a tenth of the bound, in this order:
+	  - a pause, where the published state is Running;
+	  - a stop of the host; where the thread stays parked through that, a call that resumes it (the leave finds
+	    the stop of the host pending, and the thread ends);
+	  - once the machine is stopped, a start of the host: the next thread parks at its start, as every thread of
+	    a session does.
+	The test is handed that stop, fails by a check that says so, and ends. Every test behind it in the session
+	fails at once with one check, arming nothing: the machine stands where no test begins. The driver then prints
+	its summary. A machine that gives no stop through all of that has the watch print the failed check itself and
+	end the process.
+	A bound is generous: a test says its longest wait in a note, and a session that passes waits about a
+	millisecond for any of its stops where the bound is half a minute. The last wait of the test that the run ends (writesrun.neutral)
+	has no bound.
+*/
+const int kBoundMs = 30000;
+
+// How long a test waits on the emulator thread for another thread to queue a call
+const int kHoldMs = kBoundMs / 12;
+
+struct Bound {
+	std::mutex lock;
+	const char* test = nullptr;		// the test that runs, or waits
+	bool waiting = false;			// it has returned false: it waits for a stop
+	bool unbounded = false;			// that wait is one the run ends
+	Clock::time_point since;
+	double longest = 0;				// ms: the longest wait of the test (emulator thread only)
+	const char* cut = nullptr;		// the test whose wait the watch cut
+	bool taken = false;				// the stop behind the cut was handed to that test
+	const char* how = "";			// what the watch asked the machine for
+	std::thread* watch = nullptr;
+};
+
+// Never destroyed: the watch runs until the process ends
+Bound& bound = *new Bound();
+
+// The host starts the stopped machine again; the next thread parks at its start
+bool Restart()
+{
+	if (emu::GetRunState().lifetime != Lifetime::Stopped)
+		return false;
+
+	emu::test::plainStart = false;
+	virtualDreamcast->Resume();
+	return true;
+}
+
+bool CutTaken()
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	return bound.taken;
+}
+
+// Until the test whose wait was cut is handed a stop, or the machine is stopped, for ms at most
+bool CutUntil(int ms, bool stopped)
+{
+	for (Clock::time_point t0 = Clock::now(); MsSince(t0) < ms; Nap(2))
+	{
+		if (CutTaken() || (stopped && emu::GetRunState().lifetime == Lifetime::Stopped))
+			return true;
+	}
+
+	return false;
+}
+
+void CutAsk(const char* how)
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.how = how;
+}
+
+void Watch()
+{
+	const int step = kBoundMs / 10;
+	const char* test = nullptr;
+
+	while (test == nullptr)
+	{
+		Nap(20);
+
+		std::lock_guard<std::mutex> l(bound.lock);
+
+		if (bound.waiting && !bound.unbounded && MsSince(bound.since) > kBoundMs)
+			bound.cut = test = bound.test;
+	}
+
+	if (emu::GetRunState().lifetime == Lifetime::Running)
+	{
+		CutAsk("a pause");
+		emu::RequestPause();
+
+		if (CutUntil(step, false))
+			return;
+	}
+
+	if (emu::GetRunState().lifetime != Lifetime::Stopped)
+	{
+		CutAsk("a stop and a start of the host");
+		virtualDreamcast->Stop([] { });
+
+		if (!CutUntil(step, true))
+		{
+			CutAsk("a stop of the host, a call that resumes the thread that stayed parked, and a start of the host");
+			emu::Call(emu::CC_EXEC, [] { emu::Resume(); });
+			CutUntil(step, true);
+		}
+	}
+
+	if (CutTaken() || (Restart() && CutUntil(step, false)))
+		return;
+
+	printf("SelfTest: %s: FAILED: the stop the test waited for did not come within the bound of the session, %d s, and the machine gave none for a pause, "
+		"a stop and a start of the host either: the session ends here, with no summary\n", test, kBoundMs / 1000);
+	fflush(stdout);
+	std::_Exit(1);
+}
+
+// A test whose last wait the run ends: it has no bound
+void Unbounded()
+{
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.unbounded = true;
+}
+
+// A guest test of this file, with the bound of its waits
+bool Bounded(const emu::RunState& stop, const char* name, bool (*test)(const emu::RunState& stop))
+{
+	const char* cut;
+	const char* how;
+
+	{
+		std::lock_guard<std::mutex> l(bound.lock);
+
+		if (bound.test != name)
+		{
+			bound.test = name;
+			bound.unbounded = false;
+			bound.longest = 0;
+		}
+
+		if (bound.waiting && bound.cut == nullptr)
+			bound.longest = std::max(bound.longest, MsSince(bound.since));
+
+		bound.waiting = false;
+		cut = bound.cut;
+		how = bound.how;
+
+		if (cut == name)
+			bound.taken = true;
+	}
+
+	if (cut != nullptr && cut != name)
+	{
+		Check(false, "not run: a wait of %s did not end within the bound of the session, %d s, and the machine stands where no test begins", cut, kBoundMs / 1000);
+		return true;
+	}
+
+	if (cut != nullptr)
+	{
+		Check(false, "the stop the test waited for did not come within the bound of the session, %d s: the session asked the machine for %s, and was handed a stop "
+			"with \"%s\"; the test ends here", kBoundMs / 1000, how, StopCauseName(stop.cause));
+		return true;
+	}
+
+	if (bound.watch == nullptr)
+		bound.watch = new std::thread(Watch);
+
+	if (test(stop))
+	{
+		Note("the longest wait of the test for a stop: %.1f ms (the bound of a wait is %d s)", bound.longest, kBoundMs / 1000);
+		return true;
+	}
+
+	std::lock_guard<std::mutex> l(bound.lock);
+
+	bound.since = Clock::now();
+	bound.waiting = true;
+	return false;
+}
+
+// DBG_SELFTEST_GUEST with the bound of its waits: every guest test of this file
+#define BOUNDED_GUEST_TEST(ident, name) \
+	static bool ident(const dbg::emu::RunState& stop); \
+	static bool ident##_bounded(const dbg::emu::RunState& stop) { return Bounded(stop, name, ident); } \
+	static dbg::selftest::Test ident##_selftest(name, nullptr, ident##_bounded); \
+	static bool ident(const dbg::emu::RunState& stop)
+
 }
 
 /*
@@ -801,7 +1011,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_ram, "writes.mem.ram")
+BOUNDED_GUEST_TEST(writes_mem_ram, "writes.mem.ram")
 {
 	static const u32 bases[3] = { 0x0C000000, 0x8C000000, 0xAC000000 };
 	u8 saved[32], pattern[16], seen[16], low[8], high[8];
@@ -904,7 +1114,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_code, "writes.mem.code")
+BOUNDED_GUEST_TEST(writes_mem_code, "writes.mem.code")
 {
 	u32 end = 0, cycles = 0;
 
@@ -1144,7 +1354,7 @@ bool CachedWitness(const emu::RunState& stop)
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_cached, "writes.mem.cached")
+BOUNDED_GUEST_TEST(writes_mem_cached, "writes.mem.cached")
 {
 	return CachedWitness(stop);
 }
@@ -1159,7 +1369,7 @@ DBG_SELFTEST_GUEST(writes_mem_cached, "writes.mem.cached")
 	A build without a recompiler of the SH4 compiles nothing: a write has no block to discard there, and the
 	steps show what an interpreter shows. The test says so and asks for the level alone
 */
-DBG_SELFTEST_GUEST(smcwrites_cached, "smcwrites.cached")
+BOUNDED_GUEST_TEST(smcwrites_cached, "smcwrites.cached")
 {
 	// in front of the first step
 	if (m_cached.co.line == 0)
@@ -1189,7 +1399,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_bppage, "writes.mem.bppage")
+BOUNDED_GUEST_TEST(writes_mem_bppage, "writes.mem.bppage")
 {
 	CO_BEGIN(m_bp.co);
 
@@ -1248,7 +1458,7 @@ u32 StoreOfView32(u32 offset32)
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_vram, "writes.mem.vram")
+BOUNDED_GUEST_TEST(writes_mem_vram, "writes.mem.vram")
 {
 	u8 saved[64], pattern[16], seen[64], expect[64];
 	Tally views;
@@ -1344,7 +1554,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_aram, "writes.mem.aram")
+BOUNDED_GUEST_TEST(writes_mem_aram, "writes.mem.aram")
 {
 	u8 saved[8], pattern[8], seen[8];
 	Tally views;
@@ -1450,7 +1660,7 @@ const Refusal refusals[] = {
 
 }
 
-DBG_SELFTEST_GUEST(writes_mem_refused, "writes.mem.refused")
+BOUNDED_GUEST_TEST(writes_mem_refused, "writes.mem.refused")
 {
 	std::vector<u8> before, after;
 	u8 data[8];
@@ -1573,7 +1783,7 @@ u32 Sh4Stored(const char* name, u32 value)
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_sh4, "writes.reg.sh4")
+BOUNDED_GUEST_TEST(writes_reg_sh4, "writes.reg.sh4")
 {
 	const regs::Node& node = Sh4Node();
 	Rows start, now;
@@ -1654,7 +1864,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_pc, "writes.reg.pc")
+BOUNDED_GUEST_TEST(writes_reg_pc, "writes.reg.pc")
 {
 	const Engine engine = TheEngine();
 	u32 end = 0, cycles = 0;
@@ -1813,7 +2023,7 @@ bool AicaAsksSh4()
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_sr, "writes.reg.sr")
+BOUNDED_GUEST_TEST(writes_reg_sr, "writes.reg.sr")
 {
 	bool swapped, back;
 	int rv;
@@ -2040,7 +2250,7 @@ bool StepPast(const emu::RunState& stop, u32 at)
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_fpscr, "writes.reg.fpscr")
+BOUNDED_GUEST_TEST(writes_reg_fpscr, "writes.reg.fpscr")
 {
 	const Engine engine = TheEngine();
 	bool swapped;
@@ -2350,7 +2560,7 @@ u32 CpsrWrite(u32 value, std::string* why)
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_arm7, "writes.reg.arm7")
+BOUNDED_GUEST_TEST(writes_reg_arm7, "writes.reg.arm7")
 {
 	const regs::Node& node = Arm7Node();
 	Rows now;
@@ -2643,7 +2853,7 @@ DBG_SELFTEST_GUEST(writes_reg_arm7, "writes.reg.arm7")
 		});
 
 		// until the call is in the queue
-		for (Clock::time_point t0 = Clock::now(); !(g_attn.load() & ATTN_CALL) && MsSince(t0) < 5000; )
+		for (Clock::time_point t0 = Clock::now(); !(g_attn.load() & ATTN_CALL) && MsSince(t0) < kHoldMs; )
 			std::this_thread::yield();
 
 		if (!Resume())
@@ -2711,7 +2921,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_readonly, "writes.reg.readonly")
+BOUNDED_GUEST_TEST(writes_reg_readonly, "writes.reg.readonly")
 {
 	std::vector<u8> before, after;
 	Tally refused, edges;
@@ -2776,7 +2986,7 @@ struct {
 
 }
 
-DBG_SELFTEST_GUEST(writes_reg_width, "writes.reg.width")
+BOUNDED_GUEST_TEST(writes_reg_width, "writes.reg.width")
 {
 	u32 r12, pc, r1, got;
 	int rv, rv2;
@@ -2953,7 +3163,7 @@ void NeutralMemory(bool by_request, u32 addr, const u8* other, u32 n)
 
 }
 
-DBG_SELFTEST_GUEST(writesrun_neutral, "writesrun.neutral")
+BOUNDED_GUEST_TEST(writesrun_neutral, "writesrun.neutral")
 {
 	bool by_request;
 	u8 bytes[16];
@@ -3045,7 +3255,9 @@ DBG_SELFTEST_GUEST(writesrun_neutral, "writesrun.neutral")
 	Check(neutral.requests == kNeutralStops / 2 * 2 * 18, "%u of the writes and restores were requests of a client, state.writeMemory and state.setRegister", neutral.requests);
 
 	// The run has gone on behind what the test had to do. Nothing stops it any more; a stop that comes all the
-	// same is a failure, and is resumed
+	// same is a failure, and is resumed. The run ends the wait: it has no bound
+	Unbounded();
+
 	for (;;)
 	{
 		if (!Resume())
