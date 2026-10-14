@@ -769,6 +769,21 @@ DBG_SELFTEST(core_tables, "core.tables")
 		&& InBand(Send("breakpoints.add", { { "event", "dc.no.such.event" }, { "enabled", 1 } })) == kErrInvalidParams
 		&& InBand(Send("breakpoints.add", { { "event", "dc.no.such.event" }, { "address", 4294967296.0 } })) == kErrInvalidParams,
 		"a mistyped event, kind, address or enabled, and an address above 32 bits: -32602, before the event is looked at");
+
+	{
+		// A name is compared whole: what stands in front of a NUL is not the name. Sent as a client sends it, with
+		// the escape \u0000 in the JSON text: an event that the tree lists, and the event of a target's code
+		// breakpoints, each with a NUL behind it
+		const std::string vblank_nul("dc.holly.core.vblank\0x", 22), pc_nul("dc.sh4.cpu.pc\0x", 15);
+		const json as_event = Send("breakpoints.add", { { "event", vblank_nul }, { "kind", "event" } });
+		const json no_kind = Send("breakpoints.add", { { "event", vblank_nul } });
+		const json as_code = Send("breakpoints.add", { { "event", pc_nul }, { "address", 0x8C010000u } });
+
+		Check(InBand(as_event) == kErrInvalidParams && InBand(no_kind) == kErrInvalidParams && InBand(as_code) == kErrInvalidParams,
+			"an event name with a NUL behind the name of an event, or of the event of a target's code breakpoints (\"dc.holly.core.vblank\\u0000x\", "
+			"\"dc.sh4.cpu.pc\\u0000x\"), is none of them: -32602, with kind event, without kind and as a code breakpoint (%s)", as_event.dump().c_str());
+	}
+
 	Check(Tick(false)["breakpoints"].size() == 3, "a refused request adds nothing");
 
 	// the event gates
