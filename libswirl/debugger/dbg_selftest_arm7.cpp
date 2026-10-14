@@ -4800,6 +4800,15 @@ BOUNDED_GUEST_TEST(arm7n_steps, "arm7n.steps")
 	those phases executed is held here, by the sound line and the state hash: a completion that started the
 	suspended sample again, or dropped the rest of it, moves both.
 
+	And what it does with a FIQ that becomes enterable in the rest of its sample. On two of the addresses, the last
+	plain instruction of the F window of the loop and the msr that ends it, a hit is taken only where a request of
+	the AICA is latched and F is set: the request waits behind the window, and the completion executes the msr and
+	enters the FIQ in the loop that goes on with the suspended sample, where a plain run enters it in its own
+	sample. (Unless the msr is the last instruction of its sample: then the entry is that of a new phase.) A loop
+	that entered such a FIQ one executed instruction late moves the line, through the handler's fold of lr. Other
+	hits on those two addresses are resumed with the breakpoint kept; the test takes at least five such stops of
+	the host, and a hit of its own when a cycle has seen kFiqTries of them without the request.
+
 	The sixty are over within some hundreds of bursts. The stops of the host are taken with the thread parked,
 	not in the tick of the exit key
 */
@@ -4812,15 +4821,30 @@ const u32 kHostAddrCount = sizeof(kHostAddrs) / sizeof(kHostAddrs[0]);
 const u32 kHostStops = 60;
 const u32 kHostBpId = 100;
 
+// The stops of the host where the rest of the sample has a FIQ to enter, at least; and the hits of one cycle on the
+// window that are resumed for it, at most
+const u32 kHostFiqStops = 5;
+const u32 kFiqTries = 4000;
+
 struct {
 	Co co;
 	u32 hits, cycles, other, bad;
+	u32 fiq;				// stops of the host with a FIQ to enter in the rest of the sample
+	u32 passed;				// hits on the window resumed for that, in this cycle
+	u32 passedAll;
 	u32 at[kHostAddrCount];
 	bool counted;			// whole has the counts of a stop behind a burst
 	Counts whole;
 	std::atomic<u32> callbacks { 0 }, callbacksSuspended { 0 };
 	std::atomic<bool> failed { false };
 } n_host;
+
+// A hit on the last plain instruction of the F window, or on the msr that ends it, with a request of the AICA latched
+// and F set: the rest of the sample has the FIQ to enter behind the msr
+bool NeutralHostFiqWaits()
+{
+	return (ArmPc() == kLastOfWindow || ArmPc() == kUnmask) && ArmInService() && (Arm(RN_CPSR) & 0x40) != 0;
+}
 
 // the stop callback of the host: the burst is whole in front of it
 void NeutralHostStopped()
@@ -4863,6 +4887,7 @@ BOUNDED_GUEST_TEST(arm7n_hoststop, "arm7n.hoststop")
 	EventBp(kNeutralEvent);
 
 	n_host.hits = n_host.cycles = n_host.other = n_host.bad = 0;
+	n_host.fiq = n_host.passed = n_host.passedAll = 0;
 	n_host.counted = false;
 	memset(n_host.at, 0, sizeof(n_host.at));
 
@@ -4875,8 +4900,22 @@ BOUNDED_GUEST_TEST(arm7n_hoststop, "arm7n.hoststop")
 		if (stop.cause == StopCause::Breakpoint && Suspended() == SOUND_BURST_ARM7 && stop.breakpointId >= kHostBpId
 			&& stop.breakpointId < kHostBpId + kHostAddrCount && n_host.cycles < kHostStops)
 		{
+			// on the window, a hit with no FIQ waiting behind it is resumed, with the breakpoint kept (the test holds
+			// what it keeps across a stop in n_host only)
+			if ((kHostAddrs[stop.breakpointId - kHostBpId] == kLastOfWindow || kHostAddrs[stop.breakpointId - kHostBpId] == kUnmask) && !NeutralHostFiqWaits()
+				&& n_host.passed < kFiqTries)
+			{
+				n_host.passed++;
+				n_host.passedAll++;
+				continue;
+			}
+
+			if (NeutralHostFiqWaits())
+				n_host.fiq++;
+
 			// a hit: the breakpoint goes, and the host stops the machine while this thread is parked on the burst
 			n_host.hits++;
+			n_host.passed = 0;
 			n_host.at[stop.breakpointId - kHostBpId]++;
 
 			ArmBps({ });
@@ -4932,6 +4971,9 @@ BOUNDED_GUEST_TEST(arm7n_hoststop, "arm7n.hoststop")
 		"thread ran on to a stop behind a burst, with every burst whole (%u did not; %u stops of another kind)", n_host.cycles, n_host.bad, n_host.other);
 	Check(n_host.callbacks == kHostStops && n_host.callbacksSuspended == 0, "each of the %u stop callbacks found the burst whole (%u did not)",
 		n_host.callbacks.load(), n_host.callbacksSuspended.load());
+	Check(n_host.fiq >= kHostFiqStops, "%u of the stops of the host were taken where the rest of the sample had a FIQ to enter: on the last plain instruction of the "
+		"F window or on the msr that ends it, with a request of the AICA latched and F set (at least %u; %u hits there were resumed for them)", n_host.fiq, kHostFiqStops,
+		n_host.passedAll);
 	Note("stops by address: %u %u %u %u %u %u %u %u %u %u %u %u %u; the last one in burst %u of the run", n_host.at[0], n_host.at[1], n_host.at[2], n_host.at[3],
 		n_host.at[4], n_host.at[5], n_host.at[6], n_host.at[7], n_host.at[8], n_host.at[9], n_host.at[10], n_host.at[11], n_host.at[12], ReadCounts().n[0]);
 
