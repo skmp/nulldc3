@@ -25,14 +25,16 @@ real-time clock pinned, a core size limit of 1 byte and a watchdog, as in `tests
 start wait no longer. Where the machine never gives the stop a test waits for, a thread of the session cuts the
 wait at the bound and asks the machine for a stop it can still give, a tenth of the bound for each: a pause where
 it runs; a stop of the host, with a call that resumes a thread that stays parked through it; and a start of the
-host, whose new thread parks at its start as every thread of a session does. The test is handed that stop and
-fails by a check that says so, every test behind it in the session fails at once with one check (the machine
-stands where no test begins), and the session prints its summary, long before the watchdog of the runner. Each
-test says its longest wait in a note: in a session that passes it is under a tenth of a second in `arm7` and
-`writes`, and under a second in `core`: `core.guest` (the boot of 2ndmix, about 0.9 s on the interpreter),
-`core.reset` (about 0.3 s: its host thread lets the machine run 300 ms before it asks for the reset) and
-`core.writes` (about 0.1 s: its host thread lets the machine run 100 ms before it sends its requests). The last
-wait of a test that the run ends has no bound.
+host, whose new thread parks at its start as every thread of a session does. (In `core`, a thread of a test that
+takes the machine apart and makes it again, in `core.lifetime` and `core.writes`, has the machine to itself until
+the new one has started: the stop and the start of the host wait for it, and for the start park of that machine
+first.) The test is handed that stop and fails by a check that says so, every test behind it in the session fails
+at once with one check (the machine stands where no test begins), and the session prints its summary, long before
+the watchdog of the runner. Each test says its longest wait in a note: in a session that passes it is under a
+tenth of a second in `arm7` and `writes`, and under a second in `core`: `core.guest` (the boot of 2ndmix, about
+0.9 s on the interpreter), `core.reset` (about 0.3 s: its host thread lets the machine run 300 ms before it asks
+for the reset) and `core.writes` (about 0.1 s: its host thread lets the machine run 100 ms before it sends its
+requests). The last wait of a test that the run ends has no bound.
 
 ## The tests of dbg::emu
 

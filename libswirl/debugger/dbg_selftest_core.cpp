@@ -122,9 +122,14 @@ void Nap(int ms)
 	end the process.
 	A bound is generous: a test says its longest wait in a note, and a session that passes waits about a second at
 	most (the boot of 2ndmix on the interpreter, in core.guest) where the bound is a minute. The waits of the
-	threads that the tests start have the same bound, and the host starts the machine on one thread at a time
-	(Restart). While a thread of a test takes the machine apart and makes it again (core.lifetime, core.writes)
-	there may be no machine to ask: a wait cut then has the watch end the process as above.
+	threads that the tests start have the same bound.
+	The machine is the host's, and the host is one thread at a time: bound.restart. The watch holds it for the
+	stop and the start it asks for; Restart() holds it; and a thread of a test that takes the machine apart and
+	makes it again (core.lifetime, core.writes) holds it from the moment it lets go of the machine until the new
+	one has started. So the watch never calls a machine that is being taken apart, nor starts one that such a
+	thread starts. Where it had to wait for bound.restart it first waits, a tenth of the bound, for the start park
+	of the machine that the thread which held it has started; then it goes on as above. A thread that holds the
+	machine for a tenth of the bound beyond the cut has the watch end the process as above.
 */
 const int kBoundMs = 60000;
 
@@ -138,7 +143,7 @@ struct Bound {
 	bool taken = false;				// the stop behind the cut was handed to that test
 	const char* how = "";			// what the watch asked the machine for
 	std::thread* watch = nullptr;
-	std::mutex restart;				// one start of the host at a time
+	std::timed_mutex restart;		// the host: what calls, starts, takes apart or makes the machine (above)
 };
 
 // Never destroyed: the watch runs until the process ends
@@ -161,16 +166,21 @@ bool WaitLifetime(Lifetime want, int timeout_ms = kBoundMs)
 
 // The host starts the stopped machine again: the next thread parks at its start, as every thread of a session.
 // False when the machine is not stopped: the watch and a thread of a test can both find it stopped, and only one
-// starts it
-bool Restart()
+// starts it. The caller holds bound.restart
+bool RestartHeld()
 {
-	std::lock_guard<std::mutex> l(bound.restart);
-
 	if (emu::GetRunState().lifetime != Lifetime::Stopped || !virtualDreamcast)
 		return false;
 
 	virtualDreamcast->Resume();
 	return true;
+}
+
+bool Restart()
+{
+	std::lock_guard<std::timed_mutex> l(bound.restart);
+
+	return RestartHeld();
 }
 
 bool CutTaken()
@@ -223,6 +233,30 @@ void Watch()
 			return;
 	}
 
+	// The machine is the host's from here on (bound.restart)
+	std::unique_lock<std::timed_mutex> host(bound.restart, std::try_to_lock);
+
+	if (!host.owns_lock())
+	{
+		if (!host.try_lock_for(std::chrono::milliseconds(step)))
+		{
+			printf("SelfTest: %s: FAILED: the stop the test waited for did not come within the bound of the session, %d s, and a thread of the test that "
+				"takes the machine apart and makes it again held the machine for a tenth of the bound more: the session ends here, with no summary\n",
+				test, kBoundMs / 1000);
+			fflush(stdout);
+			std::_Exit(1);
+		}
+
+		// that thread has started the machine: its thread parks at its start
+		CutAsk("nothing: a thread of the test that held the machine had started it");
+
+		if (CutUntil(step, false))
+			return;
+	}
+
+	if (CutTaken())
+		return;
+
 	if (emu::GetRunState().lifetime != Lifetime::Stopped && virtualDreamcast)
 	{
 		CutAsk("a stop and a start of the host");
@@ -236,7 +270,14 @@ void Watch()
 		}
 	}
 
-	if (CutTaken() || (Restart() && CutUntil(step, false)))
+	if (CutTaken())
+		return;
+
+	const bool restarted = RestartHeld();
+
+	host.unlock();
+
+	if (restarted && CutUntil(step, false))
 		return;
 
 	printf("SelfTest: %s: FAILED: the stop the test waited for did not come within the bound of the session, %d s, and the machine gave none for a pause, "
@@ -2059,7 +2100,9 @@ BOUNDED_GUEST_TEST(core_lifetime, "core.lifetime")
 
 			Look(&lt.exited, false);
 
-			// the host takes the machine apart
+			// the host takes the machine apart, and has it until the new one has started (the watch of the bound)
+			std::lock_guard<std::timed_mutex> owns(bound.restart);
+
 			virtualDreamcast.reset();
 
 			Look(&lt.none, false);
@@ -3051,6 +3094,9 @@ BOUNDED_GUEST_TEST(core_writes, "core.writes")
 			}
 
 			AskStopped(&wr.stopped, wr.watch_dbr);
+
+			// the host takes the machine apart, and has it until the new one has started (the watch of the bound)
+			std::lock_guard<std::timed_mutex> owns(bound.restart);
 
 			virtualDreamcast.reset();
 
