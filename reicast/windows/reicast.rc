@@ -23,12 +23,12 @@ BEGIN
     BLOCK "040904E4"
     BEGIN
       VALUE "CompanyName", "Reicast Team"
-      VALUE "FileDescription", "devcast"
+      VALUE "FileDescription", "nullDC"
       VALUE "FileVersion", REICAST_VERSION
-      VALUE "InternalName", "devcast"
+      VALUE "InternalName", "nulldc3"
       VALUE "LegalCopyright", "Copyright (c) Reicast Team. All rights reserved."
-      VALUE "OriginalFilename", "devcast.exe"
-      VALUE "ProductName", "devcast"
+      VALUE "OriginalFilename", "nulldc3.exe"
+      VALUE "ProductName", "nullDC"
       VALUE "ProductVersion", REICAST_VERSION
     END
   END

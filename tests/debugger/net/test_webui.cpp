@@ -33,9 +33,11 @@ static void TestBuiltinPage() {
 	const std::string& page = webui::BuiltinPage();
 	CHECK(page.find("<title>nullDC 3.0.0 debugger</title>") != std::string::npos);
 	CHECK(page.find("<h1>nullDC 3.0.0 debugger</h1>") != std::string::npos);
-	CHECK(page.find("no devtools UI embedded") != std::string::npos);
+	CHECK(page.find("no Dreamcast DevTools embedded") != std::string::npos);
+	CHECK(page.find("devtools/dist-native") != std::string::npos);
 	CHECK(page.find("NULLDC_DEVTOOLS_DIST") != std::string::npos);
-	CHECK(page.find("Debugger:WebRoot") != std::string::npos);
+	CHECK(page.find("--config Debugger:WebRoot") != std::string::npos);
+	CHECK(page.find("-config") == page.find("--config") + 1);	// two dashes, the one-dash form is refused
 	CHECK(page.find("npm run build:native") != std::string::npos);
 	CHECK(page.find("protocol 3") != std::string::npos);
 }

@@ -20,7 +20,7 @@ static void pulseaudio_init(audio_backend_pull_callback_t pull_callback)
 	ss.channels = 2;
 	ss.rate = 44100;
 	/* Create a new playback stream */
-	pulse_stream = pa_simple_new(NULL, "reicast", PA_STREAM_PLAYBACK, NULL, "reicast", &ss, NULL, NULL, NULL);
+	pulse_stream = pa_simple_new(NULL, "nullDC", PA_STREAM_PLAYBACK, NULL, "nullDC", &ss, NULL, NULL, NULL);
   if (!pulse_stream) {
     fprintf(stderr, "PulseAudio: pa_simple_new() failed!\n");
   }

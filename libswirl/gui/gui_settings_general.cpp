@@ -135,7 +135,7 @@ void gui_settings_general()
         ImGui::ListBoxFooter();
         
         ImGui::SameLine();
-        gui_ShowHelpMarker("The directory where reicast saves configuration files and VMUs. BIOS files should be in the data subdirectory");
+        gui_ShowHelpMarker("The directory where nullDC saves configuration files and VMUs. BIOS files should be in the data subdirectory");
 
     	ImGui::PopStyleVar();
     	ImGui::EndTabItem();
