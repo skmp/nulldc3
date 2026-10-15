@@ -209,7 +209,8 @@ struct vram_block
 enum ndc_error_codes
 {
 	rv_ok = 0,			//no error
-	rv_cli_finish=69,	//clean exit after -help or -version , should we just use rv_ok?
+	rv_cli_finish=69,	//clean exit after --help
+	rv_cli_error=70,	//the command line was refused (cfg/cl.cpp), the message is on stderr: exit status 2
 
 	rv_error=-2,		//error
 	rv_serror=-1,		//silent error , it has been reported to the user

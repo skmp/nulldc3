@@ -166,11 +166,9 @@ public:
 	}
 };
 
-#if HOST_OS != OS_DARWIN
-	#define DATA_PATH "/data/"
-#else
-	#define DATA_PATH "/"
-#endif
+// The BIOS, the flash and the save states are in the subdirectory data of the data directory, on every system
+// (README.md has the layout)
+#define DATA_PATH "/data/"
 
 //Set the path !
 void set_user_config_dir(const string& dir);

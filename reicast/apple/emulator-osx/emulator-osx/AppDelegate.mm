@@ -7,7 +7,10 @@
 #import "MainMenu.h"
 #import "libswirl.h"
 #import "gui/gui_renderer.h"
+#include "cfg/cfg.h"
 #include <cstdio>
+#include <cstring>
+#include <vector>
 
 #if FEAT_HAS_SERIAL_TTY
 #include <util.h>
@@ -85,7 +88,7 @@ static bool _isInitializing = true;
 
 - (void)windowWillClose:(NSNotification *)notification {
     if (notification.object == _mainWindow) {
-        // Make sure to close the console window if we're closing Reicast
+        // Make sure to close the console window if we're closing nullDC
         [_consoleWindow close];
     } else if (notification.object == _consoleWindow) {
         _consoleWindow = nil;
@@ -139,7 +142,15 @@ static bool _isInitializing = true;
 - (void)mainSetup {
     [self setupPaths];
     common_linux_setup();
-    int result = reicast_init(_argc, _argv);
+    // Older macOS starts an application from the Finder with -psn_<n>_<n>, its process serial number: not a
+    // switch of the command line (cfg/cl.cpp refuses every word that begins with a dash)
+    std::vector<char*> args;
+    for (int i = 0; i < _argc; i++) {
+        if (i == 0 || strncmp(_argv[i], "-psn_", 5) != 0)
+            args.push_back(_argv[i]);
+    }
+    args.push_back(nullptr);
+    int result = reicast_init((int)args.size() - 1, args.data());
     if (result == 0) {
         _isInitializing = false;
         [self captureConsoleOutput];
@@ -147,11 +158,19 @@ static bool _isInitializing = true;
         _removePTYSymlink = common_serial_pty_setup();
         #endif
         [self setupUIThread];
-    } else if (result == 69) {
+    } else if (result == rv_cli_finish) {
         // We showed the usage text, so don't show an error, just exit
         exit(0);
+    } else if (result == rv_cli_error) {
+        // The command line was refused: the message is on stderr, and in an alert for a start from the Finder
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.alertStyle = NSAlertStyleCritical;
+        alert.messageText = [NSString stringWithUTF8String:cl_ErrorText().c_str()];
+        [alert addButtonWithTitle:@"Exit"];
+        [alert runModal];
+        exit(2);
     } else {
-        [self alertAndTerminateWithMessage:@"Reicast initialization failed"];
+        [self alertAndTerminateWithMessage:@"nullDC initialization failed"];
     }
 }
 
@@ -210,31 +229,38 @@ static bool _isInitializing = true;
     dispatch_resume(_stdoutSource);
 }
 
+// The directories a run can keep its files in, cfg/cl.cpp chooses: the one of the executable, and
+// ~/Library/Application Support/nulldc3 for --shared. For an executable inside an application bundle "the
+// directory of the executable" is the directory that holds the bundle, never one inside it.
 - (void)setupPaths {
-    NSFileManager *fileManager = [NSFileManager defaultManager];
-    NSString *configDirPath = [[NSURL fileURLWithPathComponents:@[NSHomeDirectory(), @".reicast"]] path];
-    BOOL isDir = false;
-    BOOL exists = [fileManager fileExistsAtPath:configDirPath isDirectory:&isDir];
-    if (exists && !isDir) {
-        NSString *formatString = @"Config directory exists, but is not a directory: %@";
-        [self alertAndTerminateWithMessage:[NSString stringWithFormat:formatString, configDirPath]];
-    } else if (!exists) {
-        NSError *error;
-        [fileManager createDirectoryAtPath:configDirPath withIntermediateDirectories:YES attributes:nil error:&error];
-        if (error) {
-            NSString *formatString = @"Failed to create config directory at %@ with error: %@";
-            [self alertAndTerminateWithMessage:[NSString stringWithFormat:formatString, configDirPath, error]];
-        }
-    }
-    
-    // Set user config path
-    std::string config_dir([configDirPath UTF8String]);
-    set_user_config_dir(config_dir);
-    set_user_data_dir(config_dir);
-    
-    // Set system data path
-    std::string data_dir([[[NSBundle mainBundle] resourcePath] UTF8String]);
-    add_system_data_dir(data_dir);
+    HostDirs dirs;
+    NSBundle *bundle = [NSBundle mainBundle];
+    NSString *bundlePath = [[bundle bundlePath] stringByResolvingSymlinksInPath];
+    NSString *executablePath = [[bundle executablePath] stringByResolvingSymlinksInPath];
+    NSString *dir = nil;
+    if (bundlePath && [[bundlePath pathExtension] caseInsensitiveCompare:@"app"] == NSOrderedSame)
+        dir = [bundlePath stringByDeletingLastPathComponent];
+    else if (executablePath)
+        dir = [executablePath stringByDeletingLastPathComponent];
+    if (dir.length > 0)
+        dirs.exe_dir = [dir fileSystemRepresentation];
+    else
+        dirs.exe_dir_error = "the main bundle names no path";
+
+    NSArray<NSURL *> *support = [[NSFileManager defaultManager] URLsForDirectory:NSApplicationSupportDirectory
+                                                                       inDomains:NSUserDomainMask];
+    if (support.count > 0) {
+        NSURL *shared = [support.firstObject URLByAppendingPathComponent:@"nulldc3" isDirectory:YES];
+        dirs.shared_config = dirs.shared_data = [shared.path fileSystemRepresentation];
+    } else
+        dirs.shared_error = "the system names no Application Support directory";
+
+    // read behind the chosen directory in every mode
+    NSString *resources = [bundle resourcePath];
+    if (resources)
+        dirs.data_ro.push_back([resources fileSystemRepresentation]);
+
+    cl_SetHostDirs(dirs);
 }
 
 - (void)setupWindow {

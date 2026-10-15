@@ -5,6 +5,9 @@
 
 #include "win_common.h"
 
+#include <shlobj.h>		// SHGetKnownFolderPath
+#include <knownfolders.h>
+
 // Gamepads
 u16 kcode[4] = { 0xffff, 0xffff, 0xffff, 0xffff };
 u32 vks[4];
@@ -159,14 +162,67 @@ LONG ExeptionHandler(EXCEPTION_POINTERS *ExceptionInfo)
 	}
 }
 
+// A path of the system in the code page the rest of the emulator opens files with, the ANSI one; false when the
+// path has a character that page does not have
+static bool narrow_path(const wchar_t* wide, string& out)
+{
+	BOOL lossy = FALSE;
+	int n = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, wide, -1, nullptr, 0, nullptr, &lossy);
+	if (n <= 0 || lossy)
+		return false;
+	vector<char> text(n);
+	if (WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, wide, -1, text.data(), n, nullptr, &lossy) != n || lossy)
+		return false;
+	out = text.data();
+	return true;
+}
+
+// The directories a run can keep its files in, cfg/cl.cpp chooses: the one of the executable, and %APPDATA%\nulldc3
+// for --shared
 void SetupPath()
 {
-	char fname[512];
-	GetModuleFileName(0,fname,512);
-	string fn=string(fname);
-	fn=fn.substr(0,fn.find_last_of('\\'));
-	set_user_config_dir(fn);
-	set_user_data_dir(fn);
+	HostDirs dirs;
+
+	// the file of the executable, from the system: never the working directory
+	vector<wchar_t> path(MAX_PATH);
+	for (;;)
+	{
+		DWORD n = GetModuleFileNameW(NULL, path.data(), (DWORD)path.size());
+		if (n == 0)
+		{
+			dirs.exe_dir_error = "GetModuleFileNameW failed with error " + std::to_string(GetLastError());
+			break;
+		}
+		if (n < path.size())
+		{
+			wstring exe(path.data(), n);
+			size_t separator = exe.find_last_of(L"\\/");
+			wstring dir = separator == wstring::npos ? L"" : exe.substr(0, separator);
+			if (!dir.empty() && dir.back() == L':')
+				dir += L'\\';	// C:\nulldc3.exe is in C:\, not in the working directory of drive C
+			if (dir.empty())
+				dirs.exe_dir_error = "the path of the executable has no directory";
+			else if (!narrow_path(dir.c_str(), dirs.exe_dir))
+				dirs.exe_dir_error = "its path has a character that the ANSI code page of the system does not have";
+			break;
+		}
+		path.resize(path.size() * 2);
+	}
+
+	PWSTR appdata = nullptr;
+	if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, NULL, &appdata)))
+	{
+		string dir;
+		if (narrow_path(appdata, dir))
+			dirs.shared_config = dirs.shared_data = dir + "\\nulldc3";
+		else
+			dirs.shared_error = "%APPDATA% has a character that the ANSI code page of the system does not have";
+	}
+	else
+		dirs.shared_error = "the system names no %APPDATA% folder";
+	CoTaskMemFree(appdata);
+
+	cl_SetHostDirs(dirs);
 }
 
 
@@ -442,9 +498,13 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 	int argc=0;
 	wchar* cmd_line=GetCommandLineA();
 	wchar** argv=CommandLineToArgvA(cmd_line,&argc);
-	for (int i = 0; i < argc; i++)
+	// --console is looked for here, ahead of the command line (cfg/cl.cpp, which takes it and --log), so that the
+	// console shows what that says as well; a "--" ends the switches here too
+	for (int i = 1; i < argc; i++)
 	{
-		if (!stricmp(argv[i], "-console"))
+		if (!strcmp(argv[i], "--"))
+			break;
+		if (!strcmp(argv[i], "--console"))
 		{
 			if (AllocConsole())
 			{
@@ -453,19 +513,7 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 				freopen("CON", "r", stdin);
 			}
 			SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE);
-		}
-		else if (!stricmp(argv[i], "-log"))
-		{
-			const char *logfile;
-			if (i < argc - 1)
-			{
-				logfile = argv[i + 1];
-				i++;
-			}
-			else
-				logfile = "reicast-log.txt";
-			freopen(logfile, "w", stdout);
-			freopen(logfile, "w", stderr);
+			break;
 		}
 	}
 
@@ -483,9 +531,16 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 
 		int init_rv = reicast_init(argc, argv);
 		if (init_rv == rv_cli_finish)
-			return 0;	// -help: the usage text is all that was asked for
+			return 0;	// --help: the usage text is all that was asked for
+		if (init_rv == rv_cli_error)
+		{
+			// the command line was refused: on stderr, which nobody sees without a console window
+			if (GetConsoleWindow() == NULL)
+				MessageBoxA(NULL, cl_ErrorText().c_str(), "nullDC", MB_OK | MB_ICONERROR);
+			return 2;
+		}
 		if (init_rv != 0)
-			die("Reicast initialization failed");
+			die("nullDC initialization failed");
 
 		setup_seh();
 
