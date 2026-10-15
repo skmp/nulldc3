@@ -145,7 +145,7 @@ Paused 2026-10-12 at the user's request, resumed 2026-10-14. `EXe` (cut 3.11) is
 merged as 6fe01759, 259 ctest targets: tests, three header sentences, one refusal). `EXu` (3.12) is done (2026-10-15,
 four verifications and one integrator commit; devtools `skmp/nulldc3` = d59336b, the UI pin moved there): the end of an address
 space reachable in a small memory panel, a watch renamed from the keyboard, 0x-only register values, sharper tests.
-M2G, the gate, is done (2026-10-15; branch `skmp/nulldc3-m2g` on 6fe01759, documents only): **M2 IS COMPLETE.** On devcast 6fe01759 with the UI at `d59336b` and emulators that carry its bundle (`ui` of `debugger.describe` is `3.0.0-pre+d59336b`): the M2 gate passes against the emulator on the JIT, the interpreter and the forced fallback (19 scenarios passed, 0 partial, 0 not applicable each) and its second run against the sounding guest (2 passed, both notes); the 259 ctest targets are green twice, none skipped; the sound lines of the guest and of 2ndmix equal those of the tree before E6b, and the state hashes of 5.7 those of the tree before the round, in the five builds; `npm run check` and the e2e suite pass in a fresh clone; the smoke spec passes against a headless emulator on the guest. ThreadSanitizer of the contract parts on the guest: no report. Speed (tests/perf, none renderer, by CPU time, ten rounds): the JIT 0.6 % faster than before E6b, the interpreter 3.4 % slower, from code placement (the same machine code of the interpreter's dispatch 32 bytes off its place in a cache line; 0.07 % more instructions), not from added work; nothing changed for it. The design is brought to the cut (its section 7), with the known limits of the round in its 2.3.7 and what each package left in its Appendix A.3, "M2 as built".
+M2G, the gate, is done (2026-10-15; branch `skmp/nulldc3-m2g` on 6fe01759, documents only): **M2 IS COMPLETE.** On devcast 6fe01759 with the UI at `d59336b` and emulators that carry its bundle (`ui` of `debugger.describe` is `3.0.0-pre+d59336b`): the M2 gate passes against the emulator on the JIT, the interpreter and the forced fallback (19 scenarios passed, 0 partial, 0 not applicable each) and its second run against the sounding guest (2 passed, both notes); the 259 ctest targets are green twice, none skipped; the sound lines of the guest and of 2ndmix equal those of the tree before E6b, and the state hashes of 5.7 those of the tree before the round, in the five builds; `npm run check` and the e2e suite pass in a fresh clone; the smoke spec passes against a headless emulator on the guest. ThreadSanitizer of the contract parts on the guest: no report. Speed (tests/perf, none renderer, by CPU time, ten rounds): the JIT 0.6 % faster than before E6b, the interpreter 3.4 % slower, from code placement (the same machine code of the interpreter's dispatch 32 bytes off its place in a cache line; 0.07 % more instructions), not from added work; nothing changed for it. The design is brought to the cut (its section 7), with the known limits of the round in its 2.3.7 and what each package left in its Appendix A.3, "M2 as built". What the round leaves to later work is listed below ("Backlog left by the M2 round").
 Next: `N1` (the rebrand: `nulldc3`, portable by default, two-dash switches).
 After that, one workflow at a time, in this order unless the user reorders: M3-M4 (E8, E9, F4, F5, the DSP core wired in), track
 10 (one web UI), track 3 (cycle-similar). Devtools: F0, F1, F2 and the round after design revision 3 are done and verified.
@@ -153,6 +153,45 @@ Known defects recorded by E4a's verifier, not caused by it (package J1): the x64
 few hundred host stop/start cycles in one process the 10 MB code cache is full and the guest crawls; `Sh4Context::CpuRunning`
 is a plain volatile written across threads (every ThreadSanitizer report); event breakpoints latched inside SLEEP waits and
 single steps on the JIT shift guest time (the documented skew class).
+
+**Backlog left by the M2 round** (what the design's 2.3.7 and its Appendix A.3 cite as "PLAN's backlog"; from the cut's
+1.2, the answers to M2-Q3 to M2-Q6 and the integrator's notes of its Appendix I; none of them blocks M3):
+- *The SH4 recompiler without the virtual memory layout* (M2-Q6; design 2.3.7 item 15). `bm_AddBlock` protects a page
+  from which a block was compiled in every build, and `bm_LockedWrite` measures the faulting address from
+  `virt_ram_base`, which is null there, so a guest store into such a page ends the process. To do: resolve the fault
+  from the address of main memory when there is no layout. No configuration gives that build on the development
+  machine; E7a's verifier made it, with the layout forced off by a scratch change of `_vmem_reserve`
+  (`agents/nulldc3/e7a/verify-1/logs/nolayout.txt`; again in `verify-2/`, `scripts/nolayout.sh` and
+  `logs/nolayout.txt`): the session `writes` passes on both engines and on the forced fallback, 2ndmix runs 600 vblanks
+  to one state hash twice, and a debugger writer without its own unprotect ends at its store (`fault_handler: unhandled
+  SIGSEGV ... not a guest memory fault`), the fault a guest store meets there.
+- *An SH4 block cache with the address in its key* (the cut's 1.2; design 2.3.7 item 6; M2-Q4). `fpcb` is indexed by
+  `(pc >> 1)` under a mask of 32 MiB, with no address in the key, so addresses a multiple of 32 MiB apart share a slot:
+  main memory at `0x0C…`, `0x8C…` and `0xAC…`, and the boot ROM and main memory (the dispatcher clears the cache at three
+  boot addresses). A guest that changes mirror by itself runs the blocks of the other one, with or without a debugger.
+  M2 only keeps the debugger from doing it to a guest: a debugger write that moves the SH4's PC empties the code cache
+  (M2-D42). With the address in the key, and with blocks keyed by the FP mode for FPSCR (T3.4), the debugger's two
+  cache resets are no longer needed.
+- *The exit line in the tick of a latched stop* (design 2.3.7 item 20; the integrator's decision in the cut's I.4). When
+  a check of the ARM7 or an event breakpoint latches a stop in the tick of an exit or host-stop request, the stop
+  callback sees the SH4 in front of an interrupt acceptance that an undebugged run has already made (the latch deferred
+  it; `OnThreadExiting` makes it behind the callback), so the `sh4` and `hash` parts of the exit line can differ from
+  the plain run's although the guest does not sleep. To do: the deferred acceptance in front of the stop callback, a new
+  entry of `dbg::emu` and so a header revision. The scratch test that shows it: `agents/nulldc3/e6b/fix-1/`
+  (`scripts/p4_test.inc`, `scripts/p4_run.sh`, `logs/p4-exitintc.txt`).
+- *A step out of the ARM7 that knows the mode it was asked in* (design 2.3.7 item 21). The temporary breakpoint stands at
+  the live R14, which in FIQ mode is the return address plus 4, so a step out asked inside the FIQ handler ends one
+  instruction behind the interrupted one, or elsewhere when it branches. With it goes a header text of `dbg_arm7.h`
+  (H6-5).
+- *Undefined instructions and odd PCs as guest exceptions* (design 2.3.7 item 14; M2-Q5). A guest, or a debugger write,
+  that takes the SH4 to a word that is no instruction ends the process in the default build (the odd PC is in track 2's
+  defect list too). Until then the debugger refuses an odd PC of the SH4 and stores the ARM7's PC aligned.
+- *For tracks 5, 6 and 7* (the cut's 1.2, its last row). reios leaves `SCIEB` and `SCILV0-2` at 0, so the ARM7 of 2ndmix
+  and the stock KallistiOS driver never get their timer FIQ and are silent (M2-Q3: tracks 5 and 7, with a console
+  check; a fix moves 2ndmix's sound lines and lands with a new baseline). A machine reset does not reset the GD-ROM
+  drive and leaves most system bus slots as they were. The boot ROM workload of the sound harness is silent for an
+  unknown cause. ARMRST reads 0 behind a machine reset while the ARM7 is not clocked, until the guest first writes it
+  (design 2.3.7 item 13; tracks 5 and 6, with a console measurement).
 
 | Milestone | Content | Gate |
 | --- | --- | --- |
