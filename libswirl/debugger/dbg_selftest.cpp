@@ -156,6 +156,28 @@ bool Requested()
 
 static void SelfCheck();
 
+// The engine of the session, before its tests: what the SH4 runs on, and what executes its breakpoints and steps,
+// by the name debugger.describe gives it among its capabilities. The session runs on it whatever was asked for: a
+// runner compares it with the engine it asked for (tests/debugger/selftest/selftest.py), so that a key which did not
+// reach the emulator, or which the emulator did not take, does not pass for a session of that engine.
+static void SayEngine()
+{
+	emu::Sh4EngineInfo engine = { };
+
+	if (emu::GetSh4Engine(&engine))
+	{
+		bool interpreter = strcmp(engine.backend, "interpreter") == 0;
+
+		printf("SelfTest: engine: the SH4 runs on %s%s%s, its breakpoints and steps on %s\n",
+			interpreter ? "the interpreter" : "the recompiler (", interpreter ? "" : engine.backend, interpreter ? "" : ")",
+			engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native");
+	}
+	else
+		printf("SelfTest: engine: not known: no backend of the SH4 is selected\n");
+
+	fflush(stdout);
+}
+
 void AtStart()
 {
 	if (session.started || !Requested())
@@ -163,6 +185,8 @@ void AtStart()
 
 	session.started = true;
 	session.guests = new std::vector<Test*>();
+
+	SayEngine();
 
 	// the driver's own test enters the registry here, the tests of the packages during static initialisation
 	static Test self("selftest", SelfCheck, nullptr);

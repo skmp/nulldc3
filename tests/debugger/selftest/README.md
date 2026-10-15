@@ -19,6 +19,21 @@ program of `NULLDC_ELF_DIR` instead of the guest of this directory.
 Every run has an environment of its own (fresh `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, no display), the
 real-time clock pinned, a core size limit of 1 byte and a watchdog, as in `tests/system`.
 
+**Every run is made on the engine it asks for.** `--engine jit` is `config:Dynarec.Enabled=yes`, `--engine interp`
+is `=no`; the emulator takes the first for a wish and says `Using MCPU Recompiler` or `Using MCPU Interpreter`, and
+a run that says the other, or neither, fails. A run with a session also has to be made on the SH4 debug engine it
+asks for: the driver says first what executes the breakpoints and steps of the SH4, by the name
+`debugger.describe` gives it among its capabilities (`SelfTest: engine: the SH4 runs on the recompiler (x64), its
+breakpoints and steps on sh4-debug-native`, `dbg_selftest.cpp`), and `selftest.py` compares it with what it asked
+for: `sh4-debug-fallback` on the recompiler with `Debugger:ForceFallback=yes` among the `CONFIG` items (`arm7.fallback`,
+`writes.fallback`), `sh4-debug-native` on the recompiler without it (on an x86-64 host, whose recompiler executes
+them itself; the recompiler of another host has none and reports the fallback, which is then what is asked for),
+`sh4-debug-native` on the interpreter, with the key or without it. A failure says the engine found and the one
+asked for. Up to f640f21a no test looked: `arm7.fallback` and `writes.fallback` passed on an emulator that ignored
+the key (the mutant `nofallback` of the M2 gate). `startpaused` has no session, and checks the SH4 alone. The
+sessions of `debugger.selftest.sh4bp.sessions` say their engine too; their runner, `tests/debugger/sh4bp/selftest.sh`,
+does not compare it yet.
+
 **No wait without a bound.** The sessions `arm7`, `writes` and `core`, and the tests `arm7n.*` and
 `writesrun.neutral`, give every wait for a stop a bound, one constant of their file (`kBoundMs`: 30 s in
 `dbg_selftest_arm7.cpp` and `dbg_selftest_writes.cpp`, 60 s in `dbg_selftest_core.cpp`); the threads their tests
@@ -264,10 +279,13 @@ and the CPSR of the ARM7 (the mode switch rewrites bank slots that only the save
 
 **The other builds of the main-memory writer.** `dbg::mem::Write` has four forms of its main-memory store: with the
 virtual memory layout in use or not, and with an SH4 recompiler in the build or not. The default build is the
-first of each. The tests `debugger.selftest.writes*` also pass on an emulator without a recompiler
-(`-DTARGET_NO_REC=ON`: the layout in use) and on that of a generic host (no recompiler, no layout), each given to a
-configure of the tests project as `-DNULLDC_EMULATOR=`; there every engine is the interpreter. The fourth, a
-recompiler without the layout, is given by no configuration.
+first of each. On an emulator without a recompiler (`-DTARGET_NO_REC=ON`: the layout in use) and on that of a
+generic host (no recompiler, no layout), each given to a configure of the tests project as `-DNULLDC_EMULATOR=`,
+every engine is the interpreter: there `debugger.selftest.writes.interp` passes and runs the writer's form of that
+build, and the tests of the JIT fail, for they are not made on the engine they ask for. The fourth, a recompiler
+without the layout, is given by no configuration of the build; a recompiler build gets it where the layout cannot
+be set up (an address space limit of 700 MB, `prlimit --as`), and up to f640f21a got it in about one start in four
+when emulators were started together without a data directory (`tests/system/README.md`, "The memory layout").
 
 ## The tests of the SH4 breakpoints and steps
 

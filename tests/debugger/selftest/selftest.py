@@ -14,10 +14,21 @@ real-time clock is pinned. README.md has the modes:
                 the two exit lines have the same state hash, part for part
     parked      the run stays parked: after --hold seconds the process is still there and has printed no exit
                 line. It is killed, and that is a pass
+
+Every run has to be made on the engine it was asked for, and a run with a session on the SH4 debug engine as well.
+The emulator takes config:Dynarec.Enabled=yes for a wish: a build without a recompiler, or one whose recompiler
+cannot be set up, goes on with the interpreter and says "Using MCPU Interpreter" where the other says "Using MCPU
+Recompiler". The driver of a session says first what executes the breakpoints and steps of the SH4, by the name
+debugger.describe gives it ("SelfTest: engine: ..."): on the recompiler sh4-debug-fallback with
+Debugger:ForceFallback=yes among the --config items and sh4-debug-native without it (on an x86-64 host, whose
+recompiler has native breakpoints; on another the recompiler has none and runs them on the fallback), on the
+interpreter sh4-debug-native, which the key does not change. A run that was made on another engine fails, and says
+which engine it found and which one was asked for.
 """
 
 import argparse
 import os
+import platform
 import re
 import resource
 import shutil
@@ -28,6 +39,19 @@ import time
 RTC_PIN = 946684800
 
 BAD = ('Fatal error', 'Verify Failed', 'fault_handler', 'AddressSanitizer', 'ThreadSanitizer', 'runtime error:')
+
+# what the emulator thread prints when it has chosen the engine of the SH4 (dc_run of libswirl/libswirl.cpp)
+ENGINE_SAYS = {'jit': 'Using MCPU Recompiler', 'interp': 'Using MCPU Interpreter'}
+ENGINE_NAMES = {'jit': 'the recompiler', 'interp': 'the interpreter'}
+
+# what the driver of a session prints first (dbg_selftest.cpp): the SH4's engine, and its debug engine by the name
+# of debugger.describe's capabilities
+SESSION_ENGINE = re.compile(r'^SelfTest: engine: (.*)$', re.M)
+DEBUG_ENGINES = ('sh4-debug-native', 'sh4-debug-fallback')
+
+# The recompiler of an x86-64 host executes breakpoints and steps itself (SH4DBG_NATIVE, hw/sh4/sh4_if.h); the one
+# of an arm64 host does not, and runs them on the interpreter fallback with or without Debugger:ForceFallback
+NATIVE_RECOMPILER = platform.machine().lower() in ('x86_64', 'amd64')
 
 
 class Failed(Exception):
@@ -117,6 +141,49 @@ class Run:
         return self
 
 
+def forced_fallback(args):
+    """Is Debugger:ForceFallback set by the --config items? The last one that names the key decides."""
+    forced = False
+    for item in args.config:
+        key, _, value = item.partition('=')
+        if key.strip().lower() == 'debugger:forcefallback':
+            forced = value.strip().lower() in ('yes', 'true', '1')
+    return forced
+
+
+def debug_engine_asked(args):
+    """The SH4 debug engine a run of these arguments asks for, and what asks for it."""
+    if args.engine == 'interp':
+        return 'sh4-debug-native', 'the interpreter (config:Dynarec.Enabled=no), whose breakpoints and steps are its own%s' % (
+            ', with or without Debugger:ForceFallback' if forced_fallback(args) else '')
+    if forced_fallback(args):
+        return 'sh4-debug-fallback', 'the recompiler (config:Dynarec.Enabled=yes) with Debugger:ForceFallback=yes'
+    if NATIVE_RECOMPILER:
+        return 'sh4-debug-native', 'the recompiler (config:Dynarec.Enabled=yes) of an x86-64 host, without Debugger:ForceFallback'
+    return 'sh4-debug-fallback', 'the recompiler (config:Dynarec.Enabled=yes) of a %s host, which has no native breakpoints' % platform.machine()
+
+
+def check_engine(args, run, session):
+    """The run was made on the engine it asked for; a run with a session also on the SH4 debug engine it asked
+    for. Returns what it found, for the line of the test."""
+    other = 'interp' if args.engine == 'jit' else 'jit'
+    asked = '%s (config:Dynarec.Enabled=%s)' % (ENGINE_NAMES[args.engine], 'yes' if args.engine == 'jit' else 'no')
+    check(ENGINE_SAYS[other] not in run.log, 'the run was asked for %s and was made on %s: the output has "%s"'
+          % (asked, ENGINE_NAMES[other], ENGINE_SAYS[other]), run.log)
+    check(ENGINE_SAYS[args.engine] in run.log, 'the run was asked for %s and does not say that it was made on it: the '
+          'output has no "%s"' % (asked, ENGINE_SAYS[args.engine]), run.log)
+    if not session:
+        return ENGINE_NAMES[args.engine]
+
+    said = SESSION_ENGINE.findall(run.log)
+    check(len(said) == 1, 'the session said its engine %d times, not once ("SelfTest: engine: ...")' % len(said), run.log)
+    found = [name for name in DEBUG_ENGINES if said[0].endswith(' ' + name)]
+    wanted, why = debug_engine_asked(args)
+    check(found == [wanted], 'the SH4 debug engine of the session is %s, the run asked for %s (%s): "SelfTest: engine: %s"'
+          % (found[0] if found else 'none that it names', wanted, why, said[0]), run.log)
+    return said[0]
+
+
 def selftest_lines(log):
     return [line for line in log.splitlines() if line.startswith('SelfTest: ')]
 
@@ -135,6 +202,7 @@ def no_failures(run):
 
 def mode_session(args):
     run = Run(args, 'session').run(['Debugger:SelfTest=' + args.selftest])
+    engine = check_engine(args, run, True)
     no_failures(run)
     lines = selftest_lines(run.log)
     check(lines, 'the session printed nothing', run.log)
@@ -142,17 +210,20 @@ def mode_session(args):
     check(summary is not None, 'the last line of the session is not its summary: ' + lines[-1], run.log)
     check(int(summary.group(1)) > 0 and int(summary.group(2)) == 0, lines[-1], run.log)
     check(run.code == 0, 'exit code %s' % run.code, run.log)
+    print('engine: ' + engine)
     print(lines[-1])
 
 
 def mode_guest_exit(args):
     run = Run(args, 'guest-exit').run(['Debugger:SelfTest=' + args.selftest])
+    engine = check_engine(args, run, True)
     no_failures(run)
     check(any(': ok: ' in line for line in selftest_lines(run.log)), 'the test of the session did not run', run.log)
     line = exit_line(run.log)
     check(line is not None, 'the run printed no exit line', run.log)
     check(line.get('reason') == 'guest-exit', 'the run ended with reason=%s' % line.get('reason'), run.log)
     check(run.code == 0, 'exit code %s' % run.code, run.log)
+    print('engine: ' + engine)
     print('the run ended at the guest exit: reason=guest-exit')
 
 
@@ -163,10 +234,12 @@ def mode_same_hash(args):
     keys = ['config:Exit.AfterVblanks=%d' % args.vblanks, 'config:Exit.StateHash=yes']
 
     plain = Run(args, 'plain').run(keys)
+    check_engine(args, plain, False)
     base = exit_line(plain.log)
     check(base is not None and 'hash' in base, 'the run without a session printed no state hash', plain.log)
 
     run = Run(args, 'session').run(keys + ['Debugger:SelfTest=' + args.selftest])
+    engine = check_engine(args, run, True)
     no_failures(run)
     check(any(': ok: ' in line for line in selftest_lines(run.log)), 'the test of the session did not run', run.log)
     for note in args.expect:
@@ -179,6 +252,7 @@ def mode_same_hash(args):
     check(not different, 'the run of the session differs from the run nobody touched in ' + ', '.join(
         '%s (%s, not %s)' % (f, line.get(f), base.get(f)) for f in different), run.log)
     check(run.code == 0 and plain.code == 0, 'exit codes %s and %s' % (plain.code, run.code), run.log)
+    print('engine: ' + engine)
     print('both runs end in hash=%s after %s vblanks' % (line['hash'], line['vblanks']))
 
 
@@ -197,9 +271,11 @@ def mode_parked(args):
     check(exit_line(run.log) is None, 'the run printed an exit line while it was parked', run.log)
     for bad in BAD:
         check(bad not in run.log, 'the output has "%s"' % bad, run.log)
+    engine = check_engine(args, run, bool(args.selftest))
     no_failures(run)
     for note in args.expect:
         check(note in run.log, 'the run did not say "%s"' % note, run.log)
+    print('engine: ' + engine)
     print('still parked after %.1f s, no exit line: the run was killed' % args.hold)
 
 

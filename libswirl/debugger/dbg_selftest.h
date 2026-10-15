@@ -21,6 +21,7 @@
 
 	Output, on stdout, each line flushed as it is written:
 
+	    SelfTest: engine: <text>                               first line: the SH4's engine and its debug engine
 	    SelfTest: <test>: ok: <text>                           a check that held
 	    SelfTest: <test>: FAILED: <text>                       a check that did not
 	    SelfTest: <test>: note: <text>
