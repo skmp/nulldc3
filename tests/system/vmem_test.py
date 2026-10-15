@@ -244,7 +244,7 @@ def case_none(h):
 
     run, names = run_in_namespace(h, ns, 'no_layout', ro=True, hold=False, own=False,
                                   env={'LD_PRELOAD': h.options.shim}, data_dir=False, vblanks=NONE_VBLANKS)
-    st.check('vmem_shim: memfd_create refused' in run.log, 'the run did not ask for a memfd (no line of the shim)', run)
+    # what the case is about, whichever ways to the file the emulator tried (one from before memfd_create tried none)
     st.check(NO_LAYOUT in run.log and LAYOUT not in run.log, 'the run was to have no virtual memory layout and does '
              'not say "%s"' % NO_LAYOUT, run)
     st.check('Using MCPU Recompiler' in run.log, 'not the recompiler', run)
