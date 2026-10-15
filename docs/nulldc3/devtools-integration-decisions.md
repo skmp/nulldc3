@@ -37,8 +37,10 @@ Where a decision changes what a package already implemented, the package is name
 9. **What a gate is.** `--milestone Mx` selects that milestone's scenarios and requires each to **pass**; `partial` and `not
    applicable` fail a milestone gate. Without `--milestone`, a run in which no scenario passed exits non-zero ("nothing
    verified"). `--only` narrows the selection and never turns an empty result into a success. The gates are invoked as
-   `npm run contract -- --url ws://127.0.0.1:<port>/ws --profile emulator --elf <path> --milestone M1` (M2-M4 alike; the M3 DSP
-   part is a second run with the DSP test program).
+   `npm run contract -- --url ws://127.0.0.1:<port>/ws --profile emulator --elf <path> --milestone M1` (M3 and M4 alike; the
+   M2 gate is two runs: the second is `--elf <dsptest.elf> --milestone M2 --only S00,S16` against an emulator started with
+   the sounding guest, with its two required notes — `M2-ROUND.md` M2-D34; the M3 DSP part is a further run with the DSP
+   test program).
 10. **Bounds are probed**: the 1 MiB inbound message bound (a larger message closes the connection with 1009 or is answered with
     an error; the server stays up), next to the bounds already probed.
 11. **`control.pause {target}`**: the target is ignored when it is one of `sh4`, `arm7`, `dsp` — also when the server does not
