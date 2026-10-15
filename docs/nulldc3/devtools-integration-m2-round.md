@@ -1,9 +1,9 @@
 # M2 round — the cut
 
 > **This copy.** `docs/nulldc3/devtools-integration-m2-round.md` is the repository's copy of the working document
-> `M2-ROUND.md` as it stood when header revision 6 was made (package R6, 2026-10-11): the cut with the project
-> owner's answers of 2026-10-11 (6.2) and the integrator's notes behind package F3a (Appendix I). Package M2G
-> replaces it by the file as it stands at the end of the round. The text below names its companion documents by
+> `M2-ROUND.md` as it stands at the end of the M2 round (package M2G, 2026-10-15): the cut with the project owner's
+> answers of 2026-10-11 (6.2) and the integrator's notes on every package of the round (Appendix I, I.1 to I.11). It
+> replaces the copy that package R6 committed with header revision 6. The text below names its companion documents by
 > their working names; in `docs/nulldc3/` they are:
 >
 > | Named below | In `docs/nulldc3/` |
@@ -15,9 +15,9 @@
 > | `PLAN.md` | `PLAN.md` |
 >
 > "Beside this file" is the working area: the reader reports of `understand-m2/` and every path of the form
-> `agents/nulldc3/...` point outside this repository (`docs/nulldc3/README.md`). The design in `docs/nulldc3/` is
-> not at this cut yet: section 7 lists where the two differ and is applied at the end of the round, and until
-> then this file is the contract (M2-D64).
+> `agents/nulldc3/...` point outside this repository (`docs/nulldc3/README.md`). The design in `docs/nulldc3/` is at
+> this cut: section 7 was applied at the end of the round (package M2G). The design, the decisions and the frozen
+> headers cite this file for header revision 6 (section 2), for the M2 tree (3.6.1) and for the guest's contract (5.2).
 
 Status: cut, 2026-10-10; revised the same day after five adversarial reviews (four lenses each: sound, writes,
 frontend, integration; the fourth and the fifth closing rounds, each on what the round before it had left;
@@ -532,10 +532,12 @@ force). The bullet's last two sentences ("This holds when ... stops.") stay.
 ```cpp
 // - The first Park() of a thread that follows a thread exit taken in a debugger stop (the host stopped the
 //   machine while the thread before it was parked) is a resume of that stop: the debugger pause that was in
-//   force before the host stop is not applied again, and dbg::emu calls dbg::sh4::PrepareResume() and
-//   dbg::arm7::PrepareResume() there, so that the instruction of the stop executes and its breakpoint does
-//   not stop again at once. No sound burst is suspended then: the thread before ran it to its end in front
-//   of its stop callback.
+//   force before the host stop is not applied again, and dbg::emu calls dbg::sh4::PrepareResume() there, so
+//   that the instruction of the stop executes and its breakpoint does not stop again at once. The ARM7 has no
+//   part in it: no sound burst is suspended then, because the thread before ran it to its end in front of its
+//   stop callback, and so the instruction of a stop of the ARM7 has executed. The dbg::arm7::PrepareResume()
+//   that dbg::emu calls there as well arms nothing: OnThreadExiting() has ended the stop for the breakpoint
+//   state of the ARM7 (dbg::arm7::OnStop()).
 //   ... (unchanged)
 //
 // Returns PARK_RUN after leaving, with CpuRunning set and g_stop_latched clear; g_parked is clear too, but
@@ -725,7 +727,8 @@ so, because "bits of value above its width are ignored" alone would promise that
 
 ```cpp
 // Writes register `index` of the node; bits of value above its width are ignored. (E) in the park context
-// only (inside a CC_WRITE call: the park loop, or a service excursion of a running machine). Never blocks.
+// (inside a CC_WRITE call: the park loop, or a service excursion of a running machine), or a thread that holds
+// L while no emulator thread exists, as for Read(). Never blocks.
 // Writable are the rows with kRegWritable: in M2 the registers of dc.sh4.cpu and those of dc.aica.arm7 but
 // ENABLED. No other row has a writer.
 //   dc.sh4.cpu     a store into the SH4 context. PC: a value with bit 0 set is refused (nothing executes at an
@@ -776,9 +779,9 @@ while the writer does not exist" (2.5).
 
 ```cpp
 // Writes len bytes at addr. All or nothing: the whole range is checked before the first byte is stored.
-// (E) in the park context only (inside a CC_WRITE call: the park loop, or a service excursion). It waits for
-// nothing but the lock of the texture cache, which a write to video memory takes as a faulting write by the
-// guest does.
+// (E) in the park context (inside a CC_WRITE call: the park loop, or a service excursion), or a thread that
+// holds L while no emulator thread exists, as for Read(). It waits for nothing but the lock of the texture
+// cache, which a write to video memory takes as a faulting write by the guest does.
 // Writable are main memory, video memory (both views) and wave memory (both targets), every mirror of them;
 // a range may run from one mirror of a store into the next. No other region is writable, and neither is a
 // range that would pass the end of the address space (addr + len > 2^32): a write does not wrap.
@@ -825,8 +828,8 @@ the table behind the text.
 
 ```cpp
 	/*
-		Debugger access. Called on the emulator thread between two instructions of the ARM7 — outside a sound
-		burst, or while the debugger has one suspended (in the slice hook and in the park context) —, or by a
+		Debugger access. Called on the emulator thread between two instructions of the ARM7 - outside a sound
+		burst, or while the debugger has one suspended (in the slice hook and in the park context) -, or by a
 		thread that holds the debugger's lifetime lock while no emulator thread exists; the setter on the
 		emulator thread only. The defaults are those of a device that gives the debugger nothing.
 	*/
@@ -893,9 +896,9 @@ into the slot on the way back.
 
 ```cpp
 	/*
-		Debugger access. Called on the emulator thread outside Update() and TimeStep() — between two sound
+		Debugger access. Called on the emulator thread outside Update() and TimeStep() - between two sound
 		bursts, or while the debugger has one suspended in front of an ARM7 instruction, where the sound
-		generator stands between two samples —, or by a thread that holds the debugger's lifetime lock while
+		generator stands between two samples -, or by a thread that holds the debugger's lifetime lock while
 		no emulator thread exists; DebugWriteReg on the emulator thread only. Update() and TimeStep()
 		themselves also run in the debugger's park context, when a suspended burst is run on. The defaults are
 		those of a device that gives the debugger nothing.
@@ -2452,6 +2455,121 @@ item 2 are compared as the tests project builds them: a state hash does not see 
    the repository holds what it cites (M2-D65).
 
 What it finds goes back as a fix round to the package that owns the file.
+
+
+### 3.11 EXe — the leftovers of the emulator packages (added by the integrator, 2026-10-14)
+
+Between F3d and M2G. What the verifiers of R6 to E7b left as notes and the integrator collected in Appendix I.4 to
+I.6: gaps of the tests, waits without a bound, two small refusals and two sentences of frozen comments. Nothing in it
+changes what the emulator does for a guest; nothing in it blocked a merge. Two parts, one per repository: this one
+and 3.12.
+
+**Delivers.**
+
+1. **Every page of a range is witnessed.** `writes.mem.cached` and `smcwrites.cached` (`dbg_selftest_writes.cpp`)
+   write, beside the range of three pages that witnesses its middle page, one range that **ends** in the loop's page
+   and one that **begins** in it, each with an instruction of the loop in the bytes written (the verifier's edit of
+   E7a: `agents/nulldc3/e7a/verify-2/scripts/mutants_z.py`, TEST; 142 bytes from `0x8C00FFF0` with `mov #0x5E,r12` in
+   the slot). A writer that leaves out the first page of a range of more than one page, or its last, fails
+   `smcwrites.cached` (I.5, leftover 1).
+2. **No wait without a bound.** Every wait of the sessions `arm7`, `writes`, `core` and of the `arm7n.*` tests ends
+   by a check that fails, within a bound the test states, where the machine never gives what it waits for; the
+   session then prints its summary. Named by the verifiers: `ArmStop` of `writes.reg.arm7` (a device that stores the
+   ARM7's PC as given); `core.reset` when `control.reset` is not answered `{}`; the helper thread of `arm7n.hoststop`
+   when the machine does not stop; `arm7.bp.resume`, `arm7.burst.plain`, `arm7.bp.fiqvector` and `arm7.bp.context`
+   under the four mutants that today end only by the 300 s watchdog (I.4, I.5 leftover 2). A bound is generous
+   (a correct machine on a loaded host is far inside it) and is one constant a session.
+3. **A NUL in an event name.** `breakpoints.add` refuses an event name with a NUL in it with -32602, as
+   `state.setRegister` and `state.watch` do since E7a (`dbg_core.cpp`, the lookup `FindEvent(event.c_str())`;
+   I.5 leftover 3). The selftest `core` holds it.
+4. **Nothing written into the source tree by a test run.** A ctest run of `debugger.contract.*` (and of any other
+   target that starts Python from the tree) leaves no `__pycache__` in the source tree: the targets run Python with
+   `PYTHONDONTWRITEBYTECODE=1` (I.5 leftover 4). A check: a full ctest run on a clean checkout leaves `git status`
+   empty.
+5. **The made-up drive state is a state.** `regs.rows.gdrom` keeps its made-up drive state and disc type inside
+   their enums, so the session `regs` is clean under UBSan (I.6).
+6. **The completion in `dc_run` with a FIQ in the rest of its sample** (I.4 and I.5 leftover 5): `arm7n.hoststop`
+   takes some of its stops where the rest of the sample has a FIQ to enter (on the `msr` that ends the F window, or
+   on the instruction in front of it, with a request of the AICA latched) and requires at least five such stops in its
+   ok line, as `steps` requires its fourth kind; the mutant that enters a pending FIQ one executed instruction late
+   in the loop `dc_run` goes on with then fails it. If the guest gives no such stop within the test's run, the report
+   says so with the numbers and the item is closed as a known limit; the guest is not changed.
+7. **Two sentences of frozen comments, comment text only** (I.4 limit 3, I.5 limit 4): H6-19 (`dbg_emu.h`,
+   `Park()`) no longer says that the first `Park()` of a thread behind an exit in a debugger stop arms the ARM7's
+   half of an owed resume (the completion in `dc_run` has run the instruction of the stop); H6-33 and H6-35
+   (`dbg_regs.h`, `dbg_mem.h`) say the thread rule of `Write()` as `Read()` has it ("(E) in the park context, or a
+   thread that holds L while no emulator thread exists"), so that "returns kErrNotWritable with no machine" can be
+   met. ASCII only; the integrator reads the new text before the merge.
+8. The README rows these change (`tests/README.md`, `tests/debugger/selftest/README.md`), and the count of
+   `regs.rows.sb` in its README row and comment: 115 new rows, of them 100 with a value, 14 write-only and SB_FFST
+   behind a read function (I.6).
+
+**Owns.** `libswirl/debugger/dbg_selftest_arm7.cpp`, `dbg_selftest_writes.cpp`, `dbg_selftest_core.cpp`,
+`dbg_selftest_regs.cpp`; in `dbg_core.cpp` the event lookup of `breakpoints.add` and nothing else; the comment text
+of the three sentences of item 7 in `dbg_emu.h`, `dbg_regs.h`, `dbg_mem.h` and nothing else of those headers;
+`tests/debugger/**` CMake files, READMEs and `contract.py` where item 4 needs it; `tests/README.md`. No file under
+`hw/`, no other production file.
+
+**Depends on.** E7b merged (`199cdb4a`). **Gate.** All ctest targets green twice, none skipped, the number stated
+(259 and what the package adds), with the UI pin at `6c753dc`; `git status` of the checkout empty behind them; the
+five builds compile; the 46 sound lines and state hashes of the base and the tip identical (only tests changed);
+the contract gates M1 and M2 on the three engines unchanged; under each mutant named in items 1, 2, 3 and 6 the
+target that holds it fails by a check, with a summary line, inside its bound (no watchdog, no kill).
+**Verifier.** The mutants of items 1, 2, 3 and 6 again, and one more for each bound: a bound that is too tight
+(halved twice) on a host under the load of four emulators still passes the correct machine; the comment text of
+item 7 against the code it describes; that nothing outside "Owns" changed.
+
+### 3.12 EXu — the leftovers of the UI packages (added by the integrator, 2026-10-14)
+
+The second part of the leftovers: what the verifiers of F3b, F3c and F3d left as notes (Appendix I.7 to I.9).
+Two of them change what a person sees (the last rows of an address space in a small memory panel; a watch's
+expression renamed from the keyboard); the rest are tests and words.
+
+**Delivers.**
+
+1. **The end of an address space can be reached in a small panel** (I.8, leftover 5). In a memory panel that shows
+   fewer rows than a slice holds, a person reaches the last row of every address space the view offers (SH4, ARM7,
+   and the others it lists) with the wheel and with the keyboard, and the listing is still not a box the browser
+   scrolls (`overflow: clip` stays, I.8 decision 4). How (the view may stand so that the last row is the panel's last
+   visible row; or the slice shrinks to what the panel shows) is the package's to decide and to say; an e2e test
+   holds it at a panel ten rows tall, for the SH4 and the ARM7.
+2. **No editor follows its byte into another row** (I.8, leftover 6): no byte editor opens while the slice of a move
+   is being read, or the editor is recorded with the base of the rows on screen; the scratch sequence of F3c's
+   verifier (held `state.getMemorySlice` answers, `f3c/verify-2/scripts/zz-v2.spec.ts`, R2-B) becomes an e2e test.
+3. **A watch's expression is renamed from the keyboard** (I.8, leftover 8), with the keys of I.8 decision 1 (Enter,
+   the space bar or F2 on the expression), the focus rule of decision 2, and nothing while the target runs.
+4. **Tests that discriminate.** (a) `e2e/v2-server.spec.ts`, "a describe result without `targets` lists none":
+   breakpoints at `0x1000` and at DSP step 5, matched as the two lines F3b's verifier tried (I.7, leftover 1).
+   (b) One of the two no-server-yet e2e tests also expects the SH4 callstack panel without its note and the SGC panel
+   with its Record button (I.7, leftover 3). (c) `e2e/device-tree-perf.spec.ts` expects no alert on the measured page,
+   at its start and its end (I.7). (d) `e2e/memory.spec.ts`, "ARM7 memory ends where the address space of the ARM7
+   ends", reads the settled fetch count and passes under `E2E_CPU_THROTTLE=4` (I.8, leftover 7).
+5. **Two readers of v2 leniency go** (I.7, leftovers 2 and 4): `DeviceTreePanel.tsx` dims `dc.sh4.cpu` for a stale
+   tick by the SH4's `pcPath` only when the server lists the SH4 (`supported`); `registerNumber` (`targets.ts`) takes
+   hex with `0x` only, as every v3 server sends it, and its comment says so; a unit test holds each. Among the values
+   that are no number are digit runs with a leading `0` and no `x` (`01`, `08c0000a0`), so that a pattern that takes a
+   bare `0` for the prefix fails (added 2026-10-15). The emulator writes every value as `0x` and the digits
+   (`regs::FormatValue`).
+6. **A dialog in its exit transition counts as closed** for the hotkeys (I.9, leftover 11): F5 right behind Escape is
+   taken by the toolbar, not left to the browser; the toolbar spec holds it.
+7. **Words** (I.8 leftover 9, I.9 leftover 10): the README's "an arrow never takes the place to a row the panel cuts
+   off"; the block "The UI against the emulator" makes its three run directories (`mkdir -p`) as its first line.
+
+**Owns.** `src/app/components/MemoryView.tsx`, `src/app/panels/MemoryPanel.tsx`, `WatchesPanel.tsx`,
+`DeviceTreePanel.tsx` (the one line of item 5), `src/state/targets.ts` (`registerNumber`) and their unit tests,
+`src/app/layout/useRunHotkeys.ts`; `e2e/memory.spec.ts`, `watches.spec.ts`, `v2-server.spec.ts`,
+`device-tree-perf.spec.ts`, `toolbar.spec.ts`, and one of `connection.spec.ts` / `offline.spec.ts`; `README.md`,
+`src/app/layout/documentationSections.ts`; **for item 5, the two `arm7Held` assertions of `src/state/runControls.test.ts`
+that the rule changes** ("is what ENABLED of its node says" and "is not assumed ...": `arm7Held` reads `ENABLED` through
+`registerNumber`; granted by the integrator on 2026-10-15, after the package's third verification found the item
+undeliverable without them), and nothing else of that file. Not `scripts/contract/`, not `server/`, not the schemas.
+
+**Depends on.** F3d verified (`6c753dc`). **Gate.** `npm run check`; the whole unit suite three times in a fresh
+clone; the e2e suite whole (`--workers=2`); `e2e/memory.spec.ts` and the specs of items 1 to 3 under
+`E2E_CPU_THROTTLE=4`; the smoke spec once against the emulator `6fe01759` (EXe merged) with this package's bundle embedded, run by
+`agents/nulldc3/f3d/scripts/smoke.sh` in the order of I.9. **Verifier.** Item 1 at panels of 3, 10 and 40 rows for
+each address space the view offers, by wheel, keys and the address box; the mutants that take back each item; the
+keyboard and focus rules of I.8 on the new watch control; nothing sent that would be answered -32004 or -32013.
 
 ---
 
@@ -4124,6 +4242,36 @@ E7a's verifier found about the recompiler without the virtual memory layout (M2-
 without an address in its key (1.2); for the package that
 wires the T5.0 core the list of 5.6 (the batch halves it removes).
 
+
+### A.11 EXe — the leftovers of the emulator packages
+
+Repository `devcast`, cut from `skmp/nulldc3` at `199cdb4a` (E7b merged); the UI checkout pinned at `6c753dc`.
+
+Read: `M2-ROUND.md` 3.11 and Appendix I.4, I.5 and I.6 whole (every leftover and limit is described there with the
+verifier's evidence); the logs and scripts the items name (`agents/nulldc3/e6b/verify-2/`, `e7a/verify-2/`,
+`e7b/verify-2/`), whose mutants you run again; `tests/debugger/selftest/README.md`.
+
+Deliver: the eight items of 3.11. Items 1 to 5 and 8 first, each a commit of its own with the mutant that it makes
+fail shown failing in your report; then item 6, which may end as a known limit with numbers; then item 7, the
+comment text, last. Mutation runs: at most two emulators at a time, each with a guard on its resident memory (kill
+above 1.5 GB and record which mutant it was; `ulimit -v` does not work, the emulator reserves address space by
+design).
+
+Gate: 3.11 "Gate".
+
+### A.12 EXu — the leftovers of the UI packages
+
+Repository `dreamcast-devtools`, branch `skmp/nulldc3`, behind F3d (`6c753dc`).
+
+Read: `M2-ROUND.md` 3.12 and Appendix I.7, I.8 and I.9 whole (I.8's decisions 1 to 6 are the rules your new
+controls keep; I.9 says how the smoke spec is run); 3.8 and 3.9 with their decided points; the scratch specs the
+items name (`agents/nulldc3/f3b/verify-1/logs/`, `f3c/verify-2/scripts/`).
+
+Deliver: the seven items of 3.12. Item 1 first, with its decision said in the first lines of your report and in the
+README; then 2 and 3; then the tests and words.
+
+Gate: 3.12 "Gate".
+
 ---
 
 ## Appendix R. The five reviews
@@ -4392,3 +4540,406 @@ What the verifiers of the packages left for the cut and for later packages. A la
 - **Not noticed by any test of the mock (five of the verifier's extra mutations; notes, for a later mock package):** a tab
   around a value; a held ARM7 keeping a step-out's temporary breakpoint; `flags.writable` without `register-write`; a reset
   restoring the ARM7's registers only; `--m2` of `mockServer.ts` not reaching the mock.
+
+### I.2 R6 (verified at `bec9cbcc` of `devcast`, first verification; merged as `af1f1d8c`, three read-only reviewers found nothing)
+
+- **Frozen text is ASCII.** H6-38 and H6-39 carried four dashes outside ASCII into `hw/arm7/SoundCPU.h` and
+  `hw/aica/aica_mmio.h` (a compiler that does not read the source as UTF-8 warns); the integrator replaced them by ASCII
+  dashes in the tree (`f6949750`) and in section 2 of this file. A frozen comment carries no character outside ASCII.
+- **`dbg_arm7.h` stands behind the licence head** of five lines that every header of `libswirl/debugger` has; H6-5 prints it
+  from `#pragma once`.
+- **For E6a (its first commit):** `tests/debugger/guest/CMakeLists.txt` finds the guest directories with a plain glob, so a
+  directory added to a tree whose tests project is already configured is not registered until cmake is re-run, and ctest is
+  green without its tests. E6a makes the glob `CONFIGURE_DEPENDS` (three lines, tried by R6's verifier:
+  `file(GLOB nulldc_guest_lists RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*/CMakeLists.txt")`,
+  sorted, `add_subdirectory` of each entry's directory); this one change of R6's file is E6a's by the integrator's decision.
+  E6a also replaces the sentence "No guest is there yet, and the directory registers no test." of `tests/README.md`.
+- **For E6a and E6b:** a guest directory cannot call `nulldc_debugger_selftest(...)` or the contract function (they read
+  variables of their own directories and would register a command without an emulator path). Sessions on the guest are lines
+  of `tests/debugger/selftest/CMakeLists.txt` and `tests/debugger/contract/CMakeLists.txt`, as 3.0 has it.
+- **For E7a (it owns `dbg_selftest_core.cpp` next):** the hand-over check of `core.tables` reads only what `dbg::arm7` was
+  handed. A `PushBreakpoints` that also hands the ARM7's breakpoints to the SH4, or the SH4's to the ARM7, passes it. E7a adds
+  the two cross-target checks R6's verifier tried (`agents/nulldc3/r6/verify-1/scripts/proposed_fix.py`, results in
+  `logs/proposal.txt` beside it): with only ARM7 breakpoints listed `dbg_sh4_armed == 0`; with an enabled SH4 code breakpoint
+  beside them `dbg_sh4_armed == 1` and the set handed to the ARM7 unchanged. E7a also removes the two clauses of 2.5
+  (`dbg_regs.h` and `dbg_mem.h`, `Write()`), each there exactly once.
+- **For the gates' wording:** "the M1 gate unchanged" compares the result line (18 passed, 0 failed, 0 partial, 0 not
+  applicable, 0 invariant violations); the tick count differs from run to run. "No home path, host name or user name" does not
+  count branch names (`skmp/nulldc3`, `skmp/nulldc3-<pkg>`), which the working documents carry.
+- **Not covered, and accepted:** the clears of the run flag and of `g_parked` at the end of a thread are not held by a test
+  (removing them passes: `SuperH4_impl::Stop()` clears both at the request); a test that latches a debugger stop in the slice
+  of a host stop would hold them. The ARM7 half of `core.tables` and `stepping: true` on the wire ran in forced builds only;
+  their first real run is E6b's gate.
+- The repository's copy of this file is the cut as it stood at R6; this appendix and later notes reach it at M2G.
+
+### I.3 E6a (verified at `83c2ee0a` of `devcast`, second verification; merged as `5a3ad3d6`, two read-only reviewers found one item each, both fixed)
+
+- **The baseline of 5.5 is taken on `5a3ad3d6`** (its tree is that of `83c2ee0a`), by E6b as the first step of A.4. Lines of the
+  guest recorded on `52b32fe4` or earlier are void: the fix round changed the guest's bytes (`arm7`, `sh4` and the per-sample
+  `samples` moved; batch `samples` and `regs` did not).
+- **The guest as merged:** `arm7.bin` is 352 bytes, `dsptest.elf` 2028 bytes. The labels a tool needs come from
+  `dsptest_labels.inc` (`a_main_loop` 0x94, `a_fwin` 0x9C, `a_fwin_end` 0xB8 with the return address `a_fwin_end + 8` at 0xC0,
+  `a_leaf` 0xCC, `a_fiq` 0xD8, `a_fiq_end` 0x154); nothing copies an address out of a log of round 1.
+- **5.2, the `a_reset` row, as built:** "every pending bit cleared" is not enough on this emulator. A release latches a pending
+  request again (`SetResetState` accepts the interrupt), and clearing SCIPD lowers neither nFIQ nor M. `a_reset` ends the
+  service of a latched request: SCIEB 0, SCILV0-2, TIMA, the SCIRE clear, **then** the read of L and the write of M, then SCIEB
+  timer A and the `msr`. With L and M in front of SCIRE the write of M latches the request again.
+- **For E6b (it holds and releases in front of `arm7.step.fiqbehind`):** a hold and release of the guest's ARM7 between two
+  bursts restarts the counted FIQ sequence entry for entry, with or without a request pending at the hold (checked for a
+  release in front of each of the ticks 3 to 202). So "every entry of the second or a later kind returns to `a_fwin_end + 8`"
+  and the count of E6a hold behind every such release, not only in the plain run. The count: 4920 entries in 2000 ticks, 2861
+  by the first `Step`, 13 by the second, 2046 by the third or a later one; 1710 of 2000 ticks have one of the third class and
+  the longest stretch without is 1 tick. The risk of 6.3 about hold and release reduces to what `a_reset` does not write (the
+  channel registers, timers B and C, the wave memory).
+- **For E6b, E7a and the contract's sessions on the guest:** the guest's ARM7 is released, held and released again within the
+  first two ticks; the guest does its set-up between the first tick and the second (5.1 and the `_start` row of 5.2 say "before
+  the first AICA tick"). A session that reads `ENABLED` or the ARM7's PC that early sees the one-word program at address 0.
+- **Targets the cut does not list (3.3 item 3):** `debugger.sound.release.dsptest.<jit|interp>.<batch|persample>` and
+  `debugger.sound.runner`. The tests project has **206** targets at this commit.
+- **The runner checks the engine of every run.** On an emulator without a recompiler (`-DNULLDC_EMULATOR=` with a
+  `TARGET_NO_REC` or generic binary) the `.jit.` sound targets and `engines` fail, they are not skipped (8 of the 16
+  `debugger.sound.*` / `debugger.guest.*` targets), and E6b's `debugger.sound.neutral.*.jit.*` will do the same. No gate of
+  the round hands such a binary to the tests project; a package's fifth build is run by its own commands.
+- **`nulldc_sound_neutral`** also takes `CONFIG` and `TIMEOUT` (default 900 s) and can be called from a sibling directory.
+- **3.3, Verifier, as measured:** with the ARM7 never released (the second release left out) the per-sample `samples` is the
+  hash of 32 zero pairs, not the offset basis: the first tick runs on the one-word program.
+- **Toolchain:** an arm-eabi binutils (2.43) is on this machine, though not at the default `DC_ARM_BIN` of `gen.sh`; GNU as
+  and clang give the same 352 bytes, and `debugger.guest.dsptest.files` runs `gen.sh --check` with whichever it finds. The
+  check compares the ELF byte for byte, so a host whose sh-elf binutils lays the ELF out differently fails it (known limit).
+- **M2-Q3 as observed:** 2ndmix under reios is silent. Its ARM7 idles in a three-instruction loop, SCIEB reads 0, SCIPD
+  0x5C0 (pending, never delivered), no FIQ was ever entered.
+- **Kept, by the integrator's decision:** the slow pitch steps of the second channel and the SCIPD fold in `a_fiq` go beyond
+  5.2. They stay: taking either out is a guest change with new bytes, a new count and a new soak, and nothing later needs it.
+- **Not held by a test, and accepted:** the order of the TIMA write and the SCIRE clear in `a_reset` (no time step falls
+  between them on this emulator); a hold and release at a later tick (the line's fields are cumulative; the scratch trace of
+  the verifier holds it, and E6b's selftests are the place if they come to depend on it).
+
+### I.4 E6b (verified at `e3e12143` of `devcast`, second verification; merged as `b4cb3e82`; three read-only reviewers, one item to fix; the first verification found three test gaps and no defect of the emulator)
+
+- **Counts where the cut says otherwise (3.4 Gate):** sixteen neutrality targets, not twelve (a fourth `nulldc_sound_neutral`
+  call, `debugger.sound.neutral.hoststop.<jit|interp>.<batch|persample>`, is the witness of the completion of a suspended
+  burst in `dc_run`); four `arm7n.*` tests, not three; the session `arm7` has 43 tests in each of its five registrations; the
+  tests project has **238** targets. Allowed by the integrator.
+- **For E7a (its brief A.5 is read with these):**
+  1. `DebugSetReg` has its body. `regs::Write` calls `dbg::arm7::OnPcWritten()` behind a PC write of the ARM7 (the session's
+     helper does), and `writes.reg.arm7` writes the PC in a service excursion of a running machine as well: the only place
+     where that call can be seen. No row of `dc.aica.arm7` is marked writable yet.
+  2. Nothing holds the stored CPSR word behind a write (H6-38, "no other bit is stored"): `CPUUpdateCPSR` taken out of
+     `DebugSetReg` survives every test. E7a's register tests hold it.
+  3. `libswirl/debugger/dbg_core_private.h` says "What the core's own files share, and nothing else includes"; from this merge
+     on `dbg_selftest_arm7.cpp` includes it (for `events::Snapshot`: `arm7.events.park` has to show an event logged and 3.4
+     gave no other accessor). The integrator allows the include; E7a, which owns the header, corrects the sentence.
+  4. An SPSR (or `SPSR_<mode>`) written with mode bits that are no mode is stored, as H6-38 says, and ends the process at the
+     next exception return (`CPUSwitchMode`, default case), where a CPSR of that kind is refused. By the owner's answer to
+     M2-Q4 a debugger write can end the emulator; E7a keeps H6-38 and its error table as they are, and the case is a line of
+     the design's known limits at M2G.
+  5. Mutation runs on this tree: use a guard on resident memory and at most two emulators (`e6b/verify-2/scripts/`, the
+     guard and its use). The session's step loops are bounded now (`kStepsMax` = 100000, the published list capped), so a
+     machine on which a step ends no ARM phase fails by a check in seconds; before the fix two mutants of the cut's own list
+     grew an emulator by 90 MB a second. `ctest --timeout` does not shorten the TIMEOUT these targets set themselves.
+- **Known limits, for the design text at M2G (section 7) - none blocks the round:**
+  1. *The exit line in the tick of a latched stop.* When a check or an event breakpoint latches a stop in the tick of an exit
+     or host-stop request, the stop callback sees the SH4 in front of an interrupt acceptance that the plain run has already
+     made: the line's `sh4` and `hash` parts can differ from the plain run's although the guest does not sleep. The sentence
+     of 3.4 Gate ("does not sleep, so both are held whole", here and in the repository's copy) holds for a run that goes on.
+     The neutrality tests keep their stops early (by burst 42, 124, 402 and about 900, of 2000 for the line and about 2070
+     for the hash). **Integrator's decision:** documented, not changed in M2 - making it whole needs the deferred acceptance
+     in front of the stop callback, a new entry of `dbg::emu`, so a header revision; it goes to the backlog with the scratch
+     test that shows it (`e6b/fix-1/`, `p4_test.inc`, `p4_run.sh`, `logs/p4-exitintc.txt`).
+  2. *Step out inside the FIQ handler.* The temporary breakpoint stands at the live R14, as H6-5 words it. In FIQ mode R14 is
+     the return address plus 4 (the handler returns with `subs pc, lr, #4`), so a step out asked inside the handler ends one
+     instruction behind the interrupted one, after it has executed, or elsewhere when it branches. Backlog: a step out that
+     knows the mode it was asked in (header text of H6-5).
+  3. *H6-19 against H6-5.* The ARM7 half of a resume owed by the thread before can never arm: `OnThreadExiting` calls
+     `arm7::OnStop()`, which records a decision that the stop's own `OnStop` has already consumed. The effect is right - the
+     completion in `dc_run` has run the instruction of the stop - and the sentence of H6-19 is to be reworded with the next
+     header revision (comment only).
+  4. *An unaligned PC from `LDM` with pc in the list and no `^`* is executed by the core as it was loaded; the debugger's
+     breakpoint key and the word `PrepareStepOver` decodes are the aligned ones, so the `bl` decision can be wrong there.
+  5. `dbg_arm7_Check` walks the listed set linearly (up to 1024 entries a checked instruction). A pause asked for while the
+     guest's SH4 sleeps is taken by the 250 ms liveness bound.
+- **Not held by a test, accepted as notes:** the completion in `dc_run` of a sample in whose rest a FIQ becomes enterable
+  (the state is never reached by the 21 targets; the loop is the one `steps` and `arm7.step.fiqbehind` hold on the checks
+  path); the mask test of the check while a temporary breakpoint arms the loop; a step whose next check stands on a listed
+  breakpoint published as a step; four ends of the resume exemption that no run of M2 can show (equivalent mutants, as the
+  three the cut names); four mutants of the cut's list are caught by a session that never ends (the 300 s watchdog a
+  registration) and not by a failed check; on a failure path `arm7n.hoststop` waits for the watchdog as well.
+- **3.4 Verifier, wording:** "one pending FIQ an instruction late" means one *executed* instruction, and an *early* FIQ of
+  the run (the debug loop of `arm7n.hoststop` sees fewer than 20; "the 3rd" turns all sixteen red). "Once under load" is run
+  as four emulators at a time and no other load: the machine rule has no load generators.
+- **Speed, for M2G:** by CPU time on the `-DHAS_TA_LLE=OFF` build with the `none` renderer the tip is slower than the base in
+  every set that was measured (four sets of five rounds by three agents): the JIT by 1.3 to 1.7 %, the SH4 interpreter by 1.2
+  to 2.4 %, with base rows that spread 1.3 to 7.9 % on this machine. Checks (a) and (b) of the cut decide and pass (the
+  compiled code of an ARM7 instruction's path is unchanged; +27.1 to +27.4 host instructions a sample against the 48
+  allowed, which is +0.06 % of the instructions for +0.7 to +1.0 % of the cycles). The cause is not found. M2G measures it
+  again on a quiet machine with more rounds, and looks at code placement if it stands.
+- **Not run:** the notice and the fallback of the arm64 recompiler (no arm64 host); read only.
+- **The UI pin stays at `e0f7895`:** the runner's part `arm7` met its first emulator (five `debugger.contract.m2arm7*`
+  targets, also under ThreadSanitizer) and needed no change.
+
+### I.5 E7a (verified at `a86d9a24` of `devcast`, second verification; merged as `b951e440`; three read-only reviewers, three items to fix; the first verification found two test gaps; one comment-only commit of the integrator behind it, `d3fe072d`)
+
+- **Counts and names where the cut says otherwise:** the tests project has **249** targets (238 + six
+  `debugger.selftest.writes*` + five `debugger.contract.m2writes*`). The test of `debugger.selftest.writes.smc` is
+  `smcwrites.cached`, registered with `SELFTEST smcwrites` (the steps of `writes.mem.cached` behind two checks of its
+  configuration: the recompiler, and `Dynarec.SmcCheckLevel=-1`); 3.0, 3.5 Gate and Verifier and A.5 name it
+  `writes.mem.cached`.
+- **A fourth rule of value that 3.5 Delivers 2 and M2-D42 do not have:** an accepted write of the ARM7's PC that stores
+  another address than it had empties the ARM7's code cache (`SoundCPU::InvalidateJitCache()`; a recompiler of the ARM7
+  enters a block by the masked PC and has the unmasked one compiled in). The integrator put the sentence into H6-33
+  (`dbg_regs.h`) and pointed H6-38's "No compiled code is dropped" (`SoundCPU.h`) at the caller (`d3fe072d`, comment
+  text only). On x86-64 only the writer's count is held; an ARM64 host runs `writes.reg.arm7` when there is one.
+- **A text with a NUL in it** is no path, name or watch expression of the tree: -32602 in `state.setRegister` and
+  `state.watch` (M2-D20 is silent on it). M1's `breakpoints.add` still looks its event up to the first NUL
+  (`dbg_core.cpp`, `FindEvent(event.c_str())`); read, not run.
+- **Accepted departures, declared by the package:** the test hook `core::SetTickSinkForTest` (one atomic load on the path
+  without a server, null outside a selftest); sentences of E6b's rows in `tests/README.md` and the contract README that
+  this package made false were reworded.
+- **For E7b:** the `tables` row of `tests/debugger/regs/README.md` gains the writable-rows check (69 + 40 rows, no
+  other). `core.writes`, `writes.reg.readonly` and `regs_test.cpp` pin 109 writable rows; the totals of the tree are
+  computed, so new rows break nothing unless they carry `kRegWritable`, which no row of E7b does.
+- **Known limits, for the design text at M2G:**
+  1. A write into wave memory or video memory discards no SH4 block: SH4 code a guest executes from there (compiled without
+     an entry check) is not invalidated by a debugger write of its bytes. The ARM7's cache is.
+  2. `bm_LockedWrite` leaves the page marked as holding data until the next cache clear. In the default configuration that
+     is host cost. With `Dynarec.SmcCheckLevel=-1` blocks compiled from the page afterwards get neither protection nor a
+     check, so a guest that later stores new code there runs the old blocks (a speed setting, after a debugger write).
+  3. On a recompiler without `SH4DBG_CTX_AT_SLICE` (arm64) the tick behind a write to a running target says
+     `registersStale`, although the context is complete in the service excursion in which it is built. Not seen on x86-64.
+  4. H6-33 and H6-35 say "(E) in the park context only" and "returns kErrNotWritable with no machine"; no emulator thread
+     exists without a machine, so no test reaches the clause. Reworded with the next header revision, as `Read()` has it.
+  5. Two FPSCR properties are held by reading only: a write that changes none of PR, SZ and the rounding mode resets
+     nothing, and a changed rounding mode resets.
+- **ThreadSanitizer and the contract runner:** the part `arm7` against 2ndmix is red by wall-clock time on a
+  ThreadSanitizer build (the runner waits 10 s for a paused tick at a breakpoint), on this head and on E6b's merge alike;
+  against the guest it passes, and no report was written. M2G asks ThreadSanitizer of the contract parts on the guest only.
+- **Leftovers, collected for one small package in front of M2G (`EX`, test hardening; nothing in it blocks a merge):**
+  1. `writes.mem.cached` / `smcwrites.cached` witness the middle page of a range only: a writer that leaves out the last
+     page (the verifier's mutant n3), or the first, passes. The edit is written and tried
+     (`e7a/verify-2/scripts/mutants_z.py`, TEST: a range that ends in the loop's page, 142 bytes from 0x8C00FFF0 with
+     `mov #0x5E,r12` in the slot; and one that begins in it).
+  2. Waits without a bound on failure paths: `ArmStop` of `writes.reg.arm7` (under a device that stores the ARM7's PC as
+     given the session ends by the 300 s watchdog), `core.reset` when the reset is not answered, and `arm7n.hoststop` when
+     the machine does not stop (I.4). Each gets a bound and fails by a check.
+  3. `breakpoints.add` and a NUL in its event name.
+  4. A ctest run of `debugger.contract.*` leaves `tests/debugger/contract/__pycache__/` in the source tree.
+  5. Optional, I.4: a witness of the completion in `dc_run` of a sample in whose rest a FIQ becomes enterable.
+- **Other builds of the writer** (no recompiler, generic, the recompiler without the layout) are no targets of the tree; the
+  commands are in `e7a/verify-1/scripts/alt.sh` and `logs/nolayout.txt` if M2G repeats them.
+- **The UI pin stays at `e0f7895`:** the runner's parts `writeMemory`, `setRegister`, `reset` and `arm7` met the emulator
+  (five `debugger.contract.m2writes*` targets) and no rule of the runner was wrong about it.
+
+### I.6 E7b (verified at `205aa585` of `devcast`, second verification; merged as `199cdb4a`; two read-only reviewers, one item each; the first verification found one test gap and no defect of the emulator)
+
+- **The emulator packages of the round are all merged.** The contract gate M2 passes against the emulator on the JIT, the
+  interpreter and the forced fallback (19 passed, 0 partial, 0 not applicable each) and its second run against the guest
+  (2 passed, both notes). The tests project has **259** targets.
+- **One change the guest can see, and it removes a difference between runs:** a read-only system bus register that nothing
+  assigns (SB_MST, SB_MTXDAD, SB_MRXDAD, SB_MRXDBD, the twelve G2 counters, the three PVR counters; SB_SDDIV, SB_GDSTARD and
+  SB_GDLEND until their first DMA) reads 0, where it read the low half of a host function's address (`hw/holly/sb.cpp`,
+  item 3 of 3.6). State hashes and sound lines are unchanged against the base on the five builds.
+- **Accepted departures, declared by the package:** the targets `debugger.contract.hash.listening.guest` and `.guest.interp`
+  (2ndmix cannot catch a read that touches the sound CPU) and `debugger.contract.hash.listening.rule` with the mode
+  `hash-listening-rule` of `contract.py` (a tick that says `registersStale` is full without `dc.sh4.cpu`; on x86-64 the rule
+  is held by this target alone and was shown against a stand-in, the x64 recompiler built without `CtxAtSlice`); the option
+  `ONLY` of `nulldc_debugger_contract`; `Debugger:TickMs=20` and `FullTickEvery=1` in the listening runs with one
+  `control.runUntil` behind the describe; `--emulator`, `--work` and `--guest` of `contract.py` checked behind the parser;
+  the walk of `core.tables` restated as a computed rule per call; `regs.mem.read` writes made-up values into the 95
+  plain-data slots of the on-chip modules and puts them back; the row choices where 3.6.1 is silent (DMEA 23 bits with bits
+  0 and 1 reading 0; DRGA and DLG as 13-bit members; L and M 8 bits where the mock has 3; the PACKET rows first byte highest;
+  `kRegComputed` on L, M, the clock, the drive and SB_FFST).
+- **For F3c and F3d:** measure the UI against a paused tick of about **165 KB** (the sounding guest with a full event log),
+  not the 127 KiB of an empty log. M2-D27's "about 130 KiB" is the floor: every tick carries the whole event log (200
+  entries), so a paused tick of a live session is 160 KiB and more before watches and breakpoints, above `BuildTick`'s
+  reserve of 144 KiB (one regrow) and, with long messages, near the limit of 192 KiB behind which the fallback of M2-D27
+  applies.
+- **Section 7 at M2G:** row 62 names `.hash.listening.guest*`, `.hash.listening.rule`, the mode and `ONLY`; the list of
+  differences between mock and emulator gains the widths of L and M; M2-D27's figure says which event log it is measured
+  with; 3.6.1's "M (the level in service)" is the in-service flag (0 or 1) the accessor gives; "one hour of a running
+  target" is emulated time; a run listened to from its first instruction needs the `StartPaused` stop and one
+  `control.runUntil`.
+- **What the state hash of `hash.listening*` does not see:** it has the SH4 context, scheduler time, main, video and wave
+  memory and the sound CPU's save state, and no part for the system bus slots, the AICA's register file and channel state,
+  the drive or the PVR file. A tick reader with a side effect inside one of those shows only when the guest reads it back.
+  The readers are free of side effects by reading (reviewer `reads`) and by the session `regs`.
+- **Notes, accepted:** eight rows of `dc.aica.common` whose values are worked out (MIEMP, MOEMP, EG, SGC, LP, CA, AR, VREG)
+  carry no `kRegComputed` (nothing on the wire depends on it); the README row of `regs.rows.sb` counts 111 + 14 for 115 new
+  rows (the 111 include the 11 of `dc.holly.intc`); `hash.listening` needs ten full ticks, which a host four times faster
+  might not give in 600 vblanks (it can fail a correct server, never pass a broken one); no call of `core.tables` lands on
+  exactly 256 watches (S08 of the contract gate holds the bound, `core.tables` the partial fill).
+- **For `EX` (I.5), one more optional item:** under UBSan the session `regs` loads values outside their enums in
+  `gdrom_DebugGetState` (`hw/gdrom/gdromv3.cpp`), from the made-up drive state of `regs.rows.gdrom`; the test keeps its
+  values inside the enums.
+- **Not run:** `debugger.contract.hash.listening*` on an arm64 host; an arcade board (`dc.gdrom` reading "n/a" is by reading).
+- **The UI pin stays at `e0f7895`.**
+
+### I.7 F3b (verified at `1183dab` of `dreamcast-devtools`, first verification, one read-only reviewer with no item to fix; the UI pin is moved there)
+
+- **The UI pin is at `1183dab`** (`package-lock.json` unchanged, its `node_modules` kept). With the UI at that head the
+  emulator's 259 targets pass twice, and the hash and sound lines of 50 targets are those of a run with the pin at `e0f7895`.
+  `npm run check`: 488 unit tests, the M2 gate on the mock 17 passed twice; e2e 251 passed.
+- **Three choices of the package, accepted by the integrator** (section 7 at M2G takes them into the design text):
+  1. One test's set-up in `src/state/debuggerDataStore.test.ts` was edited outside "Owns" (its server now lists the DSP; the
+     assertion is unchanged): the test depended on two behaviours 3.7 removes.
+  2. A code breakpoint whose event belongs to no listed target is listed with the events, its address as plain hex ("0x" and
+     the digits, not padded). 3.7's table has no row for it.
+  3. The lists `targets` and `capabilities` are read for any present `protocol`; only an absent one leaves them unread.
+     Design 3.0 says "only when protocol >= 3"; no server sends a lower number.
+  Also: six more e2e tests in `e2e/v2-server.spec.ts` than "Delivers" asks (a scripted server per row of the table, which
+  the Verifier paragraph needs), and the entry without `metadata` of `e2e/callstack-eventlog.spec.ts` is kept as the
+  scripted server of the `metadata` row.
+- **For F3c:** `StopInfo.stopId` is a number. The built-in target values are reachable only as
+  `targetBeforeFirstServer(id)` (a page that has had no server yet) and `unlistedTarget(id)`. The synthetic server
+  (`e2e/support/syntheticDebugger.ts`, yours) is a v3 server: it lists the three targets of the scripted server with the
+  capabilities event-breakpoints and callstack, is paused in stop 1 for every tick, and has `sent` (its describe result and
+  last tick); the scripted server has `sendBinary(bytes)`. If you open `e2e/device-tree-perf.spec.ts` for the block of
+  3,000 registers, add there that no alert is on the measured page: today only the seventh test of `e2e/v2-server.spec.ts`
+  notices a synthetic server the client does not support. `DisassemblyPanel.tsx` opens a panel that is added while paused
+  with the PC line on screen whether or not the ticks carry `stopId` (where a view opens; your read-again wiring is beside
+  it).
+- **For F3d:** the toolbar's Pause sends target "sh4" (`AppLayout.tsx`, `control("pause", "sh4")`) whatever the server
+  lists; your focused target covers a server that lists no target.
+- **Leftovers of the UI, collected for the UI part of `EX` (I.5; none blocks):**
+  1. `e2e/v2-server.spec.ts`, the test "a describe result without `targets` lists none": its breakpoint address 0x8C001000
+     prints the same in the removed built-in format, so the mutant that formats by the built-in target passes it (the unit
+     test holds the behaviour). Breakpoints at 0x1000 and at DSP step 5 with the two lines the verifier tried
+     (`f3b/verify-1/logs/scratch-plainhex-*.log`).
+  2. `DeviceTreePanel.tsx`, the stale dimming reads `targetInfo(state.shape, "sh4").pcPath` without `supported`.
+  3. "A page that has had no server yet has every capability" is held by a unit test alone (the mutant passes all 251 e2e
+     tests): one of the two no-server-yet e2e tests also expects the SH4 callstack panel without its note and the SGC panel
+     with its Record button.
+  4. `registerNumber` (`targets.ts`) takes hex without "0x", which only the v2 mock sent, and its comment still speaks of a
+     v3 server: the leniency goes or the comment says what is taken.
+- **Gate wording:** for a UI package "the emulator's `debugger.contract.*` targets once" was run as all 259 targets twice,
+  by the engineer and by the verifier.
+- **The main UI checkout's `dist-native`** (not tracked) was rebuilt by the package and says `3.0.0-pre+1183dab`: an emulator
+  configured from the main emulator checkout embeds it at its next configure.
+
+### I.8 F3c (verified at `af97c4d` of `dreamcast-devtools`, second verification; two read-only reviewers, three items to fix; the first verification found five problems, all in the editors' behaviour and its tests; the UI pin is moved there)
+
+- **The UI pin is at `af97c4d`** (`package.json` and `package-lock.json` unchanged since `1183dab`). `npm run check`: 543
+  unit tests, the M2 gate on the mock 17 passed twice; e2e 312 passed, among them the layouts at 1366x768, the
+  `MOCK_M2_SUPPORT` blocks of the registers, memory and watches specs and the tree of 3,000 registers at five ticks a
+  second. 34 mutants, all caught by the package's own tests.
+- **Decided by the fix round where 3.8 and M2-D39 are silent, accepted by the integrator** (section 7 at M2G puts them into
+  design 4.3 and 4.4):
+  1. *A keyboard path to every editor.* A value of a register the server writes, a watch value, and one byte place a
+     memory listing are Tab stops with `role=button`; Enter, the space bar and F2 open the editor, and in the hex column the
+     arrow keys move the place (an arrow never takes it to a row the panel cuts off).
+  2. *Where the focus goes.* It returns to the value or byte only when the box went with the focus in it.
+  3. *A view that moves is leaving the box:* a memory view that moves, and rows replaced by an error, put the byte editor
+     away.
+  4. *The memory listing is not a box the browser scrolls* (`overflow: clip`).
+  5. *While the target runs* the value and byte controls stay focusable, with `aria-disabled`, and open nothing (design 4.3
+     says that of the run controls).
+  6. An editor goes when the target runs again, with its draft; an answer that arrives for a write whose box was reopened
+     with other text does not close the new box.
+- **For F3d, the DOM as built:** `td.register-value span` and the textbox "New value of <NAME>" are what they were. On a
+  register the server writes that span is `role=button`, named "<NAME> <value>, write", with `aria-disabled="true"` while
+  the target runs; the hex cell of the row that holds the keyboard's place (`[data-memory-hex]`) is the same kind of
+  control, named "<address> <byte>, write". A Playwright click or dblclick on either while the target runs needs
+  `{ force: true }`. A memory row keeps its text content and its first three children; the row with the keyboard's place
+  has a fourth, text-less, `aria-hidden` child, and an open editor is a fifth: match a row by its first three spans.
+  Your hotkeys (F5, F6, F10, F11) do not collide with the keys these controls take (Enter, space, F2, and the arrows in
+  the hex column; `preventDefault`, no `stopPropagation`); your verifier adds two focus places to "the hotkeys with the
+  focus in ...": on a value or byte control, and inside an open write editor (a resume from inside an editor closes it and
+  leaves the focus on the value). Your reset action advances the `reread` counter when it is answered `{}`; nothing of the
+  store changed in the fix round.
+- **Leftovers for the UI part of `EX`, beside those of I.7:**
+  5. The last rows of an address space are on screen only in a panel tall enough for the whole slice: the view cannot move
+     further and the listing does not scroll. A person has to be able to reach them in a small panel.
+  6. An editor opened between a move of the memory view and the arrival of its bytes is recorded with the address the view
+     goes to, and follows its byte into the new row (the write goes to the address the box names, so nothing is written by
+     mistake): no editor opens while a slice is being read, or the view is recorded as the base of the rows on screen.
+  7. `e2e/memory.spec.ts`, "ARM7 memory ends where the address space of the ARM7 ends", fails under
+     `E2E_CPU_THROTTLE=4` (3 slices fetched for 2 expected), as it did at `1183dab`: it reads the settled fetch count.
+  8. A watch expression is renamed by double click only.
+  9. The README's "the place is never on a row the panel cuts off" holds for the arrow keys only: "an arrow never takes
+     the place to a row the panel cuts off".
+- **The main UI checkout's `dist-native` and `dist-wasm`** (not tracked) say `3.0.0-pre+af97c4d`.
+
+### I.9 F3d (verified at `6c753dc` of `dreamcast-devtools`, second verification; two read-only reviewers, five items to fix; the first verification found seven problems; the UI pin is moved there)
+
+- **The UI pin is at `6c753dc`** (`package.json` and `package-lock.json` unchanged since `af97c4d`). `npm run check`: 583
+  unit tests, the M2 gate on the mock 17 passed twice; e2e 347 passed and the smoke spec skipped, as it is without
+  `E2E_EMULATOR_URL`. **The UI packages of the round are all verified.**
+- **The smoke spec has met the emulator:** 4 of 4 runs passed against a headless emulator built from `devcast` `199cdb4a`
+  with the package's bundle embedded, on the guest: the start stop, the breakpoint at the program's entry, SH4 steps from
+  the toolbar and by key, R0 edited in the register panel and seen in the tick, two bytes of memory written and read back,
+  the reset, and ARM7 steps behind a resume. State hashes and sound lines with that bundle embedded equal those without one.
+- **For M2G item 4, how the smoke spec is run:**
+  1. The order is part of the gate: `npm run build:native` in the pin; the emulator's own configure with
+     `-DNULLDC_DEVTOOLS_DIST=<pin>/dist-native` and its build; then the spec. The spec fails at its first step unless `ui` of
+     `debugger.describe` equals the version in the checkout's `dist-native/bundle-info.json` and all 30 files are served
+     byte for byte, and the version string carries the commit: after every UI commit the three steps are made again. Run
+     the configure in front of every build behind a changed `dist-native` (that a build alone embeds again is the
+     engineer's word, not tried by the verifier).
+  2. `agents/nulldc3/f3d/scripts/smoke.sh <emulator> <emulator tree> <UI checkout> <run dir>`: exit 0 is the only green
+     (3: the spec passed and the emulator died, did not end or printed one of `contract.py`'s BAD strings; 130: ended from
+     outside). It is stopped with SIGTERM, never SIGKILL (the emulator would then end by `timeout`, 600 s by default).
+  3. Every run has its own `HOME`, `XDG_CONFIG_HOME` and `XDG_DATA_HOME`, as `contract.py` gives its runs; the start line
+     of 3.9 and A.9 has the `-config` list only. Without them the emulator reads the user's `emu.cfg` (Bind, AllowedHosts,
+     WebRoot) and opens the user's memory cards.
+  4. The emulator the spec leaves paused resumes by itself 10 s after the page is gone and then runs on one core: whoever
+     starts it ends it by pid.
+- **Decided by the package where 3.9 and M2-D39 are silent, accepted by the integrator** (section 7 at M2G, design 4.3 and
+  4.4): a widget of a code editor is the editor's and no dialog of the page, open or closed (Monaco's Find box has the
+  dialog role and stays in the document when it is closed); a dialog is open when it is on screen, also when it carries
+  `aria-hidden`; the run state stands under the toolbar below 1440 px and the controls on a line of their own below
+  1200 px; Pause names the focused target only when the server lists it; a click on a tab counts as focus.
+- **For `N1` (the rebrand):** the README's recipe "The UI against the emulator", `smoke.sh` and `contract.py` isolate a run
+  by the three directory variables and name the binary `devcast` and the switch `-config`; with `--portable <dir>` and the
+  new names all three change, in both repositories.
+- **Leftovers for the UI part of `EX`, beside those of I.7 and I.8:**
+  10. The README block "The UI against the emulator" has no line that makes its three run directories (`mkdir -p`);
+      without them the spec passes and the emulator writes nothing.
+  11. F5 pressed right behind Escape, while a dialog is still closing, is left to the browser (the rule as written; a
+      dialog in its exit transition could count as closed).
+
+### I.10 EXe (verified at `a2d0c22a` of `devcast`, second verification; merged as `6fe01759`; one read-only reviewer, one item to fix; the first verification found two problems, both in the bounded waits of the session `core`)
+
+- **Delivered, all eight items of 3.11.** Item 6 is a witness, not a known limit: `arm7n.hoststop` takes stops on the
+  last plain instruction of the F window and on the `msr` that ends it only with a request of the AICA latched and F
+  set, and the loop that enters a pending FIQ one executed instruction late in the completion of `dc_run` now fails it.
+  The tests project still has **259** targets; behind two full runs `git status` of the checkout is empty. Sound lines,
+  state hashes and the contract gates M1 and M2 are those of the base.
+- **The three sentences of item 7 are applied** in `debugger.h` (H6-19 lives there, not in `dbg_emu.h` as 3.11 said),
+  `dbg_regs.h` (H6-33) and `dbg_mem.h` (H6-35); the integrator read them and brought section 2 of this file to the same
+  text. The repository's copy of this file is refreshed at M2G.
+- **The bounds:** one constant a session (`kBoundMs`); the longest waits of a correct run are under a tenth of a second
+  for `arm7` and `writes` and under a second for `core` (the guest about 0.9 s on the interpreter); with all three bounds
+  quartered, the 29 bounded targets passed twice under `ctest -j4`. The watch of the session `core` and the test threads
+  that make the machine again share one lock (`bound.restart`).
+- **Known, accepted by the integrator (test code, a failure path only):** a window remains between a test thread of
+  `core.lifetime` / `core.writes` finding the machine Stopped and taking `bound.restart`, in which the watch can start the
+  machine that the thread then takes apart. It is reached only when the session is already failing and the machine
+  stops within milliseconds of the 60 s bound; a probe shows the state, no effect was seen in six runs, and it was there
+  before the fix round. The fix (check the lifetime and `bound.cut` under the lock) and its mutants are in
+  `exe/verify-2/scripts/mutants_v2.py` if a later package owns the file.
+- **Also accepted:** a test's own thread that holds the machine longer than the bound and a tenth ends the session by the
+  watch's own FAILED line without a summary (documented in the code and the README); the watches of the sessions `arm7`
+  and `writes` can print an empty "asked the machine for" when the machine is already stopped at the cut.
+- **For a later header revision:** two neighbouring sentences on `Write()` (H6-32's "Values" paragraph and the file
+  comment of `dbg_mem.h`) are the next candidates of the same kind.
+
+### I.11 EXu (four verifications; item 5 needed a grant the integrator made on 2026-10-15; the head is the integrator's commit `d59336b` on the verified `b3e3600`; the UI pin is moved there)
+
+- **Delivered, all seven items of 3.12.** Item 1, as decided by the package: the memory view stands so that the last row of
+  an address space is the panel's last whole row, and what it reads there ends with the address space in as many rows as
+  the panel shows (the listing stays `overflow: clip`). Item 5's 0x-only rule needed two assertions of
+  `src/state/runControls.test.ts`, which 3.12 did not grant; three rounds stopped there (the engineer rightly did not edit a
+  file outside "Owns"), and the integrator granted them on 2026-10-15. The emulator writes every value as `0x` and the
+  digits, so nothing against the emulator changes.
+- **Accepted departure:** `e2e/disassembly.spec.ts` (`30c2998`), outside "Owns": its test pinned the slice of sixty rows at
+  the end of the address space, which item 1 replaces; it now holds where the view stands and what it reads there.
+- **The fourth verification at `b3e3600`:** `npm run check` (584 unit tests, the M2 gate on the mock 17 passed twice), the
+  unit suite three more times, e2e 368 passed, the smoke spec against the emulator `6fe01759` with the bundle embedded,
+  state hashes and sound lines unchanged; one red step, `e2e/memory.spec.ts` under `E2E_CPU_THROTTLE=4`: the test "bytes the
+  debugger cannot read ..." read the answer to the last slice once while the running view may ask for the same slice
+  again (3 of 30 runs, the same at `6c753dc`: older than the package). **The integrator applied the verifier's fix**
+  (poll for the answer; the assertions unchanged) and the test values that hold both anchors of the pattern and the 0 of
+  its prefix (`0x10zz`, `0x200MHz`, `R0=0x10`, `x10`; the three surviving variants of the pattern now fail) as `d59336b`,
+  and ran: the unit tests of `src/state` (172), `tsc -b`, eslint on the two files, the test 30 of 30 under the throttle,
+  and the memory and watches specs whole under the throttle (70 passed). M2G runs the whole gate of the UI again.
+- **Known, accepted:** whether About closes synchronously (outside "Owns": a key pressed right after a click on its Close
+  button); the leftover clone of the third fix round was deleted by the integrator (its head was in the repository).
