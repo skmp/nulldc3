@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """System tests of the memory layout: every emulator gets the file of its memory for itself, also one that starts
-at the same moment as another emulator.
+at the same moment as another emulator; and one that cannot have the layout runs without it.
 
     vmem_test.py --emulator <binary> --case <case> --work <directory> --elf-dir <directory with 2ndmix.elf>
                  [--shim <vmem_shim library>] [--ta-hle] [--watchdog <seconds>] [--keep]
@@ -9,7 +9,8 @@ One case per invocation, exit code 0 when it passes, a line "SKIPPED: <why>" and
 case (ctest counts it skipped); README.md has the cases. The runs are made as system_test.py makes them (its
 Harness), with one difference: the data directory of a run cannot be made (its XDG_DATA_HOME is below a directory
 that does not exist), as in a fresh HOME. An emulator that lost the file of its memory there runs without the
-virtual memory layout, and on the SH4 recompiler 2ndmix then ends at its first store into its start-up page.
+virtual memory layout. On the SH4 recompiler 2ndmix then ended at its first store into its start-up page as long as
+the recompiler measured such a fault from the base of the layout (vmem.none).
 """
 
 import argparse
@@ -48,8 +49,8 @@ class Skip(Exception):
     pass
 
 
-def keys():
-    return st.headless('config:pvr.backend=none', 'config:Exit.AfterVblanks=%d' % VBLANKS, 'config:Exit.StateHash=yes',
+def keys(vblanks=VBLANKS):
+    return st.headless('config:pvr.backend=none', 'config:Exit.AfterVblanks=%d' % vblanks, 'config:Exit.StateHash=yes',
                        engine='jit')
 
 
@@ -175,10 +176,10 @@ def namespace(h):
     return [unshare, '-rm', '/bin/sh', script]
 
 
-def run_in_namespace(h, ns, tag, ro, hold, own, env=None, data_dir=False):
+def run_in_namespace(h, ns, tag, ro, hold, own, env=None, data_dir=False, vblanks=VBLANKS):
     listing = os.path.join(h.work, tag + '.shm')
     args = ns + ['1' if ro else '0', '1' if hold else '0', '1' if own else '0', listing] + \
-        command(h, keys(), h.elf('2ndmix.elf'))
+        command(h, keys(vblanks), h.elf('2ndmix.elf'))
     run = h.finish(start(h, tag, args, env=env, data_dir=data_dir))
     st.check(run.returncode != 125, 'the namespace of the run has no tmpfs on /dev/shm', run)
     names = None
@@ -226,8 +227,38 @@ def case_taken(h):
     print('  4 runs of 2ndmix on the JIT, each with its layout, state hash %s' % reference.fields['hash'])
 
 
+# vmem.none runs long enough for the guest to store into pages of compiled code after its start-up as well
+NONE_VBLANKS = 600
+
+
+def case_none(h):
+    """No way to the file of the memory is left: no memfd_create, a read-only /dev/shm of its own and no data
+    directory. The emulator runs without the virtual memory layout, on the JIT: the guest's stores into the pages
+    of compiled code (the start-up page of KallistiOS first) are resolved, and the run ends at its vblanks in the
+    state hash of the run with the layout."""
+    ns = namespace(h)
+    st.check(h.options.shim and os.path.isfile(h.options.shim), 'no vmem shim (--shim)')
+
+    reference = h.run('alone', keys(NONE_VBLANKS), h.elf('2ndmix.elf'))
+    check_booted(reference)
+
+    run, names = run_in_namespace(h, ns, 'no_layout', ro=True, hold=False, own=False,
+                                  env={'LD_PRELOAD': h.options.shim}, data_dir=False, vblanks=NONE_VBLANKS)
+    st.check('vmem_shim: memfd_create refused' in run.log, 'the run did not ask for a memfd (no line of the shim)', run)
+    st.check(NO_LAYOUT in run.log and LAYOUT not in run.log, 'the run was to have no virtual memory layout and does '
+             'not say "%s"' % NO_LAYOUT, run)
+    st.check('Using MCPU Recompiler' in run.log, 'not the recompiler', run)
+    st.check_clean(run, 'vblanks')
+    got = st.check_hash(run)
+    st.check(got == reference.fields['hash'], 'state hash %s without the layout, the run %s with it ended in %s\n  %s\n  %s'
+             % (got, reference.tag, reference.fields['hash'], reference.exit_line, run.exit_line), run)
+    st.check(names == [], 'the names in /dev/shm behind the run are %s, expected none' % names, run)
+    print('  2ndmix on the JIT without the layout and with it: state hash %s' % got)
+
+
 CASES = {
     'vmem.concurrent': case_concurrent,
+    'vmem.none': case_none,
     'vmem.taken': case_taken,
 }
 

@@ -1,7 +1,7 @@
 /*
-	Preloaded into the emulator by system.vmem.taken (LD_PRELOAD): the host has no memfd_create. The emulator then
-	has to make the file of its memory layout the other ways it knows, an shm name or a file of its data directory,
-	which the case can see and take away.
+	Preloaded into the emulator by system.vmem.taken and vmem.none (LD_PRELOAD): the host has no memfd_create. The
+	emulator then has to make the file of its memory layout the other ways it knows, an shm name or a file of its data
+	directory, which the case can see and take away.
 
 	Every call is refused with ENOSYS, as a kernel without the call does, and says so on stderr: the case checks that
 	the line is there, so that a run which never asked for a memfd does not pass for one that asked and was refused.

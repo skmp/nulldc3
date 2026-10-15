@@ -69,6 +69,7 @@ Every test is `system_test.py --case <case>` on one of the two emulators, but fo
 | `perf.script` | `tests/perf/perf.py` on `guest_spin`, headless, half an emulated second and 3 runs per engine: it ends with 0, and its JSON has for each engine the speed by wall clock and the speed by CPU time of every run, with the median, the lowest and the highest of each; the speed by CPU time is the emulated time of the run over the CPU time of its process; the table it prints has both. No number is judged | |
 | `frame.refsw2` (default build only) | refsw2 runs headless: after 240 vblanks of 2ndmix the exit line has the hash of a 640x480 frame, `Exit.FramePng` wrote a valid PNG of that size that is not an empty frame, and the run differs from the same run with the `none` renderer in VRAM and in nothing else of the state hash | `NULLDC_ELF_DIR` |
 | `vmem.concurrent` | 2ndmix on the JIT for 60 vblanks, 80 runs, 2 at a time, started at the same moment (each run waits at a gate that the test opens for both together), none of them with a data directory it can make: every run says `Info: nvmem is enabled`, none `nvmem is DISABLED`, and ends at its vblanks with exit code 0, all in one state hash. About 20 s | `NULLDC_ELF_DIR` |
+| `vmem.none` | in a user and mount namespace of its own (as `vmem.taken`; a host without one skips the test): 2ndmix on the JIT for 600 vblanks where no file of the memory can be made, without `memfd_create`, on a read-only `/dev/shm` and with no data directory. The run says `nvmem is DISABLED` and `Using MCPU Recompiler`, ends at its vblanks with exit code 0, in the state hash of the same run with the layout, and leaves no name in `/dev/shm`. About 3 s | `NULLDC_ELF_DIR` |
 | `vmem.taken` | in a user and mount namespace of its own, with a tmpfs of its own on `/dev/shm` (`unshare -rm`; a host without one skips the test): 2ndmix on the JIT for 60 vblanks, with no data directory it can make, while `/dev/shm/dcnzorz_mem` is there, as while an emulator from before the fix starts; again without `memfd_create` (the library `vmem_shim.so`, preloaded, refuses it) and with `/dev/shm/dcnzorz_mem.<pid>.0`, its own first name, there too; and without `memfd_create` on a read-only `/dev/shm`, with a data directory. Each run has the layout and ends in the state hash of the same run made beside nothing; the names that were there are there behind it, and it leaves none of its own in `/dev/shm` or in the data directory | `NULLDC_ELF_DIR` |
 
 In every run that is expected to end by itself, the output must not have `Fatal error`, `Verify Failed` or
@@ -150,14 +151,14 @@ What is left:
 
 ## The memory layout
 
-On the JIT the emulator needs the virtual memory layout: the guest's address space mapped from one file, main RAM
-at its mirrors. Without the layout (`vmem_platform_init()` fails, the emulator says `Warning! nvmem is DISABLED`)
-the SH4 recompiler still write-protects the pages it compiles from, and cannot resolve a guest store into one
-(`bm_LockedWrite` measures the faulting address from `virt_ram_base`, which is null there; the design's 2.3.7 item
-15): the process ends with `fault_handler: unhandled SIGSEGV at address 0x...0d0, pc <_vmem_WriteMem32>, not a guest
-memory fault`. A KallistiOS program gets there at its first store: its start-up code keeps SR in `__arch_old_sr`,
-8C0100D0, in the page of the code that stores it. The interpreter protects no page and runs on, in the same state
-hash.
+The emulator maps the guest's address space from one file, main RAM at its mirrors: the virtual memory layout.
+Without it (`vmem_platform_init()` fails, the emulator says `Warning! nvmem is DISABLED`) main memory is a buffer of
+its own, the SH4 recompiler makes every access through the memory handlers, and it still write-protects the pages it
+compiles from. Up to the fix below it could not resolve a guest store into one: `bm_LockedWrite` measured the
+faulting address from `virt_ram_base`, which is null there (the design's 2.3.7 item 15), and the process ended with
+`fault_handler: unhandled SIGSEGV at address 0x...0d0, pc <_vmem_WriteMem32>, not a guest memory fault`. A
+KallistiOS program gets there at its first store: its start-up code keeps SR in `__arch_old_sr`, 8C0100D0, in the
+page of the code that stores it. The interpreter protects no page and ran on, in the same state hash.
 
 Up to f640f21a every emulator made that file with one name, `/dev/shm/dcnzorz_mem`: created with `O_EXCL`,
 unlinked right behind. An emulator that started while another one was between the two found the name taken,
@@ -177,9 +178,12 @@ without the layout (25 of 80 runs in one run of the test); the test fails when o
 at one batch in five it fails with a probability of 1 - 0.8^40 = 99.99 %. `vmem.taken` is the order that loses,
 made certain: on f640f21a its first run ends at the store every time.
 
-A build that has no layout for another reason (`vmem_platform_init()` fails: no address space for its 512 MiB
-reservation, no file to map) still ends at that store on the JIT. That is the open item of the design, not the
-race.
+A run can still be without the layout for other reasons: no file to map (no `memfd_create`, no writable `/dev/shm`,
+no data directory), or no address space for its 512 MiB reservation (`prlimit --as=700M`). `bm_LockedWrite`
+(`libswirl/hw/sh4/dyna/blockmanager.cpp`) now measures a fault there from main memory's own buffer: the blocks of
+the page are discarded, the page is unprotected, and the store is made again, as with the layout. `vmem.none` is
+such a run: on f640f21a, and on the tip with `blockmanager.cpp` of f640f21a, it ends at the store every time; with
+the fix 2ndmix runs 600 and 4000 vblanks without the layout to the state hashes of the runs with it.
 
 ## How a run is made
 

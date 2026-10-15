@@ -77,14 +77,14 @@ if(NOT nulldc_system_skip)
   target_link_libraries(nulldc_fault_shim PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
   set_target_properties(nulldc_fault_shim PROPERTIES PREFIX "" OUTPUT_NAME fault_shim)
 
-  # A host without memfd_create, for system.vmem.taken, see vmem_shim.cpp
+  # A host without memfd_create, for system.vmem.taken and vmem.none, see vmem_shim.cpp
   add_library(nulldc_vmem_shim MODULE vmem_shim.cpp)
   set_target_properties(nulldc_vmem_shim PROPERTIES PREFIX "" OUTPUT_NAME vmem_shim)
 endif()
 
-# The cases of vmem_test.py: the memory of every emulator is its own, also when emulators start together. Both
-# boot 2ndmix.
-set(nulldc_vmem_cases vmem.concurrent vmem.taken)
+# The cases of vmem_test.py: the memory of every emulator is its own, also when emulators start together; and an
+# emulator that cannot have the layout runs without it. All boot 2ndmix.
+set(nulldc_vmem_cases vmem.concurrent vmem.none vmem.taken)
 
 # nulldc_system_emulator(<prefix> <given binary> <build dir name> <TA_HLE ON|OFF>): the binary, built here unless given
 function(nulldc_system_emulator prefix given dir ta_hle)
@@ -148,7 +148,7 @@ function(nulldc_system_emulator prefix given dir ta_hle)
 
     add_test(NAME ${name} COMMAND ${command})
     # vmem_test.py imports system_test.py and writes no bytecode into the source tree; a host without a user and
-    # mount namespace of its own skips vmem.taken
+    # mount namespace of its own skips vmem.taken and vmem.none
     set_tests_properties(${name} PROPERTIES TIMEOUT 900 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1
                                             SKIP_REGULAR_EXPRESSION "SKIPPED:")
   endforeach()
