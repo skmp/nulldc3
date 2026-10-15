@@ -59,8 +59,9 @@ void VLockedMemory::UnLockRegion(unsigned offset, unsigned size_bytes) {
 // unlinked at once, and the name exists in between: an emulator that started while another one was there
 // found the name taken, unlinked the other one's, and took the file of its data directory instead; where
 // that could not be made either (a data directory that does not exist), it ran without the virtual memory
-// layout, where the SH4 recompiler cannot resolve a guest store into a page of compiled code, and the
-// process ended at the first one (KallistiOS stores SR into its start-up page).
+// layout, where the SH4 recompiler could not resolve a guest store into a page of compiled code then
+// (bm_LockedWrite, hw/sh4/dyna/blockmanager.cpp), and the process ended at the first one (KallistiOS stores
+// SR into its start-up page).
 static int allocate_shared_filemem(unsigned size) {
 	int fd = -1;
 
