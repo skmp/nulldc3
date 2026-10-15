@@ -679,6 +679,59 @@ const u32 kMxcsrModeBits = (3 << 13) | (1 << 15) | (1 << 6);
 }
 
 /*
+	engine.asked: the engine of the session is the one its configuration asks for. No filter selects it: the driver
+	runs it in every session of the emulator, before the tests of the filter (dbg_selftest.cpp), and a failure
+	fails the session. So a runner that asks for an engine by configuration and looks at nothing but the end of its
+	sessions (tests/debugger/sh4bp/selftest.sh) does not pass a session of another engine; selftest.py compares what
+	the session says with what it asked for from outside as well.
+	  the SH4       the recompiler when the build has one and config:Dynarec.Enabled is set (settings.dynarec.Enable,
+	                which dc_run takes for a wish), the interpreter otherwise
+	  breakpoints   on the recompiler: sh4-debug-fallback with Debugger:ForceFallback=yes, and when the recompiler has
+	  and steps     no breakpoints of its own (no SH4DBG_NATIVE in its DebugCaps); sh4-debug-native otherwise. On the
+	                interpreter sh4-debug-native, which the key does not change
+	One line: a note when the engine is the one asked for, a failed check when it is not.
+*/
+DBG_SELFTEST(engine_asked, "engine.asked")
+{
+	emu::Sh4EngineInfo info = { };
+
+	if (!emu::GetSh4Engine(&info))
+	{
+		Check(false, "the engine of the session is not known: no backend of the SH4 is selected");
+		return;
+	}
+
+#if FEAT_SHREC != DYNAREC_NONE
+	const bool has_recompiler = true;
+#else
+	const bool has_recompiler = false;
+#endif
+	const bool forced = cfgLoadBool("Debugger", "ForceFallback", false);
+
+	const bool recompiler = has_recompiler && settings.dynarec.Enable;
+	const bool fallback = recompiler && (forced || !(info.caps & SH4DBG_NATIVE));
+
+	const char* sh4_why = recompiler ? "config:Dynarec.Enabled=yes" :
+	                      settings.dynarec.Enable ? "config:Dynarec.Enabled=yes, and the build has no recompiler" : "config:Dynarec.Enabled=no";
+	const char* debug_why = !recompiler ? (forced ? "the interpreter's own, Debugger:ForceFallback=yes does not change that" : "the interpreter's own") :
+	                        forced ? "Debugger:ForceFallback=yes" :
+	                        fallback ? "the recompiler has no breakpoints and steps of its own" : "the recompiler's own, no Debugger:ForceFallback";
+
+	const bool runs_recompiler = strcmp(info.backend, "interpreter") != 0;
+	const char* asked_sh4 = recompiler ? "the recompiler" : "the interpreter";
+	const char* asked_debug = fallback ? "sh4-debug-fallback" : "sh4-debug-native";
+	const char* runs_debug = info.fallback ? "sh4-debug-fallback" : "sh4-debug-native";
+
+	if (runs_recompiler == recompiler && info.fallback == fallback)
+		Note("the engine of the session is the one its configuration asks for: the SH4 on %s (%s), its breakpoints and steps on %s (%s)",
+			asked_sh4, sh4_why, asked_debug, debug_why);
+	else
+		Check(false, "the configuration asks for the SH4 on %s (%s) and its breakpoints and steps on %s (%s); the session runs the SH4 on %s%s%s and them on %s",
+			asked_sh4, sh4_why, asked_debug, debug_why, runs_recompiler ? "the recompiler (" : "the interpreter",
+			runs_recompiler ? info.backend : "", runs_recompiler ? ")" : "", runs_debug);
+}
+
+/*
 	emu.machine: what holds before the guest has run
 */
 DBG_SELFTEST(emu_machine, "emu.machine")

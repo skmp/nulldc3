@@ -22,6 +22,9 @@
 	Output, on stdout, each line flushed as it is written:
 
 	    SelfTest: engine: <text>                               first line: the SH4's engine and its debug engine
+	    SelfTest: engine.asked: note: <text>                   in the emulator, before the tests: the engine is the
+	    SelfTest: engine.asked: FAILED: <text>                 one the configuration asks for, or it is not, which
+	                                                           fails the session (dbg_selftest.cpp)
 	    SelfTest: <test>: ok: <text>                           a check that held
 	    SelfTest: <test>: FAILED: <text>                       a check that did not
 	    SelfTest: <test>: note: <text>

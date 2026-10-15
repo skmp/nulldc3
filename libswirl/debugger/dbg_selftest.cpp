@@ -159,7 +159,8 @@ static void SelfCheck();
 // The engine of the session, before its tests: what the SH4 runs on, and what executes its breakpoints and steps,
 // by the name debugger.describe gives it among its capabilities. The session runs on it whatever was asked for: a
 // runner compares it with the engine it asked for (tests/debugger/selftest/selftest.py), so that a key which did not
-// reach the emulator, or which the emulator did not take, does not pass for a session of that engine.
+// reach the emulator, or which the emulator did not take, does not pass for a session of that engine. The emulator
+// compares it with its configuration as well (kEngineAsked).
 static void SayEngine()
 {
 	emu::Sh4EngineInfo engine = { };
@@ -178,6 +179,15 @@ static void SayEngine()
 	fflush(stdout);
 }
 
+// The check that the engine of the session is the one its configuration asks for: a machine test of this name,
+// which the emulator registers (dbg_selftest_emu.cpp). A program that runs sessions on a machine of its own, whose
+// engine is no matter of the configuration (tests/debugger/sh4bp/selftest_shim.cpp), registers none. No filter
+// selects it: every session runs it, behind the engine line and before the tests of its filter, so that a runner
+// which asks for an engine by configuration and looks only at the end of a session fails a session of another
+// engine. Its lines are those of a test ("SelfTest: engine.asked: note: ..." or "...: FAILED: ..."); it prints no
+// PASS or FAIL line, and the summary counts it only when it fails.
+static const char kEngineAsked[] = "engine.asked";
+
 void AtStart()
 {
 	if (session.started || !Requested())
@@ -192,10 +202,13 @@ void AtStart()
 	static Test self("selftest", SelfCheck, nullptr);
 
 	std::vector<Test*> selected;
+	Test* asked = nullptr;
 
 	for (Test* test = registry; test; test = test->next)
 	{
-		if (Matches(Filter().c_str(), test->name))
+		if (test->machine && strcmp(test->name, kEngineAsked) == 0)
+			asked = test;
+		else if (Matches(Filter().c_str(), test->name))
 			selected.push_back(test);
 	}
 
@@ -214,6 +227,17 @@ void AtStart()
 			printf("SelfTest: %s: FAILED: two tests have this name\n", selected[i]->name);
 			session.testsFailed++;
 		}
+	}
+
+	if (asked)
+	{
+		Begin(asked);
+		asked->machine();
+
+		if (session.failed != 0)
+			session.testsFailed++;
+
+		session.running = nullptr;
 	}
 
 	for (Test* test : selected)
