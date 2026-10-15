@@ -44,7 +44,8 @@ The tests need Linux (headless mode) and `python3`; without them they are report
 
 ## The tests
 
-Every test is `system_test.py --case <case>` on one of the two emulators.
+Every test is `system_test.py --case <case>` on one of the two emulators, but for `vmem.*`, which are
+`vmem_test.py --case <case>` ("The memory layout" below).
 
 | test (`system.` and `system.hle.`) | what has to hold | needs |
 |---|---|---|
@@ -67,6 +68,8 @@ Every test is `system_test.py --case <case>` on one of the two emulators.
 | `determinism` | 2ndmix for 600 vblanks, 6 times on the JIT and 6 times on the interpreter, 4 runs at a time: every run of an engine has the same state hash, part for part. About 8 s | `NULLDC_ELF_DIR` |
 | `perf.script` | `tests/perf/perf.py` on `guest_spin`, headless, half an emulated second and 3 runs per engine: it ends with 0, and its JSON has for each engine the speed by wall clock and the speed by CPU time of every run, with the median, the lowest and the highest of each; the speed by CPU time is the emulated time of the run over the CPU time of its process; the table it prints has both. No number is judged | |
 | `frame.refsw2` (default build only) | refsw2 runs headless: after 240 vblanks of 2ndmix the exit line has the hash of a 640x480 frame, `Exit.FramePng` wrote a valid PNG of that size that is not an empty frame, and the run differs from the same run with the `none` renderer in VRAM and in nothing else of the state hash | `NULLDC_ELF_DIR` |
+| `vmem.concurrent` | 2ndmix on the JIT for 60 vblanks, 80 runs, 2 at a time, started at the same moment (each run waits at a gate that the test opens for both together), none of them with a data directory it can make: every run says `Info: nvmem is enabled`, none `nvmem is DISABLED`, and ends at its vblanks with exit code 0, all in one state hash. About 20 s | `NULLDC_ELF_DIR` |
+| `vmem.taken` | in a user and mount namespace of its own, with a tmpfs of its own on `/dev/shm` (`unshare -rm`; a host without one skips the test): 2ndmix on the JIT for 60 vblanks, with no data directory it can make, while `/dev/shm/dcnzorz_mem` is there, as while an emulator from before the fix starts; again without `memfd_create` (the library `vmem_shim.so`, preloaded, refuses it) and with `/dev/shm/dcnzorz_mem.<pid>.0`, its own first name, there too; and without `memfd_create` on a read-only `/dev/shm`, with a data directory. Each run has the layout and ends in the state hash of the same run made beside nothing; the names that were there are there behind it, and it leaves none of its own in `/dev/shm` or in the data directory | `NULLDC_ELF_DIR` |
 
 In every run that is expected to end by itself, the output must not have `Fatal error`, `Verify Failed` or
 `fault_handler`.
@@ -144,6 +147,39 @@ What is left:
   a difference from it. Headless mode renders on the emulator thread, at STARTRENDER.
 * The hashes say little about the sound side: 2ndmix leaves AICA RAM the same at 600 and at 4000 vblanks.
 * The JIT and the interpreter end in different states on a program that depends on time.
+
+## The memory layout
+
+On the JIT the emulator needs the virtual memory layout: the guest's address space mapped from one file, main RAM
+at its mirrors. Without the layout (`vmem_platform_init()` fails, the emulator says `Warning! nvmem is DISABLED`)
+the SH4 recompiler still write-protects the pages it compiles from, and cannot resolve a guest store into one
+(`bm_LockedWrite` measures the faulting address from `virt_ram_base`, which is null there; the design's 2.3.7 item
+15): the process ends with `fault_handler: unhandled SIGSEGV at address 0x...0d0, pc <_vmem_WriteMem32>, not a guest
+memory fault`. A KallistiOS program gets there at its first store: its start-up code keeps SR in `__arch_old_sr`,
+8C0100D0, in the page of the code that stores it. The interpreter protects no page and runs on, in the same state
+hash.
+
+Up to f640f21a every emulator made that file with one name, `/dev/shm/dcnzorz_mem`: created with `O_EXCL`,
+unlinked right behind. An emulator that started while another one was between the two found the name taken,
+unlinked it (the other one's, which needs it no more), and fell back to a file in its data directory; where it
+could not make that file either, as in a fresh `HOME` whose `XDG_DATA_HOME` does not exist, it had no layout. Runs
+started together lost it often (f640f21a, 2ndmix 600 vblanks, 25 batches of 4 started at a gate, 100 runs each:
+25 runs on the JIT of the default build, 26 of the `-DHAS_TA_LLE=OFF` build, 26 of the `-DNULLDC_DEBUGGER=OFF`
+build, every one of them ended at the store; on the interpreter 22 of 100 ran without the layout, all to the
+state hash of the others). The tests of this directory give every run a data directory, and did not see it; the
+state-hash runs of the M2 gate, with a bare `HOME`, did. The file is now a memfd, with no name; without
+`memfd_create` an shm name of the emulator's own (`dcnzorz_mem.<pid>.<n>`, a taken one left alone and the next
+taken), and where shm does not work a file of the data directory made with `mkstemp`
+(`libswirl/linux/posix_vmem.cpp`).
+
+`vmem.concurrent` is the race as the gate met it, with its rate: on f640f21a 14 of 25 batches of 2 had a run
+without the layout (25 of 80 runs in one run of the test); the test fails when one of its 40 batches has one, so
+at one batch in five it fails with a probability of 1 - 0.8^40 = 99.99 %. `vmem.taken` is the order that loses,
+made certain: on f640f21a its first run ends at the store every time.
+
+A build that has no layout for another reason (`vmem_platform_init()` fails: no address space for its 512 MiB
+reservation, no file to map) still ends at that store on the JIT. That is the open item of the design, not the
+race.
 
 ## How a run is made
 
