@@ -376,16 +376,45 @@ void bm_sh4_jitsym(FILE* out)
 	die("bm_sh4_jitsym is noop");
 }
 
-bool bm_LockedWrite(u8* addy)
+// The page of main memory that addy is in, as an offset into main memory, or false when addy is in none.
+// With the virtual memory layout addy is measured from its base, where the guest's address space is mapped. Without
+// it (virt_ram_base is null: _vmem_reserve could not make the layout) main memory is a buffer of its own,
+// sh4_cpu->mram.data, whose pages bm_AddBlock protects all the same: a fault of a guest store there is measured from
+// that buffer. Any other address is measured as before, from virt_ram_base: the machine of the sh4bp tests, which
+// has no layout, hands over guest addresses that way (tests/debugger/sh4bp/machine.cpp).
+static bool bm_RamOffset(u8* addy, u32* ram_offset)
 {
+	if (virt_ram_base == nullptr && sh4_cpu->mram.data != nullptr)
+	{
+		uintptr_t in_ram = (uintptr_t)addy - (uintptr_t)sh4_cpu->mram.data;
+
+		if (in_ram < sh4_cpu->mram.size)
+		{
+			*ram_offset = (u32)in_ram;
+			return true;
+		}
+	}
+
 	ptrdiff_t offset=addy-virt_ram_base;
-
-	//printf_bm("BM_LW: Checking @ %p %08X\n", addy, offset);
-
 
 	if (offset > 0 && offset <= 0xFFFFFFFF && IsOnRam((u32)offset))
 	{
-		u32 ram_offset = offset & RAM_MASK;
+		*ram_offset = offset & RAM_MASK;
+		return true;
+	}
+
+	return false;
+}
+
+bool bm_LockedWrite(u8* addy)
+{
+	u32 ram_offset;
+
+	//printf_bm("BM_LW: Checking @ %p\n", addy);
+
+
+	if (bm_RamOffset(addy, &ram_offset))
+	{
 		u32 ram_page = ram_offset / REI_PAGE_SIZE;
 		u32 ram_obase = ram_page * REI_PAGE_SIZE;
 

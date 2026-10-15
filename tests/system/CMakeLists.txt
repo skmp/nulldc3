@@ -1,8 +1,9 @@
 ## System tests ##
 #
-#	The emulator binary itself, headless, on guest programs: system_test.py runs one case per test, README.md
-#	has the cases. Two builds of the emulator are tested, the default one (system.*) and the one without the
-#	TA of lxdream, -DHAS_TA_LLE=OFF (system.hle.*).
+#	The emulator binary itself, headless, on guest programs: system_test.py runs one case per test, and
+#	vmem_test.py the cases of the memory layout (system.vmem.*); README.md has the cases. Two builds of the
+#	emulator are tested, the default one (system.*) and the one without the TA of lxdream, -DHAS_TA_LLE=OFF
+#	(system.hle.*).
 #
 #	NULLDC_EMULATOR / NULLDC_EMULATOR_TA_HLE    binaries to test. Empty: this project builds the emulator of the
 #	                                            tree, into <build dir>/system/emulator and emulator-ta-hle
@@ -75,7 +76,15 @@ if(NOT nulldc_system_skip)
   find_package(Threads REQUIRED)
   target_link_libraries(nulldc_fault_shim PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
   set_target_properties(nulldc_fault_shim PROPERTIES PREFIX "" OUTPUT_NAME fault_shim)
+
+  # A host without memfd_create, for system.vmem.taken and vmem.none, see vmem_shim.cpp
+  add_library(nulldc_vmem_shim MODULE vmem_shim.cpp)
+  set_target_properties(nulldc_vmem_shim PROPERTIES PREFIX "" OUTPUT_NAME vmem_shim)
 endif()
+
+# The cases of vmem_test.py: the memory of every emulator is its own, also when emulators start together; and an
+# emulator that cannot have the layout runs without it. All boot 2ndmix.
+set(nulldc_vmem_cases vmem.concurrent vmem.none vmem.taken)
 
 # nulldc_system_emulator(<prefix> <given binary> <build dir name> <TA_HLE ON|OFF>): the binary, built here unless given
 function(nulldc_system_emulator prefix given dir ta_hle)
@@ -122,6 +131,27 @@ function(nulldc_system_emulator prefix given dir ta_hle)
     # system_test.py has a watchdog per run of the emulator, this is the one behind it
     set_tests_properties(${name} PROPERTIES TIMEOUT 900)
   endforeach()
+
+  foreach(case ${nulldc_vmem_cases})
+    set(name "${prefix}.${case}")
+    if(NOT nulldc_system_have_elf)
+      nulldc_add_missing_data_test(${name} "${nulldc_system_elf_missing}")
+      continue()
+    endif()
+
+    set(command "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/vmem_test.py"
+                --emulator "${binary}" --case ${case} --work "${CMAKE_CURRENT_BINARY_DIR}/work/${name}"
+                --elf-dir "${NULLDC_ELF_DIR}" --shim "$<TARGET_FILE:nulldc_vmem_shim>")
+    if(ta_hle)
+      list(APPEND command --ta-hle)
+    endif()
+
+    add_test(NAME ${name} COMMAND ${command})
+    # vmem_test.py imports system_test.py and writes no bytecode into the source tree; a host without a user and
+    # mount namespace of its own skips vmem.taken and vmem.none
+    set_tests_properties(${name} PROPERTIES TIMEOUT 900 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1
+                                            SKIP_REGULAR_EXPRESSION "SKIPPED:")
+  endforeach()
 endfunction()
 
 if(nulldc_system_skip)
@@ -133,6 +163,9 @@ if(nulldc_system_skip)
       if(NOT (needs MATCHES "LLE" AND prefix STREQUAL "system.hle"))
         nulldc_add_skipped_test(${prefix}.${case} "${nulldc_system_skip}")
       endif()
+    endforeach()
+    foreach(case ${nulldc_vmem_cases})
+      nulldc_add_skipped_test(${prefix}.${case} "${nulldc_system_skip}")
     endforeach()
   endforeach()
 else()

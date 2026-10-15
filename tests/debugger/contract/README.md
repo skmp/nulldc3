@@ -51,6 +51,33 @@ on every `--require-note` as the mode `parts` does.
 
 No hash is stored in the tree: a test makes its runs itself and compares them with each other.
 
+## The engine of a run
+
+Every run is made on the engine its test asks for, or the test fails, and says the engine it found and the one it
+asked for. A test whose run took another engine would pass for one of the engine it names: up to f640f21a an
+emulator that ignored `Debugger:ForceFallback` passed every `.fallback` test, and one that ran the fallback for
+every run passed `debugger.contract.m2` on the JIT (the mutants `nofallback` and `allfallback` of the M2 gate).
+
+* **The SH4.** `--engine jit` is `config:Dynarec.Enabled=yes`, `--engine interp` is `=no`; the emulator takes the
+  first for a wish (a build without a recompiler goes on with the interpreter) and says `Using MCPU Recompiler` or
+  `Using MCPU Interpreter`. Every run that has a machine has to say the line of its engine and not the other: every
+  test but `config`, whose runs end before a machine exists.
+* **What executes the SH4's breakpoints and steps**, by the name `debugger.describe` gives it among its
+  capabilities: `sh4-debug-fallback` with `--fallback` (`Debugger:ForceFallback=yes`, the `.fallback` tests);
+  `sh4-debug-native` on the recompiler without it (the tests without a suffix: on an x86-64 host, whose recompiler
+  executes them itself; the recompiler of another host has no native breakpoints and reports the fallback, which
+  is what the test asks for there); and `sh4-debug-native` on the interpreter (the `.interp` tests), which
+  executes its breakpoints and steps itself, with the key or without it. `--fallback` with `--engine interp` is
+  refused. The tests that run the contract runner ask for `debugger.describe` on a connection of their own when
+  the runner has ended (`m1`, `m2`, `m2arm7`, `m2writes`, each on the engines it has); `grace` and
+  `hash.listening` take the describe of their own clients at the `StartPaused` stop, `slow`, which has no such
+  stop, the describe its client makes once the machine runs (a describe that is answered before the machine has
+  selected its engine names neither capability); `hash.idlebp`, whose emulator ends with its run, takes the
+  capabilities from the last `server:` line that the runner prints (one for its first describe, and one more
+  for the describe it makes at the `StartPaused` stop when it connected before it). `hash.off` and
+  `hash.noclient` have no client, and check the SH4 alone. The engine is printed: `engine: the SH4 on the
+  recompiler, its breakpoints and steps on sh4-debug-fallback, as asked`.
+
 ## The address of the idle breakpoint
 
 `hash.idlebp` is about a breakpoint that is listed, armed and never stops (R5 and R13 of the design on a real

@@ -39,6 +39,10 @@
 #	    debugger.contract.hash.listening.rule           what these four take for a full running tick, on ticks
 #	                                                    that are made up: no emulator is run
 #
+#	Every test but hash.listening.rule fails a run that was not made on the engine it asks for: the SH4 on the
+#	recompiler or the interpreter, and, where a client describes the server, sh4-debug-fallback for a FALLBACK
+#	test and sh4-debug-native for every other (README.md, "The engine of a run").
+#
 #	The runner needs the dreamcast-devtools checkout with its node_modules (NULLDC_DEVTOOLS_DIR) and npm:
 #	without them m1*, m2*, m2arm7*, m2writes* and hash.idlebp* are tests whose data is missing. Everything
 #	needs 2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree and hash.listening.rule, which

@@ -53,19 +53,46 @@ void VLockedMemory::UnLockRegion(unsigned offset, unsigned size_bytes) {
 	#endif
 }
 
-// Allocates memory via a fd on shmem/ahmem or even a file on disk
+// Allocates memory via a fd on shmem or even a file on disk.
+// The file is this process's alone: no other process can open it, and no other process's name is taken or
+// removed for it. It used to be the one shm name "/dcnzorz_mem" for every process, created with O_EXCL and
+// unlinked at once, and the name exists in between: an emulator that started while another one was there
+// found the name taken, unlinked the other one's, and took the file of its data directory instead; where
+// that could not be made either (a data directory that does not exist), it ran without the virtual memory
+// layout, where the SH4 recompiler could not resolve a guest store into a page of compiled code then
+// (bm_LockedWrite, hw/sh4/dyna/blockmanager.cpp), and the process ended at the first one (KallistiOS stores
+// SR into its start-up page).
 static int allocate_shared_filemem(unsigned size) {
 	int fd = -1;
-		#if HOST_OS != OS_DARWIN
-		fd = shm_open("/dcnzorz_mem", O_CREAT | O_EXCL | O_RDWR, S_IREAD | S_IWRITE);
-		shm_unlink("/dcnzorz_mem");
+
+		#if HOST_OS == OS_LINUX && defined(MFD_CLOEXEC)
+		// no name at all
+		fd = memfd_create("dcnzorz_mem", MFD_CLOEXEC);
 		#endif
 
-		// if shmem does not work (or using OSX) fallback to a regular file on disk
+		#if HOST_OS != OS_DARWIN
+		// a name of this process: its pid, and a counter for a name that is there all the same (a process
+		// of another pid namespace that shares /dev/shm). A name that is there is someone else's: it is
+		// left alone. The name is removed as soon as it is open.
+		for (unsigned attempt = 0; fd < 0 && attempt < 64; attempt++) {
+			char name[64];
+			snprintf(name, sizeof(name), "/dcnzorz_mem.%ld.%u", (long)getpid(), attempt);
+			fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR, S_IREAD | S_IWRITE);
+			if (fd >= 0)
+				shm_unlink(name);
+			else if (errno != EEXIST)
+				break;
+		}
+		#endif
+
+		// if shmem does not work (or using OSX) fallback to a regular file on disk, of a name of its own
 		if (fd < 0) {
-			string path = get_writable_data_path("/dcnzorz_mem");
-			fd = open(path.c_str(), O_CREAT|O_RDWR|O_TRUNC, S_IRWXU|S_IRWXG|S_IRWXO);
-			unlink(path.c_str());
+			string path = get_writable_data_path("/dcnzorz_mem.XXXXXX");
+			vector<char> name(path.begin(), path.end());
+			name.push_back(0);
+			fd = mkstemp(name.data());
+			if (fd >= 0)
+				unlink(name.data());
 		}
 		// If we can't open the file, fallback to slow mem.
 		if (fd < 0)
