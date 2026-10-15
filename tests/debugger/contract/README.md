@@ -69,9 +69,12 @@ every run passed `debugger.contract.m2` on the JIT (the mutants `nofallback` and
   is what the test asks for there); and `sh4-debug-native` on the interpreter (the `.interp` tests), which
   executes its breakpoints and steps itself, with the key or without it. `--fallback` with `--engine interp` is
   refused. The tests that run the contract runner ask for `debugger.describe` on a connection of their own when
-  the runner has ended (`m1`, `m2`, `m2arm7`, `m2writes`, each on the engines it has); `grace`, `slow` and
-  `hash.listening` take the describe of their own clients; `hash.idlebp`, whose emulator ends with its run, takes
-  the capabilities from the `server:` line that the runner prints for its describe. `hash.off` and
+  the runner has ended (`m1`, `m2`, `m2arm7`, `m2writes`, each on the engines it has); `grace` and
+  `hash.listening` take the describe of their own clients at the `StartPaused` stop, `slow`, which has no such
+  stop, the describe its client makes once the machine runs (a describe that is answered before the machine has
+  selected its engine names neither capability); `hash.idlebp`, whose emulator ends with its run, takes the
+  capabilities from the last `server:` line that the runner prints (one for its first describe, and one more
+  for the describe it makes at the `StartPaused` stop when it connected before it). `hash.off` and
   `hash.noclient` have no client, and check the SH4 alone. The engine is printed: `engine: the SH4 on the
   recompiler, its breakpoints and steps on sh4-debug-fallback, as asked`.
 

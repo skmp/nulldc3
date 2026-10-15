@@ -51,8 +51,9 @@ sh4-debug-fallback with --fallback (Debugger:ForceFallback=yes), sh4-debug-nativ
 an x86-64 host, whose recompiler has native breakpoints and steps; on another the recompiler has none and the
 fallback is what it reports), and sh4-debug-native on the interpreter, which executes its breakpoints and steps
 itself and which the key does not change (--fallback is refused with --engine interp). The modes m1, m2 and parts
-ask for describe on a connection of their own behind the runner, grace, slow and hash-listening on their clients,
-hash-idlebp takes the runner's describe from its "server:" line; hash-off, hash-noclient and config have no client
+ask for describe on a connection of their own behind the runner, grace and hash-listening on their clients at the
+StartPaused stop, slow on its client once the machine runs, hash-idlebp takes the runner's describe from its last
+"server:" line; hash-off, hash-noclient and config have no client
 and check the SH4's engine alone (config not even that: its runs end before there is a machine). A failure says the
 engine found and the one asked for.
 """
@@ -646,9 +647,11 @@ def mode_slow(args):
         port = run.port()
         a = wsclient.Client('127.0.0.1', port)
         a.describe()
-        print('engine: ' + check_engine(args, a.shape.get('capabilities', []), run, 'debugger.describe'))
         a.wait_tick(lambda t: t['executionState']['state'] == 'running', 30, 'a running tick')
         paths = len(a.describe()['registers'])
+        # the engine from the describe of a running machine: this run has no StartPaused, and the first describe
+        # can be answered before the machine has selected its engine (with no sh4-debug-* capability then)
+        print('engine: ' + check_engine(args, a.shape.get('capabilities', []), run, 'debugger.describe'))
 
         # Large ticks, before the other client is there: a watch on every register (as many as there may be),
         # and breakpoints that stop nothing
@@ -802,13 +805,15 @@ def mode_hash_idlebp(args):
         if run.alive():
             run.kill()
     run.no_bad()
-    # the engine, from the describe of the runner: its "server:" line has the capabilities
-    server = re.search(r'^server: .*?; capabilities: ([^;]*);', text, re.M)
-    check(server is not None, 'the runner printed no "server: ...; capabilities: ...;" line: the engine of the run is not known', run)
-    engine = check_engine(args, [name.strip() for name in server.group(1).split(',')], run,
-                          'debugger.describe, as the "server:" line of the runner has it,')
     check('idle breakpoint' in text and 'sh4 muted, target running' in text, 'the runner did not say that it set the breakpoint and resumed', run)
     check(code == 0, 'the runner ended with exit code %s: the muted breakpoint stopped the target, or an invariant was violated' % code, run)
+    # the engine, from the describe of the runner: its "server:" line has the capabilities. The last one: a runner
+    # that connected before the StartPaused stop prints one more behind the describe it makes there, and the first
+    # was answered before the machine had an engine
+    servers = re.findall(r'^server: .*?; capabilities: ([^;]*);', text, re.M)
+    check(servers, 'the runner printed no "server: ...; capabilities: ...;" line: the engine of the run is not known', run)
+    engine = check_engine(args, [name.strip() for name in servers[-1].split(',')], run,
+                          'debugger.describe, as the last "server:" line of the runner has it,')
     line = exit_line(run.out)
     check(line is not None and 'hash' in line, 'the run with the idle breakpoint printed no state hash', run)
     check(run.code == 0, 'exit code %s' % run.code, run)
