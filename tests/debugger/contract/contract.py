@@ -42,10 +42,24 @@ size limit of 1 byte, and a watchdog. A process this script starts is ended by i
     hash-listening-rule
                    what the mode hash-listening takes for a full running tick, on ticks that are made up: no
                    emulator is run, and --emulator, --work and --guest are not asked for
+
+Every run is made on the engine it asks for. The SH4 runs on the recompiler with --engine jit and on the
+interpreter with --engine interp: the emulator takes config:Dynarec.Enabled=yes for a wish and says "Using MCPU
+Recompiler" or "Using MCPU Interpreter", and a run that says the other, or neither, fails. A mode that talks to the
+server also requires the SH4 debug engine, by the name debugger.describe gives it among its capabilities:
+sh4-debug-fallback with --fallback (Debugger:ForceFallback=yes), sh4-debug-native on the recompiler without it (on
+an x86-64 host, whose recompiler has native breakpoints and steps; on another the recompiler has none and the
+fallback is what it reports), and sh4-debug-native on the interpreter, which executes its breakpoints and steps
+itself and which the key does not change (--fallback is refused with --engine interp). The modes m1, m2 and parts
+ask for describe on a connection of their own behind the runner, grace, slow and hash-listening on their clients,
+hash-idlebp takes the runner's describe from its "server:" line; hash-off, hash-noclient and config have no client
+and check the SH4's engine alone (config not even that: its runs end before there is a machine). A failure says the
+engine found and the one asked for.
 """
 
 import argparse
 import os
+import platform
 import re
 import resource
 import shutil
@@ -69,6 +83,18 @@ BAD = ('Fatal error', 'Verify Failed', 'fault_handler', 'AddressSanitizer', 'Thr
 HASH_FIELDS = ('reason', 'vblanks', 'hash', 'sh4', 'sched', 'ram', 'vram', 'aram', 'arm7')
 
 PORT_LINE = re.compile(r'^Debugger: http://127\.0\.0\.1:(\d+)/$', re.M)
+
+# what the emulator thread prints when it has chosen the engine of the SH4 (dc_run of libswirl/libswirl.cpp)
+ENGINE_SAYS = {'jit': 'Using MCPU Recompiler', 'interp': 'Using MCPU Interpreter'}
+ENGINE_NAMES = {'jit': 'the recompiler', 'interp': 'the interpreter'}
+
+# What executes the breakpoints and steps of the SH4, by the names of debugger.describe's capabilities (design
+# 2.3.5): the active backend itself, or the interpreter fallback
+DEBUG_ENGINES = ('sh4-debug-native', 'sh4-debug-fallback')
+
+# The recompiler of an x86-64 host executes breakpoints and steps itself (SH4DBG_NATIVE, hw/sh4/sh4_if.h); the one
+# of an arm64 host does not, and runs them on the interpreter fallback with or without Debugger:ForceFallback
+NATIVE_RECOMPILER = platform.machine().lower() in ('x86_64', 'amd64')
 
 
 class Failed(Exception):
@@ -211,6 +237,52 @@ class Run:
             time.sleep(0.05)
 
 
+def check_backend(args, run):
+    """The SH4 of the run is on the engine --engine asked for."""
+    run.read()
+    other = 'interp' if args.engine == 'jit' else 'jit'
+    asked = '%s (config:Dynarec.Enabled=%s)' % (ENGINE_NAMES[args.engine], 'yes' if args.engine == 'jit' else 'no')
+    check(ENGINE_SAYS[other] not in run.out, 'the run was asked for %s and was made on %s: its output has "%s"'
+          % (asked, ENGINE_NAMES[other], ENGINE_SAYS[other]), run)
+    check(ENGINE_SAYS[args.engine] in run.out, 'the run was asked for %s and does not say that it was made on it: its '
+          'output has no "%s"' % (asked, ENGINE_SAYS[args.engine]), run)
+
+
+def debug_engine_asked(args):
+    """The SH4 debug engine a run of these arguments asks for, and what asks for it."""
+    if args.engine == 'interp':
+        return 'sh4-debug-native', 'the interpreter (config:Dynarec.Enabled=no), whose breakpoints and steps are its own'
+    if args.fallback:
+        return 'sh4-debug-fallback', 'the recompiler (config:Dynarec.Enabled=yes) with Debugger:ForceFallback=yes (--fallback)'
+    if NATIVE_RECOMPILER:
+        return 'sh4-debug-native', 'the recompiler (config:Dynarec.Enabled=yes) of an x86-64 host, without Debugger:ForceFallback'
+    return 'sh4-debug-fallback', 'the recompiler (config:Dynarec.Enabled=yes) of a %s host, which has no native breakpoints' % platform.machine()
+
+
+def check_engine(args, capabilities, run, where):
+    """The run is made on the engine it asked for: its SH4 (check_backend), and the debug engine that the
+    capabilities of a debugger.describe name. Returns a line that says which."""
+    check_backend(args, run)
+    found = [name for name in capabilities if name in DEBUG_ENGINES]
+    wanted, why = debug_engine_asked(args)
+    check(found == [wanted], 'the SH4 debug engine: %s names %s, the run asked for %s (%s)'
+          % (where, ' and '.join(found) if found else 'neither %s nor %s' % DEBUG_ENGINES, wanted, why), run)
+    return 'the SH4 on %s, its breakpoints and steps on %s, as asked' % (ENGINE_NAMES[args.engine], wanted)
+
+
+def described_engine(args, port, run):
+    """check_engine() on a debugger.describe of a connection of this script's own."""
+    try:
+        client = wsclient.Client('127.0.0.1', port)
+        try:
+            client.describe()
+            return check_engine(args, client.shape.get('capabilities', []), run, 'debugger.describe')
+        finally:
+            client.close()
+    except wsclient.Error as error:
+        check(False, 'the client that asks for the engine: %s' % error, run)
+
+
 def exit_line(log):
     lines = [line for line in log.splitlines() if line.startswith('nulldc-exit: ')]
     if not lines:
@@ -308,6 +380,9 @@ def run_runner(args, selection, what):
         print(text)
         check(code is not None, 'the contract runner did not end within %d s' % args.watchdog, run)
         check(run.alive(), 'the emulator ended (exit code %s) while the runner was at it' % run.process.poll(), run)
+        # what the runner checked was made on the engine the test asked for: a describe of its own, behind the
+        # runner, which it does not see
+        engine = described_engine(args, port, run)
         check(code == 0, 'the contract runner ended with exit code %d: %s did not pass' % (code, what), run)
         summary = [line for line in text.splitlines() if ' passed, ' in line and ' failed, ' in line]
         check(summary and 'contract: OK' in text, 'the runner did not say "contract: OK"', run)
@@ -320,6 +395,7 @@ def run_runner(args, selection, what):
         ended = run.terminate()
     run.no_bad()
     check(ended, 'the emulator did not end within 20 s of SIGTERM', run)
+    print('engine: ' + engine)
     print('%s: %s' % (what, summary[-1]))
 
 
@@ -370,6 +446,7 @@ def mode_grace(args):
         a = wsclient.Client('127.0.0.1', port)
         first = a.describe()
         check(first['executionState'].get('reason') == 'start', 'the emulator is not at its StartPaused stop: %r' % (first['executionState'],), run)
+        print('engine: ' + check_engine(args, a.shape.get('capabilities', []), run, 'debugger.describe'))
 
         # an enabled breakpoint on a function the program calls in every frame, and the target left stopped at it
         a.call('breakpoints.add', {'event': 'dc.sh4.cpu.pc', 'address': address, 'kind': 'code', 'enabled': True})
@@ -569,6 +646,7 @@ def mode_slow(args):
         port = run.port()
         a = wsclient.Client('127.0.0.1', port)
         a.describe()
+        print('engine: ' + check_engine(args, a.shape.get('capabilities', []), run, 'debugger.describe'))
         a.wait_tick(lambda t: t['executionState']['state'] == 'running', 30, 'a running tick')
         paths = len(a.describe()['registers'])
 
@@ -653,6 +731,7 @@ def mode_slow(args):
 def hash_run(args, name, keys, vblanks=None):
     keys = ['config:Exit.AfterVblanks=%d' % (vblanks or args.vblanks), 'config:Exit.StateHash=yes'] + keys
     run = Run(args, name).run(keys)
+    check_backend(args, run)
     line = exit_line(run.out)
     check(line is not None and 'hash' in line, name + ': the run printed no state hash', run)
     check(run.code == 0, name + ': exit code %s' % run.code, run)
@@ -723,12 +802,18 @@ def mode_hash_idlebp(args):
         if run.alive():
             run.kill()
     run.no_bad()
+    # the engine, from the describe of the runner: its "server:" line has the capabilities
+    server = re.search(r'^server: .*?; capabilities: ([^;]*);', text, re.M)
+    check(server is not None, 'the runner printed no "server: ...; capabilities: ...;" line: the engine of the run is not known', run)
+    engine = check_engine(args, [name.strip() for name in server.group(1).split(',')], run,
+                          'debugger.describe, as the "server:" line of the runner has it,')
     check('idle breakpoint' in text and 'sh4 muted, target running' in text, 'the runner did not say that it set the breakpoint and resumed', run)
     check(code == 0, 'the runner ended with exit code %s: the muted breakpoint stopped the target, or an invariant was violated' % code, run)
     line = exit_line(run.out)
     check(line is not None and 'hash' in line, 'the run with the idle breakpoint printed no state hash', run)
     check(run.code == 0, 'exit code %s' % run.code, run)
     same_hash(base, line, 'the run with a muted breakpoint on %s and the run with the server off' % args.idle_symbol, run)
+    print('engine: ' + engine)
     print('a muted breakpoint on %s with a client connected, and server off: both runs end in hash=%s after %s vblanks'
           % (args.idle_symbol, line['hash'], line['vblanks']))
 
@@ -767,6 +852,7 @@ def mode_hash_listening(args):
         client = wsclient.Client('127.0.0.1', port)
         first = client.describe()
         check(first['executionState'].get('reason') == 'start', 'the emulator is not at its StartPaused stop: %r' % (first['executionState'],), run)
+        print('engine: ' + check_engine(args, client.shape.get('capabilities', []), run, 'debugger.describe'))
         counts = {node['path']: len(node['registers']) for node in tree_nodes(client.shape['deviceTree']) if node.get('registers')}
         # at a stop the context of the SH4 is complete, whatever the engine: every path
         check(sorted(first['registers']) == sorted(counts), 'the tick behind debugger.describe is not a full one: %d of %d paths'
@@ -930,6 +1016,10 @@ def main():
         return 1
     if args.require_note and args.mode not in ('m2', 'parts'):
         print('FAIL: --require-note is for the modes m2 and parts')
+        return 1
+    if args.fallback and args.engine != 'jit':
+        print('FAIL: --fallback is for --engine jit: the interpreter executes its breakpoints and steps itself, and '
+              'Debugger:ForceFallback does not change that (it reports sh4-debug-native)')
         return 1
 
     modes = {'m1': mode_m1, 'm2': mode_m2, 'parts': mode_parts, 'grace': mode_grace, 'config': mode_config, 'slow': mode_slow,
