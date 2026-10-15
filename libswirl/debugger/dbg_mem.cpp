@@ -524,9 +524,8 @@ void WriteRam(u32 addr, u32 count, const u8* in)
 	}
 	else
 	{
-		// No layout: bm_LockedWrite measures an address from the base of the layout and finds no page. The
-		// blocks go through the backend (per 4 KiB page, in every mirror), and the protection that bm_AddBlock
-		// put on the page, with or without the layout, is removed here
+		// No layout: the blocks go through the backend (per 4 KiB page, in every mirror), and the protection that
+		// bm_AddBlock put on the page, with or without the layout, is removed here
 		SuperH4Backend* backend = sh4_cpu->DebugBackend();
 
 		pages.ForEach([&ram, backend](u32 page) {
