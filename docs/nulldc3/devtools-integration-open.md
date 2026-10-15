@@ -4,8 +4,8 @@ Companion of `TRACK1-DESIGN.md` v3. Part 1: the questions that are still open, e
 recommendation, and the list of the questions that were answered on 2026-10-09. None of the open ones blocked the core
 package (E5), which is done: milestone M1 is complete. Part 2: "header revision 4", the comment-only changes that
 brought the frozen headers to what the document says: it is applied, and its list is kept as the record. Part 3:
-header revision 5, applied with package J1: one declaration (the run flag as an `AtomicU32`) and one comment. The
-next revision is 6; it comes with the cut of the M2 round and is not listed here.
+header revision 5, applied with package J1: one declaration (the run flag as an `AtomicU32`) and one comment.
+Revision 6 is applied (package R6 of the M2 round); its list is section 2 of `M2-ROUND.md`.
 
 History. The independent check of revision 3 added Q15 and Q16, widened Q4, added H17 to H19 and extended H8, H9 and
 one row of H10. Its second pass added H20 and H21 and rewrote H8; it added no question. On 2026-10-09 thirteen of the
@@ -709,5 +709,4 @@ New:
 - The removal of `resetting`, `stopping` and `StopForReset()` (design 2.2.5, 6.1.2): they are members of
   `SuperH4_impl`, whose header is not one of the frozen ones.
 
-**The next revision is 6.** It comes with the cut of the M2 round — the document `M2-ROUND.md` beside the design —
-and has the declarations M2 needs in the frozen headers; it is listed there, not here.
+**Revision 6 is applied** (package R6 of the M2 round); its list is section 2 of `M2-ROUND.md`.

@@ -12,7 +12,9 @@ track.
 - Repos: emulator `dreamster/devcast`, UI `dreamster/dreamcast-devtools`; work on local branch `skmp/nulldc3` in each;
   commits are made as work lands, nothing is pushed. A second, older checkout of `devcast` outside `dreamster` is stale — do not
   use it.
-- New surfaces say "nullDC" / "3.0.0". The tree is not mass-renamed (config/data dirs stay `reicast` until the user renames).
+- New surfaces say "nullDC" / "3.0.0". The tree is not mass-renamed. **The executable becomes `nulldc3` and is portable by
+  default** (user, 2026-10-12; package `N1` below, behind M2G): until it lands the binary is `devcast` and the Linux
+  directories are `reicast` ones.
 - Scratch, build dirs, reports: `dreamster/agents/nulldc3/` only; agents delete their clones and build trees before returning.
 - **Machine**: 15 GB RAM. One workflow at a time; `ninja -j8`, `ctest -j4`, at most 4 emulator processes; every emulator run
   headless. Three parallel build-and-stress workflows were OOM-killed on 2026-10-06.
@@ -98,13 +100,98 @@ reviewers): the run flag is an atomic word with the layout it had (header revisi
 slowdown), every emulator thread starts with an empty code cache and the code region is prepared once per process (2,200
 host stop / start cycles in one process: no cache clear, same speed, same hash), `IsRunning()` is one word (a reviewer showed
 that the five-word read could report a live parked machine as stopped), and the three leftovers of the core are closed.
-Next, one workflow at a time, in this order unless the user reorders: the cut of the M2 round (`M2-ROUND.md`: header
-revision 6, packages, gates; documents only), then M2-M4 (E6-E9, F3-F5, the DSP core wired in), track 10 (one web
-UI), track 3 (cycle-similar). Devtools: F0, F1, F2 and the round after design revision 3 are done and verified.
+The M2 round is cut (`M2-ROUND.md`, 2026-10-10; six review rounds, the last one clean): header revision 6 and ten packages in
+this order — F3a (the M2 contract: schema, mock, runner), R6 (header revision 6 with stubs, the core's ARM7 wiring), E6a (the
+sounding guest and the sound-line baseline), E6b (the resumable burst, ARM7 breakpoints and steps), E7a (memory and register
+writes, reset), E7b (the M2 device-tree rows, read-only), F3b (end of protocol v2), F3c (register panels, editing), F3d
+(toolbar, reset, hotkeys, a smoke spec against the emulator), M2G (the gate). The user answered its six questions on
+2026-10-11: every recommendation accepted — M2 writes only the two processors' registers (device tables read-only; the device
+write table is M3 / M4 work); a paused tick of about 130 KiB is fine; a debugger write of FPSCR or of the SH4 PC may empty the
+code cache; a debugger write can end the emulator (only an odd PC is refused); and two items stay out of the round and go to
+the backlog: reios leaving the AICA interrupt registers as the retail boot ROM does (tracks 5 and 7, needs a console check;
+under reios 2ndmix and stock KallistiOS sound are silent because timer A is never enabled), and whether a build with the SH4
+recompiler but without the virtual memory layout has to run guests. F3a is done and verified (2026-10-11; devtools
+`skmp/nulldc3` = e0f7895: the mock is an M2 server, the runner has the M2 rules and gate; three verification rounds). R6 is
+done too (header revision 6 with stubs, merged: devcast `skmp/nulldc3` = f6949750, 190 ctest targets; the wire is unchanged).
+E6a is done (2026-10-11, second verification; merged as 5a3ad3d6, 206 ctest targets): `tests/debugger/guest/dsptest/`, a
+bare-metal guest whose ARM7 plays two channels and takes counted FIQs, the runner of the sound lines (`soundlines.py`) and the
+`debugger.sound.*` / `debugger.guest.*` targets; soak of 200 runs and memcheck clean; 2ndmix under reios observed silent, as
+inferred. E6b is done (2026-10-11, second verification; merged as b4cb3e82, 238 ctest targets): the sound burst of a tick can be
+suspended between two ARM7 instructions and run on, ARM7 breakpoints / step / step over / step out, the ARM7's register writer,
+the callstack while stepping; with it the UI's ARM7 controls work against the emulator. Sound lines and state hashes are
+identical before and after, with the debugger compiled out and with it at work on the ARM7; ThreadSanitizer clean. Open for
+M2G: a 1-2 % loss of speed by CPU time that every measured set shows and whose cause is not found (the instruction-count
+checks of the cut pass); known limits in the cut's Appendix I.4. E7a is done (2026-10-12, second verification; merged as
+b951e440, head d3fe072d with one comment-only commit, 249 ctest targets): `state.writeMemory`, `state.setRegister`,
+`state.editWatch` and `control.reset` on the emulator, with the compiled blocks of every written page discarded and each
+register write doing what the guest's own write would (bank switch, FP mode, code cache). Leftovers of the emulator packages
+(test hardening, none blocks) are collected in the cut's Appendix I.5 for one small package `EX` in front of M2G.
+E7b is done (2026-10-12, second verification; merged as 199cdb4a, 259 ctest targets): the M2 rows of the device tree, read-only
+and free of side effects; the contract gate M2 passes against the emulator on the three engines (19 scenarios) and against the
+guest; a client that only listens leaves the state hash that of a run without a server. It also made read-only system bus
+registers that nothing assigns read 0 (they read part of a host address, different from run to run). **The emulator side of M2
+is complete.** F3b is done (2026-10-12, first verification; devtools `skmp/nulldc3` = 1183dab, the UI pin moved there): every
+branch for protocol v2 is gone from the client, a server without `protocol` gets the banner, the synthetic e2e server is a v3
+server; 488 unit tests, 251 e2e, the emulator's 259 targets twice with the UI at that head.
+F3c is done (2026-10-12, second verification; devtools `skmp/nulldc3` = af97c4d, the UI pin moved there): the register panels
+(SH4, ARM7 and the M2 nodes), editing of registers, memory bytes and watch values while paused, with a keyboard path to every
+editor; editors only where the server marks a row writable; 543 unit tests, 312 e2e.
+F3d is done (2026-10-12, second verification; devtools `skmp/nulldc3` = 6c753dc, the UI pin moved there): the run controls
+as a component (Run, Pause, Step Into / Over / Out for the focused target, Reset), the hotkeys, the ARM7's step buttons off
+while it is held in reset, and `e2e/emulator-smoke.spec.ts`, which passed 4 of 4 against a headless emulator of 199cdb4a with
+the bundle embedded (break at the entry, step, edit R0, write memory, reset, step the ARM7); 583 unit tests, 347 e2e.
+**Every package of M2 but the gate is verified: the emulator at devcast 199cdb4a, the UI at devtools 6c753dc.**
+Paused 2026-10-12 at the user's request, resumed 2026-10-14. `EXe` (cut 3.11) is done (2026-10-14, second verification;
+merged as 6fe01759, 259 ctest targets: tests, three header sentences, one refusal). `EXu` (3.12) is done (2026-10-15,
+four verifications and one integrator commit; devtools `skmp/nulldc3` = d59336b, the UI pin moved there): the end of an address
+space reachable in a small memory panel, a watch renamed from the keyboard, 0x-only register values, sharper tests.
+M2G, the gate, is done (2026-10-15; branch `skmp/nulldc3-m2g` on 6fe01759, documents only): **M2 IS COMPLETE.** On devcast 6fe01759 with the UI at `d59336b` and emulators that carry its bundle (`ui` of `debugger.describe` is `3.0.0-pre+d59336b`): the M2 gate passes against the emulator on the JIT, the interpreter and the forced fallback (19 scenarios passed, 0 partial, 0 not applicable each) and its second run against the sounding guest (2 passed, both notes); the 259 ctest targets are green twice, none skipped; the sound lines of the guest and of 2ndmix equal those of the tree before E6b, and the state hashes of 5.7 those of the tree before the round, in the five builds; `npm run check` and the e2e suite pass in a fresh clone; the smoke spec passes against a headless emulator on the guest. ThreadSanitizer of the contract parts on the guest: no report. Speed (tests/perf, none renderer, by CPU time, ten rounds): the JIT 0.6 % faster than before E6b, the interpreter 3.4 % slower, from code placement (the same machine code of the interpreter's dispatch 32 bytes off its place in a cache line; 0.07 % more instructions), not from added work; nothing changed for it. The design is brought to the cut (its section 7), with the known limits of the round in its 2.3.7 and what each package left in its Appendix A.3, "M2 as built". What the round leaves to later work is listed below ("Backlog left by the M2 round").
+Next: `N1` (the rebrand: `nulldc3`, portable by default, two-dash switches).
+After that, one workflow at a time, in this order unless the user reorders: M3-M4 (E8, E9, F4, F5, the DSP core wired in), track
+10 (one web UI), track 3 (cycle-similar). Devtools: F0, F1, F2 and the round after design revision 3 are done and verified.
 Known defects recorded by E4a's verifier, not caused by it (package J1): the x64 JIT keeps the code of earlier emulator threads, so after a
 few hundred host stop/start cycles in one process the 10 MB code cache is full and the guest crawls; `Sh4Context::CpuRunning`
 is a plain volatile written across threads (every ThreadSanitizer report); event breakpoints latched inside SLEEP waits and
 single steps on the JIT shift guest time (the documented skew class).
+
+**Backlog left by the M2 round** (what the design's 2.3.7 and its Appendix A.3 cite as "PLAN's backlog"; from the cut's
+1.2, the answers to M2-Q3 to M2-Q6 and the integrator's notes of its Appendix I; none of them blocks M3):
+- *The SH4 recompiler without the virtual memory layout* (M2-Q6; design 2.3.7 item 15). `bm_AddBlock` protects a page
+  from which a block was compiled in every build, and `bm_LockedWrite` measures the faulting address from
+  `virt_ram_base`, which is null there, so a guest store into such a page ends the process. To do: resolve the fault
+  from the address of main memory when there is no layout. No configuration gives that build on the development
+  machine; E7a's verifier made it, with the layout forced off by a scratch change of `_vmem_reserve`
+  (`agents/nulldc3/e7a/verify-1/logs/nolayout.txt`; again in `verify-2/`, `scripts/nolayout.sh` and
+  `logs/nolayout.txt`): the session `writes` passes on both engines and on the forced fallback, 2ndmix runs 600 vblanks
+  to one state hash twice, and a debugger writer without its own unprotect ends at its store (`fault_handler: unhandled
+  SIGSEGV ... not a guest memory fault`), the fault a guest store meets there.
+- *An SH4 block cache with the address in its key* (the cut's 1.2; design 2.3.7 item 6; M2-Q4). `fpcb` is indexed by
+  `(pc >> 1)` under a mask of 32 MiB, with no address in the key, so addresses a multiple of 32 MiB apart share a slot:
+  main memory at `0x0C…`, `0x8C…` and `0xAC…`, and the boot ROM and main memory (the dispatcher clears the cache at three
+  boot addresses). A guest that changes mirror by itself runs the blocks of the other one, with or without a debugger.
+  M2 only keeps the debugger from doing it to a guest: a debugger write that moves the SH4's PC empties the code cache
+  (M2-D42). With the address in the key, and with blocks keyed by the FP mode for FPSCR (T3.4), the debugger's two
+  cache resets are no longer needed.
+- *The exit line in the tick of a latched stop* (design 2.3.7 item 20; the integrator's decision in the cut's I.4). When
+  a check of the ARM7 or an event breakpoint latches a stop in the tick of an exit or host-stop request, the stop
+  callback sees the SH4 in front of an interrupt acceptance that an undebugged run has already made (the latch deferred
+  it; `OnThreadExiting` makes it behind the callback), so the `sh4` and `hash` parts of the exit line can differ from
+  the plain run's although the guest does not sleep. To do: the deferred acceptance in front of the stop callback, a new
+  entry of `dbg::emu` and so a header revision. The scratch test that shows it: `agents/nulldc3/e6b/fix-1/`
+  (`scripts/p4_test.inc`, `scripts/p4_run.sh`, `logs/p4-exitintc.txt`).
+- *A step out of the ARM7 that knows the mode it was asked in* (design 2.3.7 item 21). The temporary breakpoint stands at
+  the live R14, which in FIQ mode is the return address plus 4, so a step out asked inside the FIQ handler ends one
+  instruction behind the interrupted one, or elsewhere when it branches. With it goes a header text of `dbg_arm7.h`
+  (H6-5).
+- *Undefined instructions and odd PCs as guest exceptions* (design 2.3.7 item 14; M2-Q5). A guest, or a debugger write,
+  that takes the SH4 to a word that is no instruction ends the process in the default build (the odd PC is in track 2's
+  defect list too). Until then the debugger refuses an odd PC of the SH4 and stores the ARM7's PC aligned.
+- *For tracks 5, 6 and 7* (the cut's 1.2, its last row). reios leaves `SCIEB` and `SCILV0-2` at 0, so the ARM7 of 2ndmix
+  and the stock KallistiOS driver never get their timer FIQ and are silent (M2-Q3: tracks 5 and 7, with a console
+  check; a fix moves 2ndmix's sound lines and lands with a new baseline). A machine reset does not reset the GD-ROM
+  drive and leaves most system bus slots as they were. The boot ROM workload of the sound harness is silent for an
+  unknown cause. ARMRST reads 0 behind a machine reset while the ARM7 is not clocked, until the guest first writes it
+  (design 2.3.7 item 13; tracks 5 and 6, with a console measurement).
 
 | Milestone | Content | Gate |
 | --- | --- | --- |
@@ -355,6 +442,46 @@ What it needs:
 Order: after track 1 M1 (the server, core and run control exist), before or alongside M2-M4; the imgui removal is the last
 step, once every setting and action has its web counterpart (gate: a checklist of every imgui page and control mapped to
 its web counterpart, each exercised by an e2e test against a headless emulator).
+
+## Rebrand: the executable and its directories (direction set by the user 2026-10-12)
+
+"on the rebrand from reicast/devcast, the main executable name should be nulldc3 and it should by default operate in
+portable mode, unless instructed to use the shared directories for cfg/data/bios/vmus and such".
+
+As the tree is today (read 2026-10-12): the target name is one line (`set(TNAME devcast)` in `CMakeLists.txt`), and
+`devcast` is named by 9 test scripts / CMake files and 13 documents. Directories: on Linux shared by default
+(`~/.reicast` when it exists, else `$XDG_CONFIG_HOME/reicast` and `$XDG_DATA_HOME/reicast`, with `/etc/reicast`,
+`/usr/share/reicast` and the XDG system lists behind them; `libswirl/linux-dist/main.cpp`); `-portable` exists and means
+the current working directory, not the executable's (`cfg/cl.cpp`); on Windows the executable's directory already
+(`windows/winmain.cpp`); on macOS `~/.reicast` plus the bundle's resources (`AppDelegate.mm`). The system tests isolate a
+run by fresh `HOME` / `XDG_CONFIG_HOME` / `XDG_DATA_HOME` directories below their work directory.
+
+**Package `N1`, the first package behind M2G** (the M2 briefs and gates name `devcast`; it is not changed under them),
+cut like the others (readers, a cut with its decisions, implementation in a worktree, independent verification):
+- The executable is `nulldc3` on the three desktop systems (target, bundle, the names in tests, scripts and documents).
+- **Portable by default:** configuration, data, BIOS / flash, VMUs, mappings and whatever else is written live in the
+  directory of the executable, on every system (decided with the user, 2026-10-12).
+- **`--portable <dir>` names another directory** (user, 2026-10-12: "without -portable pick the exe, with -portable <dir>
+  pick dir"). The switch takes a directory now; today it takes none and means the current one. What `-portable` as the
+  last word of a command line, or in front of another switch or of a game, means is a decision of the cut (proposed: an
+  error that says the switch takes a directory, since a game path would otherwise be taken for it).
+- **Shared directories when instructed:** a command-line switch (working name `--shared`). **No build option** (user,
+  2026-10-12). Proposed, to be fixed in the cut: the shared directories are named `nulldc3` (XDG on Linux, the per-user
+  application directory on Windows and macOS); the `reicast` directories are not read. What a portable start does when its
+  directory cannot be written is a decision of the cut (proposed: an error that names the switches, not a silent change of
+  place).
+- **Switches are written with two dashes** (user, 2026-10-12: "while we're changing the options, let's switch to unix
+  style -- instead of -"): `--config`, `--portable <dir>`, `--shared`, `--help`, and on Windows `--console` and `--log`
+  (`windows/winmain.cpp`). As the tree is today the parser takes both forms of `config`, `portable` and `help`
+  (`cfg/cl.cpp`), prints and documents the one-dash form, and the one-dash `-config` is what the tests, the scripts and 13
+  files of documents and CMake write. **Decided (user, 2026-10-12, "both proposals make sense"):** the help text, the
+  documents, the tests and the scripts write two dashes only, and a one-dash switch is an error that names the two-dash
+  form (a clean break with the new executable name; a word that begins with one dash is then never taken for a game path);
+  the list of keys behind `--config` keeps its form (`section:key=value , section:key=value`, with the blanks around the
+  comma).
+- The tests name their directory with `--portable <dir>`: a run of the suite writes nothing beside the binary under test.
+- It goes with the items of the preview offered on 2026-10-11 (a quick-start README, a build that embeds the UI, the
+  history scrub of the two early docs commits) and with open question Q13 (the name of the config section).
 
 ## Order of work
 
