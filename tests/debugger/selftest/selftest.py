@@ -18,12 +18,14 @@ real-time clock is pinned. README.md has the modes:
 Every run has to be made on the engine it was asked for, and a run with a session on the SH4 debug engine as well.
 The emulator takes config:Dynarec.Enabled=yes for a wish: a build without a recompiler, or one whose recompiler
 cannot be set up, goes on with the interpreter and says "Using MCPU Interpreter" where the other says "Using MCPU
-Recompiler". The driver of a session says first what executes the breakpoints and steps of the SH4, by the name
-debugger.describe gives it ("SelfTest: engine: ..."): on the recompiler sh4-debug-fallback with
-Debugger:ForceFallback=yes among the --config items and sh4-debug-native without it (on an x86-64 host, whose
-recompiler has native breakpoints; on another the recompiler has none and runs them on the fallback), on the
-interpreter sh4-debug-native, which the key does not change. A run that was made on another engine fails, and says
-which engine it found and which one was asked for.
+Recompiler". The driver of a session says first what the SH4 runs on and what executes its breakpoints and steps,
+by the name debugger.describe gives it ("SelfTest: engine: the SH4 runs on ..., its breakpoints and steps on ..."):
+the SH4 on the engine of that line too, and on the recompiler sh4-debug-fallback with Debugger:ForceFallback=yes
+among the --config items and sh4-debug-native without it (on an x86-64 host, whose recompiler has native
+breakpoints; on another the recompiler has none and runs them on the fallback), on the interpreter
+sh4-debug-native, which the key does not change. Behind that line the emulator says once that this is the engine
+its configuration asks for ("SelfTest: engine.asked: note: ..."; when it is not, the line is a failed check). A run
+that was made on another engine fails, and says which engine it found and which one was asked for.
 """
 
 import argparse
@@ -47,7 +49,12 @@ ENGINE_NAMES = {'jit': 'the recompiler', 'interp': 'the interpreter'}
 # what the driver of a session prints first (dbg_selftest.cpp): the SH4's engine, and its debug engine by the name
 # of debugger.describe's capabilities
 SESSION_ENGINE = re.compile(r'^SelfTest: engine: (.*)$', re.M)
+SESSION_SH4 = {'jit': 'the SH4 runs on the recompiler (', 'interp': 'the SH4 runs on the interpreter,'}
 DEBUG_ENGINES = ('sh4-debug-native', 'sh4-debug-fallback')
+
+# what the emulator says behind it, when the engine is the one its configuration asks for (engine.asked of
+# dbg_selftest_emu.cpp; a FAILED line of it when not, which no_failures() finds)
+SESSION_ASKED = re.compile(r'^SelfTest: engine\.asked: note: the engine of the session is the one its configuration asks for: ', re.M)
 
 # The recompiler of an x86-64 host executes breakpoints and steps itself (SH4DBG_NATIVE, hw/sh4/sh4_if.h); the one
 # of an arm64 host does not, and runs them on the interpreter fallback with or without Debugger:ForceFallback
@@ -177,10 +184,16 @@ def check_engine(args, run, session):
 
     said = SESSION_ENGINE.findall(run.log)
     check(len(said) == 1, 'the session said its engine %d times, not once ("SelfTest: engine: ...")' % len(said), run.log)
+    sh4 = [engine for engine in ENGINE_NAMES if said[0].startswith(SESSION_SH4[engine])]
+    check(sh4 == [args.engine], 'the SH4 of the session runs on %s, the run asked for %s, and its output has "%s": '
+          '"SelfTest: engine: %s"' % (ENGINE_NAMES[sh4[0]] if sh4 else 'an engine that it does not name', asked,
+                                       ENGINE_SAYS[args.engine], said[0]), run.log)
     found = [name for name in DEBUG_ENGINES if said[0].endswith(' ' + name)]
     wanted, why = debug_engine_asked(args)
     check(found == [wanted], 'the SH4 debug engine of the session is %s, the run asked for %s (%s): "SelfTest: engine: %s"'
           % (found[0] if found else 'none that it names', wanted, why, said[0]), run.log)
+    check(len(SESSION_ASKED.findall(run.log)) == 1, 'the emulator did not say once that the engine of the session is '
+          'the one its configuration asks for ("SelfTest: engine.asked: note: ...")', run.log)
     return said[0]
 
 

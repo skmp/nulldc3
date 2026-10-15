@@ -24,15 +24,25 @@ is `=no`; the emulator takes the first for a wish and says `Using MCPU Recompile
 a run that says the other, or neither, fails. A run with a session also has to be made on the SH4 debug engine it
 asks for: the driver says first what executes the breakpoints and steps of the SH4, by the name
 `debugger.describe` gives it among its capabilities (`SelfTest: engine: the SH4 runs on the recompiler (x64), its
-breakpoints and steps on sh4-debug-native`, `dbg_selftest.cpp`), and `selftest.py` compares it with what it asked
-for: `sh4-debug-fallback` on the recompiler with `Debugger:ForceFallback=yes` among the `CONFIG` items (`arm7.fallback`,
-`writes.fallback`), `sh4-debug-native` on the recompiler without it (on an x86-64 host, whose recompiler executes
-them itself; the recompiler of another host has none and reports the fallback, which is then what is asked for),
-`sh4-debug-native` on the interpreter, with the key or without it. A failure says the engine found and the one
-asked for. Up to f640f21a no test looked: `arm7.fallback` and `writes.fallback` passed on an emulator that ignored
-the key (the mutant `nofallback` of the M2 gate). `startpaused` has no session, and checks the SH4 alone. The
-sessions of `debugger.selftest.sh4bp.sessions` say their engine too; their runner, `tests/debugger/sh4bp/selftest.sh`,
-does not compare it yet.
+breakpoints and steps on sh4-debug-native`, `dbg_selftest.cpp`), and `selftest.py` compares both halves of that
+line with what it asked for: the SH4 on the engine of `--engine`, and `sh4-debug-fallback` on the recompiler with
+`Debugger:ForceFallback=yes` among the `CONFIG` items (`arm7.fallback`, `writes.fallback`), `sh4-debug-native` on
+the recompiler without it (on an x86-64 host, whose recompiler executes them itself; the recompiler of another host
+has none and reports the fallback, which is then what is asked for), `sh4-debug-native` on the interpreter, with the
+key or without it. A failure says the engine found and the one asked for. Up to f640f21a no test looked:
+`arm7.fallback` and `writes.fallback` passed on an emulator that ignored the key (the mutant `nofallback` of the M2
+gate). `startpaused` has no session, and checks the SH4 alone.
+
+The emulator compares the engine of every session with its configuration as well, behind that line and before the
+tests of the filter: the check `engine.asked` (`dbg_selftest_emu.cpp`), which no filter selects and the driver runs
+in every session. It asks for the SH4 on the recompiler when the build has one and `config:Dynarec.Enabled` is set,
+on the interpreter otherwise; for `sh4-debug-fallback` on the recompiler with `Debugger:ForceFallback=yes` or a
+recompiler without breakpoints of its own, `sh4-debug-native` otherwise. It says so in one line,
+`SelfTest: engine.asked: note: the engine of the session is the one its configuration asks for: ...`, or fails a
+check, and then the session (`SelfTest: engine.asked: FAILED: the configuration asks for ...; the session runs ...`);
+the summary counts it only when it fails. `selftest.py` requires the note. That is what holds the sessions of
+`debugger.selftest.sh4bp.sessions` to their engines: their runner, `tests/debugger/sh4bp/selftest.sh`, asks for
+the engines by configuration and looks at the exit code of a session, not at what it says.
 
 **No wait without a bound.** The sessions `arm7`, `writes` and `core`, and the tests `arm7n.*` and
 `writesrun.neutral`, give every wait for a stop a bound, one constant of their file (`kBoundMs`: 30 s in
@@ -257,7 +267,7 @@ between the write and the witness: arming discards the blocks of a page by itsel
 | `writes.mem.ram` | main memory is one store behind `0x0C..`, `0x8C..` and `0xAC..`, four times in each: 16 bytes written through each of the three read back through the two others, through the mirror 16 MiB up and by the guest's own access; a write of no bytes; a range that runs from the end of the store into its start; a range across the end of main memory refused whole in each region, its first half unchanged; 65536 bytes in one write, the bytes around them untouched |
 | `writes.mem.code` | an instruction that is written executes. At the stop of a breakpoint in the middle of the loop's block, `mov #imm, r12` at the PC and `mov #imm, r13` behind it: two steps execute them. At the next such stop, with a second breakpoint on the branch of the loop: they are written again and the resume runs them, up to that breakpoint; on an engine that runs blocks the rest of the block was owed, and was decoded from memory as it was at the leave. And what such a stop owes: the rest of its block on the recompiler (`dbg_sh4_TakeRemainder`), nothing on the interpreter. This test says nothing about the block cache |
 | `writes.mem.cached` | the witness of the discard: a write into main memory discards the compiled blocks of its page. At a stop that owes nothing the first instruction of the loop is written with the word it has, which makes the page one that was written; a sound burst on the block of the loop is in the cache again; `mov #0x5C, r12` is written into the slot of the loop's branch, and behind a resume that entered the loop from the block cache `r12` reads `0x5C`; the `nop` is written back, and `r12` keeps what it is then set to. Then **three ranges of more than one page**, each holding the bytes that are there but for a `mov #imm, r12` in the slot, so that every page of a range is witnessed in one of them: one over three pages, which begins 16 bytes in front of the loop's page and ends 16 bytes behind it (`0x5D`); one of two pages that begins 16 bytes in front of the loop's page and ends behind the slot (`0x5E`; with pages of 4 KiB 142 bytes from `0x8C00FFF0`); one of two pages that begins at the slot and ends 16 bytes into the page behind (`0x5F`). Behind the resume after each, `r12` reads its immediate: a writer that discarded the blocks of the first page of a range alone, or of its first and last, leaves the loop's block behind the first; one that leaves out the last page of a range of more than one page, behind the second; one that leaves out its first page, behind the third. **In the default configuration this test passes with or without the discard**: a block of a page that was written compares its code when it is entered (`Dynarec.SmcCheckLevel`, `FullCheck` by default), and a write into a page that was not written yet faults into the block manager. `debugger.selftest.writes.smc` is where a missing discard executes the stale `nop` |
-| `smcwrites.cached` | the test of `debugger.selftest.writes.smc`, no test of the session `writes`: the steps of `writes.mem.cached`, and in front of them two checks of the configuration that gives them their power, that the SH4 runs on a recompiler and that `Dynarec.SmcCheckLevel` is `-1`. A run that the key did not reach fails here; without the checks it would be the default run of the steps, which passes with or without the discard. On an emulator built without a recompiler of the SH4 (`-DTARGET_NO_REC=ON`, a generic host) nothing is compiled and a write has no block to discard: there the test says so, asks for the level alone, and its steps show what an interpreter shows |
+| `smcwrites.cached` | the test of `debugger.selftest.writes.smc`, no test of the session `writes`: the steps of `writes.mem.cached`, and in front of them two checks of the configuration that gives them their power, that the SH4 runs on a recompiler and that `Dynarec.SmcCheckLevel` is `-1`. A run that the key did not reach fails here; without the checks it would be the default run of the steps, which passes with or without the discard. On an emulator built without a recompiler of the SH4 (`-DTARGET_NO_REC=ON`, a generic host) `debugger.selftest.writes.smc` fails as every test of the JIT does there, for its run is not made on the recompiler (`selftest.py`); the test has a branch for such a build, which a session started by hand reaches: nothing is compiled and a write has no block to discard, the test says so, asks for the level alone, and its steps show what an interpreter shows |
 | `writes.mem.bppage` | a write into a page with an armed breakpoint, into the slot of the loop's branch and onto the breakpoint's own instruction: the breakpoint still stops, a pass on, and what was written has run |
 | `writes.mem.vram` | video memory through its two views: 16 bytes written through the 64-bit view read back at its mirrors and, byte by byte, at the three addresses of the 32-bit view that the test works out itself (word `w` of bank `b` is word `2 w + b` of the store); 16 bytes written through each bank of the 32-bit view are every other word of the 64-bit view, with the bytes between them as they were; a range from one view into the other |
 | `writes.mem.aram` | wave memory: 8 bytes written through the ARM7's address read back through the SH4's, and the other way round; through a mirror of the store |
@@ -284,8 +294,9 @@ generic host (no recompiler, no layout), each given to a configure of the tests 
 every engine is the interpreter: there `debugger.selftest.writes.interp` passes and runs the writer's form of that
 build, and the tests of the JIT fail, for they are not made on the engine they ask for. The fourth, a recompiler
 without the layout, is given by no configuration of the build; a recompiler build gets it where the layout cannot
-be set up (an address space limit of 700 MB, `prlimit --as`), and up to f640f21a got it in about one start in four
-when emulators were started together without a data directory (`tests/system/README.md`, "The memory layout").
+be set up (an address space limit of 700 MB, `prlimit --as`; no `memfd_create`, no writable `/dev/shm` and no data
+directory, which `system.vmem.none` makes), and up to f640f21a got it in about one start in four when emulators
+were started together without a data directory (`tests/system/README.md`, "The memory layout").
 
 ## The tests of the SH4 breakpoints and steps
 
