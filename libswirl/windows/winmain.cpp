@@ -164,15 +164,21 @@ LONG ExeptionHandler(EXCEPTION_POINTERS *ExceptionInfo)
 }
 
 // A path of the system in the code page the rest of the emulator opens files with, the ANSI one; false when the
-// path has a character that page does not have
+// path has a character that page does not have. With UTF-8 as that page (the "Use Unicode UTF-8" option of
+// Windows, or activeCodePage in a manifest) WideCharToMultiByte takes no WC_NO_BEST_FIT_CHARS and no
+// lpUsedDefaultChar, it fails with them; every character has a form there, and only a broken UTF-16 sequence is lost
 static bool narrow_path(const wchar_t* wide, string& out)
 {
+	UINT page = GetACP();
+	bool utf8 = page == CP_UTF8;
+	DWORD flags = utf8 ? WC_ERR_INVALID_CHARS : WC_NO_BEST_FIT_CHARS;
 	BOOL lossy = FALSE;
-	int n = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, wide, -1, nullptr, 0, nullptr, &lossy);
+	BOOL* used_default = utf8 ? nullptr : &lossy;
+	int n = WideCharToMultiByte(page, flags, wide, -1, nullptr, 0, nullptr, used_default);
 	if (n <= 0 || lossy)
 		return false;
 	vector<char> text(n);
-	if (WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, wide, -1, text.data(), n, nullptr, &lossy) != n || lossy)
+	if (WideCharToMultiByte(page, flags, wide, -1, text.data(), n, nullptr, used_default) != n || lossy)
 		return false;
 	out = text.data();
 	return true;
