@@ -6,10 +6,10 @@ runs it on a program of the system tests and checks that its figures are there, 
 has the figures of the machine this was written on, measured while it was quiet.
 
     # no rendering: headless, the none renderer. Any build of the emulator.
-    python3 tests/perf/perf.py --emulator <devcast> --program <2ndmix.elf>
+    python3 tests/perf/perf.py --emulator <nulldc3> --program <2ndmix.elf>
 
     # a hardware GL renderer: a window and gles, which only a -DHAS_TA_LLE=OFF build has
-    python3 tests/perf/perf.py --emulator <devcast of a TA_HLE build> --program <2ndmix.elf> --renderer gl
+    python3 tests/perf/perf.py --emulator <nulldc3 of a TA_HLE build> --program <2ndmix.elf> --renderer gl
 
     --engines jit,interp     which SH4 engines (both)
     --seconds 60             emulated seconds per run

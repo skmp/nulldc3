@@ -39,7 +39,7 @@ if(NULLDC_EMULATOR)
   set(nulldc_guest_emulator "${NULLDC_EMULATOR}")
 else()
   # what tests/system builds, every time the project is built
-  set(nulldc_guest_emulator "${CMAKE_BINARY_DIR}/system/emulator/devcast")
+  set(nulldc_guest_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
 endif()
 
 # CONFIGURE_DEPENDS: a directory that is added to a tree whose build is configured already is found at the next

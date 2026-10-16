@@ -65,7 +65,7 @@ if(NULLDC_EMULATOR)
   set(nulldc_contract_emulator "${NULLDC_EMULATOR}")
 else()
   # what tests/system builds, every time the project is built
-  set(nulldc_contract_emulator "${CMAKE_BINARY_DIR}/system/emulator/devcast")
+  set(nulldc_contract_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
 endif()
 
 set(nulldc_contract_no_elf "")

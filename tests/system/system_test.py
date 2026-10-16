@@ -5,9 +5,10 @@
                    [--elf-dir <directory with 2ndmix.elf and hello.elf>] [--shim <fault_shim library>]
                    [--ta-hle] [--watchdog <seconds>] [--keep]
 
-One case per invocation, exit code 0 when it passes. README.md has the cases. Every run of the emulator gets
-an empty environment but for fresh HOME / XDG_CONFIG_HOME / XDG_DATA_HOME directories below --work (no DISPLAY:
-the runs are headless), a core file limit of 1 byte and a wall-clock watchdog that kills it and fails the case.
+One case per invocation, exit code 0 when it passes. README.md has the cases. Every run of the emulator keeps
+its files in a directory of its own below --work (--portable <run>/portable), has an empty environment (no
+DISPLAY: the runs are headless), a core file limit of 1 byte and a wall-clock watchdog that kills it and fails
+the case. The cases dirs.* run it without --portable as well, and with --shared.
 """
 
 import argparse
@@ -117,20 +118,24 @@ class Harness:
             raise Failure('no %s in --elf-dir (%s)' % (name, self.options.elf_dir))
         return path
 
-    def start(self, tag, keys, program=None, extra_args=(), env=None, seed_config=None):
-        """Starts the emulator. keys are "section:key=value" strings. Returns what finish() takes."""
+    def start(self, tag, keys, program=None, extra_args=(), env=None, seed_config=None, portable=True, binary=None,
+              cwd=None):
+        """Starts the emulator. keys are "section:key=value" strings. portable: --portable <run>/portable in front
+        of the rest, which is made; with seed_config as its emu.cfg. binary and cwd: another file to run than the
+        emulator, and another working directory than the run's. Returns what finish() takes."""
         directory = os.path.join(self.work, tag)
-        for sub in ('home', 'config', 'data'):
-            os.makedirs(os.path.join(directory, sub))
+        os.makedirs(directory)
 
+        args = [binary or self.options.emulator]
+        if portable:
+            os.makedirs(os.path.join(directory, 'portable'))
+            args += ['--portable', os.path.join(directory, 'portable')]
         if seed_config is not None:
-            os.makedirs(os.path.join(directory, 'config', 'reicast'))
-            with open(os.path.join(directory, 'config', 'reicast', 'emu.cfg'), 'w') as f:
+            with open(os.path.join(directory, 'portable', 'emu.cfg'), 'w') as f:
                 f.write(seed_config)
 
-        args = [self.options.emulator]
         if keys:
-            args.append('-config')
+            args.append('--config')
             for i, key in enumerate(keys):
                 if i:
                     args.append(',')
@@ -139,19 +144,14 @@ class Harness:
         if program:
             args.append(program)
 
-        environment = {
-            'HOME': os.path.join(directory, 'home'),
-            'XDG_CONFIG_HOME': os.path.join(directory, 'config'),
-            'XDG_DATA_HOME': os.path.join(directory, 'data'),
-        }
-        environment.update(env or {})
+        environment = dict(env or {})
 
         def limit_core():
             # 1 byte, not 0: the one value with which the kernel does not start a piped core handler either
             resource.setrlimit(resource.RLIMIT_CORE, (1, resource.getrlimit(resource.RLIMIT_CORE)[1]))
 
         log = open(os.path.join(directory, 'log.txt'), 'wb')
-        process = subprocess.Popen(args, cwd=directory, env=environment, stdin=subprocess.DEVNULL, stdout=log,
+        process = subprocess.Popen(args, cwd=cwd or directory, env=environment, stdin=subprocess.DEVNULL, stdout=log,
                                    stderr=subprocess.STDOUT, preexec_fn=limit_core, start_new_session=True)
         return (tag, args, process, log, directory, time.time())
 
@@ -210,9 +210,14 @@ class Harness:
         return self.finish(self.start(tag, keys, program, **kwargs), watchdog)
 
     def config_file(self, run):
-        path = os.path.join(run.directory, 'config', 'reicast', 'emu.cfg')
+        path = os.path.join(run.directory, 'portable', 'emu.cfg')
         with open(path) as f:
             return f.read()
+
+
+def limit_core():
+    # 1 byte, not 0: the one value with which the kernel does not start a piped core handler either
+    resource.setrlimit(resource.RLIMIT_CORE, (1, resource.getrlimit(resource.RLIMIT_CORE)[1]))
 
 
 def headless(*keys, engine='jit', rtc=RTC_PIN):
@@ -265,12 +270,24 @@ def check_hash(run):
 # The cases
 
 
+# What --help lists: every switch of a Linux build, and the form of the list behind --config
+HELP_TEXTS = ('Usage: nulldc3 [switches] [game]', '--config section:key=value [ , section:key=value ]...',
+              '--portable <dir>', '--shared', '--help', '  --  ', 'docs/nulldc3/automated-runs.md')
+
+
 def case_help(h):
-    """-help prints the usage text and exits with 0, with no display and no config."""
-    run = h.run('help', [], extra_args=['-help'])
-    check(not run.hung, '-help did not end', run)
+    """--help prints the usage text and exits with 0, with no display and no config: every switch and the form of
+    the list of --config, in two-dash forms only. Nothing is made, not the directory of a --portable in front."""
+    portable = os.path.join(h.work, 'help', 'not-made')
+    run = h.run('help', [], extra_args=['--portable', portable, '--help'], portable=False)
+    check(not run.hung, '--help did not end', run)
     check(run.returncode == 0, 'exit code %s' % run.returncode, run)
-    check('Usage:' in run.log and '-config' in run.log, 'no usage text', run)
+    for text in HELP_TEXTS:
+        check(text in run.log, 'the usage text has no "%s"' % text, run)
+    one_dash = re.findall(r'(?<![-\w])-(?:config|portable|shared|help)\b', run.log)
+    check(not one_dash, 'the usage text has a one-dash switch: %s' % one_dash, run)
+    check('Config dir is' not in run.log and 'nulldc-exit' not in run.log, 'a run after --help', run)
+    check(not os.path.exists(portable), '--help made the directory of --portable', run)
     for text in FORBIDDEN:
         check(text not in run.log, 'the output has "%s"' % text, run)
 
@@ -369,7 +386,7 @@ def case_rtc_game(h):
              'Dreamcast.RTC of the game, not the one of section config'),
             # the section of the game on the command line
             ('game_line', [dreamcast_rtc(a), '%s:Dreamcast.RTC=%d' % (GAME_ID, b)], [], b,
-             'Dreamcast.RTC of the game, given with -config'),
+             'Dreamcast.RTC of the game, given with --config'),
             # Debug.FixedRtc of the game: over its own Dreamcast.RTC, and over both keys of section config
             ('game_fixed', [], [(GAME_ID, [('Debug.FixedRtc', c), ('Dreamcast.RTC', b)])], c, 'Debug.FixedRtc of the game'),
             ('game_fixed_over_config', [dreamcast_rtc(a), fixed_rtc(b)], [(GAME_ID, [('Debug.FixedRtc', c)])], c,
@@ -391,7 +408,7 @@ def case_rtc_game(h):
 
 
 def case_cfg_untouched(h):
-    """A headless run with -config overrides leaves emu.cfg byte for byte as it was."""
+    """A headless run with --config overrides leaves emu.cfg byte for byte as it was."""
     seed = '[config]\nDynarec.Enabled = yes\npvr.backend = refsw2\nDebug.SerialConsoleEnabled = no\n\n' \
            '[audio]\nbackend = auto\n\n'
     run = h.run('cfg', headless('config:pvr.backend=none', 'config:Exit.AfterVblanks=5', engine='interp'),
@@ -671,6 +688,265 @@ def case_determinism(h):
         print('  %s: %d runs, hash %s' % (engine, len(runs), first.fields['hash']))
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# The directories: the one of the executable by default, --portable <dir>, --shared, and the command lines that
+# are refused. Each case runs a copy of the emulator in a scratch directory, never the binary under test itself,
+# with HOME and the XDG variables pointed into scratch as well, and lists everything there before and after.
+
+# What a headless run of guest_exit writes into its directory
+RUN_FILES = ('emu.cfg', 'vmu_save_A1.bin', 'vmu_save_A2.bin')
+
+# An emu.cfg that would show if it were read: the exit line of a run that does not ask for it gets a state hash
+HASH_CFG = '[config]\nExit.StateHash = yes\n'
+
+
+def listing(top):
+    """Every directory (with a / at its end) and file below top, relative to it, files with their size."""
+    found = {}
+    for root, dirs, files in os.walk(top):
+        for name in dirs:
+            found[os.path.relpath(os.path.join(root, name), top) + '/'] = None
+        for name in files:
+            path = os.path.join(root, name)
+            found[os.path.relpath(path, top)] = os.path.getsize(path)
+    return found
+
+
+def scratch(h, name, env_dirs=True):
+    """<work>/<name>: bin/nulldc3, a copy of the emulator; cwd/, an empty working directory; home/, an empty HOME;
+    and with env_dirs xdg/config and xdg/data, empty, for XDG_CONFIG_HOME and XDG_DATA_HOME. Returns the
+    directory, the copy and the environment."""
+    top = os.path.join(h.work, name)
+    for sub in ('bin', 'cwd', 'home'):
+        os.makedirs(os.path.join(top, sub))
+    binary = os.path.join(top, 'bin', 'nulldc3')
+    shutil.copy2(h.options.emulator, binary)
+    env = {'HOME': os.path.join(top, 'home')}
+    if env_dirs:
+        for sub in ('config', 'data'):
+            os.makedirs(os.path.join(top, 'xdg', sub))
+        env.update({'XDG_CONFIG_HOME': os.path.join(top, 'xdg', 'config'),
+                    'XDG_DATA_HOME': os.path.join(top, 'xdg', 'data')})
+    return top, binary, env
+
+
+def check_new(run, top, before, expected, what):
+    """What the run added below top is expected (a set of paths of listing()), and it changed nothing there."""
+    after = listing(top)
+    added = sorted(set(after) - set(before))
+    gone = sorted(set(before) - set(after))
+    changed = sorted(p for p in before if p in after and before[p] != after[p])
+    check(added == sorted(expected) and not gone and not changed,
+          '%s: the run wrote %s (expected %s), removed %s, changed %s' % (what, added, sorted(expected), gone, changed),
+          run)
+
+
+def check_dirs_line(run, directory, data=None):
+    check('Config dir is: %s/\n' % directory in run.log and 'Data dir is:   %s/\n' % (data or directory) in run.log,
+          'the run does not name %s as its directory' % directory, run)
+
+
+def guest_run(h, tag, binary, cwd, env, extra_args=(), keys=(), program=True):
+    """guest_exit, headless, on a copy of the emulator, without the --portable of the harness."""
+    return h.run(tag, headless(*keys), h.guest('guest_exit') if program else None, extra_args=extra_args,
+                 portable=False, binary=binary, cwd=cwd, env=env)
+
+
+def case_dirs_default(h):
+    """Without --portable and --shared the files are in the directory of the executable, from the system: a copy of
+    the emulator in a scratch directory, started from another working directory, writes them beside itself and
+    nowhere else (not into the working directory, HOME or the XDG directories). Started through a symbolic link in
+    a third directory, the directory is the one of the file the link points at."""
+    top, binary, env = scratch(h, 'default.dirs')
+    before = listing(top)
+    run = guest_run(h, 'default', binary, os.path.join(top, 'cwd'), env)
+    check_clean(run, 'guest-exit')
+    check_dirs_line(run, os.path.join(top, 'bin'))
+    check_new(run, top, before, ['bin/' + name for name in RUN_FILES], 'a run in the directory of its executable')
+    check(sorted(os.listdir(run.directory)) == ['log.txt'], 'the run wrote into its working directory', run)
+
+    top, binary, env = scratch(h, 'link.dirs')
+    os.makedirs(os.path.join(top, 'link'))
+    link = os.path.join(top, 'link', 'nulldc3')
+    os.symlink(binary, link)
+    before = listing(top)
+    run = guest_run(h, 'link', link, os.path.join(top, 'cwd'), env)
+    check_clean(run, 'guest-exit')
+    check_dirs_line(run, os.path.join(top, 'bin'))
+    check_new(run, top, before, ['bin/' + name for name in RUN_FILES], 'a run through a symbolic link')
+
+
+def case_dirs_portable(h):
+    """--portable <dir>: the files are in <dir> and nowhere else, not beside the executable. A directory that is not
+    there is made, with the ones above it; a relative one is relative to the working directory; a name with blanks
+    is one word; one that is there is taken as it is. "--" ends the switches: a game behind it may begin with a
+    dash."""
+    top, binary, env = scratch(h, 'portable.dirs')
+    cwd = os.path.join(top, 'cwd')
+    os.makedirs(os.path.join(top, 'there'))
+    for tag, given, made in (('missing', os.path.join(top, 'p', 'not', 'there'), ['p/', 'p/not/', 'p/not/there/']),
+                             ('relative', os.path.join('rel', 'dir'), ['cwd/rel/', 'cwd/rel/dir/']),
+                             ('blanks', os.path.join(top, 'with blanks', 'and more'),
+                              ['with blanks/', 'with blanks/and more/']),
+                             ('there', os.path.join(top, 'there'), [])):
+        directory = made[-1].rstrip('/') if made else 'there'
+        before = listing(top)
+        run = guest_run(h, 'portable_' + tag, binary, cwd, env, extra_args=['--portable', given])
+        check_clean(run, 'guest-exit')
+        check_dirs_line(run, os.path.join(top, directory))
+        check_new(run, top, before, made + [directory + '/' + name for name in RUN_FILES], '--portable %s' % given)
+
+    # a game whose name begins with a dash, behind "--"
+    shutil.copy(h.guest('guest_exit'), os.path.join(cwd, '-guest_exit.bin'))
+    before = listing(top)
+    run = guest_run(h, 'portable_dash_game', binary, cwd, env, program=False,
+                    extra_args=['--portable', os.path.join(top, 'dash'), '--', '-guest_exit.bin'])
+    check_clean(run, 'guest-exit')
+    check('guest: returning to the BIOS' in run.log, 'the game behind "--" did not run', run)
+    check_new(run, top, before, ['dash/'] + ['dash/' + name for name in RUN_FILES], '-- -guest_exit.bin')
+
+
+def case_dirs_shared(h):
+    """--shared: the files are in $XDG_CONFIG_HOME/nulldc3 and $XDG_DATA_HOME/nulldc3, made when missing, and
+    nowhere else, not beside the executable; without the variables in ~/.config/nulldc3 and ~/.local/share/nulldc3.
+    The reicast directories of before are there and not read; the XDG system lists are read behind the user's
+    directory."""
+    top, binary, env = scratch(h, 'shared.dirs')
+    cwd = os.path.join(top, 'cwd')
+    # every place the reicast builds read a config from: one that is read asks for a state hash
+    for reicast in ('home/.reicast', 'home/.config/reicast', 'xdg/config/reicast', 'sys/a/reicast'):
+        os.makedirs(os.path.join(top, reicast))
+        with open(os.path.join(top, reicast, 'emu.cfg'), 'w') as f:
+            f.write(HASH_CFG)
+    os.makedirs(os.path.join(top, 'home', '.local', 'share', 'reicast', 'data'))
+    env['XDG_CONFIG_DIRS'] = os.path.join(top, 'sys', 'a')
+    env['XDG_DATA_DIRS'] = os.path.join(top, 'sys', 'data')
+
+    before = listing(top)
+    run = guest_run(h, 'shared_xdg', binary, cwd, env, extra_args=['--shared'])
+    check_clean(run, 'guest-exit')
+    check('hash' not in run.fields, 'a reicast emu.cfg was read: the exit line has a state hash', run)
+    check_dirs_line(run, os.path.join(top, 'xdg', 'config', 'nulldc3'), os.path.join(top, 'xdg', 'data', 'nulldc3'))
+    check_new(run, top, before, ['xdg/config/nulldc3/', 'xdg/config/nulldc3/emu.cfg', 'xdg/data/nulldc3/',
+                                 'xdg/data/nulldc3/vmu_save_A1.bin', 'xdg/data/nulldc3/vmu_save_A2.bin'],
+              '--shared with XDG_CONFIG_HOME and XDG_DATA_HOME')
+
+    # without the two variables: below HOME
+    plain = {k: v for k, v in env.items() if k not in ('XDG_CONFIG_HOME', 'XDG_DATA_HOME')}
+    before = listing(top)
+    run = guest_run(h, 'shared_home', binary, cwd, plain, extra_args=['--shared'])
+    check_clean(run, 'guest-exit')
+    check('hash' not in run.fields, 'a reicast emu.cfg was read: the exit line has a state hash', run)
+    check_dirs_line(run, os.path.join(top, 'home', '.config', 'nulldc3'),
+                    os.path.join(top, 'home', '.local', 'share', 'nulldc3'))
+    check_new(run, top, before, ['home/.config/nulldc3/', 'home/.config/nulldc3/emu.cfg',
+                                 'home/.local/share/nulldc3/', 'home/.local/share/nulldc3/vmu_save_A1.bin',
+                                 'home/.local/share/nulldc3/vmu_save_A2.bin'], '--shared with HOME only')
+
+    # a config of the system list, nulldc3/emu.cfg in its second directory, is read when the user has none
+    os.makedirs(os.path.join(top, 'sys', 'b', 'nulldc3'))
+    with open(os.path.join(top, 'sys', 'b', 'nulldc3', 'emu.cfg'), 'w') as f:
+        f.write(HASH_CFG)
+    system = dict(env, XDG_CONFIG_HOME=os.path.join(top, 'xdg2', 'config'), XDG_DATA_HOME=os.path.join(top, 'xdg2', 'data'),
+                  XDG_CONFIG_DIRS=os.path.join(top, 'sys', 'a') + ':' + os.path.join(top, 'sys', 'b'))
+    run = guest_run(h, 'shared_system', binary, cwd, system, extra_args=['--shared'])
+    check_clean(run, 'guest-exit')
+    check('hash' in run.fields, 'the emu.cfg of $XDG_CONFIG_DIRS (its second directory) was not read', run)
+    check(not os.path.exists(os.path.join(top, 'bin', 'emu.cfg')), 'a --shared run wrote beside the executable', run)
+
+
+# The command lines that are refused: what follows the program on the command line (the headless keys and
+# guest_exit are in front, so that one taken by mistake starts a run, which writes), and the text of the message.
+# DIR is a directory that is not there, FILE a file, RO a directory that cannot be written.
+ERRORS = (
+    ('one_dash_config', ['-config', 'config:Headless=yes'], '-config is written with two dashes: --config'),
+    ('one_dash_portable', ['-portable', 'DIR'], '-portable is written with two dashes: --portable'),
+    ('one_dash_shared', ['-shared'], '-shared is written with two dashes: --shared'),
+    ('one_dash_help', ['-help'], '-help is written with two dashes: --help'),
+    ('portable_last', ['--portable'], '--portable needs a directory: --portable <dir>'),
+    ('portable_switch', ['--portable', '--shared'], '--portable needs a directory: --portable <dir>, not --shared'),
+    ('portable_empty', ['--portable', ''], '--portable needs a directory'),
+    ('portable_file', ['--portable', 'FILE'], 'FILE is not a directory'),
+    ('portable_unwritable', ['--portable', 'RO'], 'cannot be written'),
+    ('portable_twice', ['--portable', 'DIR', '--portable', 'DIR2'], '--portable is given twice'),
+    ('portable_shared', ['--portable', 'DIR', '--shared'], '--portable <dir> and --shared cannot be given together'),
+    ('shared_portable', ['--shared', '--portable', 'DIR'], '--portable <dir> and --shared cannot be given together'),
+    ('shared_twice', ['--shared', '--shared'], '--shared is given twice'),
+    ('shared_no_home', ['--shared'], 'there are no per-user directories'),
+    ('unknown', ['--bogus'], 'unknown switch --bogus'),
+    ('unknown_one_dash', ['-x'], 'unknown switch -x'),
+    ('dash_alone', ['-'], 'unknown switch -'),
+    ('dash_game', ['-guest_exit.bin'], 'unknown switch -guest_exit.bin'),
+    ('windows_switch', ['--console'], '--console is a switch of the Windows build only'),
+    ('windows_log', ['--log'], '--log is a switch of the Windows build only'),
+    ('portable_equals', ['--portable=DIR'], 'the value of --portable is the next word'),
+    ('shared_value', ['--shared=yes'], '--shared takes no value'),
+    ('config_last', ['--config'], '--config needs section:key=value'),
+    ('config_item', ['--config', 'Headless=yes'], "--config: 'Headless=yes' is not section:key=value"),
+    ('config_comma', ['--config', 'config:Headless=yes', ','], "--config: nothing after the last ','"),
+    ('config_switch', ['--config', '--portable', 'DIR'], '--config needs section:key=value in front of --portable'),
+    ('exe_unwritable', [], 'the directory of the executable, BIN, cannot be written'),
+)
+
+
+def case_dirs_errors(h):
+    """Every command line that is refused: exit code 2, a message on stderr that says why (and for a directory that
+    cannot be written names --portable <dir> and --shared), no machine started, and nothing written anywhere."""
+    top, binary, env = scratch(h, 'errors.dirs')
+    cwd = os.path.join(top, 'cwd')
+    shutil.copy(h.guest('guest_exit'), os.path.join(cwd, '-guest_exit.bin'))
+    with open(os.path.join(top, 'file'), 'w') as f:
+        f.write('a file\n')
+    os.makedirs(os.path.join(top, 'ro'))
+    as_root = hasattr(os, 'geteuid') and os.geteuid() == 0
+    names = {'DIR': os.path.join(top, 'dir'), 'DIR2': os.path.join(top, 'dir2'), 'FILE': os.path.join(top, 'file'),
+             'RO': os.path.join(top, 'ro'), 'BIN': os.path.join(top, 'bin')}
+    command = [binary, '--config']
+    for i, key in enumerate(headless()):
+        command += [','] if i else []
+        command.append(key)
+    command.append(h.guest('guest_exit'))
+
+    done = 0
+    for tag, words, text in ERRORS:
+        if as_root and tag in ('portable_unwritable', 'exe_unwritable'):
+            print('  %s: not made, root writes into a directory without write permission' % tag)
+            continue
+        args = command + [names.get(w, w) for w in words]
+        message = text.replace('FILE', names['FILE']).replace('BIN', names['BIN'])
+        environment = {} if tag == 'shared_no_home' else env
+        locked = {'portable_unwritable': names['RO'], 'exe_unwritable': names['BIN']}.get(tag)
+        before = listing(top)
+        if locked:
+            os.chmod(locked, 0o555)
+        t0 = time.time()
+        try:
+            p = subprocess.run(args, cwd=cwd, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, timeout=h.options.watchdog, preexec_fn=limit_core)
+        except subprocess.TimeoutExpired:
+            raise Failure('%s: the run did not end: %s' % (tag, ' '.join(args)))
+        finally:
+            if locked:
+                os.chmod(locked, 0o755)
+        out, err = p.stdout.decode('utf-8', 'replace'), p.stderr.decode('utf-8', 'replace')
+        h.runs.append(Run(tag, args, p.returncode, False, out + err, cwd, time.time() - t0))
+        what = '%s: %s\n  stdout: %s\n  stderr: %s' % (tag, ' '.join(repr(a) if not a or ' ' in a else a for a in args),
+                                                      out.strip().replace('\n', ' | ')[-300:], err.strip())
+        check(p.returncode == 2, 'exit code %s, expected 2\n  %s' % (p.returncode, what))
+        lines = err.strip().splitlines()
+        check(len(lines) == 1 and lines[0].startswith('nulldc3: ') and message in lines[0],
+              'stderr is not the one line "nulldc3: ...%s..."\n  %s' % (message, what))
+        if tag in ('portable_unwritable', 'exe_unwritable'):
+            check('--portable <dir>' in lines[0] and '--shared' in lines[0],
+                  'the message does not name --portable <dir> and --shared\n  %s' % what)
+        for machine in ('Config dir is', 'Virtual cfg', 'Using MCPU', 'nulldc-exit', 'Using \''):
+            check(machine not in out, 'a machine was started ("%s" in stdout)\n  %s' % (machine, what))
+        after = listing(top)
+        check(after == before, 'the refused run wrote %s\n  %s' % (sorted(set(after) ^ set(before)), what))
+        done += 1
+    print('  %d command lines refused, each with exit code 2, its message and nothing written' % done)
+
+
 def case_perf_script(h):
     """tests/perf/perf.py on a program of the suite: for each engine a speed by wall clock and one by CPU time."""
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, 'perf', 'perf.py')
@@ -743,6 +1019,10 @@ CASES = {
     'fault.guest': case_fault_guest,
     'determinism': case_determinism,
     'perf.script': case_perf_script,
+    'dirs.default': case_dirs_default,
+    'dirs.portable': case_dirs_portable,
+    'dirs.shared': case_dirs_shared,
+    'dirs.errors': case_dirs_errors,
 }
 
 

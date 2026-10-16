@@ -45,6 +45,10 @@ set(nulldc_system_cases
   "frame.refsw2:ELF,LLE"
   "determinism:ELF"
   "perf.script:"
+  "dirs.default:"
+  "dirs.portable:"
+  "dirs.shared:"
+  "dirs.errors:"
 )
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -79,6 +83,7 @@ if(NOT nulldc_system_skip)
 
   # A host without memfd_create, for system.vmem.taken and vmem.none, see vmem_shim.cpp
   add_library(nulldc_vmem_shim MODULE vmem_shim.cpp)
+  target_link_libraries(nulldc_vmem_shim PRIVATE ${CMAKE_DL_LIBS})
   set_target_properties(nulldc_vmem_shim PROPERTIES PREFIX "" OUTPUT_NAME vmem_shim)
 endif()
 
@@ -91,7 +96,7 @@ function(nulldc_system_emulator prefix given dir ta_hle)
   if(given)
     set(binary "${given}")
   else()
-    set(binary "${CMAKE_CURRENT_BINARY_DIR}/${dir}/devcast")
+    set(binary "${CMAKE_CURRENT_BINARY_DIR}/${dir}/nulldc3")
     # In the console pool: one build of the emulator at a time, and it has all the cores for itself
     add_custom_target(nulldc_${dir} ALL
       COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${nulldc_root_path}" "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}/${dir}"

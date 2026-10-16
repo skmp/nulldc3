@@ -5,12 +5,12 @@ with the devtools UI. The UI repository has the contract runner that holds a ser
 (`npm run contract`, `scripts/contract/`); the tests of this directory start the emulator and run it, and test
 what belongs to the server and is no scenario of the runner.
 
-    python3 tests/debugger/contract/contract.py --emulator <devcast> --work /tmp/w --guest <2ndmix.elf> \
+    python3 tests/debugger/contract/contract.py --emulator <nulldc3> --work /tmp/w --guest <2ndmix.elf> \
             --mode m1 --devtools <dreamcast-devtools checkout> --keep
 
 Every emulator is started as `tests/system` and the selftests start one: headless (`config:Headless=yes`), no
-audio device, an environment of its own (fresh `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME` under the work
-directory, no display), the real-time clock pinned, a core size limit of 1 byte and a watchdog; a process is
+audio device, its files in a directory of its own under the work directory (`--portable <dir>`), an empty
+environment (no display), the real-time clock pinned, a core size limit of 1 byte and a watchdog; a process is
 ended by its pid. The tests run on the emulator that the system tests build (`<build dir>/system/emulator`, or
 `-DNULLDC_EMULATOR=`), and are skipped where those are. No embedded UI bundle is needed. One test runs no emulator:
 `debugger.contract.hash.listening.rule`, which is there wherever python3 is.

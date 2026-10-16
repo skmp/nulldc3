@@ -57,12 +57,12 @@ Not here, because they need the emulator: the park loop itself and its arbitrati
 the reios trap, a reset and a loaded state made by the emulator, pauses and service excursions that another
 thread asks for, the rewrite of a memory access inside a block that runs outside the block cache (it happens
 on the emulator's host mapping of guest memory), and the 2ndmix workload.
-`libswirl/debugger/dbg_selftest_sh4bp.cpp` has those, for `devcast -config Debugger:SelfTest=sh4bp`.
+`libswirl/debugger/dbg_selftest_sh4bp.cpp` has those, for `nulldc3 --config Debugger:SelfTest=sh4bp`.
 
 ## The selftest of the emulator
 
 `libswirl/debugger/dbg_selftest_sh4bp.cpp` is the same mechanism on the real park loop and the real machine:
-the tests `sh4bp.b1` to `sh4bp.b14` of `devcast -config Debugger:SelfTest=sh4bp , Debugger:StartPaused=yes <elf>`
+the tests `sh4bp.b1` to `sh4bp.b14` of `nulldc3 --config Debugger:SelfTest=sh4bp , Debugger:StartPaused=yes <elf>`
 (none for B11: it compares two builds, and a session is one).
 They write the guest programs of this directory into main memory and drive them through `dbg::emu`, and add
 what only the emulator has: the boot of the guest through reios, a reset while stopped, an address armed by a
@@ -71,7 +71,7 @@ backend that is configured, in the timing mode that is configured. The tests `sh
 of the same file are B3, B6 and B7 on the booted guest ([below](#the-booted-guest)).
 
 ```
-tests/debugger/sh4bp/selftest.sh <devcast> <elf> [work dir] [config item ...]
+tests/debugger/sh4bp/selftest.sh <nulldc3> <elf> [work dir] [config item ...]
 ```
 
 runs three sessions of `sh4bp` (JIT, interpreter, JIT with `Debugger:ForceFallback=yes`) and compares what

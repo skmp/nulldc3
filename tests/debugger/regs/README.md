@@ -30,7 +30,7 @@ named `debugger.regs.<name>`, the dreamcast-devtools checkout is given with `-DN
 too.
 
 What needs the machine is not here but in the emulator's selftest (`libswirl/debugger/dbg_selftest_regs.cpp`,
-`devcast -config Debugger:SelfTest=regs <program>`): that every row is a register the emulator has, that every value
+`nulldc3 --config Debugger:SelfTest=regs <program>`): that every row is a register the emulator has, that every value
 reads without a side effect and equals what the guest would read, the memory map of `dbg_mem.h`, that the ARM7
 target has the register window of the AICA byte for byte as loads by the ARM7 deliver it (`regs.mem.arm7`, which
 runs a loop of its own on the sound CPU and puts the machine back), that `dc.aica.arm7.ENABLED` reads 0 and 1

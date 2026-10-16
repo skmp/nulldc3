@@ -1,11 +1,11 @@
 # debugger.selftest: the selftests of the debugger, in the emulator
 
-`devcast -config Debugger:SelfTest=<filter>` runs the tests that the files `libswirl/debugger/dbg_selftest_*.cpp`
+`nulldc3 --config Debugger:SelfTest=<filter>` runs the tests that the files `libswirl/debugger/dbg_selftest_*.cpp`
 register, on the emulator thread, against the live machine (`libswirl/debugger/dbg_selftest.h`). The tests of
 this directory run such sessions headless, on the emulator that the system tests build
 (`<build dir>/system/emulator`, or `-DNULLDC_EMULATOR=`), and are skipped where those are.
 
-    python3 tests/debugger/selftest/selftest.py --emulator <devcast> --work /tmp/w --selftest emu --keep
+    python3 tests/debugger/selftest/selftest.py --emulator <nulldc3> --work /tmp/w --selftest emu --keep
 
 A package adds the selftest of its file with one line in `CMakeLists.txt`:
 
@@ -16,8 +16,8 @@ interpreter): a session with the filter `<name>` that has to end with exit code 
 with no check failed. The options of the function are at the top of `CMakeLists.txt`; `ELF 2ndmix.elf` boots a
 program of `NULLDC_ELF_DIR` instead of the guest of this directory.
 
-Every run has an environment of its own (fresh `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, no display), the
-real-time clock pinned, a core size limit of 1 byte and a watchdog, as in `tests/system`.
+Every run keeps its files in a directory of its own under the work directory (`--portable <dir>`) and has an empty
+environment (no display), the real-time clock pinned, a core size limit of 1 byte and a watchdog, as in `tests/system`.
 
 **Every run is made on the engine it asks for.** `--engine jit` is `config:Dynarec.Enabled=yes`, `--engine interp`
 is `=no`; the emulator takes the first for a wish and says `Using MCPU Recompiler` or `Using MCPU Interpreter`, and
@@ -343,7 +343,7 @@ the cycles ended. `Debugger:SelfTestHostCycles`, `Debugger:SelfTestHostCycleSpan
 
 ## With a window
 
-`window_checklist.sh <devcast> <work dir> [once]` does at the window of the emulator what a person does there, once
+`window_checklist.sh <nulldc3> <work dir> [once]` does at the window of the emulator what a person does there, once
 with the emulator thread parked and once with a pause asked for all the time (the sessions `emuwin.parked` and
 `emuwin.pending`): the menu key and the buttons of the menu (Save State, Load State, Restart, Resume, Exit), the
 escape key, and the close button of the window. Then two actions that the window finds in one pass over its

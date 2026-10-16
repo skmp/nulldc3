@@ -1,6 +1,6 @@
 ## The selftests of the debugger, in the emulator ##
 #
-#	devcast -config Debugger:SelfTest=<name>, headless, on the emulator the system tests build (the default
+#	nulldc3 --config Debugger:SelfTest=<name>, headless, on the emulator the system tests build (the default
 #	build, <build dir>/system/emulator, or NULLDC_EMULATOR). selftest.py runs a session and says what it has
 #	to end with; README.md has the tests.
 #
@@ -16,7 +16,7 @@
 #	    SELFTEST <filter>           the filter of the session when it is not <name>; NONE: no session
 #	    ELF <file>                  boot this program of NULLDC_ELF_DIR instead of the guest of this directory;
 #	                                without the directory the test is one whose data is missing
-#	    CONFIG <section:key=value>...   more -config items for every run
+#	    CONFIG <section:key=value>...   more --config items for every run
 #	    ARGS <argument>...          more arguments for selftest.py
 #	    TIMEOUT <seconds>           of ctest, default 600
 #
@@ -36,7 +36,7 @@ if(NULLDC_EMULATOR)
   set(nulldc_selftest_emulator "${NULLDC_EMULATOR}")
 else()
   # what tests/system builds, every time the project is built
-  set(nulldc_selftest_emulator "${CMAKE_BINARY_DIR}/system/emulator/devcast")
+  set(nulldc_selftest_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
 endif()
 
 function(nulldc_debugger_selftest name)
