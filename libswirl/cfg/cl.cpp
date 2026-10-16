@@ -330,7 +330,19 @@ int make_one(const string& path)
 // mkdir -p; false with the reason in why
 bool make_dirs(const string& path, string& why)
 {
-	for (size_t i = 1; i <= path.size(); i++)
+	if (is_dir(path))
+		return true;
+	size_t first = 1;
+#if HOST_OS == OS_WINDOWS
+	// \\server\share\...: the server and the share are not directories to make, the first one is the name behind them
+	if (path.size() > 2 && is_separator(path[0]) && is_separator(path[1]))
+	{
+		size_t share = path.find_first_of("\\/", 2);
+		size_t below = share == string::npos ? string::npos : path.find_first_of("\\/", share + 1);
+		first = below == string::npos ? path.size() + 1 : below + 1;
+	}
+#endif
+	for (size_t i = first; i <= path.size(); i++)
 	{
 		if (i < path.size() && !is_separator(path[i]))
 			continue;
