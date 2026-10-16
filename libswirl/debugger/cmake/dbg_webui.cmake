@@ -9,12 +9,49 @@
 # A bundle is a dist-native directory with index.html and bundle-info.json
 # ({"version", "protocol", "gitRev", "files"}). One built for another protocol version than
 # dbg::kProtocolVersion would load and then show nothing, so it stops the configure step instead.
+#
+# The UI is the submodule devtools/ of the tree (dreamcast-devtools). Without NULLDC_DEVTOOLS_DIST the bundle is
+# looked for in <tree>/devtools/dist-native, then in <tree>/../dreamcast-devtools/dist-native; a place counts when
+# it has index.html, so an uninitialised submodule (an empty directory) or one whose UI was not built is passed
+# over. The build runs no npm: dist-native is built in the UI checkout (npm ci && npm run build:native). When the
+# tree is a git checkout, configure says when the embedded bundle was built from another commit than the one the
+# tree pins for its submodule (gitRev against the gitlink of devtools); that is a status line, not an error.
 
 # STRING, not PATH: a PATH entry given as -DNULLDC_DEVTOOLS_DIST=OFF would be turned into <cwd>/OFF.
 set(NULLDC_DEVTOOLS_DIST "" CACHE STRING
   "Devtools UI bundle (dist-native directory) to embed in the debugger. Empty: use <tree>/devtools/dist-native or <tree>/../dreamcast-devtools/dist-native when present. OFF: embed nothing.")
 
 set(DBG_WEBUI_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+
+# The status line about the commit the bundle in <dir> was built from and the commit <tree> pins for devtools/
+function(dbg_webui_check_pin tree dir)
+  file(READ "${dir}/bundle-info.json" info)
+  string(JSON built ERROR_VARIABLE error GET "${info}" gitRev)
+  if(NOT error STREQUAL "NOTFOUND")
+    set(built "")
+  endif()
+  find_package(Git QUIET)
+  set(pin "")
+  if(GIT_FOUND AND EXISTS "${tree}/.git")
+    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${tree}" ls-files --stage -- devtools
+                    RESULT_VARIABLE rc OUTPUT_VARIABLE stage ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(rc EQUAL 0 AND stage MATCHES "^160000 ([0-9a-f]+) ")
+      set(pin "${CMAKE_MATCH_1}")
+    endif()
+  endif()
+  string(REGEX REPLACE "-dirty$" "" built_commit "${built}")
+  if(pin STREQUAL "")
+    message(STATUS "Dreamcast DevTools: the tree pins no commit for devtools/ (not a git checkout, or no submodule): the bundle's commit (${built}) is not compared")
+  elseif(NOT built_commit MATCHES "^[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]+$")
+    message(STATUS "Dreamcast DevTools: the bundle does not say which commit it was built from (gitRev '${built}'); the submodule devtools is at ${pin}")
+  elseif(NOT built_commit STREQUAL pin)
+    message(STATUS "Dreamcast DevTools: the bundle was built from ${built}, another commit than the submodule devtools, ${pin}")
+  elseif(NOT built STREQUAL built_commit)
+    message(STATUS "Dreamcast DevTools: the bundle was built from the submodule's commit ${pin}, with uncommitted changes")
+  else()
+    message(STATUS "Dreamcast DevTools: the bundle was built from the submodule's commit ${pin}")
+  endif()
+endfunction()
 
 function(dbg_webui_data tree out_var)
   set(script "${DBG_WEBUI_CMAKE_DIR}/dbg_webui_embed.cmake")
@@ -64,6 +101,7 @@ function(dbg_webui_data tree out_var)
   if(dir STREQUAL "")
     message(STATUS "Dreamcast DevTools: not embedded (${reason})")
   else()
+    dbg_webui_check_pin("${tree}" "${dir}")
     file(READ "${dir}/bundle-info.json" info)
     string(JSON bundle_version ERROR_VARIABLE error1 GET "${info}" version)
     string(JSON bundle_protocol ERROR_VARIABLE error2 GET "${info}" protocol)

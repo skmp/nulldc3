@@ -9,7 +9,7 @@
 # The tests project (tests/CMakeLists.txt) adds this directory as well. What it sets is all optional here:
 #   NULLDC_TEST_PREFIX          put in front of every test name (debugger.net.)
 #   NULLDC_DEVTOOLS_DIR         the dreamcast-devtools checkout whose node_modules has the ws package, in
-#                               place of the devtools tree next to or inside this one
+#                               place of the submodule devtools/ of the tree or the checkout beside it
 #   NULLDC_TESTS_REQUIRE_DATA   interop_ws fails instead of being skipped
 
 cmake_minimum_required(VERSION 3.19)
@@ -99,7 +99,7 @@ endforeach()
 # the script prints "SKIP: <reason>" and returns 77 for the latter. With NULLDC_TESTS_REQUIRE_DATA either one
 # is a failed test.
 find_program(NODE_EXECUTABLE NAMES node nodejs)
-set(DBG_NET_NODE_MODULES "" CACHE PATH "node_modules directory that has the ws package (default: the devtools tree next to or inside this one)")
+set(DBG_NET_NODE_MODULES "" CACHE PATH "node_modules directory that has the ws package (default: the one of the submodule devtools/, else of ../dreamcast-devtools)")
 set(node_modules "${DBG_NET_NODE_MODULES}")
 set(candidates "")
 if(NOT DEFINED NULLDC_DEVTOOLS_DIR)
@@ -127,7 +127,7 @@ endif()
 
 # The embed step itself: which bundle is picked, what stops the configure step, what a rebuilt bundle does,
 # which files of a bundle are embedded.
-foreach(case off auto mismatch incomplete rebuilt corrupt names)
+foreach(case off auto pin mismatch incomplete rebuilt corrupt names)
   add_test(NAME ${NULLDC_TEST_PREFIX}embed_${case} COMMAND "${CMAKE_COMMAND}"
     "-DCASE=${case}" "-DTREE=${tree}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/embed_check/${case}" "-DGENERATOR=${CMAKE_GENERATOR}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_check/run.cmake")

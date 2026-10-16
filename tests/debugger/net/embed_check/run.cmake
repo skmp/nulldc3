@@ -3,7 +3,10 @@
 #   cmake -DCASE=<case> -DTREE=<emulator tree> -DWORK=<scratch directory> -DGENERATOR=<generator> -P run.cmake
 #
 #   off         NULLDC_DEVTOOLS_DIST=OFF wins over a bundle that would be found, and gives the empty table
-#   auto        the two places a bundle is looked for, their order, and what is said when there is none
+#   auto        the two places a bundle is looked for, their order, and what is said when there is none; an
+#               uninitialised submodule devtools/ (an empty directory) and one whose UI is not built are passed over
+#   pin         what configure says about the commit the bundle was built from (gitRev) and the commit the tree
+#               pins for its submodule devtools/ (the gitlink): the same, another, the same with changes, none
 #   mismatch    a bundle for another protocol version stops the configure step
 #   incomplete  a directory named explicitly that is not a bundle stops the configure step
 #   rebuilt     a rebuilt bundle (other asset names, other version) is embedded by the next build
@@ -98,6 +101,13 @@ elseif(CASE STREQUAL "auto")
   expect_success("configure without a bundle")
   expect_output("Dreamcast DevTools: not embedded \\(no bundle found, set NULLDC_DEVTOOLS_DIST")
 
+  # the submodule devtools/ of a clone that did not initialise it is an empty directory; one that did and has not
+  # built the UI has its sources and no dist-native/index.html. Neither is a bundle, and neither hides the next place
+  file(MAKE_DIRECTORY "${WORK}/top/tree/devtools")
+  configure("${WORK}/top/tree")
+  expect_success("configure with an empty devtools directory")
+  expect_output("Dreamcast DevTools: not embedded \\(no bundle found, set NULLDC_DEVTOOLS_DIST")
+
   # next to the tree, as a checkout of both repositories has it; not a bundle until the UI build says what it is
   write_bundle("${WORK}/top/dreamcast-devtools/dist-native" 3 "1.2.3" "aaaa1111" none)
   configure("${WORK}/top/tree")
@@ -107,6 +117,11 @@ elseif(CASE STREQUAL "auto")
   write_bundle("${WORK}/top/dreamcast-devtools/dist-native" 3 "1.2.3" "aaaa1111" sha256)
   configure("${WORK}/top/tree")
   expect_success("configure with the bundle next to the tree")
+  expect_output("Dreamcast DevTools: embedding .*/top/dreamcast-devtools/dist-native \\(1.2.3, protocol 3\\)")
+  file(WRITE "${WORK}/top/tree/devtools/package.json" "{}\n")
+  file(MAKE_DIRECTORY "${WORK}/top/tree/devtools/dist-native")
+  configure("${WORK}/top/tree")
+  expect_success("configure with a devtools submodule whose UI is not built")
   expect_output("Dreamcast DevTools: embedding .*/top/dreamcast-devtools/dist-native \\(1.2.3, protocol 3\\)")
   build()
   expect_success("build")
@@ -132,6 +147,45 @@ elseif(CASE STREQUAL "auto")
   expect_failure("configure with an old bundle inside the tree")
   expect_output("is built for protocol 2, the debugger speaks protocol 3")
   expect_output("NULLDC_DEVTOOLS_DIST=OFF")
+
+elseif(CASE STREQUAL "pin")
+  find_program(git NAMES git)
+  if(NOT git)
+    message(FATAL_ERROR "${CASE}: no git to make a tree with a submodule")
+  endif()
+  set(tree "${WORK}/tree")
+  set(pin "0123456789abcdef0123456789abcdef01234567")
+  execute_process(COMMAND "${git}" init -q "${tree}" RESULT_VARIABLE rc)
+  execute_process(COMMAND "${git}" -C "${tree}" update-index --add --cacheinfo "160000,${pin},devtools" RESULT_VARIABLE rc2)
+  if(NOT rc EQUAL 0 OR NOT rc2 EQUAL 0)
+    message(FATAL_ERROR "${CASE}: git could not make the tree")
+  endif()
+  write_bundle("${tree}/devtools/dist-native" 3 "1.0.0" "${pin}" sha256)
+  configure("${tree}")
+  expect_success("configure with the bundle of the pinned commit")
+  expect_output("Dreamcast DevTools: the bundle was built from the submodule's commit ${pin}")
+
+  write_bundle("${tree}/devtools/dist-native" 3 "1.0.0" "fedcba9876543210fedcba9876543210fedcba98" sha256)
+  configure("${tree}")
+  expect_success("configure with the bundle of another commit")
+  expect_output("Dreamcast DevTools: the bundle was built from fedcba9876543210fedcba9876543210fedcba98, another commit than the submodule devtools, ${pin}")
+
+  write_bundle("${tree}/devtools/dist-native" 3 "1.0.0" "${pin}-dirty" sha256)
+  configure("${tree}")
+  expect_success("configure with the bundle of the pinned commit and changes")
+  expect_output("the bundle was built from the submodule's commit ${pin}, with uncommitted changes")
+
+  # a bundle that names no commit: the UI built without git ("") or a fixture's name
+  write_bundle("${tree}/devtools/dist-native" 3 "1.0.0" "fixture" sha256)
+  configure("${tree}")
+  expect_success("configure with a bundle that names no commit")
+  expect_output("Dreamcast DevTools: the bundle does not say which commit it was built from \\(gitRev 'fixture'\\); the submodule devtools is at ${pin}")
+
+  # a tree that is no git checkout pins nothing
+  write_bundle("${WORK}/plain/devtools/dist-native" 3 "1.0.0" "${pin}" sha256)
+  configure("${WORK}/plain")
+  expect_success("configure in a tree that is no git checkout")
+  expect_output("Dreamcast DevTools: the tree pins no commit for devtools/")
 
 elseif(CASE STREQUAL "mismatch")
   write_bundle("${WORK}/bundle" 2 "0.9.0" "aaaa1111" sha256)

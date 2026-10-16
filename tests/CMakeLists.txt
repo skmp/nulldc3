@@ -42,9 +42,12 @@ endif()
 set(NULLDC_WREN7_DIR "${nulldc_wren7_default}"
     CACHE PATH "wren7-rtl checkout (ARM7 console suites), empty: those tests are skipped")
 
+# The UI: the submodule devtools/ (dreamcast-devtools), else a checkout beside the tree. A place counts when it has
+# package.json and node_modules (npm ci was run there): an uninitialised submodule is an empty directory.
+# devtools.commit checks that the checkout is at the commit the tree pins for its submodule.
 set(nulldc_devtools_default "")
 foreach(candidate "${nulldc_root_path}/devtools" "${nulldc_root_path}/../dreamcast-devtools")
-  if(nulldc_devtools_default STREQUAL "" AND EXISTS "${candidate}")
+  if(nulldc_devtools_default STREQUAL "" AND EXISTS "${candidate}/package.json" AND IS_DIRECTORY "${candidate}/node_modules")
     get_filename_component(nulldc_devtools_default "${candidate}" ABSOLUTE)
   endif()
 endforeach()
@@ -169,3 +172,4 @@ add_subdirectory(debugger/selftest)
 add_subdirectory(debugger/contract)
 add_subdirectory(debugger/guest)
 add_subdirectory(aica_dsp)
+add_subdirectory(devtools)
