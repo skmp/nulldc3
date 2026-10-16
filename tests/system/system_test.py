@@ -705,6 +705,18 @@ RUN_FILES = ('emu.cfg', 'vmu_save_A1.bin', 'vmu_save_A2.bin')
 # An emu.cfg that would show if it were read: the exit line of a run that does not ask for it gets a state hash
 HASH_CFG = '[config]\nExit.StateHash = yes\n'
 
+# A flash that would show if it were read: reios loads data/dc_nvmem.bin of the first directory of the run's data
+# list that has a data/ and says "Loaded <path> as nvram", without one "No nvmem loaded". 128 KiB, erased.
+FLASH = b'\xff' * (128 * 1024)
+
+# Below a scratch directory (scratch() points XDG_CONFIG_DIRS at sys/c and XDG_DATA_DIRS at sys/d): the places the
+# reicast builds read an emu.cfg from, and the places they read data/ from (the config directories as well)
+REICAST_CONFIGS = ('home/.reicast', 'home/.config/reicast', 'xdg/config/reicast', 'sys/c/reicast')
+REICAST_DATAS = REICAST_CONFIGS + ('home/.local/share/reicast', 'xdg/data/reicast', 'sys/d/reicast')
+# the places of nulldc3 that --shared reads: the per-user ones of HOME and of the XDG variables, the system lists
+SHARED_CONFIGS = ('home/.config/nulldc3', 'xdg/config/nulldc3', 'sys/c/nulldc3')
+SHARED_DATAS = ('home/.local/share/nulldc3', 'xdg/data/nulldc3', 'sys/d/nulldc3')
+
 
 def listing(top):
     """Every directory (with a / at its end) and file below top, relative to it, files with their size."""
@@ -720,10 +732,10 @@ def listing(top):
 
 def scratch(h, name, env_dirs=True):
     """<work>/<name>: bin/nulldc3, a copy of the emulator; cwd/, an empty working directory; home/, an empty HOME;
-    and with env_dirs xdg/config and xdg/data, empty, for XDG_CONFIG_HOME and XDG_DATA_HOME. Returns the
-    directory, the copy and the environment. The directory is named with every symbolic link resolved, the way
-    the emulator names the directory of its executable (/proc/self/exe) and a relative --portable (getcwd): --work
-    may be reached through a link."""
+    and with env_dirs xdg/config and xdg/data, empty, for XDG_CONFIG_HOME and XDG_DATA_HOME, and XDG_CONFIG_DIRS
+    and XDG_DATA_DIRS set to sys/c and sys/d (not made). Returns the directory, the copy and the environment. The
+    directory is named with every symbolic link resolved, the way the emulator names the directory of its
+    executable (/proc/self/exe) and a relative --portable (getcwd): --work may be reached through a link."""
     top = os.path.realpath(os.path.join(h.work, name))
     for sub in ('bin', 'cwd', 'home'):
         os.makedirs(os.path.join(top, sub))
@@ -734,8 +746,38 @@ def scratch(h, name, env_dirs=True):
         for sub in ('config', 'data'):
             os.makedirs(os.path.join(top, 'xdg', sub))
         env.update({'XDG_CONFIG_HOME': os.path.join(top, 'xdg', 'config'),
-                    'XDG_DATA_HOME': os.path.join(top, 'xdg', 'data')})
+                    'XDG_DATA_HOME': os.path.join(top, 'xdg', 'data'),
+                    'XDG_CONFIG_DIRS': os.path.join(top, 'sys', 'c'),
+                    'XDG_DATA_DIRS': os.path.join(top, 'sys', 'd')})
     return top, binary, env
+
+
+def seed(top, configs=(), datas=()):
+    """Below top: an emu.cfg that asks for a state hash (HASH_CFG) in each directory of configs, and a flash
+    (data/dc_nvmem.bin) in each directory of datas; the directories are made."""
+    for directory in configs:
+        os.makedirs(os.path.join(top, directory), exist_ok=True)
+        with open(os.path.join(top, directory, 'emu.cfg'), 'w') as f:
+            f.write(HASH_CFG)
+    for directory in datas:
+        os.makedirs(os.path.join(top, directory, 'data'), exist_ok=True)
+        with open(os.path.join(top, directory, 'data', 'dc_nvmem.bin'), 'wb') as f:
+            f.write(FLASH)
+
+
+def check_flash(run, path=None):
+    """path None: reios loaded no flash ("No nvmem loaded"); otherwise the one at path, and no other."""
+    loaded = re.findall(r'^Loaded (.*) as nvram$', run.log, re.M)
+    if path is None:
+        check(not loaded and 'No nvmem loaded' in run.log, 'a flash of another directory was read: %s' % loaded, run)
+    else:
+        check(loaded == [path], 'the flash that was read is %s, expected %s' % (loaded, path), run)
+
+
+def check_reads_its_own(run):
+    """The run read no emu.cfg and no flash that seed() put somewhere else: no state hash, no flash."""
+    check('hash' not in run.fields, 'an emu.cfg of another directory was read: the exit line has a state hash', run)
+    check_flash(run)
 
 
 def check_new(run, top, before, expected, what):
@@ -763,23 +805,28 @@ def guest_run(h, tag, binary, cwd, env, extra_args=(), keys=(), program=True):
 def case_dirs_default(h):
     """Without --portable and --shared the files are in the directory of the executable, from the system: a copy of
     the emulator in a scratch directory, started from another working directory, writes them beside itself and
-    nowhere else (not into the working directory, HOME or the XDG directories). Started through a symbolic link in
-    a third directory, the directory is the one of the file the link points at."""
+    nowhere else (not into the working directory, HOME or the XDG directories), and reads nothing of the other
+    places (an emu.cfg and a flash in each place of reicast and of --shared). Started through a symbolic link in a
+    third directory, the directory is the one of the file the link points at."""
     top, binary, env = scratch(h, 'default.dirs')
+    seed(top, REICAST_CONFIGS + SHARED_CONFIGS, REICAST_DATAS + SHARED_DATAS)
     before = listing(top)
     run = guest_run(h, 'default', binary, os.path.join(top, 'cwd'), env)
     check_clean(run, 'guest-exit')
+    check_reads_its_own(run)
     check_dirs_line(run, os.path.join(top, 'bin'))
     check_new(run, top, before, ['bin/' + name for name in RUN_FILES], 'a run in the directory of its executable')
     check(sorted(os.listdir(run.directory)) == ['log.txt'], 'the run wrote into its working directory', run)
 
     top, binary, env = scratch(h, 'link.dirs')
+    seed(top, REICAST_CONFIGS + SHARED_CONFIGS, REICAST_DATAS + SHARED_DATAS)
     os.makedirs(os.path.join(top, 'link'))
     link = os.path.join(top, 'link', 'nulldc3')
     os.symlink(binary, link)
     before = listing(top)
     run = guest_run(h, 'link', link, os.path.join(top, 'cwd'), env)
     check_clean(run, 'guest-exit')
+    check_reads_its_own(run)
     check_dirs_line(run, os.path.join(top, 'bin'))
     check_new(run, top, before, ['bin/' + name for name in RUN_FILES], 'a run through a symbolic link')
 
@@ -787,11 +834,14 @@ def case_dirs_default(h):
 def case_dirs_portable(h):
     """--portable <dir>: the files are in <dir> and nowhere else, not beside the executable. A directory that is not
     there is made, with the ones above it; a relative one is relative to the working directory; a name with blanks
-    is one word; one that is there is taken as it is. "--" ends the switches: a game behind it may begin with a
-    dash."""
+    is one word; one that is there is taken as it is, and its emu.cfg and its flash are read. Nothing of the other
+    places is read (an emu.cfg and a flash in each place of reicast and of --shared). "--" ends the switches: a
+    game behind it may begin with a dash."""
     top, binary, env = scratch(h, 'portable.dirs')
+    seed(top, REICAST_CONFIGS + SHARED_CONFIGS, REICAST_DATAS + SHARED_DATAS)
     cwd = os.path.join(top, 'cwd')
-    os.makedirs(os.path.join(top, 'there'))
+    # the directory that is there has an emu.cfg that asks for a state hash and a flash: both are read
+    seed(top, ['there'], ['there'])
     for tag, given, made in (('missing', os.path.join(top, 'p', 'not', 'there'), ['p/', 'p/not/', 'p/not/there/']),
                              ('relative', os.path.join('rel', 'dir'), ['cwd/rel/', 'cwd/rel/dir/']),
                              ('blanks', os.path.join(top, 'with blanks', 'and more'),
@@ -802,7 +852,14 @@ def case_dirs_portable(h):
         run = guest_run(h, 'portable_' + tag, binary, cwd, env, extra_args=['--portable', given])
         check_clean(run, 'guest-exit')
         check_dirs_line(run, os.path.join(top, directory))
-        check_new(run, top, before, made + [directory + '/' + name for name in RUN_FILES], '--portable %s' % given)
+        if tag == 'there':
+            check('hash' in run.fields, 'the emu.cfg of the --portable directory was not read', run)
+            check_flash(run, os.path.join(top, 'there', 'data', 'dc_nvmem.bin'))
+            files = [name for name in RUN_FILES if name != 'emu.cfg']
+        else:
+            check_reads_its_own(run)
+            files = RUN_FILES
+        check_new(run, top, before, made + [directory + '/' + name for name in files], '--portable %s' % given)
 
     # a game whose name begins with a dash, behind "--"
     shutil.copy(h.guest('guest_exit'), os.path.join(cwd, '-guest_exit.bin'))
@@ -811,55 +868,56 @@ def case_dirs_portable(h):
                     extra_args=['--portable', os.path.join(top, 'dash'), '--', '-guest_exit.bin'])
     check_clean(run, 'guest-exit')
     check('guest: returning to the BIOS' in run.log, 'the game behind "--" did not run', run)
+    check_reads_its_own(run)
     check_new(run, top, before, ['dash/'] + ['dash/' + name for name in RUN_FILES], '-- -guest_exit.bin')
 
 
 def case_dirs_shared(h):
     """--shared: the files are in $XDG_CONFIG_HOME/nulldc3 and $XDG_DATA_HOME/nulldc3, made when missing, and
     nowhere else, not beside the executable; without the variables in ~/.config/nulldc3 and ~/.local/share/nulldc3.
-    The reicast directories of before are there and not read; the XDG system lists are read behind the user's
-    directory."""
+    The reicast directories of before are there and not read, neither their emu.cfg nor their flash, and with the
+    variables neither are the directories below HOME; the XDG system lists are read behind the user's directory,
+    an emu.cfg of XDG_CONFIG_DIRS and a flash of XDG_DATA_DIRS."""
     top, binary, env = scratch(h, 'shared.dirs')
     cwd = os.path.join(top, 'cwd')
-    # every place the reicast builds read a config from: one that is read asks for a state hash
-    for reicast in ('home/.reicast', 'home/.config/reicast', 'xdg/config/reicast', 'sys/a/reicast'):
-        os.makedirs(os.path.join(top, reicast))
-        with open(os.path.join(top, reicast, 'emu.cfg'), 'w') as f:
-            f.write(HASH_CFG)
-    os.makedirs(os.path.join(top, 'home', '.local', 'share', 'reicast', 'data'))
-    env['XDG_CONFIG_DIRS'] = os.path.join(top, 'sys', 'a')
-    env['XDG_DATA_DIRS'] = os.path.join(top, 'sys', 'data')
+    # every place the reicast builds read a config or a flash from, and the two below HOME that the XDG variables
+    # replace: none of them is read
+    seed(top, REICAST_CONFIGS + ('home/.config/nulldc3',), REICAST_DATAS + ('home/.local/share/nulldc3',))
 
     before = listing(top)
     run = guest_run(h, 'shared_xdg', binary, cwd, env, extra_args=['--shared'])
     check_clean(run, 'guest-exit')
-    check('hash' not in run.fields, 'a reicast emu.cfg was read: the exit line has a state hash', run)
+    check_reads_its_own(run)
     check_dirs_line(run, os.path.join(top, 'xdg', 'config', 'nulldc3'), os.path.join(top, 'xdg', 'data', 'nulldc3'))
     check_new(run, top, before, ['xdg/config/nulldc3/', 'xdg/config/nulldc3/emu.cfg', 'xdg/data/nulldc3/',
                                  'xdg/data/nulldc3/vmu_save_A1.bin', 'xdg/data/nulldc3/vmu_save_A2.bin'],
               '--shared with XDG_CONFIG_HOME and XDG_DATA_HOME')
 
-    # without the two variables: below HOME
+    # without the two variables: below HOME. Its data directory has the flash of above, which is read now; its
+    # config directory goes, so that a reicast emu.cfg would still show
+    shutil.rmtree(os.path.join(top, 'home', '.config', 'nulldc3'))
     plain = {k: v for k, v in env.items() if k not in ('XDG_CONFIG_HOME', 'XDG_DATA_HOME')}
     before = listing(top)
     run = guest_run(h, 'shared_home', binary, cwd, plain, extra_args=['--shared'])
     check_clean(run, 'guest-exit')
     check('hash' not in run.fields, 'a reicast emu.cfg was read: the exit line has a state hash', run)
+    check_flash(run, os.path.join(top, 'home', '.local', 'share', 'nulldc3', 'data', 'dc_nvmem.bin'))
     check_dirs_line(run, os.path.join(top, 'home', '.config', 'nulldc3'),
                     os.path.join(top, 'home', '.local', 'share', 'nulldc3'))
     check_new(run, top, before, ['home/.config/nulldc3/', 'home/.config/nulldc3/emu.cfg',
-                                 'home/.local/share/nulldc3/', 'home/.local/share/nulldc3/vmu_save_A1.bin',
+                                 'home/.local/share/nulldc3/vmu_save_A1.bin',
                                  'home/.local/share/nulldc3/vmu_save_A2.bin'], '--shared with HOME only')
 
-    # a config of the system list, nulldc3/emu.cfg in its second directory, is read when the user has none
-    os.makedirs(os.path.join(top, 'sys', 'b', 'nulldc3'))
-    with open(os.path.join(top, 'sys', 'b', 'nulldc3', 'emu.cfg'), 'w') as f:
-        f.write(HASH_CFG)
+    # the system lists: nulldc3/emu.cfg in the second directory of XDG_CONFIG_DIRS and nulldc3/data/dc_nvmem.bin in
+    # the second one of XDG_DATA_DIRS are read when the user has none
+    seed(top, ['sys/c2/nulldc3'], ['sys/d2/nulldc3'])
     system = dict(env, XDG_CONFIG_HOME=os.path.join(top, 'xdg2', 'config'), XDG_DATA_HOME=os.path.join(top, 'xdg2', 'data'),
-                  XDG_CONFIG_DIRS=os.path.join(top, 'sys', 'a') + ':' + os.path.join(top, 'sys', 'b'))
+                  XDG_CONFIG_DIRS=os.path.join(top, 'sys', 'c') + ':' + os.path.join(top, 'sys', 'c2'),
+                  XDG_DATA_DIRS=os.path.join(top, 'sys', 'd') + ':' + os.path.join(top, 'sys', 'd2'))
     run = guest_run(h, 'shared_system', binary, cwd, system, extra_args=['--shared'])
     check_clean(run, 'guest-exit')
     check('hash' in run.fields, 'the emu.cfg of $XDG_CONFIG_DIRS (its second directory) was not read', run)
+    check_flash(run, os.path.join(top, 'sys', 'd2', 'nulldc3', 'data', 'dc_nvmem.bin'))
     check(not os.path.exists(os.path.join(top, 'bin', 'emu.cfg')), 'a --shared run wrote beside the executable', run)
 
 
