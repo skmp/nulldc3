@@ -270,9 +270,12 @@ def check_hash(run):
 # The cases
 
 
-# What --help lists: every switch of a Linux build, and the form of the list behind --config
-HELP_TEXTS = ('Usage: nulldc3 [switches] [game]', '--config section:key=value [ , section:key=value ]...',
-              '--portable <dir>', '--shared', '--help', '  --  ', 'docs/nulldc3/automated-runs.md')
+# What --help lists: every switch of a Linux build, each at the start of a line of its own (two blanks in front,
+# a blank or the end of the line behind), with the form of the list behind --config and of the directory of
+# --portable
+HELP_SWITCHES = ('--config section:key=value [ , section:key=value ]...', '--portable <dir>', '--shared', '--help',
+                 '--')
+HELP_TEXTS = ('Usage: nulldc3 [switches] [game]', 'docs/nulldc3/automated-runs.md')
 
 
 def case_help(h):
@@ -284,6 +287,9 @@ def case_help(h):
     check(run.returncode == 0, 'exit code %s' % run.returncode, run)
     for text in HELP_TEXTS:
         check(text in run.log, 'the usage text has no "%s"' % text, run)
+    for switch in HELP_SWITCHES:
+        check(re.search(r'^  %s(\s|$)' % re.escape(switch), run.log, re.M) is not None,
+              'the usage text lists no "%s" (at the start of a line)' % switch, run)
     one_dash = re.findall(r'(?<![-\w])-(?:config|portable|shared|help)\b', run.log)
     check(not one_dash, 'the usage text has a one-dash switch: %s' % one_dash, run)
     check('Config dir is' not in run.log and 'nulldc-exit' not in run.log, 'a run after --help', run)
