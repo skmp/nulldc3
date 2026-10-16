@@ -1,4 +1,4 @@
-# sh4.fpu.scalar baseline: what devcast's SH4 interpreter and dynarec leave of the hardware's results, per group.
+# sh4.fpu.scalar baseline: what nullDC's SH4 interpreter and dynarec leave of the hardware's results, per group.
 #   total     cases, of which
 #   trap      the hardware raises the FPU exception and writes no result
 #   value-i   the interpreter leaves the hardware's FR, XF, FPUL and T        value-d   the dynarec does

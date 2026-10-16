@@ -10,7 +10,7 @@
 	written, the texture cache, the breakpoint state behind a written PC, the register banks, the interrupt
 	acceptance, the FP mode of compiled code.
 
-	    devcast -config config:Headless=yes , audio:backend=none , Debugger:SelfTest=writes tests/debugger/guest/dsptest/dsptest.elf
+	    nulldc3 --config config:Headless=yes , audio:backend=none , Debugger:SelfTest=writes tests/debugger/guest/dsptest/dsptest.elf
 
 	The guest is the sounding guest of the tree (tests/debugger/guest/dsptest, README.md there), whose addresses
 	come from dsptest_labels.inc. Its SH4 counts in a loop of ten instructions, g_main_loop: one block of the

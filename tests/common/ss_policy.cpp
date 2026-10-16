@@ -9,9 +9,9 @@
 
 //Reasons that more than one file shares
 static const char known_oix[] =
-	"devcast: the operand cache as ram hack is keyed on address bit 25 alone, not on CCR.OIX and the cache area";
+	"nullDC: the operand cache as ram hack is keyed on address bit 25 alone, not on CCR.OIX and the cache area";
 static const char known_sum_of_products[] =
-	"devcast rounds (and overflows) every product and every sum to single precision and adds the products in one "
+	"nullDC rounds (and overflows) every product and every sum to single precision and adds the products in one "
 	"order in both engines, FIPR in pairs, (p0 + p1) + (p2 + p3), FTRV one by one, ((p0 + p1) + p2) + p3. The vectors "
 	"carry the fused multiply-add of the host that generated them. Neither is the SH4's sum of products";
 
@@ -463,7 +463,7 @@ const char* ss_filter_description(SsFilterReason reason)
 	{
 	case SSF_UNALIGNED:
 		return "16/32/64 bit data access at an address that is not a multiple of its width. The vectors access "
-		       "unaligned memory freely, an SH4 raises an address error and devcast ends in its unaligned access handler";
+		       "unaligned memory freely, an SH4 raises an address error and nullDC ends in its unaligned access handler";
 	case SSF_ODD_PC:
 		return "instruction fetch from an odd address (jump through a register with bit 0 set). The vectors fetch from it, "
 		       "an SH4 raises an address error";

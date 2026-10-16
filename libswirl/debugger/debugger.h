@@ -79,7 +79,7 @@ namespace dbg {
 /*
 	Process start and end (dbg_main.cpp).
 
-	Section Debugger of the configuration (on the command line: -config Debugger:Port=0), keys and defaults:
+	Section Debugger of the configuration (on the command line: --config Debugger:Port=0), keys and defaults:
 	  read by Init()          Enabled yes (no in an automated run: headless, or an Exit.* key that ends the
 	                          run; and no in a selftest session: Debugger:SelfTest set), Bind 127.0.0.1,
 	                          Port 55543, Required no, AllowedHosts (empty), WebRoot (empty), TickMs 200,

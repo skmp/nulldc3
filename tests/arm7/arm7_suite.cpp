@@ -162,7 +162,7 @@ static bool save_baseline(const std::string& path)
 	if (!f)
 		return false;
 
-	fprintf(f, "# What devcast's ARM7 interpreter passes of the ARM7 tests, per test and check.\n");
+	fprintf(f, "# What nullDC's ARM7 interpreter passes of the ARM7 tests, per test and check.\n");
 	fprintf(f, "# A test fails when one of its checks passes fewer cases than listed here. KNOWN_FAILURES.md has the\n");
 	fprintf(f, "# reason for every check that is below its total.\n");
 	fprintf(f, "# Written by --update-baseline of the tests, see README.md.\n");

@@ -209,7 +209,7 @@ static bool save_baseline(const std::string& path, const char* name, const SsSui
 	if (!f)
 		return false;
 
-	fprintf(f, "# %s baseline: what devcast passes of the single-step vectors, per file.\n", name);
+	fprintf(f, "# %s baseline: what nullDC passes of the single-step vectors, per file.\n", name);
 	fprintf(f, "# The test fails when a file runs or passes fewer vectors than listed here,%s has more during which the\n",
 		suite.native ? "" : " or");
 	fprintf(f, "# emulator code raises a notification (msgboxf) and carries on%s.\n",

@@ -368,7 +368,7 @@ static bool save_baseline(const std::string& path)
 	if (!f)
 		return false;
 
-	fprintf(f, "# %s baseline: what devcast's SH4 interpreter and dynarec leave of the hardware's results, per group.\n", baseline_name.c_str());
+	fprintf(f, "# %s baseline: what nullDC's SH4 interpreter and dynarec leave of the hardware's results, per group.\n", baseline_name.c_str());
 	fprintf(f, "#   total     cases, of which\n");
 	fprintf(f, "#   trap      the hardware raises the FPU exception and writes no result\n");
 	fprintf(f, "#   value-i   the interpreter leaves the hardware's FR, XF, FPUL and T        value-d   the dynarec does\n");

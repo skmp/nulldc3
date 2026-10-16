@@ -7,7 +7,7 @@
 	  the bus      every data access in order: read or write, width, address and value
 	  the state    every register, bit for bit
 	  the outcome  running through, and what the emulator code notifies of on the way (msgboxf)
-	What a vector expects plays no part. Only the vectors that devcast cannot run are filtered: unaligned data
+	What a vector expects plays no part. Only the vectors that nullDC cannot run are filtered: unaligned data
 	accesses and odd PCs (ss_policy.h).
 
 	Per file the report has: total / run / identical / different / both-crash / both-notify / native / filtered,
@@ -466,7 +466,7 @@ int main(int argc, char** argv)
 		return 2;
 	}
 
-	//What the vectors expect does not matter here, what devcast cannot run does
+	//What the vectors expect does not matter here, what nullDC cannot run does
 	u32 ignore = ~((1u << SSF_UNALIGNED) | (1u << SSF_ODD_PC)) | opt.unfilter;
 
 	std::vector<std::string> files;

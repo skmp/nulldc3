@@ -18,7 +18,7 @@
   the design differed until the end of the round, when the design was brought to it (package M2G); the design, the
   decisions and the frozen headers cite it for header revision 6, the M2 tree and the guest's contract.
 - `sh4-breakpoints-spec.md` — the SH4 breakpoint / single-step mechanism in the active backend, with the prototype's results.
-- `automated-runs.md` — headless mode, the `-config` keys that end a run, the exit line and its state hash, the pinned
+- `automated-runs.md` — headless mode, the `--config` keys that end a run, the exit line and its state hash, the pinned
   RTC, what a fatal fault and a signal that is sent do. Reference for `tests/system` and `tests/perf`.
 
 These are snapshots of working documents. They name each other by their working names (the design has the table at its

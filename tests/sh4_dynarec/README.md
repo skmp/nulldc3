@@ -63,7 +63,7 @@ instructions on the same memory and are compared on
 * the outcome: running through, and what the emulator code notified of (`msgboxf`) on the way.
 
 The memory (`diff_memory`) returns the vector's opcodes for fetches, the vector's recorded value for its data read
-and a value made of the address anywhere else, whatever the order of the accesses. Only the vectors devcast cannot
+and a value made of the address anywhere else, whatever the order of the accesses. Only the vectors nullDC cannot
 run are filtered (`unaligned`, `odd-pc`): 91,989 of 116,500 run.
 
 A vector is *identical*, *different* (by the first of: crash, path, bus, state, notify), *both-crash* (both
