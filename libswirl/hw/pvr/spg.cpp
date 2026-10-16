@@ -12,6 +12,7 @@
 #include "hw/holly/holly_intc.h"
 #include "oslib/oslib.h"
 #include "hw/sh4/sh4_sched.h"
+#include "debugger/debugger.h"
 
 //SPG emulation; Scanline/Raster beam registers & interrupts
 //Time to emulate that stuff correctly ;)
@@ -173,6 +174,7 @@ struct SPG_impl final : SPG {
                 //Vblank counter
                 vblk_cnt++;
                 vblank_count_monotonic++;
+                DBG_EVENT(dbg::EV_CORE_VBLANK, "vblank %u", vblank_count_monotonic);
                 asic->RaiseInterrupt(holly_HBLank);// -> This turned out to be HBlank btw , needs to be emulated ;(
                 //TODO : rend_if_VBlank();
                 rend_vblank();//notify for vblank :)
@@ -294,6 +296,8 @@ struct SPG_impl final : SPG {
 
     int rend_end_sch(int tag, int cycl, int jitt)
     {
+        DBG_EVENT(dbg::EV_CORE_RENDER_END, "render done");
+
         asic->RaiseInterrupt(holly_RENDER_DONE);
         asic->RaiseInterrupt(holly_RENDER_DONE_isp);
         asic->RaiseInterrupt(holly_RENDER_DONE_vd);

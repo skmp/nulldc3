@@ -10,11 +10,7 @@
 
 #include "types.h"
 
-#if defined(TARGET_IPHONE) //apple-specific ogles2 headers
-	//#include <APPLE/egl.h>
-	#include <OpenGLES/ES2/gl.h>
-	#include <OpenGLES/ES2/glext.h>
-#elif HOST_OS == OS_DARWIN
+#if HOST_OS == OS_DARWIN
 	#include <OpenGL/gl3.h>
 #else
 	#include "khronos/GLES32/gl32.h"

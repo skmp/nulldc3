@@ -8,10 +8,13 @@
 #include "types.h"
 #include "oslib/oslib.h"
 #include "assert.h"
+#include "debugger/debugger.h"
 
 #define SCIEB_addr 0x289C
 #define SCIPD_addr (0x289C+4)
 #define SCIRE_addr (0x289C+8)
+#define SCILV0_addr (0x289C+12)
+#define SCILV2_addr (0x289C+20)
 
 #define MCIEB_addr 0x28B4
 #define MCIPD_addr (0x28B4+4)
@@ -351,6 +354,8 @@ public:
 				data->count++;
 				if (data->count==0)
 				{
+					DBG_EVENT(dbg::EV_AICA_TIMER, "timer %c overflowed", (int)('A' + id));
+
 					if (id==0)
 					{
 						SCIPD->TimerA=1;

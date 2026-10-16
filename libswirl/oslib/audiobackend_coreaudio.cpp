@@ -76,11 +76,7 @@ static void coreaudio_init(audio_backend_pull_callback_t pull_callback) {
     
     // Setup the AudioComponent
     desc.componentType = kAudioUnitType_Output;
-#if !defined(TARGET_IPHONE)
     desc.componentSubType = kAudioUnitSubType_DefaultOutput;
-#else
-    desc.componentSubType = kAudioUnitSubType_RemoteIO;
-#endif
     desc.componentFlags = 0;
     desc.componentFlagsMask = 0;
     desc.componentManufacturer = kAudioUnitManufacturer_Apple;

@@ -30,7 +30,6 @@
 #include "rend/gles/gles.h"
 #include "linux-dist/main.h"	// FIXME for kcode[]
 #include "gui_util.h"
-#include "gui_android.h"
 
 #include "version.h"
 #include "oslib/audiostream.h"
@@ -44,6 +43,7 @@
 
 #include "libswirl.h"
 #include "gui/gui_renderer.h"
+#include "utils/run_control.h"
 
 bool game_started;
 
@@ -56,9 +56,6 @@ int scaling_int = 1;
 GuiState gui_state = Welcome;
 
 bool settings_opening;
-#ifdef _ANDROID
-static bool touch_up;
-#endif
 
 extern bool subfolders_read;
 
@@ -110,11 +107,7 @@ static const int vmu_coords[8][2] = {
         { 1 , 1 },
 };
 
-#ifdef _ANDROID
-static std::string current_library_path("/storage/emulated/0/Download");
-#else
 static std::string current_library_path("/home/raph/RetroPie/roms/dreamcast/");
-#endif
 
 void reset_vmus()
 {
@@ -164,20 +157,6 @@ void ImGui_Impl_NewFrame()
         io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
     else
         io.MousePos = ImVec2(real_x, real_y);
-#ifdef _ANDROID
-    // Put the "mouse" outside the screen one frame after a touch up
-    // This avoids buttons and the like to stay selected
-    if ((mo_buttons & 0xf) == 0xf)
-    {
-        if (touch_up)
-        {
-            io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
-            touch_up = false;
-        }
-        else if (io.MouseDown[0])
-            touch_up = true;
-    }
-#endif
     if (io.WantCaptureMouse)
     {
         io.MouseWheel = -mo_wheel_delta / 16;
@@ -272,11 +251,6 @@ struct ReicastUI_impl : GUI {
         ImGui::GetStyle().ItemSpacing = ImVec2(8, 8);		// from 8,4
         ImGui::GetStyle().ItemInnerSpacing = ImVec2(4, 6);	// from 4,4
         //ImGui::GetStyle().WindowRounding = 0;
-#ifdef _ANDROID
-        ImGui::GetStyle().GrabMinSize = 20.0f;				// from 10
-        ImGui::GetStyle().ScrollbarSize = 24.0f;			// from 16
-        ImGui::GetStyle().TouchExtraPadding = ImVec2(1, 1);	// from 0,0
-#endif
 
     // Setup Platform/Renderer bindings
         // ImGui_ImplOpenGL3_Init(); -> this is donwe on the thread now
@@ -372,9 +346,6 @@ struct ReicastUI_impl : GUI {
         case VJoyEdit:
             break;
         case VJoyEditCommands:
-#ifdef _ANDROID
-            gui_display_vjoy_commands(screen_width, screen_height, scaling);
-#endif
             break;
         }
 
@@ -534,7 +505,7 @@ struct ReicastUI_impl : GUI {
         ImGui::SetNextWindowPos(ImVec2(screen_width / 2.f, screen_height / 2.f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(330 * scaling, 0));
 
-        ImGui::Begin("devcast", NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::Begin("nullDC", NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
 
 
 
@@ -1075,12 +1046,15 @@ struct ReicastUI_impl : GUI {
     }
 };
 
+GUI* CreateHeadlessGUI();
+
 GUI* GUI::Create() {
+    if (runctl_headless())
+        return CreateHeadlessGUI();
 
     return new ReicastUI_impl();
 }
 
-#if !defined(_ANDROID)
 int msgboxf(const wchar* text, unsigned int type, ...) {
     va_list args;
 
@@ -1092,8 +1066,9 @@ int msgboxf(const wchar* text, unsigned int type, ...) {
     printf("%s\n", temp);
     fflush(stdout);
 
-    g_GUI->DisplayNotification(temp, 2000);
+    // die() and verify() end up here, also before there is a GUI
+    if (g_GUI)
+        g_GUI->DisplayNotification(temp, 2000);
 
     return 1;
 }
-#endif

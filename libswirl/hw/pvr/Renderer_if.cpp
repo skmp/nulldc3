@@ -18,6 +18,7 @@
 #include "deps/crypto/md5.h"
 
 #include "scripting/lua_bindings.h"
+#include "utils/run_control.h"
 
 #include <memory>
 #include <atomic>
@@ -486,7 +487,7 @@ void rend_start_render(u8* vram)
 void rend_end_render()
 {
 #if 1 //also disabled the printf, it takes quite some time ...
-	#if HOST_OS!=OS_WINDOWS && !(defined(_ANDROID) || defined(TARGET_PANDORA))
+	#if HOST_OS!=OS_WINDOWS
 		//too much console spam.
 		//TODO: how about a counter?
 		//if (!re.state) printf("Render > Extended time slice ...\n");
@@ -533,6 +534,8 @@ void rend_vblank()
 	}
 	render_called = false;
     pvr_update_framebuffer_watches();
+
+    runctl_vblank();
 }
 
 

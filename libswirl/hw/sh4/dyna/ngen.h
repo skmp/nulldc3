@@ -96,14 +96,26 @@ void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc);
 u32 DYNACALL rdv_DoInterrupts(void* block_cpde);
 u32 DYNACALL rdv_DoInterrupts_pc(u32 pc);
 
+//Called where the code of a block ends in front of its last instruction (RuntimeBlockInfo::dbg_rest_pc): the rest
+//of the block, from pc to end_pc, runs next, outside the block cache and for these cycles. The caller gives the
+//cycles back to the slice counter and leaves Mainloop or RunBlock at once, without the end-of-slice work
+void DYNACALL rdv_BlockRest(u32 pc, u32 cycles, u32 end_pc);
+
 #ifdef __cplusplus
 }
 #endif
+
+//Compiles a block at the pc that does not enter the block cache and runs it once, with the end-of-slice work
+//behind it if the slice ran out: a single step, the rest of a block that a debugger check interrupted, or the
+//rest of a block whose code ends in front of its last instruction (rdv_BlockRest).
+//Only with ngen_features::DebugChecks
+void rdv_RunTempBlock(const DecodeLimits* limits);
 
 
 //Stuff to be implemented per dynarec core
 
 typedef void (*MainloopFnPtr_t) (void*);
+typedef void (*RunBlockFnPtr_t) (void*);
 
 //Canonical callback interface
 enum CanonicalParamType
@@ -121,7 +133,8 @@ struct NGenBackend
 {
 	virtual bool Init() = 0;
 
-	//Called to compile a block
+	//Called to compile a block. A backend that finds the code cache too small for the code leaves block->code 0
+	//and the cache as it was: the caller empties the cache, or asks for a block of fewer instructions
 	virtual void Compile(RuntimeBlockInfo* block, SmcCheckEnum smc_checks, bool reset, bool staging, bool optimise) = 0;
 
 	//Called when blocks are reseted
@@ -140,9 +153,29 @@ struct NGenBackend
 
 	virtual bool Rewrite(rei_host_context_t* ctx) = 0;
 
+	// The slice counter of Mainloop: the cycles left until it calls UpdateSystem. 0 from a backend that does not
+	// expose it
+	virtual int SliceCyclesLeft() { return 0; }
+
+	// Sets that counter to SH4_TIMESLICE, for a machine reset
+	virtual void ResetSlice() { }
+
+	// Does Mainloop keep the counter when it returns, and continue from it when it or RunBlock is entered again?
+	// A backend with ngen_features::DebugChecks does. The interpreter fallback (hw/sh4/sh4_dbg.h) then goes on
+	// from SliceCyclesLeft() behind Mainloop and hands its own counter back with SetSliceCyclesLeft()
+	virtual bool KeepsSlice() { return false; }
+	virtual void SetSliceCyclesLeft(int cycles) { }
+
 	// assembly exports
 
+	// With ngen_features::DebugChecks: entered with a slice counter that is not positive, it does the
+	// end-of-slice work before the first block
 	MainloopFnPtr_t Mainloop;
+
+	// Runs the block at this (executable) address once, then does what Mainloop does behind a block: the
+	// end-of-slice work if the slice ran out. The block is not in the block cache and is not linked to.
+	// Only with ngen_features::DebugChecks, 0 otherwise
+	RunBlockFnPtr_t RunBlock = 0;
 
 	//Value to be returned when the block manager failed to find a block,
 	//should call rdv_FailedToFindBlock and then jump to the return value

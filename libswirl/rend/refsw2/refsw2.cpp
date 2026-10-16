@@ -5,8 +5,14 @@
 #include "build.h"
 #include "types.h"
 
+#include <atomic>
+
 u8* emu_vram;
 extern u32 FrameCount;
+
+// Set by the input code of every build, consumed by the renderers of the TA_LLE build
+std::atomic<bool> refsw2_do_dump(false);
+
 #if FEAT_TA == TA_LLE
 #include "imgui/imgui.h"
 #include "hw/pvr/Renderer_if.h"
@@ -16,14 +22,13 @@ extern u32 FrameCount;
 #include "hw/pvr/pvr_regs.h"
 #include "hw/pvr/pvr_mem.h"
 #include "rend/TexCache.h"
+#include "utils/run_control.h"
 
 #include <set>
 
 extern FILE* rendlog;
 extern const char* dump_textures;
 extern std::set<u64> texture_dumps;
-
-std::atomic<bool> refsw2_do_dump(false);
 
 void RenderCORE();
 
@@ -61,30 +66,31 @@ struct refsw2rend : Renderer
 
 	virtual bool RenderPVR() {        
         if (refsw2_do_dump) {
-            static char dump_folder[256];
-            static char dump_log[256];
-            static char dump_textures_path[256];
+            static string dump_folder;
+            static string dump_log;
+            static string dump_textures_path;
 
-            static char vram_dump_path[256];
-            static char pvr_regs_dump_path[256];
+            static string vram_dump_path;
+            static string pvr_regs_dump_path;
 
+            // in data/dumps/ of the emulator's directory, not in the working directory
             auto time_now = time(nullptr);
-            snprintf(dump_folder, sizeof(dump_folder), "refsw2-dump-%lld", (long long)time_now);
-            snprintf(dump_log, sizeof(dump_log), "%s/refsw2.log", dump_folder, (long long)time_now);
-            snprintf(dump_textures_path, sizeof(dump_textures_path), "%s/textures", dump_folder, (long long)time_now);
+            dump_folder = get_writable_dumps_path() + "refsw2-dump-" + std::to_string((long long)time_now);
+            dump_log = dump_folder + "/refsw2.log";
+            dump_textures_path = dump_folder + "/textures";
 
-            snprintf(vram_dump_path, sizeof(vram_dump_path), "%s/vram.bin", dump_folder, (long long)time_now);
-            snprintf(pvr_regs_dump_path, sizeof(pvr_regs_dump_path), "%s/pvr_regs.bin", dump_folder, (long long)time_now);
+            vram_dump_path = dump_folder + "/vram.bin";
+            pvr_regs_dump_path = dump_folder + "/pvr_regs.bin";
 
             make_directory(dump_folder);
             make_directory(dump_textures_path);
-            rendlog = fopen(dump_log, "w");
+            rendlog = fopen(dump_log.c_str(), "w");
             texture_dumps.clear();
-            dump_textures = dump_textures_path;
+            dump_textures = dump_textures_path.c_str();
 
-            printf("Dumping VRAM to %s\n", vram_dump_path);
+            printf("Dumping VRAM to %s\n", vram_dump_path.c_str());
             {
-                FILE* v0 = fopen(vram_dump_path, "wb");
+                FILE* v0 = fopen(vram_dump_path.c_str(), "wb");
                 if (!v0) {
                     return false;
                 }
@@ -99,9 +105,9 @@ struct refsw2rend : Renderer
                 fclose(v0);
             }
 
-            printf("Dumping PVR registers to %s\n", pvr_regs_dump_path);
+            printf("Dumping PVR registers to %s\n", pvr_regs_dump_path.c_str());
             {
-                FILE* v0 = fopen(pvr_regs_dump_path, "wb");
+                FILE* v0 = fopen(pvr_regs_dump_path.c_str(), "wb");
                 if (!v0) {
                     return false;
                 }
@@ -113,7 +119,7 @@ struct refsw2rend : Renderer
             }
 
             printf("Dumping textures to %s\n", dump_textures);
-            printf("Dumping render log to %s\n", dump_log);
+            printf("Dumping render log to %s\n", dump_log.c_str());
 
         }
         
@@ -288,6 +294,10 @@ struct refsw2rend : Renderer
             }
             break;
         }
+
+        // without a GL context the frame is done here
+        if (runctl_present(pb.data(), width, SPG_CONTROL.interlace ? height * 2 : height))
+            return;
         
 	// TODO softrend without X11 (SDL f.e.)
     //die("Softrend doesn't know how to update the screen");
@@ -337,5 +347,5 @@ struct refsw2rend : Renderer
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 };
-static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refsw2", "Different refsw", 2, [](u8* vram) { return (Renderer*) new refsw2rend(vram); } });
+static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refsw2", "Different refsw", 2, [](u8* vram) { return (Renderer*) new refsw2rend(vram); }, true });
 #endif

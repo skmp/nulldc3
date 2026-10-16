@@ -2,7 +2,6 @@
 #
 #	get luserx0 to doc this shit or something, vars in all caps are to be exported as defs if they aren't in build.h already
 #		handle options for FEAT per platform, so rec isn't built for targets w.o one...
-#		*TODO* fix Android for build system in emu too,  OS_LINUX is hardly fitting:  prob works better as PLATFORM_ANDROID_{S,N}DK or something
 #		*TODO* setup git version like it's done in VS/make and configure header so --version works still
 #		*TODO* lots of other shit to improve build, add enabling/disabling libs/features, setting 3rd party libs as either built in  static, dynamic  or shared/system
 #
@@ -37,28 +36,16 @@ set(DC_PLATFORM_AURORA      6)  # /* Needs to be done, Uses newer 300 mhz sh4 + 
 set(OS_WINDOWS     0x10000001)  # HOST_OS
 set(OS_LINUX       0x10000002)
 set(OS_DARWIN      0x10000003)
-set(OS_IOS         0x10000004)  # todo: iOS != OS_DARWIN
-set(OS_ANDROID     0x10000005)  # todo: should be SYSTEM_ANDROID but ! OS_LINUX
-
-set(OS_UWP         0x10000011)
-set(OS_NSW_HOS     0x80000001)
-set(OS_PS4_BSD     0x80000002)
 
 
 
-set(CPU_X86        0x20000001)  # HOST_CPU
-set(CPU_X64        0x20000004)
-set(CPU_ARM        0x20000002)
+
+set(CPU_X64        0x20000004)  # HOST_CPU
 set(CPU_A64        0x20000008)
-set(CPU_MIPS       0x20000003)
-set(CPU_MIPS64     0x20000009)
-set(CPU_PPC        0x20000006)
-set(CPU_PPC64      0x20000007)
-set(CPU_GENERIC    0x20000005)  # used for pnacl, emscripten, etc
+set(CPU_GENERIC    0x20000005)  # used for emscripten, etc
 
 set(DYNAREC_NONE   0x40000001)  # FEAT_SHREC, FEAT_AREC, FEAT_DSPREC
 set(DYNAREC_JIT    0x40000002)
-set(DYNAREC_CPP    0x40000003)
 
 set(COMPILER_VC    0x30000001)  # BUILD_COMPILER
 set(COMPILER_GCC   0x30000002)
@@ -104,13 +91,20 @@ endif()
 
 
 
-## strings are used to append to path/file names, and to filter multiple possibilities down to one 
-#		AMD64/x86_64:x64, i*86:x86, ppc/powerpc[64][b|l]e:ppc[64] etc 
+## Native builds are for x86_64 and arm64. A 32-bit x86 or arm host has no recompiler, no fault context and no FP mode
+#  code in this tree, and the configure stops instead of building what is left. Any other processor has no recompiler
+#  and runs the interpreters.
 #
-if(("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "i686") OR
-   ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "X86"))   # todo: check MATCHES "i.86" ?
-  set(host_arch "x86")
-  set(HOST_CPU ${CPU_X86})
+function(nulldc_no_32bit_host what)
+  message(FATAL_ERROR "32-bit x86 and arm hosts are not supported (${what}): nullDC builds for x86_64 and arm64.")
+endfunction()
+
+## strings are used to append to path/file names, and to filter multiple possibilities down to one 
+#		AMD64/x86_64:x64 etc 
+#
+if(EMSCRIPTEN)	# its toolchain file calls the processor "x86": the host is WebAssembly
+  set(host_arch "wasm")
+  set(HOST_CPU ${CPU_GENERIC})
 #
 elseif(("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64") OR
        ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64") OR
@@ -125,25 +119,11 @@ elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "arm64")
   set(host_arch "arm64")
   set(HOST_CPU ${CPU_A64})
 #
-elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "arm")
-  set(host_arch "arm")
-  set(HOST_CPU ${CPU_ARM})
-#
-elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "ppc64")
-  set(host_arch "ppc64")
-  set(HOST_CPU ${CPU_PPC64})
-#
-elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "ppc")	 # has to be done after ppc64 obv
-  set(host_arch "ppc")
-  set(HOST_CPU ${CPU_PPC})
-#
-elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "mips64") # todo: check , r* names?
-  set(host_arch "mips64")
-  set(HOST_CPU ${CPU_MIPS64})
-#
-elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "mips")   # todo: check , r* names?
-  set(host_arch "mips")
-  set(HOST_CPU ${CPU_MIPS})
+elseif(("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^i[3-6]86$") OR
+       ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^[xX]86$") OR
+       ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "arm") OR			# has to be done after arm64
+       ("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "^ARM(V[0-9A-Z]+)?$"))	# the names MSVC has for it
+  nulldc_no_32bit_host("CMAKE_SYSTEM_PROCESSOR is \"${CMAKE_SYSTEM_PROCESSOR}\"")
 #
 else()
   message("Warning: Unknown Host System Processor: \"${CMAKE_SYSTEM_PROCESSOR}\"")
@@ -151,61 +131,73 @@ else()
   set(HOST_CPU ${CPU_GENERIC})
 endif()
 
+# The same host with a 32-bit compiler (-m32, a 32-bit userland on a 64-bit kernel)
+if(((${HOST_CPU} EQUAL ${CPU_X64}) OR (${HOST_CPU} EQUAL ${CPU_A64})) AND ("${CMAKE_SIZEOF_VOID_P}" STREQUAL "4"))
+  nulldc_no_32bit_host("the compiler has 4 byte pointers on \"${CMAKE_SYSTEM_PROCESSOR}\"")
+endif()
+
 string(TOLOWER ${CMAKE_SYSTEM_NAME} host_os)
 
 #message(" - testing cmake host_os: \"${host_os}\"")
 
+## The targets are the desktops, Linux, Windows and macOS, on x86_64 and arm64; any other processor is the generic host,
+#  which runs the interpreters. Emscripten is let through as the scaffolding of the wasm build (it takes the Linux
+#  sources). Every other system stops the configure, and so does a switch of a target that is no longer in the tree.
+#
+function(nulldc_unsupported_target what)
+  message(FATAL_ERROR "Unsupported target (${what}): nullDC builds for Linux, Windows and macOS, on x86_64 and arm64, and on any other processor with the interpreters only.")
+endfunction()
+
+if(NOT EMSCRIPTEN AND NOT ("${host_os}" STREQUAL "linux" OR "${host_os}" STREQUAL "windows" OR "${host_os}" STREQUAL "darwin"))
+  nulldc_unsupported_target("CMAKE_SYSTEM_NAME is \"${CMAKE_SYSTEM_NAME}\"")
+endif()
+
+foreach(removed_switch LIBRETRO_CORE TARGET_NSW TARGET_PS4)
+  if(${removed_switch})
+    nulldc_unsupported_target("${removed_switch} is set")
+  endif()
+endforeach()
+
 ## HOST_* is not TARGET_*  ;;  change ndc-e internal naming it's wrong , then change this  ;;
 
-if("android" STREQUAL "${host_os}"  OR ANDROID)
-  set(HOST_OS ${OS_LINUX}) 	# *FIXME* we might have to keep as OS_LINUX or add to full cleanup list :|
-
-elseif("windowsstore" STREQUAL "${host_os}")
-  set(HOST_OS ${OS_UWP}) 
-  set(HOST_CPU ${CPU_X64})
-
-elseif(CMAKE_HOST_WIN32)
+if(CMAKE_HOST_WIN32)
   set(HOST_OS ${OS_WINDOWS}) 
 
 elseif(CMAKE_HOST_APPLE)
 
   if("${host_arch}" MATCHES "arm")
     set(HOST_OS ${OS_DARWIN})
-    # set(TARGET_IOS On)
-    # add_definitions(-DTARGET_IPHONE -DTARGET_IOS)
     set(TARGET_OSX On)
     add_definitions(-DTARGET_OSX)
   else()
-    set(HOST_OS ${OS_DARWIN})  # todo ios check, check compiler/arch?
+    set(HOST_OS ${OS_DARWIN})
     set(TARGET_OSX On)
     add_definitions(-DTARGET_OSX)
   endif()
   
 elseif(CMAKE_HOST_UNIX) # GP UNIX MUST BE AFTER OTHER UNIX'ish options such as APPLE , it matches both 
 
-    set(HOST_OS ${OS_LINUX})   # todo android check, just check android vars?
+    set(HOST_OS ${OS_LINUX})
 endif()
 
 
 
-#option(TARGET_NO_REC  BOOL "")
-#option(TARGET_NO_AREC BOOL "")
-#option(TARGET_NO_JIT  BOOL "")
+option(TARGET_NO_REC  "Interpreters only: no SH4, ARM7 or DSP recompiler, on any host" OFF)
+option(TARGET_NO_AREC "No ARM7 and no DSP recompiler" OFF)
 
 
 
 ## Main CPU Dynarec
-if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_X64}) OR
-   (${HOST_CPU} EQUAL ${CPU_ARM}) OR (${HOST_CPU} EQUAL ${CPU_A64}))
+if((${HOST_CPU} EQUAL ${CPU_X64}) OR (${HOST_CPU} EQUAL ${CPU_A64}))
   message("SH4 Dynarec Features Available")
   set(FEAT_SHREC  ${DYNAREC_JIT})
 else()
   message("SH4 Dynarec Features Missing")
-  set(FEAT_SHREC  ${DYNAREC_CPP})
+  set(FEAT_SHREC  ${DYNAREC_NONE})
 endif()
 
 # Sound CPU dynarec
-if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_A64}))
+if(${HOST_CPU} EQUAL ${CPU_A64})
   message("ARM7 Dynarec Features Available")
   set(FEAT_AREC  ${DYNAREC_JIT})
 else()
@@ -214,7 +206,7 @@ else()
 endif()
 
 # Sound DSP dynarec
-if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_A64}))
+if(${HOST_CPU} EQUAL ${CPU_A64})
   message("DSP Dynarec Features Available")
   set(FEAT_DSPREC  ${DYNAREC_JIT})
 #
@@ -236,10 +228,11 @@ if(TARGET_NO_AREC)
   set(FEAT_DSPREC ${DYNAREC_NONE})
 endif()
 
-if(TARGET_NO_JIT)
-  set(FEAT_SHREC  ${DYNAREC_CPP})
-  set(FEAT_AREC   ${DYNAREC_NONE})
-  set(FEAT_DSPREC ${DYNAREC_NONE})
+## A generic host has no fault context (oslib/context.h) and no fault trampoline (linux/common.cpp): it is built without
+#  the fault handler, so without nvmem and without write protection of VRAM, and without the sampling profiler.
+#
+if(${HOST_CPU} EQUAL ${CPU_GENERIC})
+  add_definitions(-DTARGET_NO_EXCEPTIONS -DTARGET_NO_NIXPROF)
 endif()
 
 
@@ -274,10 +267,6 @@ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
   
   add_definitions(/D_CRT_SECURE_NO_WARNINGS /D_CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES=1)
 
-  if("${HOST_OS}" STREQUAL "${OS_UWP}")
-    set(_CXX_FLAGS "/ZW ")
-	set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /AppContainer")
-  endif()
 #
 elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU") 
   set(BUILD_COMPILER ${COMPILER_GCC})
@@ -313,13 +302,9 @@ if ((${BUILD_COMPILER} EQUAL ${COMPILER_VC}) OR
 elseif ((${BUILD_COMPILER} EQUAL ${COMPILER_GCC}) OR
 		(${BUILD_COMPILER} EQUAL ${COMPILER_CLANG})) # AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS}))
   
-  if(USE_32B OR TARGET_LINUX_X86)
-    set(_C_FLAGS "${_C_FLAGS} -m32")
-  endif()
-  
-  if((${HOST_CPU} EQUAL ${CPU_X86}) OR (${HOST_CPU} EQUAL ${CPU_X64}))
+  if(${HOST_CPU} EQUAL ${CPU_X64})
     set(_C_FLAGS "${_C_FLAGS} -msse4")
-  endif() # X86 family
+  endif()
   
     
   set(_CXX_FLAGS "${_CXX_FLAGS} -fno-operator-names -fpermissive -fno-strict-aliasing") # -fcxx-exceptions") ## xbyak needs exceptions
@@ -359,40 +344,13 @@ set(CMAKE_CXX_FLAGS " ${_CXX_FLAGS}") # ${CMAKE_CXX_FLAGS}
 #endif
 
 
-if (TARGET_NSW) # -DCMAKE_TOOLCHAIN_FILE=./cmake/devkitA64.cmake -DTARGET_NSW=ON
-  set(HOST_OS ${OS_NSW_HOS}) 
-
-  message(" DEVKITA64: ${DEVKITA64} ")
-  message("HOST_OS ${HOST_OS}")
-
-  add_definitions(-D__SWITCH__ -DGLES -DMESA_EGL_NO_X11_HEADERS)
-  add_definitions(-DTARGET_NO_THREADS -DTARGET_NO_EXCEPTIONS -DTARGET_NO_NIXPROF)
-  add_definitions(-DTARGET_NO_COREIO_HTTP -DTARGET_NO_WEBUI -UTARGET_SOFTREND)
-  add_definitions(-D_GLIBCXX_USE_C99_MATH_TR1 -D_LDBL_EQ_DBL)
-
-endif()
-
-if (TARGET_PS4) # -DCMAKE_TOOLCHAIN_FILE=./cmake/{ps4sdk,clang_scei}.cmake -DTARGET_PS4=ON
-  set(HOST_OS ${OS_PS4_BSD})
-  message("HOST_OS ${HOST_OS}")
-  
-
-  add_definitions(-DPS4 -DTARGET_PS4 -DTARGET_BSD -D__ORBIS__ -DGLES -DMESA_EGL_NO_X11_HEADERS)  ## last needed for __unix__ on eglplatform.h
-  add_definitions(-DTARGET_NO_THREADS -DTARGET_NO_EXCEPTIONS -DTARGET_NO_NIXPROF)
-  add_definitions(-DTARGET_NO_COREIO_HTTP -DTARGET_NO_WEBUI -UTARGET_SOFTREND)
-
-
-  message("*******FIXME******** LARGE PAGES !!")
-endif()
-
 
 
 if(ZBUILD)
   set(DEBUG_CMAKE ON)
   add_definitions(-D_Z_)  # Get rid of some warnings and internal dev testing
   
-  if(NOT TARGET_PS4 AND NOT TARGET_NSW AND 
-     NOT TARGET_OSX AND NOT TARGET_IOS )
+  if(NOT TARGET_OSX)
      set(USE_QT ON)
   endif()
 endif()

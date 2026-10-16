@@ -41,23 +41,6 @@ void gui_settings_general()
         ImGui::SameLine();
         gui_ShowHelpMarker("The language as configured in the Dreamcast BIOS");
 
-#ifdef _ANDROID
-		const char *orientation[] = { "Auto", "Force Portrait", "Force Landscape" };
-		if (ImGui::BeginCombo("Orientation", orientation[settings.rend.ScreenOrientation], ImGuiComboFlags_None))
-		{
-			for (int i = 0; i < IM_ARRAYSIZE(orientation); i++)
-			{
-				bool is_selected = settings.rend.ScreenOrientation == i;
-				if (ImGui::Selectable(orientation[i], &is_selected))
-					settings.rend.ScreenOrientation = i;
-				if (is_selected)
-					ImGui::SetItemDefaultFocus();
-			}
-			ImGui::EndCombo();
-		}
-		ImGui::SameLine();
-		gui_ShowHelpMarker("Select type of orientation");
-#endif
 		const char *broadcast[] = { "NTSC", "PAL", "PAL/M", "PAL/N", "Default" };
 		if (ImGui::BeginCombo("Broadcast", broadcast[settings.dreamcast.broadcast], ImGuiComboFlags_None))
 		{
@@ -149,17 +132,10 @@ void gui_settings_general()
         	ImGui::AlignTextToFramePadding();
             ImGui::Text("%s", get_writable_config_path("").c_str());
 		}
-#ifdef _ANDROID
-        ImGui::SameLine(ImGui::GetContentRegionAvailWidth() - ImGui::CalcTextSize("Change").x - ImGui::GetStyle().FramePadding.x);
-        if (ImGui::Button("Change"))
-        {
-        	gui_state = Onboarding;
-        }
-#endif
         ImGui::ListBoxFooter();
         
         ImGui::SameLine();
-        gui_ShowHelpMarker("The directory where reicast saves configuration files and VMUs. BIOS files should be in the data subdirectory");
+        gui_ShowHelpMarker("The directory where nullDC saves configuration files and VMUs. BIOS files should be in the data subdirectory");
 
     	ImGui::PopStyleVar();
     	ImGui::EndTabItem();

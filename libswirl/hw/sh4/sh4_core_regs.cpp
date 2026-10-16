@@ -77,7 +77,7 @@ void SetFloatStatusReg()
         
         //Correct rounding is required by some games (SOTB, etc)
 #if BUILD_COMPILER == COMPILER_VC
-        if (fpscr.RM == 1)  //if round to 0 , set the flag
+        if (FPSCR_RM_ZERO(fpscr))  //if round to 0 , set the flag
             _controlfp(_RC_CHOP, _MCW_RC);
         else
             _controlfp(_RC_NEAR, _MCW_RC);
@@ -88,42 +88,22 @@ void SetFloatStatusReg()
             _controlfp(_DN_SAVE, _MCW_DN);
 #else
 
-    #if HOST_CPU==CPU_X86 || HOST_CPU==CPU_X64
+    #if HOST_CPU==CPU_X64
 
             u32 temp=0x1f80;	//no flush to zero && round to nearest
 
-			if (fpscr.RM==1)  //if round to 0 , set the flag
+			if (FPSCR_RM_ZERO(fpscr))  //if round to 0 , set the flag
 				temp|=(3<<13);
 
-			if (fpscr.DN)     //denormals are considered 0
-				temp|=(1<<15);
+			// SH7091: with DN = 1 a denormal is zero as an operand and as a result (programming manual 6.2.3): DAZ and FTZ
+			if (fpscr.DN)
+				temp|=(1<<15)|(1<<6);
 			asm("ldmxcsr %0" : : "m"(temp));
-    #elif HOST_CPU==CPU_ARM
-		static const unsigned int x = 0x04086060;
-		unsigned int y = 0x02000000;
-		if (fpscr.RM==1)  //if round to 0 , set the flag
-			y|=3<<22;
-	
-		if (fpscr.DN)
-			y|=1<<24;
-
-
-		int raa;
-
-		asm volatile
-			(
-				"fmrx   %0, fpscr   \n\t"
-				"and    %0, %0, %1  \n\t"
-				"orr    %0, %0, %2  \n\t"
-				"fmxr   fpscr, %0   \n\t"
-				: "=r"(raa)
-				: "r"(x), "r"(y)
-			);
 	#elif HOST_CPU == CPU_ARM64
 		static const unsigned long off_mask = 0x04080000;
         unsigned long on_mask = 0x02000000;    // DN=1 Any operation involving one or more NaNs returns the Default NaN
 
-        if (fpscr.RM == 1)		// if round to 0, set the flag
+        if (FPSCR_RM_ZERO(fpscr))		// if round to 0, set the flag
         	on_mask |= 3 << 22;
 
         if (fpscr.DN)
@@ -146,6 +126,14 @@ void SetFloatStatusReg()
 #endif
 
 	}
+}
+
+//old_rm / old_dn say what some thread was last set to, not the calling one
+void sh4_host_fp_resync()
+{
+	old_rm=0xFF;
+	old_dn=0xFF;
+	SetFloatStatusReg();
 }
 
 //called when fpscr is changed and we must check for reg banks etc..

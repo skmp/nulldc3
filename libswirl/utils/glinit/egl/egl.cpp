@@ -37,9 +37,6 @@ void egl_GetCurrent()
 	egl_setup.surface = eglGetCurrentSurface(EGL_DRAW);
 }
 
-#ifdef _ANDROID
-#include <android/native_window.h>
-#endif
 
 // Create a basic GLES context
 bool egl_Init(void* wind, void* disp)
@@ -96,15 +93,6 @@ bool egl_Init(void* wind, void* disp)
 				return false;
 			}
 		}
-#ifdef _ANDROID
-		EGLint format;
-		if (!eglGetConfigAttrib(egl_setup.display, config, EGL_NATIVE_VISUAL_ID, &format))
-		{
-			printf("eglGetConfigAttrib() returned error %x\n", eglGetError());
-			return false;
-		}
-		ANativeWindow_setBuffersGeometry((ANativeWindow*)wind, 0, 0, format);
-#endif
 		egl_setup.surface = eglCreateWindowSurface(egl_setup.display, config, (EGLNativeWindowType)wind, NULL);
 
 		if (egl_setup.surface == EGL_NO_SURFACE)
@@ -196,13 +184,6 @@ bool egl_Init(void* wind, void* disp)
 //swap buffers
 bool egl_Swap()
 {
-#ifdef TARGET_PANDORA0
-	if (fbdev >= 0)
-	{
-		int arg = 0;
-		ioctl(fbdev, FBIO_WAITFORVSYNC, &arg);
-	}
-#endif
 	auto status = eglSwapBuffers(egl_setup.display, egl_setup.surface);
 
 	bool rv = true;
@@ -233,13 +214,6 @@ void egl_Term()
 			eglDestroyContext(egl_setup.display, egl_setup.context);
 		if (egl_setup.surface != NULL)
 			eglDestroySurface(egl_setup.display, egl_setup.surface);
-#ifdef TARGET_PANDORA
-        if (egl_setup.display)
-            eglTerminate(egl_setup.display);
-        if (fbdev >= 0)
-            close(fbdev);
-        fbdev = -1;
-#endif
 #endif    // !OS_WINDOWS
 		eglTerminate(egl_setup.display);
 

@@ -11,26 +11,73 @@
 #include "sh4_mem.h"
 #include "sh4_sched.h"
 #include "sh4_interrupts.h"
+#include "sh4_dbg.h"
+#include "debugger/debugger.h"
+
+// The slice end is in both of the functions below, with nothing between them and it: one of them is every
+// slice end of the recompilers
+#if BUILD_COMPILER == COMPILER_VC
+#define SLICE_INLINE __forceinline
+#else
+#define SLICE_INLINE inline __attribute__((always_inline))
+#endif
+
+// The slice end of a machine whose debugger wants something of it
+[[maybe_unused]] static NOINLINE int slice_end_attention()
+{
+    // A debugger stop is decided: no emulated time passes and no scheduler callback runs until the
+    // emulator thread has left the park context again
+    if (dbg::g_stop_latched)
+        return 1;
+
+    Sh4cntx.sh4_sched_next -= SH4_TIMESLICE;
+    if (Sh4cntx.sh4_sched_next < 0)
+        sh4_sched_tick(SH4_TIMESLICE);
+
+    // Behind the scheduler tick: what a callback of this slice asked the debugger for is seen in this call
+    if (dbg::g_attn.load(std::memory_order_relaxed))
+        dbg::emu::SliceHook();
+
+    return Sh4cntx.interrupt_pend | (sh4_int_bCpuRun.load(std::memory_order_relaxed) == 0);
+}
 
 // every SH4_TIMESLICE cycles
-int UpdateSystem()
+static SLICE_INLINE int slice_end()
 {
+    // The one test a slice pays for the debugger. The attention word is not zero while a call or a pause
+    // waits for the slice hook, and for as long as the stop latch is set (ATTN_LATCHED), so the latch is
+    // looked at only behind it
+    if (unlikely(dbg::g_attn.load(std::memory_order_relaxed)))
+        return slice_end_attention();
+
     //this is an optimisation (mostly for ARM)
     //makes scheduling easier !
     //update_fp* tmu=pUpdateTMU;
 
     Sh4cntx.sh4_sched_next -= SH4_TIMESLICE;
     if (Sh4cntx.sh4_sched_next < 0)
+    {
         sh4_sched_tick(SH4_TIMESLICE);
+
+        // what a callback of this tick asked the debugger for is seen in this call
+        if (unlikely(dbg::g_attn.load(std::memory_order_relaxed)))
+            dbg::emu::SliceHook();
+    }
 
     // Force an interrupt check if the cpu has been stopped
     // ngen is required to only check the bCpuRun on interrupt processing
-    return Sh4cntx.interrupt_pend | (sh4_int_bCpuRun == false);
+    // The poll of the emulator thread: a relaxed load, the one read of the word that a slice has (sh4_if.h)
+    return Sh4cntx.interrupt_pend | (sh4_int_bCpuRun.load(std::memory_order_relaxed) == 0);
+}
+
+int UpdateSystem()
+{
+    return slice_end();
 }
 
 int UpdateSystem_INTC()
 {
-    if (UpdateSystem())
+    if (slice_end())
         return UpdateINTC();
     else
         return 0;
@@ -65,44 +112,57 @@ bool SuperH4_impl::setBackend(SuperH4Backends backend) {
         return false;
     }
 
+    backend_kind = backend;
+
+    // The slice counters outlive a backend object: the reset that this backend has not seen is made on it
+    if (slice_reset_owed)
+        sh4_backend->ResetSlice();
+
     return sh4_backend->Init();
 }
 
 void SuperH4_impl::Run() {
-    sh4_backend->Loop();
+    slice_reset_owed = false;
+
+    // the host FP mode is per thread: FPSCR was last written by another one (reset, load state, the thread before)
+    sh4_host_fp_resync();
+
+    // A JIT without breakpoint checks of its own runs the guest through the interpreter fallback while the
+    // debugger has a breakpoint that can stop. Asked once per entry: the answer changes only between two
+    // calls of Run()
+    if (dbg::emu::UseFallbackLoop())
+        sh4_fallback_loop();
+    else
+        sh4_backend->Loop();
 }
 
+// Any thread: the host stops the machine, or the guest has ended; and the emulator thread where the guest
+// asks for a reset of the machine. The cpu leaves its loop, and a debugger stop ends with it. The machine
+// counts as running until its emulator thread has taken its stop callback (IsRunning), all through a reset
+// as well. The park loop is woken so that the thread takes the request
 void SuperH4_impl::Stop()
 {
-    verify(sh4_int_bCpuRun);
+    // Sequentially consistent, as every store of the word (sh4_if.h)
+    sh4_int_bCpuRun.store(0, std::memory_order_seq_cst);
+    dbg::g_parked = false;
 
-    sh4_int_bCpuRun = false;
+    dbg::emu::Kick();
 }
 
 void SuperH4_impl::Start()
 {
-    verify(!sh4_int_bCpuRun);
-    
-    sh4_int_bCpuRun = true;
+    sh4_int_bCpuRun.store(1, std::memory_order_seq_cst);
 }
 
+// One instruction, executed and charged by the backend as its Loop() would
 void SuperH4_impl::Step()
 {
-    if (sh4_int_bCpuRun)
-    {
-        printf("Sh4 Is running , can't step\n");
-    }
-    else
-    {
-        u32 op = ReadMem16(next_pc);
-        next_pc += 2;
-        ExecuteOpcode(op);
-    }
+    sh4_backend->Step();
 }
 
 void SuperH4_impl::Skip()
 {
-    if (sh4_int_bCpuRun)
+    if (sh4_int_bCpuRun.load(std::memory_order_seq_cst))
     {
         printf("Sh4 Is running, can't Skip\n");
     }
@@ -114,7 +174,7 @@ void SuperH4_impl::Skip()
 
 void SuperH4_impl::Reset(bool Manual)
 {
-    if (sh4_int_bCpuRun)
+    if (sh4_int_bCpuRun.load(std::memory_order_seq_cst))
     {
         printf("Sh4 Is running, can't Reset\n");
     }
@@ -132,7 +192,8 @@ void SuperH4_impl::Reset(bool Manual)
         old_sr.status = sr.status;
         UpdateSR();
 
-        fpscr.full = 0x0004001;
+        // SH7091 hardware manual, table 2.1: FPSCR is H'00040001 after a reset (DN = 1, RM = 01)
+        fpscr.full = 0x00040001;
         old_fpscr = fpscr;
         UpdateFPSCR();
 
@@ -141,6 +202,10 @@ void SuperH4_impl::Reset(bool Manual)
 
         //Clear cache
         sh4_backend->ClearCache();
+
+        // the slice in progress belongs to the machine before the reset
+        sh4_backend->ResetSlice();
+        slice_reset_owed = true;
 
         // reset mmrs/modules
         sh4mmr->Reset();
@@ -151,14 +216,27 @@ void SuperH4_impl::Reset(bool Manual)
     }
 }
 
+// A machine counts as running for as long as it has an emulator thread that has not taken its stop callback:
+// from the moment the host starts the thread until the thread takes the callback. Also one that the debugger
+// has stopped (latched, parked, in a step), one that is being reset, and one that has been asked to stop and
+// is on its way there. The host UI stops each of them like a running one
+//
+// One word and one load. The cpu's word cannot be it: that one is 0 for a machine that is parked, reset or on
+// its way to its stop, because the generated code of the recompilers leaves its loop on 0. Put together from
+// the cpu's word and a word for each of those reasons, the answer took five loads, and a reader whose loads
+// fell between the stores of two hand-overs in a row (a guest reset and the debugger stop behind it) found
+// every one of them clear for a live machine
 bool SuperH4_impl::IsRunning()
 {
-    return sh4_int_bCpuRun;
+    return thread_live.load(std::memory_order_seq_cst);
 }
 
 SuperH4_impl::SuperH4_impl() {
 
 }
+
+// The generated code of the recompilers reads the run flag by its place in the context
+static_assert(offsetof(Sh4Context, CpuRunning) == 292 && sizeof(Sh4cntx.CpuRunning) == 4, "the run flag has moved");
 
 bool SuperH4_impl::Init()
 {

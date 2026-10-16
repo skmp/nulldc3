@@ -11,6 +11,7 @@
 #include "SoundCPU.h"
 #include "arm7.h"
 #include "arm7_context.h"
+#include "debugger/debugger.h"
 
 #include <memory>
 
@@ -32,22 +33,43 @@
 	pin on arm7
 */
 
+/*
+	The handshake, as on the console (wren7-rtl model/tests/hw/fiqdiag, model/NOTES.md "Interrupts"):
+	a request is latched with its level and pulls nFIQ, reading L releases nFIQ, writing bit 0 of M ends the
+	service and lets the next request in
+*/
 static void update_e68k(Arm7Context* ctx)
 {
-	if (!ctx->e68k_out && ctx->aica_interr)
+	if (!ctx->e68k_reg_M && ctx->aica_interr)
 	{
-		//Set the pending signal
-		//Is L register held here too ?
-		ctx->e68k_out = true;
 		ctx->e68k_reg_L = ctx->aica_reg_L;
 
+		//a request of level 0 does not interrupt, and L reads 0 behind it (console: fiqdiag d1.bin, d4.bin, d5.bin)
+		if (ctx->aica_reg_L != 0)
+		{
+			DBG_EVENT(dbg::EV_AICA_INTERRUPT, "to the ARM7: level %u", ctx->aica_reg_L);
+
+			//Set the pending signal
+			ctx->e68k_reg_M = 1;
+			ctx->e68k_out = true;
+
+			ctx->backend->UpdateInterrupts();
+		}
+	}
+}
+
+static void e68k_AcknowledgeInterrupt(Arm7Context* ctx)
+{
+	if (ctx->e68k_out)
+	{
+		ctx->e68k_out = false;
 		ctx->backend->UpdateInterrupts();
 	}
 }
 
 static void e68k_AcceptInterrupt(Arm7Context* ctx)
 {
-	ctx->e68k_out = false;
+	ctx->e68k_reg_M = 0;
 	update_e68k(ctx);
 	
 }
@@ -58,9 +80,12 @@ static T arm_ReadReg(Arm7Context* ctx, u32 addr)
 {
 	addr &= 0x7FFF;
 	if (addr == REG_L)
+	{
+		e68k_AcknowledgeInterrupt(ctx);
 		return ctx->e68k_reg_L;
+	}
 	else if (addr == REG_M)
-		return ctx->e68k_reg_M;	//shouldn't really happen
+		return 0;	//shouldn't really happen
 	else
 		return ctx->aica->ReadReg(addr, sz);
 }
@@ -132,6 +157,7 @@ static void DYNACALL scpu_WriteMemArm(u32 addr, T data, Arm7Context* ctx)
 struct SoundCPU_impl : SoundCPU {
 	Arm7Context ctx;
 	unique_ptr<ARM7Backend> arm;
+	bool recompiler = false;		//what arm is: for the debugger (DebugIsRecompiler)
 
 	SoundCPU_impl(AICA* aica, u8* aica_ram, u32 aram_size) {
 		ctx.aica_ram = aica_ram;
@@ -145,6 +171,9 @@ struct SoundCPU_impl : SoundCPU {
 		ctx.write32 = &scpu_WriteMemArm<4, u32>;
 
 		setBackend(ARM7BE_INTERPRETER);
+
+		//The reset of the AICA releases ARMRST before the first Reset() of this device: the reset state from the start
+		SoundCPU_impl::Reset(false);
 	}
 
 	//called when plugin is used by emu (you should do first time init here)
@@ -182,10 +211,40 @@ struct SoundCPU_impl : SoundCPU {
 		// disable FIQ
 		ctx.regs[16].I |= 0x40;
 
+		//The AICA's requests go with its registers: nothing is pending, pulls nFIQ or is in service, L is 0
+		ctx.aica_interr = false;
+		ctx.aica_reg_L = 0;
+		ctx.e68k_out = false;
+		ctx.e68k_reg_L = 0;
+		ctx.e68k_reg_M = 0;
+
 		ARM7Backend::CPUUpdateCPSR(&ctx);
 
 		ctx.regs[R15_ARM_NEXT].I = ctx.regs[15].I;
 		ctx.regs[15].I += 4;
+
+		arm->UpdateInterrupts();
+		arm->InvalidateJitCache();
+	}
+
+	//ARMRST is released: the reset of the ARM7DI (data sheet 3.5, console: wren7-rtl model/tests/hw/bringup).
+	//R14_svc and SPSR_svc take the PC and the CPSR, the CPSR gets SVC mode with I and F set and the PC is 0.
+	//Every other register keeps its value
+	void ResetException()
+	{
+		u32 pc = ctx.regs[R15_ARM_NEXT].I;
+
+		ARM7Backend::CPUSwitchMode(&ctx, 0x13, true);
+		ctx.regs[14].I = pc;
+
+		ctx.regs[RN_PSR_FLAGS].FLG.NZCV = ctx.regs[RN_SPSR].PSR.NZCV;
+		ctx.armIrqEnable = false;
+		ctx.armFiqEnable = false;
+		ARM7Backend::CPUUpdateCPSR(&ctx);
+
+		ctx.regs[R15_ARM_NEXT].I = 0;
+		ctx.regs[15].I = 4;
+		ctx.regs[CYCL_CNT].I = 0;
 
 		arm->UpdateInterrupts();
 		arm->InvalidateJitCache();
@@ -196,7 +255,15 @@ struct SoundCPU_impl : SoundCPU {
 		bool enabled = state == 0;
 
 		if (!ctx.enabled && enabled)
-			Reset(false);
+		{
+			ResetException();
+
+			//The reset ends a service in progress, as a write of bit 0 of M does: the program that is started gets its
+			//interrupts whatever the one before it was in the middle of. Not measured on a console (no job there
+			//finds a request in service); software depends on it, the ARM crt0 of KallistiOS writes M in its FIQ
+			//handler only. L and the registers of the AICA stay (console: fiqdiag d1.bin to d5.bin), and nFIQ does
+			e68k_AcceptInterrupt(&ctx);
+		}
 
 		ctx.enabled = enabled;
 	}
@@ -213,11 +280,59 @@ struct SoundCPU_impl : SoundCPU {
 		}
 	}
 
+	//The ARM phase of a sample (SoundCPU.h). A new phase that no debugger looks into is the backend's Run(), as it
+	//was before the burst could be suspended: this is the path of every run, and it is kept to a test and a call.
+	//Everything else is the debug loop
+	bool RunSample(u32 ticks, u32* done, bool checks)
+	{
+		if (likely(*done == 0 && !(checks && dbg_arm7_armed != 0)))
+		{
+			//the phase uses its ticks up: nothing reads the count while it runs
+			*done = ticks;
+			arm->Run(ticks);
+			return true;
+		}
+
+		return RunSampleDebug(ticks, done, checks);
+	}
+
+	//The debug loop (debugger/debugger.h, the ARM7 block): per instruction the entry of a pending FIQ, the
+	//debugger's check, the instruction, and the test of the ticks behind it, which is the sequence of
+	//ARM7Backend::StepMany with the check in it. It runs the interpreter's functions on the context whatever
+	//backend is selected, and it keeps nothing but `used`: a phase that is suspended is gone on with from the
+	//context and from the ticks the caller holds. The pending FIQ is looked at in front of every instruction,
+	//also in front of the first one of a phase that is gone on with: a request can become enterable inside a
+	//sample (an MSR that clears F with a request waiting)
+	NOINLINE bool RunSampleDebug(u32 ticks, u32* done, bool checks)
+	{
+		u32 used = *done;
+
+		for (;;)
+		{
+			ARM7Backend::StepIrq(&ctx);
+
+			if (checks && dbg_arm7_armed != 0 && dbg_arm7_Check(ctx.regs[R15_ARM_NEXT].I))
+			{
+				*done = used;
+				return false;
+			}
+
+			used += ARM7Backend::StepExec(&ctx);
+
+			if (used >= ticks)
+			{
+				*done = used;
+				return true;
+			}
+		}
+	}
+
 	bool setBackend(Arm7Backends backend) {
 
 		if (backend == ARM7BE_INTERPRETER) {
 			arm.reset(ARM7Backend::CreateInterpreter(&ctx));
 			ctx.backend = arm.get();
+			recompiler = false;
 
 			return true;
 		}
@@ -225,6 +340,7 @@ struct SoundCPU_impl : SoundCPU {
 		else if (backend == ARM7BE_DYNAREC) {
 			arm.reset(ARM7Backend::CreateJit(&ctx));
 			ctx.backend = arm.get();
+			recompiler = true;
 
 			return true;
 		}
@@ -243,6 +359,183 @@ struct SoundCPU_impl : SoundCPU {
 
 	void InvalidateJitCache() {
 		arm->InvalidateJitCache();
+	}
+
+	bool DebugEnabled() {
+		return ctx.enabled;
+	}
+
+	//The core keeps R8..R14 and the SPSR of the mode it is in in regs[8..14] and regs[RN_SPSR]; the slots of that
+	//mode's bank are written when the mode is left. While in FIQ mode the slots R8_FIQ..R12_FIQ hold the
+	//registers of the other modes, which were swapped out
+	bool DebugGetReg(u32 reg, u32* value) {
+		if (reg < 15)
+		{
+			*value = ctx.regs[reg].I;
+			return true;
+		}
+
+		if (reg == 15)
+		{
+			*value = ctx.regs[R15_ARM_NEXT].I;
+			return true;
+		}
+
+		if (reg == RN_CPSR)
+		{
+			//as CPUUpdateCPSR puts it together
+			arm7_reg cpsr;
+
+			cpsr.I = ctx.regs[RN_CPSR].I & 0x40;
+			cpsr.PSR.NZCV = ctx.regs[RN_PSR_FLAGS].FLG.NZCV;
+			if (!ctx.armFiqEnable)
+				cpsr.I |= 0x40;
+			if (!ctx.armIrqEnable)
+				cpsr.I |= 0x80;
+			cpsr.PSR.M = ctx.armMode;
+
+			*value = cpsr.I;
+			return true;
+		}
+
+		if (reg == RN_SPSR)
+		{
+			*value = ctx.regs[RN_SPSR].I;
+			return true;
+		}
+
+		//R8..R12 of the modes other than FIQ have no slot of their own: they are the live ones, or swapped out
+		if (reg >= 21 && reg <= 25)
+		{
+			*value = ctx.regs[(ctx.armMode == 0x11 ? R8_FIQ : 8) + (reg - 21)].I;
+			return true;
+		}
+
+		//the banked registers: the live copy for the bank of the mode the core is in (LiveIndex, below)
+		if ((reg >= R13_IRQ && reg <= SPSR_IRQ) || (reg >= R13_USR && reg <= SPSR_FIQ))
+		{
+			*value = ctx.regs[LiveIndex(reg)].I;
+			return true;
+		}
+
+		return false;
+	}
+
+	//The index of the register that holds reg now: the live copy for the bank of the mode the core is in, the
+	//slot otherwise. For the indices DebugGetReg serves from R13_IRQ on, R8..R12 of the other modes (21..25) apart
+	u32 LiveIndex(u32 reg) {
+		switch (ctx.armMode)
+		{
+		case 0x10:
+		case 0x1F:
+			if (reg == R13_USR || reg == R14_USR)
+				return reg - R13_USR + 13;
+			break;
+
+		case 0x11:
+			if (reg >= R8_FIQ && reg <= R14_FIQ)
+				return reg - R8_FIQ + 8;
+			if (reg == SPSR_FIQ)
+				return RN_SPSR;
+			break;
+
+		case 0x12:
+			if (reg == R13_IRQ || reg == R14_IRQ)
+				return reg - R13_IRQ + 13;
+			if (reg == SPSR_IRQ)
+				return RN_SPSR;
+			break;
+
+		case 0x13:
+			if (reg == R13_SVC || reg == R14_SVC)
+				return reg - R13_SVC + 13;
+			if (reg == SPSR_SVC)
+				return RN_SPSR;
+			break;
+
+		case 0x17:
+			if (reg == R13_ABT || reg == R14_ABT)
+				return reg - R13_ABT + 13;
+			if (reg == SPSR_ABT)
+				return RN_SPSR;
+			break;
+
+		case 0x1b:
+			if (reg == R13_UND || reg == R14_UND)
+				return reg - R13_UND + 13;
+			if (reg == SPSR_UND)
+				return RN_SPSR;
+			break;
+		}
+
+		return reg;
+	}
+
+	//The writer of the debugger (SoundCPU.h): every index DebugGetReg reads, into the place it reads from
+	bool DebugSetReg(u32 reg, u32 value) {
+		if (reg < 15)
+		{
+			ctx.regs[reg].I = value;
+			return true;
+		}
+
+		if (reg == 15)
+		{
+			//as every write of R15 by the core: the fetch does not align the address
+			ctx.regs[R15_ARM_NEXT].I = value & ~3u;
+			return true;
+		}
+
+		if (reg == RN_CPSR)
+		{
+			u32 mode = value & 0x1F;
+
+			//the switch ends the process on any other
+			if (mode != 0x10 && mode != 0x11 && mode != 0x12 && mode != 0x13 && mode != 0x17 && mode != 0x1B && mode != 0x1F)
+				return false;
+
+			//As MSR CPSR does it (gpl/vba-arm/arm-new.h): the banks swap for the mode, then the register is the
+			//value, the flags and the interrupt enables follow it, the pending FIQ is worked out again, and the
+			//register is put together anew, which keeps N Z C V, I, F and the mode. saveState false: the SPSR of
+			//the mode that is entered is that mode's own, not the CPSR that is replaced
+			ARM7Backend::CPUSwitchMode(&ctx, mode, false);
+			ctx.regs[RN_CPSR].I = value;
+			ARM7Backend::CPUUpdateFlags(&ctx);
+			ARM7Backend::CPUUpdateCPSR(&ctx);
+			return true;
+		}
+
+		if (reg == RN_SPSR)
+		{
+			ctx.regs[RN_SPSR].I = value;
+			return true;
+		}
+
+		//R8..R12 of the modes other than FIQ: the live ones, or swapped out
+		if (reg >= 21 && reg <= 25)
+		{
+			ctx.regs[(ctx.armMode == 0x11 ? R8_FIQ : 8) + (reg - 21)].I = value;
+			return true;
+		}
+
+		if ((reg >= R13_IRQ && reg <= SPSR_IRQ) || (reg >= R13_USR && reg <= SPSR_FIQ))
+		{
+			ctx.regs[LiveIndex(reg)].I = value;
+			return true;
+		}
+
+		return false;
+	}
+
+	bool DebugIsRecompiler() {
+		return recompiler;
+	}
+
+	//L as arm_ReadReg gives it, without the acknowledge that goes with that read
+	bool DebugGetInterrupt(u32* level, u32* inService) {
+		*level = ctx.e68k_reg_L;
+		*inService = ctx.e68k_reg_M;
+		return true;
 	}
 
 	void serialize(void** data, unsigned int* total_size)

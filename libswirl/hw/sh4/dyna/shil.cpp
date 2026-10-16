@@ -843,7 +843,7 @@ void srt_waw(RuntimeBlockInfo* blk)
 			if ((op->rs1.is_reg() && op->rs1._reg==reg_sr_T)
 				|| (op->rs2.is_reg() && op->rs2._reg==reg_sr_T)
 				|| (op->rs3.is_reg() && op->rs3._reg==reg_sr_T)
-				|| op->op==shop_ifb)
+				|| op->op==shop_ifb || op->op==shop_dbg_check)
 			{
 				found=false;
 			}
@@ -926,12 +926,6 @@ void AnalyseBlock(RuntimeBlockInfo* blk)
 	if (settings.dynarec.unstable_opt)
 		sq_pref(blk);
 	//constprop(blk); // crashes on ip
-#if HOST_CPU==CPU_X86
-//	rdgrp(blk);
-//	wtgrp(blk);
-	//constprop(blk);
-	
-#endif
 	bool last_op_sets_flags=!blk->has_jcond && blk->oplist.size() > 0 && 
 		blk->oplist[blk->oplist.size()-1].rd._reg==reg_sr_T;
 

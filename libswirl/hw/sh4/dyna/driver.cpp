@@ -24,12 +24,15 @@
 #include "ngen.h"
 #include "decoder.h"
 
+#include "debugger/debugger.h"
+#include "hw/sh4/sh4_dbg.h"
+
 #define bm_printf(...)
 
 #if FEAT_SHREC != DYNAREC_NONE
 
 u8 SH4_TCB[CODE_SIZE+16384]
-#if HOST_OS == OS_WINDOWS || FEAT_SHREC != DYNAREC_JIT
+#if HOST_OS == OS_WINDOWS
 	;
 #elif HOST_OS == OS_LINUX
 	__attribute__((section(".text")));
@@ -206,7 +209,7 @@ const char* RuntimeBlockInfo::hash(bool full, bool relocable)
 	return block_hash;
 }
 
-void RuntimeBlockInfo::Setup(u32 rpc,fpscr_t rfpu_cfg)
+void RuntimeBlockInfo::Setup(u32 rpc,fpscr_t rfpu_cfg,const DecodeLimits* limits)
 {
 	staging_runs=addr=lookups=runs=host_code_size=0;
 	guest_cycles=guest_opcodes=host_opcodes=0;
@@ -221,11 +224,22 @@ void RuntimeBlockInfo::Setup(u32 rpc,fpscr_t rfpu_cfg)
 	
 	oplist.clear();
 
-	dec_DecodeBlock(this,SH4_TIMESLICE/2);
+	dec_DecodeBlock(this,SH4_TIMESLICE/2,limits);
 	AnalyseBlock(this);
 }
 
-DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
+//The code cache is cleared when the guest enters one of these addresses and no block is there: compiled code of
+//the boot rom aliases with ram
+static bool rdv_IsSoftResetPc(u32 pc)
+{
+	return pc==0x8c0000e0 || pc==0xac010000 || pc==0xac008300;
+}
+
+//Compiles the block at next_pc into the block cache. 0: the code cache has to be emptied first. That is so at the
+//addresses of a soft reset and when little of the cache is left (soft_resets: the caller has not emptied it
+//yet), and whenever the backend finds no room for the code of the block.
+//max_opcodes: not 0, the block ends behind that many instructions at the latest
+DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets, u32 max_opcodes=0)
 {
 	u32 pc=next_pc;
 
@@ -234,18 +248,20 @@ DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
 
 	if (soft_resets)
 	{
-		if (pc==0x8c0000e0 || pc==0xac010000 || pc==0xac008300)
+		if (rdv_IsSoftResetPc(pc))
 		{
 			bm_printf("rdv_CompilePC: failed (soft jit reset) %08X\n", next_pc);	 	
 			return nullptr;
 		}
+
+		if (emit_FreeSpace()<16*1024)
+		{
+			bm_printf("rdv_CompilePC: failed out of mem %08X\n", next_pc);
+			return nullptr;
+		}
 	}
 
-	if (emit_FreeSpace()<16*1024)
-	{
-		bm_printf("rdv_CompilePC: failed out of mem %08X\n", next_pc);
-		return nullptr;
-	}
+	const DecodeLimits limits = { max_opcodes, 0, -1, false };
 
 	RuntimeBlockInfo* rv=0;
 	do
@@ -253,7 +269,7 @@ DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
 		RuntimeBlockInfo* rbi = rdv_ngen->AllocateBlock();
 		if (rv==0) rv=rbi;
 
-		rbi->Setup(pc,fpscr);
+		rbi->Setup(pc,fpscr,max_opcodes ? &limits : 0);
 
 		
 		bool do_opts=((rbi->addr&0x3FFFFFFF)>0x0C010100);
@@ -261,7 +277,12 @@ DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
 
 		rdv_ngen->Compile(rbi,DoCheck(rbi->addr, rbi->sh4_code_size),(pc&0xFFFFFF)==0x08300 || (pc&0xFFFFFF)==0x10000,false,do_opts);
 
-		verify(rbi->code!=0);
+		if (rbi->code==0)
+		{
+			bm_printf("rdv_CompilePC: failed, no room for the code %08X\n", next_pc);
+			delete rbi;
+			return nullptr;
+		}
 
 		bool doLock = !bm_RamPageHasData(rbi->addr, rbi->sh4_code_size); // && maybe some setting?
 
@@ -283,6 +304,105 @@ DynarecCodeEntryPtr rdv_CompilePC_OrFail(bool soft_resets)
 	bm_printf("rdv_CompilePC: end %08X\n", next_pc);
 
 	return rv->code;
+}
+
+/*
+	Compiles a block at next_pc that does not enter the block cache, runs it once and does the end-of-slice work
+	if the slice ran out, as the main loop does behind a block. The space its code took is given back.
+
+	This is a single step (limits: one instruction) and the rest of a block that a debugger check interrupted
+	(limits: the end and the cost of that block). A block that is cached at the same address stays, and the
+	dispatcher never finds this one: it would change the block boundaries and costs of the run.
+
+	Only with ngen_features::DebugChecks.
+*/
+void rdv_RunTempBlock(const DecodeLimits* limits)
+{
+	u32 pc=next_pc;
+
+	//what the dispatcher does when it has to compile at this pc
+	if ((rdv_IsSoftResetPc(pc) && bm_GetCode(pc)==rdv_ngen->FailedToFindBlock) || emit_FreeSpace()<16*1024)
+		sh4_cpu->ResetCache();
+
+	DecodeLimits fewer=*limits;
+	RuntimeBlockInfo* rbi;
+	u32 cc_start;
+
+	for (;;)
+	{
+		cc_start=LastAddr;
+
+		rbi = rdv_ngen->AllocateBlock();
+
+		rbi->Setup(pc,fpscr,&fewer);
+
+		bool do_opts=((rbi->addr&0x3FFFFFFF)>0x0C010100);
+		rbi->staging_runs=do_opts?100:-100;
+
+		//The code was decoded this instant and runs right away: there is nothing to check at its entry, and the
+		//failure path of that check would look the block up in the cache
+		rdv_ngen->Compile(rbi,NoCheck,false,false,do_opts);
+
+		if (rbi->code!=0)
+			break;
+
+		//No room for the code in what is left of the cache: the cache is emptied, and code that the empty
+		//cache has no room for is made of fewer instructions, down to one
+		delete rbi;
+
+		if (LastAddr!=LastAddr_min)
+		{
+			sh4_cpu->ResetCache();
+		}
+		else
+		{
+			fewer.max_opcodes=fewer.max_opcodes ? fewer.max_opcodes/2 : 256;
+			verify(fewer.max_opcodes!=0);
+		}
+	}
+
+	u32 cc_end=LastAddr;
+
+	bm_SetTempBlock(rbi);
+	rdv_ngen->RunBlock((void*)CC_RW2RX(rbi->code));
+	bm_SetTempBlock(0);
+
+	//Nothing else is compiled while a block runs. A cache clear from inside the block moves LastAddr, and wins
+	if (LastAddr==cc_end)
+		LastAddr=cc_start;
+
+	delete rbi;
+}
+
+//The rest of a block whose code ended in front of its last instruction: where the block ends, and the cycles of
+//the rest
+static bool rest_pending;
+static u32 rest_end;
+static u32 rest_cycles;
+
+void DYNACALL rdv_BlockRest(u32 pc, u32 cycles, u32 end_pc)
+{
+	next_pc=pc;
+
+	rest_pending=true;
+	rest_end=end_pc;
+	rest_cycles=cycles;
+}
+
+//Takes it, as the limits of the block that runs it. false: none is owed
+static bool rdv_TakeBlockRest(DecodeLimits* limits)
+{
+	if (!rest_pending)
+		return false;
+
+	rest_pending=false;
+
+	limits->max_opcodes=0;
+	limits->end_pc=rest_end;
+	limits->cycles=(s32)rest_cycles;
+	limits->no_compile=false;
+
+	return true;
 }
 
 DynarecCodeEntryPtr rdv_FindOrCompile_OrFail()
@@ -310,6 +430,10 @@ DynarecCodeEntryPtr rdv_CompilePC_OrClearCache()
         sh4_cpu->ResetCache();
 
 		rv = rdv_CompilePC_OrFail(false);
+
+		//code that the empty cache has no room for: a block of fewer instructions, down to one
+		for (u32 max_opcodes = 256; !rv && max_opcodes != 0; max_opcodes /= 2)
+			rv = rdv_CompilePC_OrFail(false, max_opcodes);
 
 		verify(rv != nullptr);
 	}
@@ -456,8 +580,182 @@ void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc)
 	bm_printf("rdv_LinkBlock() end\n");
 	return (void*)rv;
 }
+#if defined(NULLDC_DEBUGGER)
+
+/*
+	The interpreter fallback (hw/sh4/sh4_dbg.h): the guest runs through the interpreter's handlers and is charged
+	by the decoder's blocks. At each block start the block at pc is decoded, without compiling it, for its end,
+	its cost and the refunds of its debugger checks; the cost goes off the slice counter, and instructions are
+	interpreted up to the end of the block before the counter is tested.
+*/
+
+// Cycles left in the slice of the fallback loop. Kept when the loop is left and entered again.
+static int fallback_slice = SH4_TIMESLICE;
+
+// The guest last ran on the fallback loop: its counter is the one that tells the time
+static bool fallback_ran;
+
+// The two loops take turns in one slice where the backend's loop keeps its counter: whichever runs goes on from
+// the counter of the one that ran before it, so that the slice ends where it would have without the switch.
+// Behind a backend that starts a slice of its own at every entry the fallback keeps to its own counter.
+static void fallback_Enter()
+{
+	if (!fallback_ran && rdv_ngen->KeepsSlice())
+		fallback_slice = rdv_ngen->SliceCyclesLeft();
+
+	fallback_ran = true;
+}
+
+static void fallback_Leave()
+{
+	if (fallback_ran && rdv_ngen->KeepsSlice())
+		rdv_ngen->SetSliceCyclesLeft(fallback_slice);
+
+	fallback_ran = false;
+}
+
+// The decoded block, reused from block to block
+static RuntimeBlockInfo* fallback_blk;
+
+// Decodes the block at next_pc, charges it and interprets it to its end.
+// false: a debugger check or a flow report stopped inside; the refund is back on the counter
+static bool fallback_RunBlock(u32 max_opcodes, u32 end_pc, s32 cycles)
+{
+	const DecodeLimits limits = { max_opcodes, end_pc, cycles, true };
+
+	if (!fallback_blk)
+		fallback_blk = rdv_ngen->AllocateBlock();
+
+	RuntimeBlockInfo* rbi = fallback_blk;
+
+	rbi->Setup(next_pc,fpscr,&limits);
+
+	const u32 block_end = rbi->addr + rbi->sh4_code_size;
+
+	fallback_slice -= rbi->guest_cycles;
+
+	// the checks are in the order of their instructions
+	size_t check = 0;
+
+	// the instruction that runs next is the slot of a bt/s or bf/s that was not taken
+	bool slot_left = false;
+
+	for (;;)
+	{
+		u32 addr = next_pc;
+
+		while (check < rbi->oplist.size() && rbi->oplist[check].op != shop_dbg_check)
+			check++;
+
+		// The decoder makes no check for a delay slot: the slot of a delayed branch that is not taken runs
+		// here as an instruction of its own, without one
+		if (slot_left)
+		{
+			dbg_sh4_SlotRuns();
+		}
+		else if (check < rbi->oplist.size() && rbi->oplist[check].rs1._imm == addr)
+		{
+			u32 refund = rbi->oplist[check].rs2._imm;
+			check++;
+
+			if (dbg_sh4_Check(addr, refund, block_end))
+			{
+				fallback_slice += refund;
+				return false;
+			}
+		}
+
+		u32 op = IReadMem16(addr);
+
+		// A delayed branch that is taken is a control transfer wherever it goes, to its own slot as well: the
+		// address is then arrived at as a branch target, at the start of a block. bt/s and bf/s that are not
+		// taken leave their slot to this loop.
+		const bool has_slot = (OpDesc[op]->type & Delayslot) != 0;
+
+		slot_left = has_slot && (((op & 0xFF00) == 0x8D00 && sr.T == 0) || ((op & 0xFF00) == 0x8F00 && sr.T != 0));
+
+		const bool taken_delayed = has_slot && !slot_left;
+
+		next_pc = addr + 2;
+
+		ExecuteOpcode(op);
+
+		if (unlikely(dbg_sh4_stepout != 0))
+		{
+			// calls and returns report when they have run. RTE does it itself, in front of its interrupt check
+			if ((op & 0xF000) == 0xB000 || (op & 0xF0FF) == 0x0003 || (op & 0xF0FF) == 0x400B)
+				dbg_sh4_CheckFlow(DBG_SH4_FLOW_CALL);
+			else if (op == 0x000B)
+				dbg_sh4_CheckFlow(DBG_SH4_FLOW_RTS);
+
+			if (dbg_sh4_StopPending())
+				return false;
+		}
+
+		// the block ends with a control transfer, or behind its last instruction
+		if (taken_delayed || next_pc != addr + 2 || next_pc == block_end)
+			return true;
+	}
+}
+
+// The end-of-slice work, when the slice ran out. false: the loop ends
+static bool fallback_SliceEnd()
+{
+	if (fallback_slice > 0)
+		return true;
+
+	fallback_slice += SH4_TIMESLICE;
+
+	// as the main loop of a jit: the cpu state is only looked at behind UpdateSystem
+	// (the poll of the emulator thread: a relaxed load, sh4_if.h)
+	UpdateSystem_INTC();
+
+	return sh4_int_bCpuRun.load(std::memory_order_relaxed) != 0;
+}
+
+void sh4_fallback_loop()
+{
+	u32 end_pc, cycles;
+
+	fallback_Enter();
+
+	if (dbg_sh4_TakeRemainder(next_pc, &end_pc, &cycles))
+	{
+		// the rest of the block that a check interrupted, for the cycles that were given back
+		if (!fallback_RunBlock(0, end_pc, (s32)cycles))
+			return;
+	}
+
+	// Left behind the block that used the slice up (a flow report stopped there), or entered with the cpu
+	// stopped: the end-of-slice work comes first
+	if (!fallback_SliceEnd() || !sh4_int_bCpuRun.load(std::memory_order_relaxed))
+		return;
+
+	for (;;)
+	{
+		if (!fallback_RunBlock(0, 0, -1))
+			return;
+
+		if (!fallback_SliceEnd())
+			return;
+	}
+}
+
+void sh4_fallback_step()
+{
+	fallback_Enter();
+
+	if (fallback_RunBlock(1, 0, -1))
+		fallback_SliceEnd();
+}
+
+#endif
+
 struct recSH4 : SuperH4Backend {
 	~recSH4() { Term(); }
+
+    // of the backend, constant: read once at Init
+    ngen_features features = { };
 
     void ClearCache()
     {
@@ -470,22 +768,99 @@ struct recSH4 : SuperH4Backend {
     void Loop()
     {
         sh4_dyna_rcb = (u8*)& Sh4cntx + sizeof(Sh4cntx);
-        printf("cntx // fpcb offset: %td // pc offset: %td // pc %08X\n", (u8*)& sh4rcb.fpcb - sh4_dyna_rcb, (u8*)& sh4rcb.cntx.pc - sh4_dyna_rcb, sh4rcb.cntx.pc);
-
-        if (!settings.dynarec.safemode)
-            printf("Warning: Dynarec safe mode is off\n");
-
-        if (settings.dynarec.unstable_opt)
-            printf("Warning: Unstable optimizations is on\n");
-
-        if (settings.dynarec.SmcCheckLevel != FullCheck)
-            printf("Warning: SMC check mode is %d\n", settings.dynarec.SmcCheckLevel);
 
         verify(rcb_noffs(&next_pc) == -184);
 
-        rdv_ngen->Mainloop(sh4_dyna_rcb);
+#if defined(NULLDC_DEBUGGER)
+        fallback_Leave();
+#endif
+
+        // Resuming in the block that a debugger check interrupted: its rest runs first, as one block that ends
+        // where the interrupted block ends and costs the cycles that were given back. A backend that cannot run
+        // a block outside the block cache lets the rest go.
+        DecodeLimits rest = { 0, 0, -1, false };
+        u32 owed_cycles;
+        bool have_rest = false;
+
+        if (dbg_sh4_TakeRemainder(next_pc, &rest.end_pc, &owed_cycles) && features.DebugChecks)
+        {
+            rest.cycles = (s32)owed_cycles;
+            have_rest = true;
+        }
+
+        for (;;)
+        {
+            if (have_rest)
+            {
+                rdv_RunTempBlock(&rest);
+
+                if (dbg_sh4_StopPending())
+                    return;
+
+                // the code of that block can end in front of its last instruction as well
+                have_rest = rdv_TakeBlockRest(&rest);
+                continue;
+            }
+
+            rdv_ngen->Mainloop(sh4_dyna_rcb);
+
+            // The main loop returns when the cpu was stopped, and when the code of a block handed the rest of
+            // the block over (rdv_BlockRest): that runs, and the loop is entered again
+            have_rest = rdv_TakeBlockRest(&rest);
+
+            if (!have_rest)
+                return;
+        }
     }
 
+    u32 DebugCaps()
+    {
+        return (features.DebugChecks ? SH4DBG_NATIVE : 0) | (features.CtxAtSlice ? SH4DBG_CTX_AT_SLICE : 0);
+    }
+
+    bool Step()
+    {
+        if (!features.DebugChecks)
+            return false;
+
+        sh4_dyna_rcb = (u8*)& Sh4cntx + sizeof(Sh4cntx);
+
+#if defined(NULLDC_DEBUGGER)
+        fallback_Leave();
+#endif
+
+        DecodeLimits one = { 1, 0, -1, false };
+        rdv_RunTempBlock(&one);
+
+        return true;
+    }
+
+    int SliceCyclesLeft()
+    {
+#if defined(NULLDC_DEBUGGER)
+        if (fallback_ran)
+            return fallback_slice;
+#endif
+        return rdv_ngen->SliceCyclesLeft();
+    }
+
+    void ResetSlice()
+    {
+        rdv_ngen->ResetSlice();
+#if defined(NULLDC_DEBUGGER)
+        fallback_slice = SH4_TIMESLICE;
+#endif
+    }
+
+    void DebugDiscardPage(u32 addr)
+    {
+        bm_DiscardAddrPage(addr);
+    }
+
+    void DebugDiscardFlow(bool instrumented_only)
+    {
+        bm_DiscardFlowBlocks(instrumented_only);
+    }
 
     bool Init()
     {
@@ -505,23 +880,59 @@ struct recSH4 : SuperH4Backend {
             verify(sh4_cpu->mram.data == ((u8*)p_sh4rcb->sq_buffer + 512 + 0x0C000000));
         }
 
-        // Prepare some pointer to the pre-allocated code cache:
-        void* candidate_ptr = (void*)(((unat)SH4_TCB + REI_PAGE_MASK) & ~REI_PAGE_MASK);
+        // The code region is the process's: the host prepares it for the first backend object, and every one
+        // behind it, which is every later emulator thread, finds it where it is. No host frees the region, and
+        // not every host hands the same one out twice: Windows maps a new one near the program at every call,
+        // and has no room for the next after some two hundred of them
+        if (CodeCache == NULL)
+        {
+            // Prepare some pointer to the pre-allocated code cache:
+            void* candidate_ptr = (void*)(((unat)SH4_TCB + REI_PAGE_MASK) & ~REI_PAGE_MASK);
 
-        // Call the platform-specific magic to make the pages RWX
-        CodeCache = NULL;
+            // Call the platform-specific magic to make the pages RWX
 #ifdef FEAT_NO_RWX_PAGES
-        verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache, &cc_rx_offset));
+            verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache, &cc_rx_offset));
 #else
-        verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache));
+            verify(vmem_platform_prepare_jit_block(candidate_ptr, CODE_SIZE, (void**)& CodeCache));
 #endif
+        }
+
         // Ensure the pointer returned is non-null
         verify(CodeCache != NULL);
 
        // memset(CodeCache, 0xFF, CODE_SIZE);
+
+        // Every backend object starts with an empty code cache, and every emulator thread makes one. The code
+        // generator is one object for the whole process: its Init() writes its stubs where the cache has got
+        // to and sets the base of what a cache clear recycles behind them (emit_SetBaseAddr). Entered with the
+        // code of the backend object before this one still counted, it kept that code below the base for
+        // good, and some hundred thread starts later the cache had no room left.
+        // Nothing refers to the code that goes: bm_Reset() above took every block out of the tables and out
+        // of the lookup table, and the blocks it discarded are deleted here, so that none of them is found by
+        // the address of code that is written from now on (bm_GetStaleBlock)
+        bm_CleanupDeletedBlocks();
+
+        LastAddr = 0;
+        LastAddr_min = 0;
+
         verify(rdv_ngen->Init());
 
         bm_Reset();
+
+        rdv_ngen->GetFeatures(&features);
+
+        // Loop() is entered again after every debugger stop: what is said once per backend is said here
+        sh4_dyna_rcb = (u8*)& Sh4cntx + sizeof(Sh4cntx);
+        printf("cntx // fpcb offset: %td // pc offset: %td // pc %08X\n", (u8*)& sh4rcb.fpcb - sh4_dyna_rcb, (u8*)& sh4rcb.cntx.pc - sh4_dyna_rcb, sh4rcb.cntx.pc);
+
+        if (!settings.dynarec.safemode)
+            printf("Warning: Dynarec safe mode is off\n");
+
+        if (settings.dynarec.unstable_opt)
+            printf("Warning: Unstable optimizations is on\n");
+
+        if (settings.dynarec.SmcCheckLevel != FullCheck)
+            printf("Warning: SMC check mode is %d\n", settings.dynarec.SmcCheckLevel);
 
         return true;
     }

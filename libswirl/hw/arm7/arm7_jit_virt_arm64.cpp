@@ -13,7 +13,7 @@
 #include "arm7.h"
 #include "arm7_context.h"
 #include "arm7_jit_virt_backend.h"
-#include "jit/emitter/arm32/arm_coding.h"
+#include "arm_coding.h"
 #include "deps/vixl/aarch64/macro-assembler-aarch64.h"
 
 #if HOST_OS == OS_LINUX || HOST_OS == OS_DARWIN
@@ -84,11 +84,7 @@ struct Arm7JitArm7VirtBackendArm64 : Arm7VirtBackend {
 //            verify(false);
 //        }
 
-#if TARGET_IPHONE
-        memset((u8*)mmap(ICache, ICacheSize, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_FIXED | MAP_PRIVATE | MAP_ANON, 0, 0), 0xFF, ICacheSize);
-#else
         memset(ICache, 0xFF, ICacheSize);
-#endif
 
 #endif
 
@@ -359,7 +355,6 @@ struct Arm7JitArm7VirtBackendArm64 : Arm7VirtBackend {
         assembler = NULL;
     }
 
-    //Hook cus varm misses this, so x86 needs special code
     void MOVPTR(ARM::eReg regn, uintptr_t imm)
     {
         assembler->Mov(Register::GetXRegFromCode(regn), imm);

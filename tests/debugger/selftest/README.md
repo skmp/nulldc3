@@ -1,0 +1,361 @@
+# debugger.selftest: the selftests of the debugger, in the emulator
+
+`nulldc3 --config Debugger:SelfTest=<filter>` runs the tests that the files `libswirl/debugger/dbg_selftest_*.cpp`
+register, on the emulator thread, against the live machine (`libswirl/debugger/dbg_selftest.h`). The tests of
+this directory run such sessions headless, on the emulator that the system tests build
+(`<build dir>/system/emulator`, or `-DNULLDC_EMULATOR=`), and are skipped where those are.
+
+    python3 tests/debugger/selftest/selftest.py --emulator <nulldc3> --work /tmp/w --selftest emu --keep
+
+A package adds the selftest of its file with one line in `CMakeLists.txt`:
+
+    nulldc_debugger_selftest(<name>)
+
+That makes `debugger.selftest.<name>` (the SH4 on the JIT) and `debugger.selftest.<name>.interp` (on the
+interpreter): a session with the filter `<name>` that has to end with exit code 0 and the summary of the driver,
+with no check failed. The options of the function are at the top of `CMakeLists.txt`; `ELF 2ndmix.elf` boots a
+program of `NULLDC_ELF_DIR` instead of the guest of this directory.
+
+Every run keeps its files in a directory of its own under the work directory (`--portable <dir>`) and has an empty
+environment (no display), the real-time clock pinned, a core size limit of 1 byte and a watchdog, as in `tests/system`.
+
+**Every run is made on the engine it asks for.** `--engine jit` is `config:Dynarec.Enabled=yes`, `--engine interp`
+is `=no`; the emulator takes the first for a wish and says `Using MCPU Recompiler` or `Using MCPU Interpreter`, and
+a run that says the other, or neither, fails. A run with a session also has to be made on the SH4 debug engine it
+asks for: the driver says first what executes the breakpoints and steps of the SH4, by the name
+`debugger.describe` gives it among its capabilities (`SelfTest: engine: the SH4 runs on the recompiler (x64), its
+breakpoints and steps on sh4-debug-native`, `dbg_selftest.cpp`), and `selftest.py` compares both halves of that
+line with what it asked for: the SH4 on the engine of `--engine`, and `sh4-debug-fallback` on the recompiler with
+`Debugger:ForceFallback=yes` among the `CONFIG` items (`arm7.fallback`, `writes.fallback`), `sh4-debug-native` on
+the recompiler without it (on an x86-64 host, whose recompiler executes them itself; the recompiler of another host
+has none and reports the fallback, which is then what is asked for), `sh4-debug-native` on the interpreter, with the
+key or without it. A failure says the engine found and the one asked for. Up to f640f21a no test looked:
+`arm7.fallback` and `writes.fallback` passed on an emulator that ignored the key (the mutant `nofallback` of the M2
+gate). `startpaused` has no session, and checks the SH4 alone.
+
+The emulator compares the engine of every session with its configuration as well, behind that line and before the
+tests of the filter: the check `engine.asked` (`dbg_selftest_emu.cpp`), which no filter selects and the driver runs
+in every session. It asks for the SH4 on the recompiler when the build has one and `config:Dynarec.Enabled` is set,
+on the interpreter otherwise; for `sh4-debug-fallback` on the recompiler with `Debugger:ForceFallback=yes` or a
+recompiler without breakpoints of its own, `sh4-debug-native` otherwise. It says so in one line,
+`SelfTest: engine.asked: note: the engine of the session is the one its configuration asks for: ...`, or fails a
+check, and then the session (`SelfTest: engine.asked: FAILED: the configuration asks for ...; the session runs ...`);
+the summary counts it only when it fails. `selftest.py` requires the note. That is what holds the sessions of
+`debugger.selftest.sh4bp.sessions` to their engines: their runner, `tests/debugger/sh4bp/selftest.sh`, asks for
+the engines by configuration and looks at the exit code of a session, not at what it says.
+
+**No wait without a bound.** The sessions `arm7`, `writes` and `core`, and the tests `arm7n.*` and
+`writesrun.neutral`, give every wait for a stop a bound, one constant of their file (`kBoundMs`: 30 s in
+`dbg_selftest_arm7.cpp` and `dbg_selftest_writes.cpp`, 60 s in `dbg_selftest_core.cpp`); the threads their tests
+start wait no longer. Where the machine never gives the stop a test waits for, a thread of the session cuts the
+wait at the bound and asks the machine for a stop it can still give, a tenth of the bound for each: a pause where
+it runs; a stop of the host, with a call that resumes a thread that stays parked through it; and a start of the
+host, whose new thread parks at its start as every thread of a session does. (In `core`, a thread of a test that
+takes the machine apart and makes it again, in `core.lifetime` and `core.writes`, has the machine to itself until
+the new one has started: the stop and the start of the host wait for it, and for the start park of that machine
+first.) The test is handed that stop and fails by a check that says so, every test behind it in the session fails
+at once with one check (the machine stands where no test begins), and the session prints its summary, long before
+the watchdog of the runner. Each test says its longest wait in a note: in a session that passes it is under a
+tenth of a second in `arm7` and `writes`, and under a second in `core`: `core.guest` (the boot of 2ndmix, about
+0.9 s on the interpreter), `core.reset` (about 0.3 s: its host thread lets the machine run 300 ms before it asks
+for the reset) and `core.writes` (about 0.1 s: its host thread lets the machine run 100 ms before it sends its
+requests). The last wait of a test that the run ends has no bound.
+
+## The tests of dbg::emu
+
+`libswirl/debugger/dbg_selftest_emu.cpp`: the emulator thread and run control. Its guest is `emu_guest.s`, a
+raw image of a few routines (a loop, a loop with a timer interrupt, SLEEP waits with and without that
+interrupt, a write of the reset register, a return to the BIOS); `gen.sh` assembles it into `emu_guest.bin`,
+which the runs boot, and `emu_guest.inc`, which the emulator is built with. `gen.sh` needs an sh-elf binutils,
+the build and the tests do not.
+
+What another thread of the debugger does (a call, a pause request) and what the host does (a stop, a reset
+or a loaded state of a stopped machine, a machine that is taken apart and made again) is done by a thread the
+test starts. Headless, nothing else plays the host.
+
+| test | what has to hold |
+|---|---|
+| `debugger.selftest.emu` `.interp` | the session `emu`, the nineteen tests below |
+| `emu.machine` | before the guest has run: the lifetime is Running, the park context holds the stop latch, the engine is known, run control without a stop is refused, a `CC_EXEC` call for a running thread is answered at once |
+| `emu.pause` | 2000 pauses of a loop, 1000 of a loop with interrupts, 300 of a guest that waits in SLEEP, each asked for by another thread and resumed at once: every stop is a pause with the next stop id, `GetRunState` is the stop, the listener saw Running and Parked in turns on the emulator thread; emulated time at the park is the time at the latch, no scheduler callback ran, nothing executed and no interrupt was accepted in between; an interrupt that the latch held back is accepted by the resume; a pause is latched at the first slice end that has the request; a request first seen inside a SLEEP wait is taken behind the wait. A SLEEP wait that nothing ends (interrupts masked, the slices of the wait made slow): the pause is latched in the wait once it is 250 ms old, with the pc on the SLEEP |
+| `emu.events` | before anybody has set the active mask no category is active: the event of an event breakpoint is raised and nothing stops. Then an event breakpoint, with the event raised by a scheduler callback of the test: in a SLEEP wait in the slice that raised the interrupt the wait is for (the wait is cut, the acceptance is owed, the resume accepts it and it returns behind the SLEEP), in a SLEEP wait with nothing pending (the SLEEP is executed again), with the pc written during such a stop, in a loop, together with a pause request (one stop, the event's). Each time the scheduler stopped in the call that raised the event. Two breakpoints on the event report the lower id. With the category inactive, and with the gate of the event closed, nothing stops |
+| `emu.calls` | a call of each class for a running thread (`CC_READ` in the slice hook; `CC_TABLE` and `CC_WRITE` in the park context, in a service excursion that publishes nothing; `CC_EXEC` -32003) and for a parked one (all four in the park loop; a resume armed by a call, a second one refused; a `CC_EXEC` call that waited in the queue across the resume: -32003). 800 calls of four threads run one at a time |
+| `emu.cancel` | a closure that keeps the emulator thread for 2.6 s is waited for; a `CC_READ` and a `CC_TABLE` call behind it are given up after 2 s with -32000 and never run: their closures use memory the callers free when the call has returned, which ASan would see |
+| `emu.hoststop` | the host stops a parked machine, twice in a row: one thread end, both callbacks, in order. Stopped: `CC_READ` and `CC_TABLE` run on the caller, `CC_WRITE` and `CC_EXEC` -32001, a pause request does nothing; a state saved and loaded puts the guest back and is a new stop. A call made while the next thread starts is taken by it. 60 times a pause and a host stop asked for together: the thread ends every time, each callback runs once. A stop during a call: the call ends, the thread ends; calls queued while the stop callback runs are taken by the leaving thread (`CC_READ`, `CC_TABLE`) or answered -32001 (`CC_WRITE`) |
+| `emu.lifetime` | the machine is stopped, reset while stopped, taken apart (no machine: `CC_TABLE` runs on the caller, every other class -32002, no engine) and made and started again; the listener saw every change, each a new stop |
+| `emu.reset` | the reset register written while parked: the machine is reset and stays parked, reason reset. Written by the guest with a pause asked for in the same slice: the same. A reset by a call for the running thread: the machine resets and runs on, nothing is published. By a call for the parked thread, and from the stop itself: reset, parked, reason reset |
+| `emu.resetruns` | a machine that is being reset counts as running: while the guest resets it, and while a call does, another thread looks at `IsRunning()` as a host does, over a million times, and never finds it false. (A host that takes the machine for stopped ends its user interface under the emulator thread.) A reset that is asked for behind the end of the thread leaves the stopped machine stopped |
+| `emu.exit` | a guest exit asked for while parked ends the thread: Stopped, guest-exit |
+| `emu.fp` (x86-64) | the host FP mode of the emulator thread is FPSCR's when the guest goes on: after a park in which it was changed, and in a thread whose creator had another one |
+| `emu.step` | steps, as far as run control goes. The ARM7 of this guest is held in reset: a step, a step over and a step out of it answer `-32012`; the DSP has no steps, `-32004`. With a backend that steps: a step is one stop that says step, with no Running in between; a write of the reset register in a step is one stop, the reset's; a host stop during a step (a SLEEP that nothing ends) is taken when the step has returned, and the stop of the step is never published; a call made during a step runs in the park loop behind it; an event breakpoint ends a step in the slice that raised the event. In a build whose backend does not step: a step is refused and nothing is armed |
+| `emu.startstop` | 40 times the host stops the machine while its emulator thread starts, from another thread than the one that starts it, with the threads starting as they do without a session: the thread ends, the callback runs once, and the stopped machine does not count as running |
+| `emu.startpark` | the same for threads that park at their start, as the threads of a session do. 20 times the stop is made exactly when the machine takes it for the new thread and the debugger has not heard of that thread, so that it wakes no park loop: the thread finds its cpu left stopped, makes no park and ends. Then 200 times wherever the two threads meet, from the first stop that the machine takes for the new thread to a stop that finds it in its start park: the thread ends, every stop that was taken runs its callback once, and the stopped machine does not count as running |
+| `emu.stopevent` | the host stops the machine in the very slice in which an event breakpoint decides a stop: the host stop wins, the machine does not count as running when the stop callback looks, and the stop of the event is never published |
+| `emu.stopresume` | the host stops the machine while its emulator thread is parked on a breakpoint, and starts it again: the next thread does not park for that stop again and resumes it, so the instruction of the breakpoint executes and the breakpoint stops at its next arrival (a thread that starts as it does without a session). A pc that was written in the stop, onto another breakpoint, is not the instruction of the stop: that breakpoint stops the next thread at once, as it stops a resume. With the start park of a session in between the guest goes on from the stop as well |
+| `emu.stopruns` | a machine that has been asked to stop counts as running until its emulator thread has taken the stop callback. The host stops the machine and acts again at once, as the window does for its close button: parked, running (from a call in the slice hook) and behind an exit of the guest the second action finds the machine running and stops it as well, its callback behind the first; an exit of the guest is asked for once. Then 240 times from another thread, at any moment of the running guest, with a pause asked for and with the thread parked: the host never finds a machine stopped whose thread still has its stop callback to take. (A host that does ends its user interface under a thread that waits for it to draw the frames it queued: the process never ends.) |
+| `emu.term` | 48 times the machine is taken apart under its emulator thread and made again: while the guest runs, with a pause asked for, during a service excursion, with a reset by a call and with one by the guest on its way, and while a call resumes the parked thread. The thread is ended first, and finds its machine until it is gone |
+| `emu.title` | the window says that the debugger paused at every stop, and the emulator thread calls the window for nothing else. 30 stops of one thread, one behind the other: the park loop puts its title on the window exactly where the running machine has written its frame rate there since the last stop. A stop behind 3 s of a running guest: the title is put again, once. A thread that the host stops makes no call of the window behind its stop callback (the thread of the user interface may be waiting for it there, and a title call waits for that thread on some hosts) |
+| `debugger.selftest.emuexit.running` `.pending` `.parked` (and `.interp`) | the guest returns to the BIOS while running, with a pause asked for in the same slice, and the exit hook is called while parked: a headless run ends there, exit code 0, `reason=guest-exit` |
+| `debugger.selftest.emurun.reads` (and `.interp`) | 2ndmix for 600 vblanks with another thread reading guest state through `CC_READ` calls for the whole run: the state hash of the exit line is that of the same run without a session, part for part |
+| `debugger.selftest.emurun.pending` (and `.interp`) | the same with a pause asked for in the very slice that ends the run: the run ends, with that hash |
+| `debugger.selftest.emurun.pauses` (x86-64 hosts) `.interp` | the same with 150 pauses, each resumed at once: that hash. On the interpreter and the x64 recompiler: a pause is exact on a backend whose slice counter is the same after its loop was left and entered again |
+| `debugger.selftest.emuhang.parked` | a session that stays parked at its start, with `Exit.AfterVblanks=5`: 4 s later the process is still there and has printed no exit line. Emulated time stands still while the thread is parked, so no `Exit.*` key ends such a run |
+| `debugger.selftest.startpaused` | the same for `Debugger:StartPaused=yes` without a session, with the server enabled (`Debugger:Enabled=yes`, `Debugger:Port=0`: without it the key is a configuration error) and no client: the start park waits without limit |
+
+## The tests of dbg::regs and dbg::mem
+
+`libswirl/debugger/dbg_selftest_regs.cpp`: the registers of the device tree, guest memory for the debugger and
+the device accessors behind them. The first fourteen are machine tests: they run once, before the guest has
+executed anything, on the machine that boots `2ndmix.elf` of `NULLDC_ELF_DIR`. They read, and where they compare
+with what the guest would read they put the machine back as it was. The fifteenth, `regs.enabled`, is a guest
+test: it runs that program for a second of emulated time and reads at stops of it.
+
+The machine those tests find is that of a reset, where most registers of the devices read 0. The five
+`regs.rows.*` tests therefore read the rows of the devices (milestone M2) at states they make up: a value of its
+own in every word a row reads, so that a row that reads its neighbour's word, another channel's, or another bit
+of its own shows. A made-up state is put into a device through its save state or its register array, never by
+running the guest, and the device is put back.
+
+| test | what has to hold |
+|---|---|
+| `debugger.selftest.regs` `.interp` | the session `regs`, the fifteen tests below |
+| `regs.slots` | the tables against the register slots of the live machine: every on-chip row is a registered slot, every registered on-chip slot has a row, and a row and its slot agree about a read function; every system bus row is a registered slot, a slot has one row at most, a row has no reader exactly when its slot is write-only, and of the others a row is computed exactly when its slot is behind a read function; 127 of the 137 registered slots have a row, and the ten without one are the write-only slots that `sb_regs.h` does not name |
+| `regs.read` | every register of every node reads, or says that it cannot, as its flags say: values inside their width, texts not empty and cut to the buffer, the outputs untouched on failure; reads without outputs and outside a node; a write behind the last register of a node, and to its first register without a writer, is refused with nothing changed (what a write that is taken does is the session `writes`) |
+| `regs.values` | values against a second source: `dc.sh4.cpu` against the SH4 context, the on-chip registers and `dc.holly.intc` against a guest read where that read changes nothing, the timer counters, `SB_FFST` without counting as a read, the time, the texts |
+| `regs.devices` | the debug accessors of the devices against a second source: `dc.aica.arm7` and the interrupt controller of the sound CPU against its save state, in each of the seven modes; `ENABLED` of that node, one bit that reads 0 before the guest has executed anything, and 1 and 0 for a sound CPU that is clocked and one that is held in reset, as `SoundCPU::DebugEnabled()` says; the AICA register file against byte reads by the SH4, and the state of its 64 channels; the RTC; the DSP (`dc.aica.dsp`: its four widths, `MDEC_CT` as the counter modulo 2^16, `RBP` and `RBL` as the fields of the common register, the program against its registers); the interrupt controller; the GD-ROM; boot ROM and flash, and the flash bytes as a guest read delivers them |
+| `regs.mem.map` | `Classify()` against the map of `dbg_mem.h`: the regions of the SH4 at both ends and in the middle of every run in every mirror, the regions of the ARM7 and the DSP |
+| `regs.mem.read` | what `Read()` delivers, against the stores and the register readers: main memory in its mirrors and across the end of one, video memory in both views, wave memory for both processors, boot ROM and flash, the system bus, PVR and AICA registers and the RTC, the store queues, the on-chip registers at both of their addresses (the CPU version, an 8-bit and a 16-bit register by name; and every on-chip row of the tables, found by a walk over every row of the tree: as many readable bytes as its width has, holding what its reader gives, and none for a row without a reader, as the machine stands and with a value of its own in the slot of every register that is plain data, where the bytes are that value; the on-chip modules are then as they were); the GD-ROM block, the modem, the FIFO registers and what is not mapped read as nothing; the readable bits of the 64 KiB around every region boundary; `Write()` refuses the boot ROM, a range past the end of the address space and the DSP |
+| `regs.mem.arm7` | the register window of the AICA for the ARM7 target against loads by the ARM7 itself: the whole window, the two bytes behind `ARMRST` and `VREG`, and the bytes where the ARM7 has its interrupt controller, in states of it that are made up |
+| `regs.pure` | reading changes nothing: the machine, as a save state has it, is the same before and after every register, every device accessor and the memory around every boundary was read |
+| `regs.rows.sb` | the 115 system bus rows of milestone M2, beside the twelve interrupt registers of `dc.holly.intc`: 100 on slots that hold a value, 14 on write-only slots, and `SB_FFST` behind a read function (127 system bus rows in all). Against a guest read, for the 111 on slots that hold a value, those 100 and eleven of `dc.holly.intc` (a guest read of such a slot is the value and changes nothing); with a value of its own in every slot, each row reads the value its own slot was given; a row on one of the 14 write-only slots reads `"n/a"`, as a read by address does, whatever the slot holds. `dc.maple.SB_MST`, a read-only register that nothing assigns, reads 0: its slot does not hold the address of the function it was made with |
+| `regs.rows.pvr` | the 68 rows of the PVR's register file against a guest read, which is the file: as the machine stands, and with a value of its own in every register that has a row |
+| `regs.rows.aica` | the fields of the AICA's register file. The 47 fields of `dc.aica.common` against the members of `CommonData_struct`, the struct the emulator reads the block through: a member set to all ones shows the bits the compiler gives it. Then two made-up states of the device, every word a row reads with a value of its own, `ARMRST` and `VREG` other than the word of the file at `0x2C00`, the loop flag of the channel `MSLC` selects set: the 2479 fields (47, and 38 for each of the 64 channels) as the accessor delivers the file and as the state was made, and the fields of the channels against guest reads of their words; every channel differs from the one behind it in ten fields at least; `AR` and `VREG` are the device's; `MIEMP`, `MOEMP` and `LP` read 1 with all three clear in the file; `SCILV0`, `SCILV1`, `SCILV2`, `SCIRE` and `MCIRE` read `"n/a"` while the file holds a value and the accessor delivers 0; `L` and `M` are what `SoundCPU::DebugGetInterrupt` says in four states of the controller, not the words of the file at `0x2D00` and `0x2D04`; and the reads leave the made-up state as it was |
+| `regs.rows.gdrom` | the rows of `dc.gdrom` against the members of the drive's snapshot (`gdrom_DebugGetState`), by name: as the machine stands and in 24 made-up states of the drive, over which no two of the 27 rows have the same values. A made-up state has a 0 or a 1 in every byte of the drive's save state but in the two members the device keeps in an enum, the state of its command state machine and the type of its disc, which get enumerators of their own: the snapshot reads those, and loads no value outside its enum (UBSan); the packet rows have the first of their four bytes as the highest. And `dc.aica.rtc`: `SECONDS` is the counter the guest reads as two halves, `WRITE_ENABLE` the bit of the device, set and clear, where the guest reads 0 |
+| `regs.rows.pure` | reading the rows changes nothing: every register of the tree is read a hundred times, and the save state of each of the 14 devices, the PVR's register file and the machine are as they were; as the machine stands, and with made-up states in the AICA, the sound CPU, the drive, the system bus and the PVR's register file at once, the loop flag of the selected channel among them. A guest read of the channel status, made once behind that, does change the state of the AICA: a reader that goes through the guest's read function fails here |
+| `regs.tick` | what the tree costs a tick: a full tick with no breakpoint and no watch listed carries every node that has registers and is at most 192 KiB (127,031 bytes on the tree of milestone M2: 104 nodes, 2940 registers). The time the emulator thread takes to build one, and to make the reads alone, is printed: the fastest and the median of 41 builds |
+| `regs.enabled` | `dc.aica.arm7.ENABLED` where the booted program holds and releases the ARM7. The program runs from its start for 200,000,000 cycles of the scheduler and is stopped wherever it has written another value to `ARMRST` (a scheduler callback of the test looks at the byte in every slice and asks for a pause): at the start, with nothing executed, the register reads 0; at the stop behind a write of 1 it reads 0, behind a write of 0 it reads 1; at every stop it is the flag in the save state of the sound CPU and what `SoundCPU::DebugEnabled()` says, which is what the unwinder of the ARM7 call stack asks; and the program releases the ARM7 on the way. 2ndmix makes four such writes: `spu_init()` holds the ARM7 and releases it, `play_s3m()` does so again |
+
+## The tests of the core
+
+`libswirl/debugger/dbg_selftest_core.cpp`: the core of the debugger (`dbg_core.cpp`, `dbg_events.cpp`,
+`dbg_symbols.cpp`, `dbg_callstack.cpp`): the wire protocol, the tables, the tick builder and the event log,
+against the live machine. The session has no server, and so no client and no core thread (`Debugger:SelfTest`
+keeps the server off unless `Debugger:Enabled` is set; with a server running every test fails its first check
+instead of running beside the core thread). The tests hand request texts to the dispatcher of the core and get the
+response texts, build ticks and the describe result as text, and state the number of connected clients themselves.
+The first four are machine tests: they run once, before the guest has executed anything, on the machine that boots
+`2ndmix.elf` of `NULLDC_ELF_DIR`. The last four are guest tests; what comes in as it does on the core thread, through
+`dbg::emu::Call`, comes from a thread the test starts: while the host has the machine stopped, while there is
+none, and while the machine runs. A session has no server, so the ticks that the core broadcasts from inside a
+call go nowhere; `core.reset` and `core.writes` have them handed over (`core::SetTickSinkForTest`), and look at
+what `dbg::emu` publishes.
+
+| test | what has to hold |
+|---|---|
+| `debugger.selftest.core` `.interp` | the session `core`, the eight tests below |
+| `core.events` | the event log: 200 entries, with ids that ascend and stay with their entries, the oldest dropped; a message cut to its bound; with the gates closed nothing is logged and no argument of an event is evaluated; the direct append, which the note of the grace period uses |
+| `core.opcodes` | for all 65536 encodings the disassembler reports an instruction exactly where the opcode table of the interpreter executes one, but for the reios trap `0x085B`, whose line is `.word 0x085b ! reios trap` |
+| `core.tables` | breakpoints, watches and categories as the calls of the dispatcher use them: breakpoint and watch ids from 1 and never used twice; the bounds of 1024 breakpoints, 64 expressions per call and 256 characters; the bound of 256 watches, which a watch on every register of the tree reaches (the tree has 2940): the test works out for each of its 46 calls how many watches it would add, a call that fits is taken whole, a call that would pass the bound is refused whole with `-32602`, and the list has what the rule gives behind each of them; the order of the checks of `breakpoints.add`, and so which error wins (an event name with a NUL behind the name of an event, or of the event of a target's code breakpoints, is `-32602`: a name is compared whole, as `state.setRegister` and `state.watch` compare theirs); the hand-over of the enabled code breakpoints to `dbg::emu`: those of the ARM7 to the ARM7 with their ids at their addresses, and nothing of them armed for the SH4, whose own breakpoint beside them is armed there alone; watches resolved without regard to case, duplicates, all or nothing; the category of a breakpoint; the active mask for mute, solo and no client; the event gates |
+| `core.tick` | the JSON of ticks and of describe: no `null`, the required keys, the capabilities of M1 and M2 and the one of the engine, every register list that of describe, values in their wire form; a full tick and the four base paths; watches on paths that a tick does not carry; a symbol name and an event message with bytes that are no ASCII as `?`; the errors of the envelope; a memory slice that does not wrap |
+| `core.guest` | on the booted program, from the reset vector (the machine is reset when it is not there): a step on the reios trap runs the boot; the entry resolves to a symbol; the SH4 call stack at the entry and at a breakpoint on `stars_one_frame`, the function 2ndmix calls in every frame; the ARM7 call stack against `dc.aica.arm7.ENABLED`, with the ARM7 held in reset and running; `breakpointId` in the ticks of a stop until its breakpoint is removed; an event breakpoint and a code breakpoint under mute |
+| `core.lifetime` | with a thread that plays the host and sends what a client sends: the machine stopped, its guest exited, the machine gone and made again. Each has its reason and a new `stopId`; without a machine a tick has `registers: {}` and describe a tree of `"n/a"`; the bookkeeping requests work in every state; requests that need a running thread or a machine are answered -32001 and -32002 |
+| `core.reset` | `control.reset`. At the stop of a breakpoint on the entry of the program, with a disabled breakpoint, a watch and a muted category listed: `{}` (an answer that is not ends the test there: no stop comes for a reset that was not made), no tick of its own, and one more stop, with reason `reset`, the next `stopId` and no `Running` published in between. The stop names no breakpoint, though the one that had stopped is still listed; the PC of the SH4 is the one a reset leaves, not the PC of the stop; `ENABLED` reads 0 and the ARM7 has no frames; the breakpoints, the watch and the category are what they were. A resume behind it boots into the breakpoint again. Then while the machine runs, asked by a thread as a client asks: `{}`, nothing published and no tick, the event log has `dc.system.reset`, and the machine is reset: it boots again and stops at the breakpoint on its entry (a machine that is not reset never comes back there; the thread then pauses it, in half the bound of a wait, and the test fails) |
+| `core.writes` | the three write methods as a client meets them. What describe says: five capabilities besides the engine's (`event-breakpoints`, `callstack`, `memory-write`, `register-write`, `reset`); `flags: {"writable": true}` on the 109 registers that have a writer, the 69 of `dc.sh4.cpu` and the 40 of `dc.aica.arm7` that are not `ENABLED`, and on no other; no register of a tick has flags. `state.writeMemory`: a missing or mistyped `target`, `address` or `data`, no byte, 65537 bytes and a byte that is no byte are `-32602`; `dsp` is `-32004`; the boot ROM, a register window, the ARM7 above its wave memory, a range past the end of the address space and one across the end of main memory are `-32013` and store nothing; four bytes, 65536 bytes and a byte of wave memory through the ARM7 are written. `state.setRegister`: a missing or mistyped parameter is `-32602`; then, in this order, a path or a name the tree does not have `-32602` (one with a NUL behind the name of a node or of a register among them: a name is compared whole, and `R0` is not written), a register without a writer or of width 0 `-32013` (also with a value that is no number), a text that is no number `-32602` (sixteen of them), a value the device refuses `-32013` (an odd PC of the SH4, a CPSR of the ARM7 that is no mode); the path and the name without regard to case; decimal, `0x` and `0X`, blanks and tabs around the text; of a text of any length the low bits count, in hex and in decimal (2^64 + 5, 2^70 + 5 and 2^128 + 5 are 5); SR reads back as it is stored. `state.editWatch`: no watch is made of an expression with a NUL in it (`-32602`); an unknown `watchId` is `-32602`, a watch on `ENABLED` or on a text `-32013`, a watch on `R1` is written. Every error is in-band, and no refused request broadcasts a tick; every accepted write broadcasts one, paused, with the `stopId` and the reason of the stop it was made in. While the machine runs, from a thread that sends what a client sends: a register without a writer and the boot ROM are `-32013`, not `-32003`; four bytes of main memory, `DBR` and a watch on it are written, each with a running tick behind it. By lifetime, with a thread that plays the host: while the machine is stopped the three methods and `control.reset` are `-32001`, with no machine `-32002`, in front of what a method finds out itself (an unknown path, an unknown `watchId`, and for `state.writeMemory` the target `dsp` and the boot ROM, which are `-32004` and `-32013` when the call is served) and behind what the request alone shows (`-32602`); nothing is written |
+
+## The tests of the sound side
+
+`libswirl/debugger/dbg_selftest_arm7.cpp`: the sound burst that the debugger suspends and runs on (design 2.5),
+the breakpoints and steps of the ARM7 (`dbg_arm7.cpp`), what the park loop does with them (`dbg_emu.cpp`), and the
+register writer of the ARM7 (`SoundCPU::DebugSetReg`). Their guest is the sounding guest of the tree,
+`tests/debugger/guest/dsptest/dsptest.elf`, which needs no `NULLDC_ELF_DIR`; the addresses come from its
+`dsptest_labels.inc`. Every test begins by bringing the guest to where a session finds it behind its boot: the
+SH4 in its loop, the ARM7 clocked and in its own, no breakpoint listed, no burst suspended.
+
+A sound burst is the work of one scheduler callback of the AICA: with the ARM7 clocked, 32 times an ARM phase
+(the ARM7 for the 256 ticks of a sample) and a time step of the AICA, then the tail (the batch render, the tick
+of the sound regression harness). The machine counts what its bursts did (`VirtualDreamcast::SoundBurstCounts`:
+bursts started, ARM phases that ran to their end, time steps, tails), and the tests read those counts: they say
+in which burst a stop was made, whether a step stayed inside one ARM phase, and how often a tail ran.
+
+What has to happen at a moment of the emulated machine is done by a scheduler callback of the tests that is
+registered behind the AICA's, and so runs behind the sound burst in a tick they share: a pause after a number of
+bursts (with the ARM7 held no timer of the AICA overflows, and nothing else stops a run), a host stop, a guest
+exit or a guest reset in the first slice of a run, or in the tick in which a burst was suspended.
+
+| test | what has to hold |
+|---|---|
+| `debugger.selftest.arm7` `.interp` `.fallback` | the session `arm7`, the forty-three tests below, on the JIT, on the interpreter, and on the JIT with `Debugger:ForceFallback=yes` |
+| `debugger.selftest.arm7.persample` `.persample.interp` | the same session with `config:aica.NoBatch=yes`: the sound is rendered sample by sample, in the time step of the AICA, which then also renders in the park context. It is the path that stays when the batch render goes |
+| `arm7.burst.plain` | between two pauses of a run a burst is 32 ARM phases, 32 time steps and one tail while the ARM7 is clocked, and no ARM phase, no time step and one tail while the guest holds it in reset |
+| `arm7.bp.hit` | a breakpoint on the first instruction of the ARM7's loop stops within one burst of the resume: the burst is suspended in front of the instruction, its tail has not run, the stop is latched in the slice of its tick and no slice comes behind it. A resume from there executes the instruction and stops at the next arrival, in the same burst, with no Running published and no time passed |
+| `arm7.bp.context` | the debug loop leaves the context of the ARM7 as the interpreter's own loop leaves it, word for word of the save state, which the sound line and the state hash fold. At a breakpoint on the first instruction of the FIQ handler: the stored CPSR word is the one the entry composed, with F as the loop had it, where the core has F set (the debug loop composed none); R15 is what the branch of the vector left; nothing is kept in the tick remainder of the recompiler; and the debugger's reads leave the save state as it is. No tick of the guest falls inside the handler, so no sound line shows these words |
+| `arm7.bp.lowestid` | three breakpoints on one instruction, one of them through a mirror: the stop has the lowest id |
+| `arm7.bp.mask` | a listed breakpoint whose category is not active arms nothing (`dbg_arm7_armed` is 0), stops nothing and has no check made for it: the ARM phases run on the backend. With the category active it arms and stops in the next burst |
+| `arm7.bp.mirror` | the address rule: addresses are compared under the mask of the wave memory with bits 0 and 1 dropped; a breakpoint on the highest mirror stops, and the PC of the stop is the PC as it is |
+| `arm7.bp.fiqvector` | the check is made behind the entry of a pending FIQ: a breakpoint on `0x1C` is hit, in FIQ mode with the return address in R14; and a stop on the loop is never followed by a detour through the handler: the step from it executes the instruction of the stop |
+| `arm7.bp.resume` | the resume exemption. Once: the instruction of the stop executes and the next breakpoint stops. A PC written onto another breakpoint stops there with nothing executed; written away and back, the resume runs through. A breakpoint that a call lists behind the leave and in front of the next burst, at the stop of a step that was complete at the end of its burst, stops in front of the instruction the ARM7 stood on, with every register as the step left it. A step that was complete at a burst with the ARM7 held on address 0, then a breakpoint on 0 and the release: it stops on 0. A FIQ entered in front of the exempt instruction, with a breakpoint on the vector: it stops at the vector, and the instruction has not executed when the handler returns to its breakpoint. The same with no breakpoint on the vector: the check there stops nothing and ends the exemption all the same, so the breakpoint stops when the handler comes back |
+| `arm7.bp.completion` | a resume, and a step of the SH4, whose burst hits a second breakpoint of the ARM7: parked on it, a new stop counter, no Running, and the SH4 has executed nothing |
+| `arm7.bp.insleep` | a breakpoint of the ARM7 while the SH4 waits in SLEEP: the stop is latched in the wait, the SH4 stands on its SLEEP, and the machine runs on behind the resume |
+| `arm7.step.suspended` | a step with a burst suspended: the next instruction, a new stop counter, cause step, no Running, the scheduler's time and the PC of the SH4 unchanged, the latch set, two checks made; and 500 more of them |
+| `arm7.step.sample` | a step across a time step of the AICA: one ARM phase ended, one time step was made, and timers B and C counted one sample, in the park context |
+| `arm7.step.burstend` | steps to the end of a burst: the last one is complete with no burst suspended, the tail has run once, 32 ARM phases and 32 time steps were made, and no time passed. A resume from there runs whole bursts |
+| `arm7.step.frompause` | twenty steps from a stop with no burst suspended: one stop each, cause step, no Running, in the next burst, the SH4 run for one period of the AICA callback at most; while it ran, `g_parked` stayed set and the published state stayed Parked |
+| `arm7.step.fiq` | a step from a stop behind a burst whose last time step raised the timer's request: complete at the FIQ vector with nothing of the loop executed |
+| `arm7.step.fiqbehind` | a FIQ that becomes enterable inside a sample. The breakpoint is on the last instruction of the F window of the guest's loop; at each stop two steps, onto the `msr` that clears F and the `msr`. A pair counts when the count of the ARM phases reads the same at its three stops; a counted pair ends on the line behind the `msr` or on the FIQ vector, and one that ends on the vector comes within 64 bursts, with the `msr` executed (the saved status has F clear) and its return address in R14. A pair that went across the end of a phase is resumed and asserts nothing |
+| `arm7.step.unclocked` | the guest holds its ARM7 between the request of a step and the burst: the burst completes the step with nothing executed; it is not suspended and goes on with its tail |
+| `arm7.step.notclocked` | with the ARM7 held, a step, a step over and a step out answer `-32012` and arm nothing; the DSP answers `-32004` |
+| `arm7.step.sh4first` | a breakpoint of the SH4 that is reached before the burst ends the wait of a step with its own cause, and no step is left armed |
+| `arm7.step.breakpointed` | a step executes the instruction it stands on also with a listed breakpoint on it: from a stop behind a burst, and from a PC written onto a breakpoint in a suspended burst |
+| `arm7.step.wait.hoststop` `.wait.exit` | the host stops the machine, and the guest ends the run, in the first slice of the wait of a step: the thread ends, no stop of the step is published, the step is armed no more, and the first `Park()` of the next thread resumes nothing: a breakpoint on the instruction the SH4 stands on stops at once (the wait counted as a step) |
+| `arm7.step.wait.reset` | a guest reset there: one stop, with reason reset, and no step left armed |
+| `arm7.step.wait.grace` | the two calls of the grace expiry, the mask cleared and a resume, queued by two threads during the wait: they are served behind the stop of the step, in their order, and the machine then runs |
+| `arm7.step.wait.sh4` | for the SH4 the leave of a step that waits is a resume. From a stop at a breakpoint of the SH4 (on the handler of the AICA's interrupt) the step runs the SH4 through that breakpoint to the next burst, and its stop is the step's: the resume exemption was armed. And from a stop with no burst suspended and that interrupt pending (the burst in which the ARM7 raises it was stepped to its end in the park context), with a breakpoint on the handler: the SH4 stops there, come from the PC of the stop, with its loop not counted and no time passed. The leave made the acceptance that the latch held back |
+| `arm7.stepover.bl` `arm7.stepover.plain` `arm7.stepout` | a step over the `bl` of the loop and a step out of its leaf, asked from a stop the ARM7 did not decide, with the PC written onto the instruction and a listed breakpoint on it: a resume (Running is published) that ends on the line behind the `bl` with cause step, the leaf executed once. From a breakpoint in a suspended burst the same without a Running. A step over an instruction that is no `bl` is a step |
+| `arm7.reset.suspended` | the debugger resets the machine at a stop inside a burst: the burst is discarded, nothing of it runs, the stop of the reset is published, and the machine boots and runs its bursts again |
+| `arm7.hoststop.insleep` | the check of the ARM7 does not look at the run flag. The host stops the machine while the SH4 waits in SLEEP: the cpu is stopped and the wait runs on, with the bursts that fall into it. The breakpoint that is hit in the next burst suspends it, the stop is latched in that slice and ends the wait, and the burst is whole in front of the stop callback; the stop of the breakpoint is not published. (A check that recorded nothing for a stopped cpu would leave the burst suspended into the next callback of the AICA.) |
+| `arm7.hoststop.suspended` `arm7.exit.suspended` | the host stops the machine, and the guest ends the run, while the thread is parked on a suspended burst: the burst runs to its end in front of the stop callback, with its tail, and the breakpoint that is still listed stops nothing; the next thread runs on |
+| `arm7.sameslice.hoststop` `.sameslice.exit` `.sameslice.reset` | the same three asked for in the tick in which the check suspends the burst, so that `dc_run` meets it with no `Park()` in between: the burst is whole in front of the stop callback and the stop of the breakpoint is not published; a reset discards it, and the stop published is the reset's |
+| `arm7.intc.order` | a burst suspended in front of the store with which the ARM7 raises the AICA's interrupt to the SH4, and a breakpoint of the SH4 on its handler: the resume stops there with the loop of the SH4 not counted and no time passed. The interrupt was accepted on the way out of the park context |
+| `arm7.events.park` | with an event breakpoint on the timers of the AICA, the rest of a suspended burst raises the event while the park loop runs it on: the entries are in the log and nothing stops; the same event stops in the next burst |
+| `arm7.reads.suspended` | at a stop inside a burst every accessor of the debugger reads the same twice (the registers and the interrupt controller of the ARM7, the register file and the channels of the AICA, the DSP, the RTC, the callstack), frame 0 of the ARM7's callstack is its PC, and the DSP stands between two samples |
+| `arm7.setreg.classes` | each register but the PC and the CPSR written and put back, in SVC mode and in FIQ mode: it reads back in every row that shows it, the live one for the bank of the active mode, and every other row is as it was. An index that is no register is refused |
+| `arm7.setreg.cpsr` | a CPSR whose mode bits are no mode is refused; it reads back under `0xF00000DF`; the mode switch swaps the banks, and written back every row reads as before; from system mode the row SPSR reads the CPSR as it was before a write that stays in system mode, and the value the test put into `SPSR_irq` behind a write into IRQ mode and back, with every other row as in front of the pair |
+| `arm7.setreg.pc` | a PC is stored with bits 0 and 1 clear, and a step from it executes the instruction there; written with `0xFFFFFFFF` it reads back `0xFFFFFFFC`, and a step from there does not end the process |
+| `arm7.notice` | `NOTICE_ARM7_FALLBACK` follows the backend that executes the ARM7: on this host, where that is the interpreter, it is never set, with a breakpoint armed, at its stop, at the stop of a step |
+| `arm7.grace` | the active mask cleared while a burst is suspended: the resume runs through the breakpoint that suspended it and every later arrival, and no check is made |
+
+`arm7n.idlebp`, `arm7n.hitresume`, `arm7n.steps` and `arm7n.hoststop` are in the same file and not in the session:
+such a test never returns, and the run ends by the sound harness or by an `Exit.*` key. They are the debugger at
+work in a run whose sound line and state hash have to be those of a run nobody touched: the tests
+`debugger.sound.neutral.*` of `tests/debugger/guest/neutral` run them, through the mode `neutral` of
+`tests/debugger/guest/dsptest/soundlines.py`. (A test that the run ends is never named under the prefix of a
+session: the filter of a session selects by prefix and waits for its last test to return.) Each takes its stops
+early in the run. A run that an exit key ends in the very tick in which a stop is latched prints its exit line with
+an interrupt acceptance of the SH4 still owed, which is made behind the stop callback: the `sh4` part of that line
+is then not the plain run's (`tests/debugger/guest/neutral/CMakeLists.txt`).
+
+A loop of steps in these tests has an end (100000 steps, more than a burst has instructions), and so has the list
+of published states that a test keeps between two looks at it: a machine on which a step ends no ARM phase fails
+the test that waits for one, and takes neither the time of the runner's watchdog nor the memory of the host. A
+wait for a stop has its bound (above): a machine that runs on where a breakpoint should stop it, or where a pause
+should, or that does not stop for the host, fails the test that waits within 30 s.
+
+## The tests of the writes
+
+`libswirl/debugger/dbg_selftest_writes.cpp`: the debugger's writes of guest memory (`dbg::mem::Write`) and of the
+registers of the two processors (`dbg::regs::Write`), with what each write owes the machine. The guest is the
+sounding guest of the tree, as for the sound side. Its SH4 counts in `g_main_loop`, ten instructions that are one
+block of the recompiler and go back to their start by a PC-relative branch. The tests write into that loop: two of
+its instructions compute `r11` anew in every pass and nothing reads it, and the slot of its branch holds a `nop`,
+so an instruction a test puts there changes nothing of the guest but what the instruction itself writes; the guest
+uses neither `r12` to `r14` nor an FP register, and its `FPSCR` is what reios leaves, with PR and SZ clear. Every
+test begins by bringing the guest to where a session finds it behind its boot, with the code cache empty.
+
+Which kind of stop a test takes is part of what it shows. A stop that is **latched at a slice end** (the event
+breakpoint on the timers of the AICA, which overflow in every sound burst of the guest) owes nothing: the SH4 stands
+between two blocks, and the resume enters its next block from the block cache. A stop at a **code breakpoint of the
+SH4** owes the rest of its block on an engine that runs blocks, and that rest is decoded from memory when the stop
+is left, in the FPSCR of that moment, outside the block cache; a step decodes its instruction the same way. So what
+compiled code does behind a write (`writes.mem.cached`, the FP mode in `writes.reg.fpscr`, the mirror in
+`writes.reg.pc`) is seen from stops of the first kind only, with no breakpoint of the SH4 added, removed or toggled
+between the write and the witness: arming discards the blocks of a page by itself.
+
+| test | what has to hold |
+|---|---|
+| `debugger.selftest.writes` `.interp` `.fallback` | the session `writes`, the fourteen tests below, on the JIT, on the interpreter, and on the JIT with `Debugger:ForceFallback=yes` |
+| `debugger.selftest.writes.smc` | the one test `smcwrites.cached`, below, on the JIT with `config:Dynarec.SmcCheckLevel=-1` (the run prints `Warning: SMC check mode is -1`): the configuration in which a write without the discard is seen |
+| `writes.mem.ram` | main memory is one store behind `0x0C..`, `0x8C..` and `0xAC..`, four times in each: 16 bytes written through each of the three read back through the two others, through the mirror 16 MiB up and by the guest's own access; a write of no bytes; a range that runs from the end of the store into its start; a range across the end of main memory refused whole in each region, its first half unchanged; 65536 bytes in one write, the bytes around them untouched |
+| `writes.mem.code` | an instruction that is written executes. At the stop of a breakpoint in the middle of the loop's block, `mov #imm, r12` at the PC and `mov #imm, r13` behind it: two steps execute them. At the next such stop, with a second breakpoint on the branch of the loop: they are written again and the resume runs them, up to that breakpoint; on an engine that runs blocks the rest of the block was owed, and was decoded from memory as it was at the leave. And what such a stop owes: the rest of its block on the recompiler (`dbg_sh4_TakeRemainder`), nothing on the interpreter. This test says nothing about the block cache |
+| `writes.mem.cached` | the witness of the discard: a write into main memory discards the compiled blocks of its page. At a stop that owes nothing the first instruction of the loop is written with the word it has, which makes the page one that was written; a sound burst on the block of the loop is in the cache again; `mov #0x5C, r12` is written into the slot of the loop's branch, and behind a resume that entered the loop from the block cache `r12` reads `0x5C`; the `nop` is written back, and `r12` keeps what it is then set to. Then **three ranges of more than one page**, each holding the bytes that are there but for a `mov #imm, r12` in the slot, so that every page of a range is witnessed in one of them: one over three pages, which begins 16 bytes in front of the loop's page and ends 16 bytes behind it (`0x5D`); one of two pages that begins 16 bytes in front of the loop's page and ends behind the slot (`0x5E`; with pages of 4 KiB 142 bytes from `0x8C00FFF0`); one of two pages that begins at the slot and ends 16 bytes into the page behind (`0x5F`). Behind the resume after each, `r12` reads its immediate: a writer that discarded the blocks of the first page of a range alone, or of its first and last, leaves the loop's block behind the first; one that leaves out the last page of a range of more than one page, behind the second; one that leaves out its first page, behind the third. **In the default configuration this test passes with or without the discard**: a block of a page that was written compares its code when it is entered (`Dynarec.SmcCheckLevel`, `FullCheck` by default), and a write into a page that was not written yet faults into the block manager. `debugger.selftest.writes.smc` is where a missing discard executes the stale `nop` |
+| `smcwrites.cached` | the test of `debugger.selftest.writes.smc`, no test of the session `writes`: the steps of `writes.mem.cached`, and in front of them two checks of the configuration that gives them their power, that the SH4 runs on a recompiler and that `Dynarec.SmcCheckLevel` is `-1`. A run that the key did not reach fails here; without the checks it would be the default run of the steps, which passes with or without the discard. On an emulator built without a recompiler of the SH4 (`-DTARGET_NO_REC=ON`, a generic host) `debugger.selftest.writes.smc` fails as every test of the JIT does there, for its run is not made on the recompiler (`selftest.py`); the test has a branch for such a build, which a session started by hand reaches: nothing is compiled and a write has no block to discard, the test says so, asks for the level alone, and its steps show what an interpreter shows |
+| `writes.mem.bppage` | a write into a page with an armed breakpoint, into the slot of the loop's branch and onto the breakpoint's own instruction: the breakpoint still stops, a pass on, and what was written has run |
+| `writes.mem.vram` | video memory through its two views: 16 bytes written through the 64-bit view read back at its mirrors and, byte by byte, at the three addresses of the 32-bit view that the test works out itself (word `w` of bank `b` is word `2 w + b` of the store); 16 bytes written through each bank of the 32-bit view are every other word of the 64-bit view, with the bytes between them as they were; a range from one view into the other |
+| `writes.mem.aram` | wave memory: 8 bytes written through the ARM7's address read back through the SH4's, and the other way round; through a mirror of the store |
+| `writes.mem.refused` | 36 ranges that are refused whole, `-32013`, with their bytes as before: the boot ROM, the flash, the system bus, GD-ROM, PVR and AICA registers, `ARMRST`, the RTC, the on-chip registers at both of their addresses, the store queues, what is not mapped, ranges past the end of the address space, ranges that begin or end in memory that is written, the ARM7 above its wave memory, the DSP. The state of the machine, as a save state has it, is the same behind them |
+| `writes.reg.sh4` | every one of the 69 rows of `dc.sh4.cpu` written with two values and written back: it reads back what is stored, in `dbg::regs` and in the SH4 context (`SR` under `0x700083F3` and without `RB` where `MD` is clear, `FPSCR` under `0x003FFFFF`, the others whole); a row that is a store leaves every other row as it was; behind each restore all 69 read as at the stop |
+| `writes.reg.pc` | the PC of the SH4. A value with bit 0 set is refused and nothing changes: the stop still owes the rest of its block. Written with the value it has, the owed remainder goes (`dbg_sh4_TakeRemainder` answers false: the one case that needs the word to the breakpoint state) and the code cache is left alone. Written onto the address of another breakpoint, the code cache is emptied and the resume stops there with nothing executed; written away and back onto the address of the stop, the resume runs through the breakpoint there. **The mirror:** at a stop that owes nothing, with the SH4 on its loop, the PC is written into the `0x0C..` mirror of its address; behind three resumes, each entered from the block cache, the loop is still in that mirror. The block cache finds a block by its address under a mask of 32 MiB, so `0x0C..`, `0x8C..` and `0xAC..` share their slots: without the emptied cache the block that was compiled at `0x8C..` is found, and its branch goes back there. (`0x8D..` is the same memory in other slots, and would show nothing.) The witness is the recompiler's; an interpreter reads every instruction at the PC |
+| `writes.reg.sr` | SR. With `RB` written, `R0` to `R7` and `R0_BANK` to `R7_BANK` change places; written with `MD` clear and `RB` set it reads back with `RB` 0; written with `0xFFFFFFFF` it reads back `0x700083F3`. An interrupt that the written SR lets in: the interrupts are masked by a write, the run goes on until the AICA has raised its interrupt at the SH4, and at the stop of a code breakpoint, where no interrupt acceptance is owed, SR is written with the mask at 0. Nothing is accepted in the park context (the PC, `SPC` and `SSR` are what they were, and the acceptance is owed), and a step is then complete at the vector with nothing executed: the SH4 at `g_irq`, `SPC` the PC of the stop, `SSR` the SR that was written |
+| `writes.reg.fpscr` | FPSCR. With `FR` written the FP banks change places; written with `0xFFFFFFFF` it reads back `0x003FFFFF`. **The FP mode of compiled code:** `float FPUL, FR2` and `fmov FR4, FR6` are written into the loop and run with PR 0 and SZ 0, the guest's FPSCR, which the test checks and says: a single, and a move of 32 bits. PR is written to 1: behind a resume from a stop that owes nothing the first makes a double, and so it does by steps. PR is written back, the block is compiled again, and SZ is written to 1: the second moves 64 bits, by a resume and by steps. The direction matters: only a block compiled with PR clear has the FP mode in its code (with PR set the recompiler calls the interpreter's handlers, which read FPSCR when they run), so the other direction would pass with no emptied cache. The rounding mode has no witness on an x86-64 host |
+| `writes.reg.arm7` | the rows of `dc.aica.arm7`, at a stop inside a sound burst with no request of the AICA waiting. Each of the 39 rows but `ENABLED` and the CPSR written: it reads back what is stored, in `dbg::regs` and in the device (the PC with bits 0 and 1 clear), in every row that shows the register, with every other row as it was, and all 41 read as at the stop behind the restore. A CPSR with one of the 25 mode values that are no mode is refused and nothing changes; `ENABLED` is refused. The CPSR through the mode switch, twelve writes (its flags, into another mode with an SPSR and back, into a mode without one, again with the value it has, from there into the mode with an SPSR and back, into FIQ mode and back), each held to what the core's switch does: it reads back under `0xF00000DF`, in its row and in the word a save state has; `R13` and `R14` are those of the mode written; **the row SPSR is compared by value**: the CPSR as it was when the write is made in user or system mode with one of those two, and otherwise what the row `SPSR_<mode>` of the mode written read in front of the write; every other row is as it was. The test is written for a loop in system mode or in a mode with an SPSR; the guest's is SVC. A PC written unaligned reads back aligned, and a step from it executes the instruction there; written with `0xFFFFFFFF` it reads back `0xFFFFFFFC`, and written into the next mirror of the wave memory it reads back whole. **A write that moves the PC empties the code cache of the ARM7** (`SoundCPU::InvalidateJitCache`: its recompiler finds a block by its address under the mask of the wave memory, and a block has the address it was compiled at in its code); a PC written with the address it has, and a write of any other row, do not. On a host without an ARM7 recompiler the call does nothing that can be seen, and the test holds the count the writer keeps of it (`dbg::regs::Arm7CacheResets`): what a resume from a PC in another mirror runs on a recompiler is not run on such a host. A PC written onto another breakpoint of the ARM7 stops there at the resume with nothing executed, and written away and back onto the address of the stop it resumes through. **A PC written in a service excursion of a running machine:** at the stop of a step that was complete at the end of its burst, a breakpoint is listed on the instruction the ARM7 stands on and the resume armed, while a thread has queued a call that writes the PC with the value it has; the write ends the resume exemption, and the next burst stops in front of that instruction with every register as the step left it. Last, the guest holds its ARM7 for the test behind this one, and a register of the held ARM7 is written |
+| `writes.reg.readonly` | each of the 138 rows without a writer refuses two values, `-32013`, and reads as before; so does every node for a row it does not have; 109 rows have a writer; and the state of the machine, as a save state has it, is the same behind all of it |
+| `writes.reg.width` | bits of a value above the width of its row are not stored and do not decide what the device takes: `R12` of the SH4 and `R1` of the ARM7 keep the low 32 bits; an even PC under an odd high half is taken, an odd one under an even high half refused; a mode in the bits above the CPSR is not looked at |
+| `debugger.selftest.writesrun.neutral` `.interp` | the test `writesrun.neutral` in a run of 600 vblanks, in the mode `same-hash`: the state hash at the end is that of the same run without a session, part for part. The test takes 240 stops latched at slice ends, where the interrupt acceptance of the slice end is owed already, and at each writes and writes back: 16 bytes of main memory; the slot of the loop's branch, in the page of the guest's code; `R8`, the counter of the loop; `SR`, with the other register bank and another interrupt mask; `FPSCR` with PR set, which empties the code cache twice; and `R0` to `R12` of the ARM7. Half of the stops write through `dbg::mem` and `dbg::regs`, the other half through `state.writeMemory` and `state.setRegister`, handed to the dispatcher in place. It says how many of each it made in lines the target requires |
+
+`writesrun.neutral` is in the same file and not in the session: it never returns, and the run ends by its `Exit.*`
+key. What it does not write, because a correct writer is not neutral there: the PC of either processor (the owed
+remainder of the SH4 goes, which is no guest state but moves a block boundary); `SR` at a code breakpoint of the SH4
+(the acceptance of a pending interrupt moves from the next slice end to the leave, as behind an `LDC` of the guest);
+and the CPSR of the ARM7 (the mode switch rewrites bank slots that only the save state shows).
+
+**The other builds of the main-memory writer.** `dbg::mem::Write` has four forms of its main-memory store: with the
+virtual memory layout in use or not, and with an SH4 recompiler in the build or not. The default build is the
+first of each. On an emulator without a recompiler (`-DTARGET_NO_REC=ON`: the layout in use) and on that of a
+generic host (no recompiler, no layout), each given to a configure of the tests project as `-DNULLDC_EMULATOR=`,
+every engine is the interpreter: there `debugger.selftest.writes.interp` passes and runs the writer's form of that
+build, and the tests of the JIT fail, for they are not made on the engine they ask for. The fourth, a recompiler
+without the layout, is given by no configuration of the build; a recompiler build gets it where the layout cannot
+be set up (an address space limit of 700 MB, `prlimit --as`; no `memfd_create`, no writable `/dev/shm` and no data
+directory, which `system.vmem.none` makes), and up to f640f21a got it in about one start in four when emulators
+were started together without a data directory (`tests/system/README.md`, "The memory layout").
+
+## The tests of the SH4 breakpoints and steps
+
+`libswirl/debugger/dbg_selftest_sh4bp.cpp`, which `tests/debugger/sh4bp/README.md` describes: the gates of that
+mechanism on the park loop of the emulator. They boot `2ndmix.elf` of `NULLDC_ELF_DIR`.
+
+| test | what has to hold |
+|---|---|
+| `debugger.selftest.sh4bp` `.interp` | the session `sh4bp`: the gates B1 to B14 (none for B11) |
+| `debugger.selftest.sh4bpboot` `.interp` | the session `sh4bpboot`: B3, B6 and B7 on the booted guest, every check of its own |
+| `debugger.selftest.sh4bpbase` `.interp` | the session `sh4bpbase`: the baselines of those runs |
+| `debugger.selftest.sh4bp.sessions` | `tests/debugger/sh4bp/selftest.sh`: the sessions of `sh4bp` on the JIT, on the interpreter and on the JIT with the interpreter fallback forced agree on registers, step traces and time; the runs of the booted guest are in the state of their baselines, on those three and on the JIT and the fallback with idleskip off |
+
+## Host stop / start cycles
+
+`libswirl/debugger/dbg_selftest_hostcycles.cpp`: the host stops the running machine and starts it again, 600 times
+in one process, on the way of `2ndmix.elf` to its 1200th vblank. Every start of the machine is a new emulator
+thread with new backends, and on the recompiler that has to be an empty code cache every time: a thread that kept
+the code of the threads before it left every thread less of the 10 MB, until the guest went from one cache clear
+to the next.
+
+A thread is asked to stop, as the host asks, when it has run for 1,000,000 emulated cycles; a thread of the test
+plays the host, waits for it to be gone and starts the machine again. The stop is asked for on the emulator thread,
+from a call that the other thread makes all the time, where it is known how far the run is: the stop of the test
+never meets the stop that ends the run. The cycles begin at vblank 300, where 2ndmix is in its main loop and every
+thread has the same work (it compiles about 160 KiB), and take about 360 vblanks on the recompiler; the run leaves
+them 890. A run that is too short for them fails with the number of cycles it made.
+
+| test | what has to hold |
+|---|---|
+| `debugger.selftest.hostcycles` | 600 cycles on the recompiler. Every thread ended with its stop callback, and the next one started. The machine counted as running (`IsRunning()`) from the moment the host started it, where its emulator thread did not exist yet, at every one of the 600 starts, and in none of its stop callbacks: the answer is one word of the machine, set for as long as it has an emulator thread that has not taken its stop callback. Every thread started with the stubs of the code generator at the start of the code cache, where the first thread had them, and nothing behind them; with no block in the tables of the block manager; and with no entry in the lookup table for any block of the thread before it. The code cache never filled (half of it was free at least), and the threads together compiled more than it holds: kept from thread to thread, their code would have filled it. The guest did not get slower with the number of threads: emulated time over the CPU time of a thread, the median of the last fifth of the cycles against that of the first, within a factor of 2. And the run ends in the state hash of the same run without a session, part for part: a stop of the host and the start behind it leave no trace in the guest |
+| `debugger.selftest.hostcycles.interp` | the same on the interpreter, which has no code cache: the cycles, what counts as running, the speed and the state hash |
+
+With the code cache left where the thread before had it, as it was before, the recompiler's run does not get to
+its checks: by the 65th thread the cache is full, and some forty threads and half a million cache clears later the
+stubs of a new thread no longer fit and the process ends with a fault. With `IsRunning()` put together from the
+cpu's word and the reasons for a stopped cpu to count as running, as it was before, the machine counts as running
+at none of the 600 starts: its cpu is started by the new thread, and nothing else says so until then.
+
+The session prints its figures: the median thread of each tenth of the cycles by speed (emulated cycles per
+microsecond of CPU time) and by bytes of code compiled, the CPU time of the median thread, and the vblank at which
+the cycles ended. `Debugger:SelfTestHostCycles`, `Debugger:SelfTestHostCycleSpan` and
+`Debugger:SelfTestHostCycleFrom` are the number of cycles, the emulated cycles of a thread and the first vblank.
+
+## With a window
+
+`window_checklist.sh <nulldc3> <work dir> [once]` does at the window of the emulator what a person does there, once
+with the emulator thread parked and once with a pause asked for all the time (the sessions `emuwin.parked` and
+`emuwin.pending`): the menu key and the buttons of the menu (Save State, Load State, Restart, Resume, Exit), the
+escape key, and the close button of the window. Then two actions that the window finds in one pass over its
+events, the second while the machine is on its way to the stop of the first: the close button twice, and the
+escape key with the close button behind it, with the guest running (`emuwin.running`), parked and with a pause
+asked for all the time; a guest that is stopped while it runs in these sessions has a frame queued for the
+window, as a program that draws has at most moments. Then the sessions `emu.reset` and `emu.step` with a window
+(a reset of the guest while parked, with a pause pending and in a step, a stop by the host while a step executes)
+and a guest that returns to the BIOS. Then it reads the title of the window at two stops of one
+thread, with the guest running in between (`emuwin.twice`), and has the window closed in the moment in which
+the guest resets the machine, ten times (`emuwin.closereset`, which does what the window does for its close
+button as soon as it finds the cpu stopped for the reset). It needs a display (`DISPLAY`, default `:0`) and `xsend`, which
+it builds from `xsend.c` (Xlib). Events are sent to the window of the run; nothing is typed or clicked on the
+desktop. It prints one line per item, `PASS` or `FAIL`, and is not a ctest test: it opens windows, one at a
+time, 53 of them; with `once` it does every item one time and none of the repetitions, in 18 windows.

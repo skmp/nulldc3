@@ -1,0 +1,213 @@
+# AICA DSP core tests
+
+What is tested is `libswirl/hw/aica/dsp_core`: the DSP of the AICA as one self-contained core (its README has the
+hardware rules and the interface). The tests need nothing of the emulator.
+
+The reference is the caique project (`caique-rtl`), which is not in this repository: its sample model of the AICA,
+the DSP programs it ran on a Dreamcast and what the console answered are compiled in and read from a checkout,
+`-DNULLDC_CAIQUE_DIR=<path to caique-rtl>` (default `../caique-rtl` next to the repository if it is there).
+Without it the tests that need it are skipped, or fail with `-DNULLDC_TESTS_REQUIRE_DATA=ON`.
+
+| test | what it runs | data |
+|---|---|---|
+| `aica.dsp.api` | the core's interface on itself: `RunSample` from every step against 128 `StepOne`, state out and in before every step, two cores in turns, every register as the CPU has it, fields with bits their registers do not have, a wave RAM of 4, 8 and 16 MB. And the known-answer programs: the shifter, the address of a memory step, the ring, the read latch, the MIXS banks, on programs small enough to say by hand what they leave | none |
+| `aica.dsp.diff.random` `aica.dsp.diff.sparse` `aica.dsp.diff.directed` | the core against the DSP of the caique sample model on generated programs, compared behind every step | a caique-rtl checkout |
+| `aica.dsp.case.<case>` | a DSP program caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
+| `aica.dsp.capi` | the C interface of the core (`wasm/aica_dsp_capi.h`), compiled for the host, against the core called itself, call for call, on random programs and on the known-answer programs | none |
+| `aica.dsp.wasm` | `aica_dsp_core.wasm` and its loader in node against the core compiled for the host and called itself, call for call, on the same programs | emcc (on the PATH, or an emsdk in `EMSDK` or `~/emsdk`) and node; skipped without them |
+| `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | `wasm/build.sh` finding its emcc, run by sh on a PATH that has none: with the emsdk in `EMSDK` it builds the module, with no emsdk there it says that it has no emcc | an emcc that is in an emsdk, and node; skipped otherwise |
+
+All but `aica.dsp.capi` and the `aica.dsp.wasm` tests count their cases into checks and are gated on
+`baseline.txt`: a check that passes fewer cases than its baseline, or has another number of cases, fails, and
+ctest runs the tests with `--strict`, where more passes than the baseline fail as well until the baseline is
+updated (`<executable> ... --update-baseline`) and committed. `KNOWN_FAILURES.md` has the reason for every check
+that is below its total. `aica.dsp.capi` and `aica.dsp.wasm` are lists of answers that all have to be the same,
+the two tests of `build.sh` are what the script returns and prints.
+
+## Step for step: `dsp_lockstep`
+
+The caique model runs the 128 steps of a sample in one loop. `caique_model.cpp` compiles the model as it is in
+the checkout, with a hook in front of the one place where its DSP starts a step (the decode of the MPRO row), so
+a test gets control between any two steps. `DspLockstep` runs the core next to the model: both get the same CPU
+accesses and events, and behind every step everything the DSP has is compared: TEMP, MEMS, both MIXS banks,
+EFREG, MDEC_CT, ACC, FRC_REG, Y_REG, ADRS_REG, the read latch, its copy, what IWT stores, the NOFL of the last two
+steps, and the wave RAM a write can reach (each has its own wave RAM). The view the core gives of the step
+(`AicaDspStepView`, what the debugger and the playground show) is compared in all of its words: INPUTS, SHIFTED,
+X, Y, B and the wave RAM access with its address and word are worked out from the model's state in front of the
+step, the rest is the model's state behind it. The test fails as a problem, whatever the counts, when the model
+does not announce 128 steps for a sample: the checkout's model is then not the one the hook was written for.
+
+A second core runs every sample with `RunSample`, from step 0 or from a step in the middle, and has to be where
+the first core is behind every sample. That is the check named `run-samples`.
+
+Two ways to run a sample:
+
+* the whole model (`StepChip`): its sound generator makes the sends and the channel fetches. The cases run this
+  way.
+* the model's DSP alone (`StepDsp`), on events the test makes up. The generated programs run this way. The
+  sample model has bus reads between samples only; one in front of a later step is written into the model's
+  latch at that step, which is where caique's clocked model has it. For those steps the reference is the model's
+  code for the latch with a read placed by the test, not a behaviour of the sample model as it comes.
+
+## The generated programs
+
+`aica_dsp_diff`, from fixed seeds:
+
+| set | programs | what |
+|---|---|---|
+| `random` | 1500 x 16 samples | every bit of MPRO, COEF, MADRS, TEMP, MEMS and the wave RAM random; random ring (also across the end of the wave RAM), MDEC_CT anywhere and near 0, the test mode of MDEC_CT in 1 of 16 |
+| `sparse` | 4000 x 24 samples | programs whose steps do little, half of them on operands from the edges of their ranges |
+| `directed` | 40048 programs | `read`: MRD and its IWT at every step and distance 0 to 5, with and without NOFL, a second read behind, MWT in the step, a channel in the slot. `write`: MWT at every step in every shifter mode, float or not, ring or table, ADRS_REG, NXADR. `bus-read`: a bus read in front of every step, next to a read of the DSP. `fetch`: a channel in every slot against nothing, MRD, MWT and both. `ring`: every ring size at its ends. `test-mode`: bit 15 of 0x2804 on and off. `float`: the float format through MWT, MRD and IWT. `datapath`: every combination of the selects and the shifter on edge operands behind a chain that fills ACC. `mixs`: sweeps with several sends to a bus, past 20 bit, or none, and a CPU that writes buses. `cpu`: every register written and read back. And without a program: the float format against the model's header on all 2^24 values and all 2^16 words |
+
+Every sample also gets random sends, channel fetches, bus reads and EXTS, and between two samples the CPU writes
+and reads registers and reads wave RAM. The checks `did:*` count what the compared steps did (reads, writes,
+slots lost to a channel, IWT of both kinds, bus reads): a generator that stops producing them changes the
+baseline.
+
+## The known-answer programs
+
+`dsp_known.cpp`: programs whose answer is a number that is written down in the test, with the rule of the
+hardware it follows from. They need no data, so they hold what they cover in a build without a caique checkout
+as well:
+
+| group | what is known |
+|---|---|
+| `shifter` | SHIFTED in the four modes for 18 values of ACC: inside 24 bit, where twice the value leaves 24 bit, where the value does, at the ends of 26 bit and behind them. Which mode doubles, which saturates and at 0x7FFFFF / -0x800000, which cuts; the sum in ACC and its wrap at 26 bit; EWT |
+| `address` | the byte of the wave RAM that an MWT writes and an MRD reads, 28 cases on a wave RAM of 2, 4, 8 and 16 MB: TABLE with its wrap at 64K words, upwards (NXADR, ADRS_REG) and downwards (a negative ADRS_REG), every ring size, MDEC_CT under the ring's mask, ADRS_REG from SHIFTED and from INPUTS, RBP up to 0xFFF, the last word of 2, 4 and 8 MB, and the ring that goes on behind it: at byte 0 where the wave RAM ends there, at the next byte where it is larger. The write has to be the only two bytes of the wave RAM that changed; the read finds other words planted where an address that is cut short, or not cut, would read |
+| `ring` | a word written at MADRS is read at MADRS + 1 by the next sample and at MADRS + 2 by the one after, with MDEC_CT going through 0 |
+| `rules` | the read latch: the distances from MRD to IWT, a second read behind the first, a bus read, MRD with MWT, a channel in the slot, NOFL of IWT; EFREG, ACC of step 127, MDEC_CT |
+| `mixs` | the sends of a sweep, the two banks, the late sends, the CPU's bank |
+
+The programs are written on a machine that is nothing but the calls a user of the core has, and every program
+runs twice, by single steps and with `RunSample`. `aica.dsp.api` runs the set on the core called itself, and
+counts it into its checks. `aica_dsp_wasm_trace` runs the same set through the C interface, and its trace takes
+it to the module: a defect that is in `aica_dsp_core.wasm` only, in a rule the set knows, fails `aica.dsp.wasm`.
+
+### Wave RAM above 2 MB
+
+The core takes any power of two, the header names 8 MB, and the emulator has builds with 8 MB. The caique model
+has a wave RAM of 2 MB and no other (`AicaModel::RAM_SIZE`), so the tests against the model, `aica.dsp.diff.*`
+and `aica.dsp.case.*`, run on 2 MB and say nothing about more. What does:
+
+* `address` of the known-answer programs, on 4, 8 and 16 MB, natively and in the module;
+* `ram-sizes` of `aica.dsp.api`: 160 random programs on each of 4, 8 and 16 MB, with the ring anywhere RBP reaches
+  (the first 8 MB, or all of a smaller wave RAM), in the upper half of that, with 64K words that start in its last
+  16 KB, and as far up as RBP goes. Every memory step has to be at the byte that the address rule, written out in
+  the test, gives for the state in front of it, and a second core that runs the samples with `RunSample` has to
+  leave what the steps leave, in the state and in all of the wave RAM. The checks at the end count the memory
+  steps in the upper half, behind the end of the wave RAM and, on 16 MB, above 8 MB: a generator that stops
+  reaching them fails.
+
+16 MB is more than the hardware has. It is there because a ring at the top of RBP's 8 MB ends 126 KB above them:
+only a wave RAM with room there shows that the core's addresses are not cut at 8 MB.
+
+## Fields with more than their bits
+
+`aica_dsp_core.h` says which bits each field of the state has, and that the core computes with those and ignores
+what else a field holds (a debugger and the typed arrays of the module's loader write fields directly). The check
+`fields` of `aica.dsp.api` takes 96 states with every such field filled beyond its bits, with random bits, with
+all ones and with the largest and smallest numbers of its type, and holds the core against itself on the same
+state cut to its bits (what `LoadState` makes of it): what the CPU reads at every offset, the view of every step
+to the end of the next sample, and the state and wave RAM that a send to each bank, the steps and `RunSample`
+leave, cut again, have to be the same. Under `-fsanitize=undefined` the same check is what shows that no such
+value overflows a sum.
+
+## The C interface and the module
+
+`aica_dsp_wasm_trace` runs 108 random programs and the known-answer programs on the core twice, call for call: on
+an `AicaDsp` with the calls of `aica_dsp_core.h`, and through the C interface compiled for the host. The second
+has to answer what the first answers, and that is `aica.dsp.capi`: every register as the CPU and as a debugger
+read it, the registers by index after writes with more bits than they have, the steps up to a breakpoint, the
+state blob, the wave RAM, the view of every single step, and every array behind a pointer of the interface as
+the numbers it holds, over the length the header gives it. What a debugger's write and read do other than the
+CPU's, where a run stops and how a value is cut to its register are written out in the tests a second time: they
+are not taken from the interface.
+
+The random programs take turns on a wave RAM of 64 KB, 2 MB and 256 KB. 64 KB is smaller than a ring, so the
+addresses wrap in the wave RAM; 256 KB is more than the 128 KB that TABLE reaches, so TABLE's own wrap is what
+limits it; 2 MB is the console's. The known-answer programs go up to 16 MB.
+
+The trace the tool writes has every call with the answer of the core that was called itself. `aica.dsp.wasm`
+makes the calls on the module through the loader's object and compares with those answers, the arrays as the
+loader's typed arrays over their whole length. So the C interface and the loader are both on the side that is
+tested: a defect in `aica_dsp_capi.cpp` fails both tests, one in `aica_dsp_core.mjs` fails `aica.dsp.wasm`.
+
+## The cases
+
+`aica_dsp_cases <case>`. A case is a C program of caique on a small register and wave RAM interface, compiled
+from the checkout as it is. It runs on
+
+* **the model**, the whole sound chip, with the core in step. What the case writes out is the model's answer.
+* **the core alone**, with a silent sound generator around it: 64 channels that send 0 to their ISEL bus.
+
+Both on the time base of caique's own harness (an access costs 2400 ns, a sample starts every 1 / 44100 s).
+
+| case | what it measures | model | core alone | compared with the console |
+|---|---|---|---|---|
+| `dsp_basic` | multiplier, shifter, operand selects, FRC_REG, Y_REG, the first memory steps, MIXS and EXTS as inputs | yes | yes | `dsp_basic.txt`, 309 lines, runs `hw9` and `hw` |
+| `dsp_mem` | addressing: ring sizes, RBP, TABLE, NXADR, ADRS_REG; even MWT; read pairs; EFREG twice; ACC width | yes | yes | `dsp_mem.txt`, 26 lines, `hw9` and `hw` |
+| `dsp_mem2` | ADRS_REG's sign, the NOFL of IWT | yes | yes | `dsp_mem2.txt`, 24 lines, `hw9` and `hw` |
+| `dsp_mem3` | MRD and MWT in one step and in adjacent steps, the CPU's read in the latch | yes | yes | `dsp_mem3.txt`, 12 lines, `hw9` and `hw` |
+| `dsp_wslot` | MWT and MRD in every pair of adjacent steps, 15 + 15 in 30 steps | yes | yes | `dsp_wslot.txt`, 14 lines, `hw9` and `hw` |
+| `dsp_unpack` | all 65536 words through MRD and IWT | yes | yes | `unpack.bin`, 65536 words, and the report, `hw9` and `hw` |
+| `dsp_pack` | all 2^24 values through a float MWT, checksum over all results | no | yes | the report with its CRC, `hw9` and `hw` |
+| `dsp_temp` | dumps of TEMP while a program fills it | yes | yes | not compared: when a dump is taken is the console's timing |
+| `dsp_coll` | 18 runs with a playing channel: what the DSP reads and writes in the channel's slot, logged every sample | yes | no | the 18 logs, `hw9` and `hw`, sample for sample at the shift where they overlap |
+| `sh4_latch` | five reads logged every sample while the SH4 reads wave RAM and a channel plays | yes | no | the two runs without SH4 reads, `hw11`; the two with them: see below |
+| `mdec_hold` | bit 15 of 0x2804 held for 22 lengths of time | yes | no | not compared: the count depends on the clock inside the hold |
+
+So, of what the console answered:
+
+* **directly on the core** (no model in between): dsp_basic, dsp_mem, dsp_mem2, dsp_mem3, dsp_wslot, dsp_unpack,
+  dsp_pack. The core alone writes the console's report and, for dsp_unpack, the console's 65536 words. Checks
+  `console-<run>:core:*`.
+* **through the model**: dsp_coll, and the runs `idle` and `ch` of sh4_latch. The model writes the console's
+  logs, and the core is the model's DSP at every step of the run. The model's part is counted by the test
+  itself, in `console-<run>:model:*`: if the model in the checkout stops reproducing the console's files, those
+  counts drop below the baseline and the test fails, it does not go on comparing the core with something that is
+  no longer the console. The same counts are taken for the seven cases above.
+* **sh4_latch with SH4 reads** (runs `sh4`, `sh4_ch`): the sample model cannot replay them, where an SH4 read
+  falls is the bus's timing. The core is given, for every sample of the console's log, reads of the SH4's
+  word (0xBEEF1234) in the slots that explain the five logged words, plus reads behind the two odd MRDs that must
+  not show, and has to return the console's five words. The words of the reads are the two halves of the SH4's
+  word and nothing else: a sample with any other word, or with one of the odd reads replaced, does not pass.
+  This shows that the latch rule of the core produces every sample the console logged; it does not show when
+  the bus reads. Checks `console-hw11:core:sh4`, `console-hw11:core:sh4_ch`.
+* **not anchored on the console**: dsp_temp, mdec_hold (the model's behaviour only, with the core in step), and
+  caique's `arm_latch` (the ARM7's reads: it needs the ARM7 and the bus).
+
+dsp_pack does not run on the model: it is 4.1 million samples, and the float format is compared with the model's
+on every value in `aica.dsp.diff.directed`.
+
+The case sources use C that is not C++, so the tests project enables C when the checkout is there.
+
+## Looking at a failure
+
+    aica_dsp_diff directed --verbose          # the first difference of each family, with sample, step and register
+    aica_dsp_cases dsp_basic --verbose        # every line that is not the console's, both versions
+    aica_dsp_api --verbose                    # every check that does not hold
+    aica_dsp_wasm_trace                       # the first answers of the C interface that are not the core's, and
+                                              # the first known answers the core does not give
+    node wasm_test.mjs <build dir>/aica_dsp/wasm/aica_dsp_core.mjs <build dir>/aica_dsp/wasm/aica_dsp_core.wasm \
+         <build dir>/aica_dsp/wasm_trace.bin
+
+A run with `--update-baseline` rewrites the rows of that test in `baseline.txt` and leaves the others.
+
+## Speed
+
+`aica_dsp_bench [samples]` prints samples a second on three programs. It is not a test: the numbers are the
+machine's. The core's README has the ones of the machine it was written on.
+
+## Files
+
+    dsp_suite.*        options, report, checks and baseline; a reproducible random stream
+    dsp_known.*        the known-answer programs, on a machine of the core's calls
+    caique_model.*     the caique sample model behind a wrapper, with the hook between its steps
+    dsp_lockstep.*     the core next to the model, step for step; the second core for RunSample
+    diff_main.cpp      aica.dsp.diff.*: the generated programs
+    cases_main.cpp     aica.dsp.case.*: the two machines, caique's case interface on them, the console's files
+    api_main.cpp       aica.dsp.api: the interface, and the known-answer programs on the core
+    wasm_trace.cpp     aica.dsp.capi: the C interface against the core's own calls, on random programs and on
+                       the known-answer programs; writes those calls and the core's answers for aica.dsp.wasm
+    wasm_test.mjs      aica.dsp.wasm: the replay on the module, in node
+    bench_main.cpp     aica_dsp_bench

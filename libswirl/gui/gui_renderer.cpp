@@ -14,12 +14,12 @@
 #include "oslib/oslib.h"
 #include "input/gamepad.h"
 #include "gui/gui_partials.h"
+#include "utils/run_control.h"
 
 std::unique_ptr<GUIRenderer> g_GUIRenderer;
 
 #include "rend/gles/gles.h"
 #include "rend/gles/glcache.h"
-#include "android/Android.h"
 
 #if defined(TARGET_EMSCRIPTEN)
 #include <emscripten.h>
@@ -90,6 +90,9 @@ static void findGLVersion()
     // workarounds
 
     auto renderer = (const char*)glGetString(GL_RENDERER);
+
+    // which device draws: a speed that was measured on a software rasteriser has to say so
+    printf("OpenGL renderer: %s\n", renderer ? renderer : "unknown");
 
     if (renderer && strstr(renderer, "V3D 4.2"))
     {
@@ -186,9 +189,6 @@ void main() \n\
 extern u16 kcode[4];
 extern u8 rt[4],lt[4];
 
-#if defined(_ANDROID)
-extern float vjoy_pos[14][8];
-#else
 
 float vjoy_pos[14][8]=
 {
@@ -211,7 +211,6 @@ float vjoy_pos[14][8]=
 	{96,320,64,64},         //ANALOG_POINT
 	{1}
 };
-#endif // !_ANDROID
 
 struct
 {
@@ -235,11 +234,6 @@ void gl_load_osd_resources()
     gl_osd.scaleLocation = glGetUniformLocation(gl_osd.program, "scale");
     glUniform1i(glGetUniformLocation(gl_osd.program, "tex"), 0);		//bind osd texture to slot 0
 
-#ifdef _ANDROID
-    int w, h;
-    if (gl_osd.tex == 0)
-        gl_osd.tex = loadPNG(get_readonly_data_path(DATA_PATH "buttons.png"), w, h);
-#endif
 }
 
 void gl_free_osd_resources()
@@ -265,143 +259,12 @@ void HideOSD()
     vjoy_pos[13][3] = 0;
 }
 
-#ifdef _ANDROID
-static const float vjoy_sz[2][14] = {
-        { 64,64,64,64, 64,64,64,64, 64, 90,90, 128, 64 },
-        { 64,64,64,64, 64,64,64,64, 64, 64,64, 128, 64 },
-};
-
-static void DrawButton(float* xy, u32 state)
-{
-    Vertex vtx;
-
-    vtx.z = 1;
-
-    vtx.col[0]=vtx.col[1]=vtx.col[2]=(0x7F-0x40*state/255)*vjoy_pos[13][0];
-
-    vtx.col[3]=0xA0*vjoy_pos[13][4];
-
-    vjoy_pos[13][4]+=(vjoy_pos[13][0]-vjoy_pos[13][4])/2;
-
-
-
-    vtx.x = xy[0]; vtx.y = xy[1];
-    vtx.u=xy[4]; vtx.v=xy[5];
-    osd_vertices.push_back(vtx);
-
-    vtx.x = xy[0] + xy[2]; vtx.y = xy[1];
-    vtx.u=xy[6]; vtx.v=xy[5];
-    osd_vertices.push_back(vtx);
-
-    vtx.x = xy[0]; vtx.y = xy[1] + xy[3];
-    vtx.u=xy[4]; vtx.v=xy[7];
-    osd_vertices.push_back(vtx);
-
-    vtx.x = xy[0] + xy[2]; vtx.y = xy[1] + xy[3];
-    vtx.u=xy[6]; vtx.v=xy[7];
-    osd_vertices.push_back(vtx);
-}
-
-static void DrawButton2(float* xy, bool state) { DrawButton(xy,state?0:255); }
-
-static void osd_gen_vertices()
-{
-    osd_vertices.clear();
-    DrawButton2(vjoy_pos[0],kcode[0] & DC_DPAD_LEFT);
-    DrawButton2(vjoy_pos[1],kcode[0] & DC_DPAD_UP);
-    DrawButton2(vjoy_pos[2],kcode[0] & DC_DPAD_RIGHT);
-    DrawButton2(vjoy_pos[3],kcode[0] & DC_DPAD_DOWN);
-
-    DrawButton2(vjoy_pos[4],kcode[0] & DC_BTN_X);
-    DrawButton2(vjoy_pos[5],kcode[0] & DC_BTN_Y);
-    DrawButton2(vjoy_pos[6],kcode[0] & DC_BTN_B);
-    DrawButton2(vjoy_pos[7],kcode[0] & DC_BTN_A);
-
-    DrawButton2(vjoy_pos[8],kcode[0] & DC_BTN_START);
-
-    DrawButton(vjoy_pos[9],lt[0]);
-
-    DrawButton(vjoy_pos[10],rt[0]);
-
-    DrawButton2(vjoy_pos[11],1);
-    DrawButton2(vjoy_pos[12],0);
-}
-#endif
 
 #define OSD_TEX_W 512
 #define OSD_TEX_H 256
 
 void OSD_DRAW(bool clear_screen)
 {
-#ifdef _ANDROID
-    if (gl_osd.tex == 0)
-        gl_load_osd_resources();
-    if (gl_osd.tex != 0)
-    {
-        osd_gen_vertices();
-
-        float u=0;
-        float v=0;
-
-        for (int i=0;i<13;i++)
-        {
-            //umin,vmin,umax,vmax
-            vjoy_pos[i][4]=(u+1)/OSD_TEX_W;
-            vjoy_pos[i][5]=(v+1)/OSD_TEX_H;
-
-            vjoy_pos[i][6]=((u+vjoy_sz[0][i]-1))/OSD_TEX_W;
-            vjoy_pos[i][7]=((v+vjoy_sz[1][i]-1))/OSD_TEX_H;
-
-            u+=vjoy_sz[0][i];
-            if (u>=OSD_TEX_W)
-            {
-                u-=OSD_TEX_W;
-                v+=vjoy_sz[1][i];
-            }
-            //v+=vjoy_pos[i][3];
-        }
-
-        verify(glIsProgram(gl_osd.program));
-        glcache.UseProgram(gl_osd.program);
-
-        float scale_h = screen_height / 480.f;
-        float offs_x = (screen_width - scale_h * 640.f) / 2.f;
-        float scale[4];
-        scale[0] = 2.f / (screen_width / scale_h);
-        scale[1]= -2.f / 480.f;
-        scale[2]= 1.f - 2.f * offs_x / screen_width;
-        scale[3]= -1.f;
-        glUniform4fv(gl_osd.scaleLocation, 1, scale);
-
-        glActiveTexture(GL_TEXTURE0);
-        glcache.BindTexture(GL_TEXTURE_2D, gl_osd.tex);
-
-        glBindFramebuffer(GL_FRAMEBUFFER, gl.screen_fb);
-
-        glBufferData(GL_ARRAY_BUFFER, osd_vertices.size() * sizeof(Vertex), &osd_vertices[0], GL_STREAM_DRAW); glCheck();
-
-        glcache.Enable(GL_BLEND);
-        glcache.Disable(GL_DEPTH_TEST);
-        glcache.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-        glcache.DepthMask(false);
-        glcache.DepthFunc(GL_ALWAYS);
-
-        glcache.Disable(GL_CULL_FACE);
-        glcache.Disable(GL_SCISSOR_TEST);
-        glViewport(0, 0, screen_width, screen_height);
-
-        if (clear_screen)
-        {
-            glcache.ClearColor(0.7f, 0.7f, 0.7f, 1.f);
-            glClear(GL_COLOR_BUFFER_BIT);
-        }
-        int dfa = osd_vertices.size() / 4;
-
-        for (int i = 0; i < dfa; i++)
-            glDrawArrays(GL_TRIANGLE_STRIP, i * 4, 4);
-    }
-#endif
     //g_GUI->RenderOSD();
 }
 
@@ -500,16 +363,7 @@ struct GUIRenderer_impl : GUIRenderer {
             DestroyContext();
             if (!CreateContext())
             {
-#if !defined(_ANDROID)
                 die("UIFrame: Failed to recover gl context")
-#else
-                msgboxf("Your graphics driver has crashed. Will try to recover.\n You can force a GLES2 context from the settings to avoid this message.\n\n Please upgrade your OS.", MBX_ICONEXCLAMATION);
-                printf("UIFRAME: Failed to create context - recreating view\n");
-                Stop();
-                android_RecreateView();
-                settings.pvr.ForceGLES2 = true;
-                SaveSettings();
-#endif
             }
         }
     }
@@ -602,6 +456,11 @@ struct GUIRenderer_impl : GUIRenderer {
     }
 };
 
+GUIRenderer* CreateHeadlessGUIRenderer();
+
 GUIRenderer* GUIRenderer::Create(GUI* gui) {
+    if (runctl_headless())
+        return CreateHeadlessGUIRenderer();
+
     return new GUIRenderer_impl();
 };

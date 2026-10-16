@@ -1,0 +1,71 @@
+## The SH4 dynarec ##
+#
+#	sh4.singlestep.dynarec    the single-step vectors through decoder -> shil -> x64 backend
+#	sh4.differential          interpreter against dynarec, from the initial state of every vector
+#
+#	Both enter the blocks of the x64 backend directly (dynarec_runner.h), on other hosts they are skipped.
+#
+
+if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})))
+  set(nulldc_sh4_dynarec_missing
+      "the SH4 dynarec tests run the blocks of the x64 backend, this is not an x86-64 build with the SH4 recompiler")
+  set(nulldc_sh4_dynarec_missing "${nulldc_sh4_dynarec_missing}" PARENT_SCOPE)
+  nulldc_add_skipped_test(sh4.singlestep.dynarec "${nulldc_sh4_dynarec_missing}")
+  nulldc_add_skipped_test(sh4.differential "${nulldc_sh4_dynarec_missing}")
+  return()
+endif()
+
+# The interpreter is part of it: the recompiler falls back to its handlers, and the differential runs both
+set(nulldc_sh4_dynarec_sources
+  ${NULLDC_SH4_INTERP_SOURCES}
+  hw/sh4/dyna/decoder.cpp
+  hw/sh4/dyna/shil.cpp
+  hw/sh4/dyna/driver.cpp
+  hw/sh4/dyna/blockmanager.cpp
+  jit/backend/x64/rec_x64.cpp
+  deps/crypto/sha1.cpp
+)
+
+nulldc_add_libswirl_library(nulldc_sh4_dynarec SOURCES ${nulldc_sh4_dynarec_sources})
+
+# The same with CANONICAL_TEST: the x64 backend compiles the calls of the interpreter, the jumps, the moves and the
+# memory accesses itself and calls the canonical helper (hw/sh4/dyna/shil_canonical.h) for every other shil opcode.
+# The helpers are what a backend without code of its own for an opcode runs: the x64 backend's FMAC on a CPU
+# without FMA, a build without a JIT
+nulldc_add_libswirl_library(nulldc_sh4_dynarec_canonical SOURCES ${nulldc_sh4_dynarec_sources})
+target_compile_definitions(nulldc_sh4_dynarec_canonical PRIVATE CANONICAL_TEST)
+
+foreach(variant "" _canonical)
+  add_executable(sh4_singlestep_dynarec${variant} singlestep.cpp dynarec_runner.cpp dynarec_runner.h)
+  target_link_libraries(sh4_singlestep_dynarec${variant} PRIVATE nulldc_sh4_dynarec${variant} nulldc_test_common)
+  target_compile_definitions(sh4_singlestep_dynarec${variant} PRIVATE
+    NULLDC_SH4_TESTS_DIR="${NULLDC_SH4_TESTS_DIR}"
+    NULLDC_BASELINE="${CMAKE_CURRENT_SOURCE_DIR}/baseline_singlestep.txt"
+  )
+endforeach()
+
+if(NULLDC_HAVE_SH4_TESTS)
+  add_test(NAME sh4.singlestep.dynarec COMMAND sh4_singlestep_dynarec --strict)
+  set_tests_properties(sh4.singlestep.dynarec PROPERTIES TIMEOUT 300)
+else()
+  nulldc_add_missing_data_test(sh4.singlestep.dynarec "${NULLDC_SH4_TESTS_MISSING}")
+endif()
+
+add_executable(sh4_differential
+  differential.cpp
+  diff_engines.cpp    diff_engines.h
+  diff_memory.cpp     diff_memory.h
+  dynarec_runner.cpp  dynarec_runner.h
+)
+target_link_libraries(sh4_differential PRIVATE nulldc_sh4_dynarec nulldc_test_common)
+target_compile_definitions(sh4_differential PRIVATE
+  NULLDC_SH4_TESTS_DIR="${NULLDC_SH4_TESTS_DIR}"
+  NULLDC_BASELINE="${CMAKE_CURRENT_SOURCE_DIR}/baseline_differential.txt"
+)
+
+if(NULLDC_HAVE_SH4_TESTS)
+  add_test(NAME sh4.differential COMMAND sh4_differential --strict)
+  set_tests_properties(sh4.differential PROPERTIES TIMEOUT 300)
+else()
+  nulldc_add_missing_data_test(sh4.differential "${NULLDC_SH4_TESTS_MISSING}")
+endif()

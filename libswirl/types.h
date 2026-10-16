@@ -27,18 +27,8 @@
 #endif
 
 
-#if HOST_CPU == CPU_X86
-
-	#if BUILD_COMPILER==COMPILER_VC
-	#define DYNACALL  __fastcall
-	#else
-	//android defines fastcall as regparm(3), it doesn't work for us
-	#undef fastcall
-	#define DYNACALL __attribute__((fastcall))
-	#endif
-#else
-	#define DYNACALL
-#endif
+//What recompiled code calls: the calling convention of the host, on every host there is
+#define DYNACALL
 
 #if BUILD_COMPILER==COMPILER_VC
 #ifdef _CRT_SECURE_CPP_OVERLOAD_STANDARD_NAMES
@@ -219,7 +209,8 @@ struct vram_block
 enum ndc_error_codes
 {
 	rv_ok = 0,			//no error
-	rv_cli_finish=69,	//clean exit after -help or -version , should we just use rv_ok?
+	rv_cli_finish=69,	//clean exit after --help
+	rv_cli_error=70,	//the command line was refused (cfg/cl.cpp), the message is on stderr: exit status 2
 
 	rv_error=-2,		//error
 	rv_serror=-1,		//silent error , it has been reported to the user
@@ -340,11 +331,6 @@ struct maple_device_instance
 #include <stdlib.h>
 #include <stdio.h>
 
-#if defined(TARGET_NACL32)
-	int nacl_printf(const wchar* Text,...);
-	#define printf nacl_printf
-	#define puts(X) printf("%s\n", X)
-#endif
 
 #if HOST_OS == OS_DARWIN
 int darw_printf(const wchar* Text,...);
@@ -394,6 +380,7 @@ using namespace std;
 #endif
 
 //basic includes
+#include "oslib/atomic_u32.h"
 #include "stdclass.h"
 
 #ifndef RELEASE
@@ -415,13 +402,13 @@ using namespace std;
 
 
 #if DC_PLATFORM==DC_PLATFORM_DREAMCAST
-	#define VER_EMUNAME		"devcast"
+	#define VER_EMUNAME		"nullDC"
 #elif DC_PLATFORM==DC_PLATFORM_DEV_UNIT
-	#define VER_EMUNAME		"devcast-DevKit-SET5.21"
+	#define VER_EMUNAME		"nullDC-DevKit-SET5.21"
 #elif DC_PLATFORM==DC_PLATFORM_NAOMI
-	#define VER_EMUNAME		"devcast-Naomi"
+	#define VER_EMUNAME		"nullDC-Naomi"
 #elif DC_PLATFORM==DC_PLATFORM_ATOMISWAVE
-	#define VER_EMUNAME		"devcast-AtomisWave"
+	#define VER_EMUNAME		"nullDC-AtomisWave"
 #else
 	#error unknown target platform
 #endif
@@ -520,6 +507,7 @@ struct settings_t
 		u32 language;		// 0 -> JP, 1 -> EN, 2 -> DE, 3 -> FR, 4 -> SP, 5 -> IT, 6 -> default
 		std::vector<std::string> ContentPath;
 		bool FullMMU;
+		u32 RTC;			// 0 -> the host's clock, else the second (since 1970, console time) every run starts at
 	} dreamcast;
 
 	struct
@@ -545,22 +533,7 @@ struct settings_t
 	} audio;
 
 
-#if USE_OMX
-	struct
-	{
-		u32 Audio_Latency;
-		bool Audio_HDMI;
-	} omx;
-#endif
 
-#if SUPPORT_DISPMANX
-	struct
-	{
-		u32 Width;
-		u32 Height;
-		bool Keep_Aspect;
-	} dispmanx;
-#endif
 
 	struct
 	{
@@ -617,27 +590,6 @@ inline bool is_u16(u32 v) { return (u16)v==(u32)v; }
 
 static inline void do_nada(...) { }
 
-#ifdef _ANDROID
-#include <android/log.h>
-
-#ifdef printf
-#undef printf
-#endif
-
-#ifdef puts
-#undef puts
-#endif
-
-#define LOG_TAG   "devcast"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,LOG_TAG,__VA_ARGS__)
-#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,LOG_TAG,__VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR,LOG_TAG,__VA_ARGS__)
-#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG,LOG_TAG,__VA_ARGS__)
-
-#define puts      LOGI
-#define printf    LOGI
-#define putinf    LOGI
-#endif
 
 
 

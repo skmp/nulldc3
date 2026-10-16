@@ -1,130 +1,90 @@
-.\" reicast.1:
+.\" nulldc3.1 (the file keeps the name of the tree's reicast/ directory)
 
-.TH  "REICAST" "1" "August 22, 2015" "REICAST" "System Manager's Manual: reicast"
+.TH "NULLDC3" "1" "October 2026" "nullDC 3.0.0" "User Commands"
 
 .SH NAME
 
-reicast \- The Sega Dreamcast Emulator.
+nulldc3 \- nullDC 3.0.0, the Sega Dreamcast emulator.
 
 .SH SYNOPSIS
 
-\fBreicast\fR [OPTIONS]... [IMAGE FILE]
+\fBnulldc3\fR [\fISWITCHES\fR]... [\fIGAME\fR]
 
 .SH "DESCRIPTION"
 
-\fBreicast\fR is a multi-platform emulator for the Sega Dreamcast.
-
-.SH "EXAMPLE COMMANDLINE"
-
-.TP
-\fBNo command line options will start reicast and load all values from the config file.\fR
-reicast
+\fBnulldc3\fR emulates the Sega Dreamcast. Its debugger serves the web UI Dreamcast DevTools at
+http://127.0.0.1:55543/ while it runs.
 
 .TP
-\fBOverride the image specified in the config file to load a specific image.\fR
-reicast /path/to/your/image.gdi
+\fIGAME\fR
+A disc image (.gdi, .chd, .cdi, .cue, .iso, .lst), a program that runs under reios (.elf, .bin), or \fBnodisk\fR.
+Without one the emulator starts at its menu.
+
+.SH "SWITCHES"
+
+Every switch is written with two dashes. A word that begins with a dash is always a switch: an unknown one, or one
+written with one dash, is an error, and the emulator exits with status 2 without starting.
 
 .TP
-\fBStart reicast on X11 in full screen.\fR
-reicast -config x11:fullscreen=1
-
-.SH "CONFIG FILE"
+\fB--config\fR \fIsection\fR:\fIkey\fR=\fIvalue\fR [ \fB,\fR \fIsection\fR:\fIkey\fR=\fIvalue\fR ]...
+Values of the configuration for this run; they are not written to emu.cfg. The comma between two of them is a word
+of its own.
 
 .TP
-The config file for \fBreicast\fR can be found at:
+\fB--portable\fR \fIdir\fR
+Keep the emulator's files in \fIdir\fR (made when it is missing) instead of the directory of the executable.
+
+.TP
+\fB--shared\fR
+Keep them in the per-user directories \fB$XDG_CONFIG_HOME/nulldc3\fR (~/.config/nulldc3) and
+\fB$XDG_DATA_HOME/nulldc3\fR (~/.local/share/nulldc3) instead, with the nulldc3 directories of
+\fB$XDG_CONFIG_DIRS\fR and \fB$XDG_DATA_DIRS\fR read behind them. An emulator installed where it cannot write is
+run with \fB--shared\fR.
+
+.TP
+\fB--help\fR
+Print the usage text.
+
+.TP
+\fB--\fR
+Every word after it is a game, also one whose name begins with a dash.
+
+.SH "EXAMPLES"
+
+.TP
+Start at the menu:
+nulldc3
+
+.TP
+Start a disc image in full screen:
+nulldc3 --config x11:fullscreen=1 /path/to/your/image.gdi
+
+.TP
+Keep the files in the per-user directories:
+nulldc3 --shared /path/to/your/image.gdi
+
+.SH "FILES"
+
+Without \fB--portable\fR and \fB--shared\fR the files are in the directory of the executable (the directory of
+the file a symbolic link to it points at). The layout is the same in every directory:
 
 .IP
-~/.config/reicast/emu.cfg
+emu.cfg, the configuration
+.br
+mappings/, the input mappings
+.br
+vmu_save_A1.bin, vmu_save_A2.bin, ..., the VMU images
+.br
+data/dc_boot.bin and data/dc_flash.bin, the BIOS and the flash of a Dreamcast (without them the emulator boots
+with reios)
+.br
+data/dc_nvmem.bin, the flash as the emulator writes it back; data/<game>.state, the save states
+.br
+data/dumps/, what the debugging dumps of the renderers write
 .LP
 
-.SH "VMU SAVE FILE"
-
-.TP
-The VMU save files can be found at ~/.local/share/reicast/, by default \fBreicast\fR will create two VMU files for the first controller:
-
-.IP
-~/.local/share/reicast/vmu_save_A1.bin
-.br
-~/.local/share/reicast/vmu_save_A2.bin
-.LP
-
-.SH "BIOS AND FLASH ROMS"
-
-.TP
-\fBreicast\fR currently needs BIOS/Flash ROMs of the original Dreamcast. For copyright reasons it is not possible to distribute them bundled with \fBreicast\fR, so you have to dump them from your own Dreamcast. \fBreicast\fR will look for these files in:
-
-.IP
-~/.local/share/reicast/data/dc_boot.bin
-.br
-~/.local/share/reicast/data/dc_flash.bin
-.LP
-
-If you do not supply these files, \fBreicast\fR will fall back to reios, an experimental replacement for the original Dreamcast BIOS. However, your experience might not be as stable and some feature might be missing (e.g. booting to the Dreamcast menu will NOT work).
-
-.SH "CONTROLS"
-
-.TP
-\fBreicast\fR uses the kernel event devices for capturing input. You can define the evdev device id in the config file:
-.IP
-[input]
-.br
-evdev_device_id_1 = X
-.br
-evdev_mapping_1 = my_mapping.cfg
-.LP
-
-You can create your own mappings with the \fBreicast-joyconfig\fR tool. You should either put them into the "mappings" folder inside the reicast config directory (~/.local/share/reicast) or as an alternative, you can specify an absolute path (which has to begin with a leading slash "/"):
-.IP
-[input]
-.br
-evdev_device_id_1 = X
-.br
-evdev_mapping_1 = /path/to/my_mapping.cfg
-.LP
-
-If you don't specify a mapping file, \fBreicast\fR will try to find a file withe the name of the specified input device in your "mappings" folder ("Logitech RumblePad 2 USB.cfg" for example) or use one of the pre-defined mapping files (e.g. for Xbox 360 controllers).
-
-If the evdev input works for you, it's probably best to deactivate the legacy joystick API input:
-
-.IP
-[input]
-.br
-joystick_device_id = -1
-.LP
-
-If your version of \fBreicast\fR is compiled against X11, you might want to disable the built-in X11 keyboard support as this can interfere if your controller is detected as a keyboard:
-.IP
-[input]
-.br
-enable_x11_keyboard = -1
-.LP
-
-.SH "GENERAL OPTIONS"
-
-.TP
-\fB-config section:option=value\fR
-Temporarily override a value of the config file.
-
-.TP
-\fB[IMAGE FILE]\fR
-Load a specific image file.
-
-Although \fBReicast\fR supports images in GDI, CHDv4 and CDI format, you should avoid CDI images since they often have issues.
-
-If no image is given on the command line, reicast will use the value of the "image" option in the "config" section of the config file.
-
-.SH "AUTHOR"
-
-.TP
-\fBreicast\fR is developed by a number of people. A list of contributors can be obtained at:
-\fIhttps://github.com/reicast/reicast-emulator/graphs/contributors\fP
-
-.TP
-Head over to reicast's git repository if you want to contibute:
-\fIhttps://github.com/reicast/reicast-emulator\fP
-
-.TP
-This is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License (Version 2).
+With \fB--shared\fR, emu.cfg and mappings/ are in the configuration directory and the rest in the data directory.
+The directories of reicast (~/.reicast, ~/.config/reicast, ~/.local/share/reicast) are not read.
 
 .SH "SEE ALSO"
-\fBreicast-joyconfig\fR(1)
+\fBreicast-joyconfig\fR(1); README.md of the source tree.

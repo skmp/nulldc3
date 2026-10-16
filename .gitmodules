@@ -1,0 +1,10 @@
+[submodule "tests/vendor/sh4-tests"]
+	path = tests/vendor/sh4-tests
+	url = https://github.com/SingleStepTests/sh4.git
+	shallow = true
+[submodule "tests/vendor/arm7di-tests-dreamcast"]
+	path = tests/vendor/arm7di-tests-dreamcast
+	url = https://github.com/emudev-org/arm7di-tests-dreamcast.git
+[submodule "devtools"]
+	path = devtools
+	url = ../dreamcast-devtools.git

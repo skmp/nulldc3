@@ -24,6 +24,8 @@ void sh4rom_init()
 			sin_table[i].u[0]=-(f32&)sin_coefs[i-0x8000];
 	}
 
+	// SH7091: the sine of 0x8000, and with it the cosine of 0x4000, is +0 (console), not the negated sine of 0
+	sin_table[0x8000].u[0]=0;
 
 	verify(sin_table[0x8000].u[0]==0);//this is required by Ikaruga, for the bullets to behave normally
 

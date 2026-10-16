@@ -31,13 +31,8 @@
 
 #include "utils/glinit/glx/glx.h"
 
-#if defined(TARGET_PANDORA)
-	#define DEFAULT_FULLSCREEN    true
-	#define DEFAULT_WINDOW_WIDTH  800
-#else
 	#define DEFAULT_FULLSCREEN    false
 	#define DEFAULT_WINDOW_WIDTH  640
-#endif
 #define DEFAULT_WINDOW_HEIGHT   480
 
 
@@ -189,7 +184,7 @@ static void destroy_empty_cursor()
 
 static void x11_capture_mouse()
 {
-	x11_window_set_text("devcast - mouse capture");
+	x11_window_set_text("nullDC - mouse capture");
 	capturing_mouse = true;
 	Cursor cursor = create_empty_cursor();
 	Display *display = (Display*)x11_disp;
@@ -202,7 +197,7 @@ static void x11_capture_mouse()
 
 static void x11_uncapture_mouse()
 {
-	x11_window_set_text("devcast");
+	x11_window_set_text("nullDC");
 	capturing_mouse = false;
 	Display *display = (Display*)x11_disp;
 	Window window = (Window)x11_win;
@@ -488,7 +483,7 @@ void x11_window_create()
 		x11_win = (void*)x11Window;
 		x11_vis = (void*)x11Visual->visual;
 
-		x11_window_set_text("devcast");
+		x11_window_set_text("nullDC");
 	}
 	else
 	{

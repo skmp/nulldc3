@@ -5,6 +5,10 @@
 
 #include "win_common.h"
 
+#include <shlobj.h>		// SHGetKnownFolderPath
+#include <knownfolders.h>
+#include <io.h>			// _get_osfhandle
+
 // Gamepads
 u16 kcode[4] = { 0xffff, 0xffff, 0xffff, 0xffff };
 u32 vks[4];
@@ -135,14 +139,7 @@ LONG ExeptionHandler(EXCEPTION_POINTERS *ExceptionInfo)
 	rei_host_context_t ctx = { 0 };
 
 	// TODO: Implement context abstraction for windows
-	#if HOST_CPU == CPU_X86
-		ctx.pc = (unat&)ep->ContextRecord->Eip;
-
-		ctx.eax = (unat&)ep->ContextRecord->Eax;
-		ctx.ecx = (unat&)ep->ContextRecord->Ecx;
-		ctx.esp = (unat&)ep->ContextRecord->Esp;
-		
-	#elif HOST_CPU == CPU_X64
+	#if HOST_CPU == CPU_X64
 		ctx.pc = (unat&)ep->ContextRecord->Rip;
 	#else
 		#error missing arch for windows
@@ -151,14 +148,7 @@ LONG ExeptionHandler(EXCEPTION_POINTERS *ExceptionInfo)
 	if (virtualDreamcast && virtualDreamcast->HandleFault(address, &ctx))
 	{
 		// TODO: Implement context abstraction for windows
-		#if HOST_CPU == CPU_X86
-			(unat&)ep->ContextRecord->Eip = ctx.pc;
-
-			(unat&)ep->ContextRecord->Eax = ctx.eax;
-			(unat&)ep->ContextRecord->Ecx = ctx.ecx;
-			(unat&)ep->ContextRecord->Esp = ctx.esp;
-			
-		#elif HOST_CPU == CPU_X64
+		#if HOST_CPU == CPU_X64
 			(unat&)ep->ContextRecord->Rip = ctx.pc;
 		#else
 			#error missing arch for windows
@@ -173,14 +163,73 @@ LONG ExeptionHandler(EXCEPTION_POINTERS *ExceptionInfo)
 	}
 }
 
+// A path of the system in the code page the rest of the emulator opens files with, the ANSI one; false when the
+// path has a character that page does not have. With UTF-8 as that page (the "Use Unicode UTF-8" option of
+// Windows, or activeCodePage in a manifest) WideCharToMultiByte takes no WC_NO_BEST_FIT_CHARS and no
+// lpUsedDefaultChar, it fails with them; every character has a form there, and only a broken UTF-16 sequence is lost
+static bool narrow_path(const wchar_t* wide, string& out)
+{
+	UINT page = GetACP();
+	bool utf8 = page == CP_UTF8;
+	DWORD flags = utf8 ? WC_ERR_INVALID_CHARS : WC_NO_BEST_FIT_CHARS;
+	BOOL lossy = FALSE;
+	BOOL* used_default = utf8 ? nullptr : &lossy;
+	int n = WideCharToMultiByte(page, flags, wide, -1, nullptr, 0, nullptr, used_default);
+	if (n <= 0 || lossy)
+		return false;
+	vector<char> text(n);
+	if (WideCharToMultiByte(page, flags, wide, -1, text.data(), n, nullptr, used_default) != n || lossy)
+		return false;
+	out = text.data();
+	return true;
+}
+
+// The directories a run can keep its files in, cfg/cl.cpp chooses: the one of the executable, and %APPDATA%\nulldc3
+// for --shared
 void SetupPath()
 {
-	char fname[512];
-	GetModuleFileName(0,fname,512);
-	string fn=string(fname);
-	fn=fn.substr(0,fn.find_last_of('\\'));
-	set_user_config_dir(fn);
-	set_user_data_dir(fn);
+	HostDirs dirs;
+
+	// the file of the executable, from the system: never the working directory
+	vector<wchar_t> path(MAX_PATH);
+	for (;;)
+	{
+		DWORD n = GetModuleFileNameW(NULL, path.data(), (DWORD)path.size());
+		if (n == 0)
+		{
+			dirs.exe_dir_error = "GetModuleFileNameW failed with error " + std::to_string(GetLastError());
+			break;
+		}
+		if (n < path.size())
+		{
+			wstring exe(path.data(), n);
+			size_t separator = exe.find_last_of(L"\\/");
+			wstring dir = separator == wstring::npos ? L"" : exe.substr(0, separator);
+			if (!dir.empty() && dir.back() == L':')
+				dir += L'\\';	// C:\nulldc3.exe is in C:\, not in the working directory of drive C
+			if (dir.empty())
+				dirs.exe_dir_error = "the path of the executable has no directory";
+			else if (!narrow_path(dir.c_str(), dirs.exe_dir))
+				dirs.exe_dir_error = "its path has a character that the ANSI code page of the system does not have";
+			break;
+		}
+		path.resize(path.size() * 2);
+	}
+
+	PWSTR appdata = nullptr;
+	if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, NULL, &appdata)))
+	{
+		string dir;
+		if (narrow_path(appdata, dir))
+			dirs.shared_config = dirs.shared_data = dir + "\\nulldc3";
+		else
+			dirs.shared_error = "%APPDATA% has a character that the ANSI code page of the system does not have";
+	}
+	else
+		dirs.shared_error = "the system names no %APPDATA% folder";
+	CoTaskMemFree(appdata);
+
+	cl_SetHostDirs(dirs);
 }
 
 
@@ -242,9 +291,28 @@ BOOL CtrlHandler( DWORD fdwCtrlType )
 }
 
 
+// Whether what the emulator wrote to stream can still be read when the process has ended: in a file or a pipe, or
+// in the console of the cmd.exe or PowerShell it was started from. Not when there is no console, nor in a console
+// that has this process alone (the one Windows opens for a start from Explorer or a shortcut, or the one of
+// --console): that one closes with it.
+static bool output_is_kept(FILE* stream)
+{
+	int fd = _fileno(stream);
+	if (fd < 0)
+		return false;
+	HANDLE handle = (HANDLE)_get_osfhandle(fd);
+	if (handle == INVALID_HANDLE_VALUE || handle == NULL)
+		return false;
+	DWORD mode;
+	if (!GetConsoleMode(handle, &mode))
+		return true;	// a file, a pipe, or a device that is no console
+	DWORD processes[2];
+	return GetConsoleProcessList(processes, 2) > 1;
+}
+
 void ReserveBottomMemory()
 {
-#if defined(_WIN64) && defined(_DEBUG)
+#ifdef _DEBUG
     static bool s_initialized = false;
     if ( s_initialized )
         return;
@@ -336,7 +404,6 @@ void ReserveBottomMemory()
 #endif
 }
 
-#ifdef _WIN64
 #include "hw/sh4/dyna/ngen.h"
 
 typedef union _UNWIND_CODE {
@@ -436,12 +503,10 @@ void setup_seh() {
 
 	//verify(RtlInstallFunctionTableCallback((unat)CodeCache | 0x3, (DWORD64)CodeCache, CODE_SIZE, seh_callback, 0, 0));
 }
-#endif
 
 
 
 
-#if BUILD_RETROARCH_CORE==0
 
 // DEF_CONSOLE allows you to override linker subsystem and therefore default console //
 //	: pragma isn't pretty but def's are configurable 
@@ -459,9 +524,13 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 	int argc=0;
 	wchar* cmd_line=GetCommandLineA();
 	wchar** argv=CommandLineToArgvA(cmd_line,&argc);
-	for (int i = 0; i < argc; i++)
+	// --console is looked for here, ahead of the command line (cfg/cl.cpp, which takes it and --log), so that the
+	// console shows what that says as well; a "--" ends the switches here too
+	for (int i = 1; i < argc; i++)
 	{
-		if (!stricmp(argv[i], "-console"))
+		if (!strcmp(argv[i], "--"))
+			break;
+		if (!strcmp(argv[i], "--console"))
 		{
 			if (AllocConsole())
 			{
@@ -470,19 +539,7 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 				freopen("CON", "r", stdin);
 			}
 			SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE);
-		}
-		else if (!stricmp(argv[i], "-log"))
-		{
-			const char *logfile;
-			if (i < argc - 1)
-			{
-				logfile = argv[i + 1];
-				i++;
-			}
-			else
-				logfile = "reicast-log.txt";
-			freopen(logfile, "w", stdout);
-			freopen(logfile, "w", stderr);
+			break;
 		}
 	}
 
@@ -491,23 +548,29 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 	ReserveBottomMemory();
 	SetupPath();
 
-#ifdef _WIN64
 	AddVectoredExceptionHandler(1, ExeptionHandler);
-#else
-	SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)&ExeptionHandler);
-#endif
 #ifndef __GNUC__
 	__try
 #endif
 	{
 		CoInitialize(nullptr);
 
-		if (reicast_init(argc, argv) != 0)
-			die("Reicast initialization failed");
+		int init_rv = reicast_init(argc, argv);
+		if (init_rv == rv_cli_finish || init_rv == rv_cli_error)
+		{
+			// --help (the usage text is on stdout, and is all that was asked for) or a command line that was refused
+			// (the reason is on stderr): where that cannot be read once the process has ended, without a console
+			// or in one that closes with the process, a message box shows it as well
+			bool help = init_rv == rv_cli_finish;
+			if (!output_is_kept(help ? stdout : stderr))
+				MessageBoxA(NULL, (help ? cl_HelpText() : cl_ErrorText()).c_str(), "nullDC",
+				            MB_OK | (help ? MB_ICONINFORMATION : MB_ICONERROR));
+			return help ? 0 : 2;
+		}
+		if (init_rv != 0)
+			die("nullDC initialization failed");
 
-		#ifdef _WIN64
-			setup_seh();
-		#endif
+		setup_seh();
 
         reicast_ui_loop();
 
@@ -529,49 +592,6 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 
 	return 0;
 }
-#else
-void retro_reicast_entry_point() {
-
-	ReserveBottomMemory();
-	SetupPath();
-
-#ifdef _WIN64
-	AddVectoredExceptionHandler(1, ExeptionHandler);
-#else
-	SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)&ExeptionHandler);
-#endif
-#ifndef __GNUC__
-	__try
-#endif
-	{
-		CoInitialize(nullptr);
-
-		if (reicast_init(0, nullptr) != 0)
-			die("Reicast initialization failed");
-
-#ifdef _WIN64
-		setup_seh();
-#endif
-
-		reicast_ui_loop();
-
-		reicast_term();
-	}
-#ifndef __GNUC__
-	__except (ExeptionHandler(GetExceptionInformation()))
-	{
-		printf("Unhandled exception - Emulation thread halted...\n");
-	}
-#endif
-	SetUnhandledExceptionFilter(0);
-	cfgSaveBool("windows", "maximized", window_maximized);
-	if (!window_maximized && screen_width != 0 && screen_width != 0)
-	{
-		cfgSaveInt("windows", "width", screen_width);
-		cfgSaveInt("windows", "height", screen_height);
-	}
-}
-#endif
 
 int get_mic_data(u8* buffer) { return 0; }
 int push_vmu_screen(u8* buffer) { return 0; }

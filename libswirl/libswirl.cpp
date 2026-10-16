@@ -39,7 +39,13 @@
 #include "hw/bba/bba.h"
 #include "hw/holly/holly_intc.h"
 #include "hw/aica/aica_mmio.h"
+#include "hw/aica/aica_hash.h"
 #include "hw/arm7/SoundCPU.h"
+#include "hw/arm7/arm7.h"
+#include "utils/run_control.h"
+#include "hw/sh4/sh4_dbg.h"
+#include "hw/sh4/SuperH4_impl.h"
+#include "debugger/debugger.h"
 
 #define fault_printf(...)
 
@@ -47,7 +53,7 @@
 #include "scripting/lua_bindings.h"
 #endif
 
-unique_ptr<VirtualDreamcast> virtualDreamcast;
+MachinePtr virtualDreamcast;
 unique_ptr<GDRomDisc> g_GDRDisc;
 
 
@@ -95,17 +101,13 @@ int64_t get_time_usec(void)
     if (!QueryPerformanceCounter(&count))
         return 0;
     return count.QuadPart * 1000000 / freq.QuadPart;
-#elif defined(_POSIX_MONOTONIC_CLOCK) || defined(__QNX__) || defined(ANDROID) || defined(__MACH__) || HOST_OS==OS_LINUX
+#elif defined(_POSIX_MONOTONIC_CLOCK) || defined(__MACH__) || HOST_OS==OS_LINUX
     struct timespec tv = { 0 };
     if (clock_gettime(CLOCK_MONOTONIC, &tv) < 0)
         return 0;
     return tv.tv_sec * INT64_C(1000000) + (tv.tv_nsec + 500) / 1000;
 #elif defined(EMSCRIPTEN)
     return emscripten_get_now() * 1000;
-#elif defined(__mips__) || defined(DJGPP)
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (1000000 * tv.tv_sec + tv.tv_usec);
 #else
 #error "Your platform does not have a timer function implemented in cpu_features_get_time_usec(). Cannot continue."
 #endif
@@ -287,6 +289,7 @@ void InitSettings()
     settings.dreamcast.broadcast = 4;	// default
     settings.dreamcast.language = 6;	// default
     settings.dreamcast.FullMMU = false;
+    settings.dreamcast.RTC = 0;
     settings.dynarec.SmcCheckLevel = FullCheck;
     settings.aica.LimitFPS = true;
     settings.aica.NoBatch = false;	// This also controls the DSP. Disabled by default
@@ -338,22 +341,13 @@ void InitSettings()
         settings.input.maple_expansion_devices[i][1] = i == 0 ? MDT_SegaVMU : MDT_None;
     }
 
-#if SUPPORT_DISPMANX
-    settings.dispmanx.Width = 640;
-    settings.dispmanx.Height = 480;
-    settings.dispmanx.Keep_Aspect = true;
-#endif
 
-#if (HOST_OS != OS_LINUX || defined(_ANDROID) || defined(TARGET_PANDORA))
+#if (HOST_OS != OS_LINUX)
     settings.aica.BufferSize = 2048;
 #else
     settings.aica.BufferSize = 1024;
 #endif
 
-#if USE_OMX
-    settings.omx.Audio_Latency = 100;
-    settings.omx.Audio_HDMI = true;
-#endif
 }
 
 void LoadSettings(bool game_specific)
@@ -378,6 +372,10 @@ void LoadSettings(bool game_specific)
     settings.dreamcast.broadcast = cfgLoadInt(config_section, "Dreamcast.Broadcast", settings.dreamcast.broadcast);
     settings.dreamcast.language = cfgLoadInt(config_section, "Dreamcast.Language", settings.dreamcast.language);
     settings.dreamcast.FullMMU = cfgLoadBool(config_section, "Dreamcast.FullMMU", settings.dreamcast.FullMMU);
+    // The pinned real-time clock has two keys and one rule for them (hw/aica/aica_hash.h): Debug.FixedRtc, else
+    // Dreamcast.RTC. The rule names section config for both and is asked again for a game: once the id of the
+    // game is set the config store puts a key of the game's own section in front of the one of the section named
+    settings.dreamcast.RTC = aica_hash.pinned_rtc != nullptr ? aica_hash.pinned_rtc() : 0;
     settings.aica.LimitFPS = cfgLoadBool(config_section, "aica.LimitFPS", settings.aica.LimitFPS);
     settings.aica.NoBatch = cfgLoadBool(config_section, "aica.NoBatch", settings.aica.NoBatch);
     settings.aica.NoSound = cfgLoadBool(config_section, "aica.NoSound", settings.aica.NoSound);
@@ -439,22 +437,13 @@ void LoadSettings(bool game_specific)
         settings.input.maple_expansion_devices[i][1] = (MapleDeviceType)cfgLoadInt(input_section, device_name, settings.input.maple_expansion_devices[i][1]);
     }
 
-#if SUPPORT_DISPMANX
-    settings.dispmanx.Width = cfgLoadInt(game_specific ? cfgGetGameId() : "dispmanx", "width", settings.dispmanx.Width);
-    settings.dispmanx.Height = cfgLoadInt(game_specific ? cfgGetGameId() : "dispmanx", "height", settings.dispmanx.Height);
-    settings.dispmanx.Keep_Aspect = cfgLoadBool(game_specific ? cfgGetGameId() : "dispmanx", "maintain_aspect", settings.dispmanx.Keep_Aspect);
-#endif
 
-#if (HOST_OS != OS_LINUX || defined(_ANDROID) || defined(TARGET_PANDORA))
+#if (HOST_OS != OS_LINUX)
     settings.aica.BufferSize = 2048;
 #else
     settings.aica.BufferSize = 1024;
 #endif
 
-#if USE_OMX
-    settings.omx.Audio_Latency = cfgLoadInt(game_specific ? cfgGetGameId() : "omx", "audio_latency", settings.omx.Audio_Latency);
-    settings.omx.Audio_HDMI = cfgLoadBool(game_specific ? cfgGetGameId() : "omx", "audio_hdmi", settings.omx.Audio_HDMI);
-#endif
 
     if (!game_specific)
     {
@@ -489,7 +478,8 @@ void LoadCustom()
     char* p = reios_id + strlen(reios_id) - 1;
     while (p >= reios_id && *p == ' ')
         * p-- = '\0';
-    if (*p == '\0')
+    // an id that is empty, or was nothing but blanks, has no byte to look at
+    if (p < reios_id || *p == '\0')
         return;
 #elif DC_PLATFORM == DC_PLATFORM_NAOMI || DC_PLATFORM == DC_PLATFORM_ATOMISWAVE
     char* reios_id = naomi_game_id;
@@ -600,15 +590,7 @@ void SaveSettings()
 
     GamepadDevice::SaveMaplePorts();
 
-#ifdef _ANDROID
-    void SaveAndroidSettings();
-    SaveAndroidSettings();
-#endif
 }
-
-static bool reset_requested;
-
-
 
 int reicast_init(int argc, char* argv[])
 {
@@ -618,10 +600,10 @@ int reicast_init(int argc, char* argv[])
 #endif
 
     // TODO: Move vmem_reserve back here
-    if (ParseCommandLine(argc, argv))
-    {
-        return 69;
-    }
+    // --help, or a command line that is refused: nothing else is done, no machine is made
+    int cl_result = ParseCommandLine(argc, argv);
+    if (cl_result != rv_ok)
+        return cl_result;
     printf("Config dir is: %s\n", get_writable_config_path("/").c_str());
 	printf("Data dir is:   %s\n", get_writable_data_path("/").c_str());
 
@@ -635,20 +617,20 @@ int reicast_init(int argc, char* argv[])
     else
         LoadSettings(false);
 
-#if BUILD_RETROARCH_CORE == 0
+    runctl_configure();
+
     os_CreateWindow();
-#endif
     os_SetupInput();
 
     g_GUI.reset(GUI::Create());
     g_GUI->Init();
 
-#if BUILD_RETROARCH_CORE == 0
     g_GUIRenderer.reset(GUIRenderer::Create(g_GUI.get()));
-#endif
 
     if (showOnboarding)
         g_GUI->OpenOnboarding();
+
+    dbg::Init();
 
     return 0;
 }
@@ -658,6 +640,14 @@ void reicast_ui_loop() {
 }
 
 void reicast_term() {
+    // before the GUI, and with it the machine, goes away
+    dbg::Term();
+
+    // An emulator thread that is still there goes through the renderer of the user interface on its way out:
+    // it has ended before the renderer goes
+    if (virtualDreamcast)
+        virtualDreamcast->StopAndWait();
+
     g_GUIRenderer.reset();
 
     g_GUI.reset();
@@ -679,8 +669,24 @@ struct Dreamcast_impl : VirtualDreamcast {
     unique_ptr<AicaContext> aica_ctx;
     unique_ptr<AudioStream> audio_stream;
 
+    // Why the CPU was stopped, as far as the machine knows. A bit is set under callback_lock by the thread
+    // that asks, before it stops the CPU; the emulator thread evaluates them once the CPU has stopped, the
+    // reset first. A stop that a debugger decided is not here: it is dbg::emu::Park()'s
+    enum : u32 {
+        HOST_STOP   = 1,    // Stop(): the host UI, the end of an automated run. The thread runs callback and ends
+        GUEST_RESET = 2,    // RequestReset(): the thread resets the machine and runs on
+        GUEST_EXIT  = 4,    // RequestExit(): the thread ends
+        HOST_WAITS  = 8,    // StopAndWait(), with HOST_STOP: the thread that draws the frames waits for this
+                            // one to end, so the thread ends without waiting for its frames to be drawn
+    };
+
     cMutex callback_lock;
     function<void()> callback;
+    u32 stop_reasons = 0;
+
+    // An emulator thread exists that can still take a stop request: from Resume() until that thread has
+    // taken its stop callback. Under callback_lock
+    bool thread_live = false;
     
     int aica_schid = -1;
     int ds_schid = -1;
@@ -693,6 +699,8 @@ struct Dreamcast_impl : VirtualDreamcast {
 #ifndef TARGET_DISPFRAME
     void* dc_run()
     {
+        dbg::emu::OnThreadEntered();
+
 #if FEAT_HAS_NIXPROF
         install_prof_handler(0);
 #endif
@@ -735,40 +743,98 @@ struct Dreamcast_impl : VirtualDreamcast {
             printf("Using DSP Interpreter\n");
         }
 
-        sh4_cpu->Start();
+        // Not when the machine was asked to stop while this thread started. The thread then goes to the reasons
+        // below with no park in front of them: a request that came in before the debugger heard of this thread
+        // woke no park loop, and a park made at the start of the thread would wait with the request pending
+        bool park = StartCpu(false);
 
         emu_started.Set();
 
-        do {
-            reset_requested = false;
+        u32 reasons;
 
-            sh4_cpu->Run();
+        for (;;)
+        {
+            // The debugger's park context: queued calls run here, and the thread waits here while a debugger
+            // stop is in force. PARK_EVALUATE: the CPU stays stopped, a reason below may be pending
+            if (park && dbg::emu::Park() == dbg::emu::PARK_RUN)
+                sh4_cpu->Run();
 
-            SaveRomFiles(get_writable_data_path(DATA_PATH));
-            if (reset_requested)
+            park = true;
+
+            callback_lock.Lock();
+            reasons = stop_reasons;
+            stop_reasons &= ~GUEST_RESET;
+            callback_lock.Unlock();
+
+            if (reasons & GUEST_RESET)
             {
-                virtualDreamcast->Reset();
-                sh4_cpu->Start();
+                SaveRomFiles(get_writable_data_path(DATA_PATH));
+
+                Reset();
+
+                // FPSCR is the reset's now, on this thread
+                sh4_host_fp_resync();
+
+                // not when the machine was asked to stop as well
+                StartCpu(false);
 #ifdef SCRIPTING
                 luabindings_onreset();
 #endif
             }
-        } while (reset_requested);
+
+            if (reasons & (HOST_STOP | GUEST_EXIT))
+                break;
+        }
+
+        // A sound burst that the debugger suspended runs to its end, and nothing can stop it: the stop
+        // callback, and the exit line that it prints in an automated run, find the burst whole.
+        //
+        // Whole is the burst, not yet the SH4's answer to it. A thread that gets here with the debugger's stop
+        // latch set (a check of the ARM7 or an event breakpoint stopped in the tick of the request, or the
+        // thread was parked) has the interrupt acceptance of its last slice end still owed: the latch held it
+        // back, and dbg::emu::OnThreadExiting makes it, behind the callback. An interrupt that is pending
+        // here, one that the rest of this burst raised among them, is accepted in the state the next thread
+        // starts from and not in the state the callback sees. In a run no debugger stopped the slice end
+        // accepted it before Run() returned: an exit line taken in such a tick can have another `sh4` part
+        RunSoundBurst(false);
+
+        SaveRomFiles(get_writable_data_path(DATA_PATH));
 
 #ifdef SCRIPTING
-            luabindings_onstop();
+        luabindings_onstop();
 #endif
 
+        // The frames this thread queued are drawn before the stop callback runs, unless the thread that
+        // draws them is waiting for this one. It draws until then: the machine counts as running up to the
+        // callback below, so a host ends its user interface by a callback of Stop(), which runs behind this wait
+        callback_lock.Lock();
+        bool host_waits = (stop_reasons & HOST_WAITS) != 0;
+        callback_lock.Unlock();
+
+        if (!host_waits)
             g_GUIRenderer->WaitQueueEmpty();
 
-            callback_lock.Lock();
-            if (callback) {
-                callback();
-                callback = nullptr;
-            }
-            callback_lock.Unlock();
-            return NULL;
-        }
+        // From here on a stop request finds no thread to take it, and the machine does not count as running:
+        // a debugger stop that was decided in the slice of the request set g_parked again behind it
+        callback_lock.Lock();
+        function<void()> stopped = callback;
+        callback = nullptr;
+        stop_reasons = 0;
+        thread_live = false;
+        static_cast<SuperH4_impl*>(sh4_cpu)->thread_live = false;      // what IsRunning() reads
+        p_sh4rcb->cntx.CpuRunning = false;
+        dbg::g_parked = false;
+        callback_lock.Unlock();
+
+        if (stopped)
+            stopped();
+
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "emulator thread ended: %s", (reasons & GUEST_EXIT) ? "guest exit" : "host stop");
+
+        dbg::emu::OnThreadExiting((reasons & GUEST_EXIT) != 0);
+
+        return NULL;
+    }
 #endif
 
     ~Dreamcast_impl() {
@@ -776,22 +842,100 @@ struct Dreamcast_impl : VirtualDreamcast {
     }
 
 
-    int AicaUpdate(int tag, int c, int j)
+    /*
+        The sound burst: the work of one AICA scheduler callback (debugger/debugger.h, the ARM7 block). With the
+        ARM7 clocked it is 32 times { the ARM phase of a sample, 256 ticks; one time step of the AICA }, and then
+        the tail: the rest of the callback (AICA::Update: the batch render while it exists, the tick of the sound
+        regression harness), once per burst, with the ARM7 clocked or held.
+
+        A debugger can suspend it in front of an ARM7 instruction (SoundCPU::RunSample returns false). Where it
+        stands is kept here, outside the context of the ARM7, whose every word is in the save state and in the
+        hashes: the sample, the ticks its ARM phase has used, and whether the ARM7 was clocked when the burst
+        started, which is asked once. The callback returns its period all the same; the rest of the burst is
+        run on by the debugger's park loop, or by dc_run in front of the stop callback (RunSoundBurst), never
+        by the scheduler, and a reset discards it.
+    */
+    struct {
+        bool suspended = false;
+        bool arm_on = false;        // the ARM7 was clocked when the burst started
+        u32 i = 0;                  // the sample, 0..31
+        u32 ticks_done = 0;         // of the ARM phase of that sample; 0 between two phases
+
+        // SoundBurstCounts(): bursts started, ARM phases that ran to their end, time steps, tails. In no save
+        // state and no hash
+        u32 counts[4] = { 0, 0, 0, 0 };
+    } burst;
+
+    // Runs the burst from where it stands to its end. Returns false when the debugger suspended it
+    bool RunBurst(SoundCPU* scpu, bool checks)
     {
-        //gpc_counter=0;
-        //bm_Periodical_14k();
-
-        //static int aica_sample_cycles=0;
-        //aica_sample_cycles+=14336*AICA_SAMPLE_GCM;
-
-        //if (aica_sample_cycles>=AICA_SAMPLE_CYCLES)
+        if (burst.arm_on)
         {
-            sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU)->Update(512 * 32);
-            sh4_cpu->GetA0H<AICA>(A0H_AICA)->Update(1 * 32);
-            //aica_sample_cycles-=AICA_SAMPLE_CYCLES;
+            for (; burst.i < 32; burst.i++)
+            {
+                // 512 cycles of the SH4 a sample, 256 ticks of the ARM7
+                if (!scpu->RunSample(512 / arm_sh4_bias, &burst.ticks_done, checks))
+                {
+                    burst.suspended = true;
+                    return false;
+                }
+
+                burst.counts[1]++;
+                burst.ticks_done = 0;
+
+                libAICA_TimeStep();
+                burst.counts[2]++;
+            }
         }
 
+        burst.suspended = false;
+
+        // the tail, on every path
+        sh4_cpu->GetA0H<AICA>(A0H_AICA)->Update(1 * 32);
+        burst.counts[3]++;
+
+        return true;
+    }
+
+    int AicaUpdate(int tag, int c, int j)
+    {
+        // under the stop latch no scheduler callback runs, and a suspended burst is dealt with under it
+        verify(!burst.suspended);
+
+        SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
+
+        burst.arm_on = scpu->DebugEnabled();
+        burst.i = 0;
+        burst.ticks_done = 0;
+        burst.counts[0]++;
+
+        // no instruction of the ARM7 executes in this burst: a step that waits for one is complete
+        if (!burst.arm_on && dbg_arm7_armed != 0)
+            dbg_arm7_OnBurstUnclocked();
+
+        RunBurst(scpu, true);
+
+        // also when the debugger suspended it: the stop is latched behind this scheduler tick
         return AICA_TICK;
+    }
+
+    u32 SoundBurstSuspended()
+    {
+        return burst.suspended ? SOUND_BURST_ARM7 : SOUND_BURST_NONE;
+    }
+
+    bool RunSoundBurst(bool checks)
+    {
+        if (!burst.suspended)
+            return true;
+
+        return RunBurst(sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU), checks);
+    }
+
+    void SoundBurstCounts(u32 out[4])
+    {
+        for (int n = 0; n < 4; n++)
+            out[n] = burst.counts[n];
     }
 
 
@@ -810,8 +954,17 @@ struct Dreamcast_impl : VirtualDreamcast {
         return SH4_MAIN_CLOCK;
     }
 
+    // The thread of the user interface while no emulator thread exists; the emulator thread for a guest
+    // reset and for a reset by the debugger. The CPU is stopped
     void Reset()
     {
+        dbg::emu::LifetimeLock lifetime;
+
+        // a sound burst that the debugger suspended is discarded: its rest belongs to the state that goes
+        burst.suspended = false;
+        burst.i = 0;
+        burst.ticks_done = 0;
+
         plugins_Reset(false);
 
         mem_Reset(sh4_cpu, false);
@@ -820,10 +973,16 @@ struct Dreamcast_impl : VirtualDreamcast {
 
         sh4_cpu->vram.Zero();
         sh4_cpu->aica_ram.Zero();
+
+        DBG_EVENT(dbg::EV_SYSTEM_RESET, "machine reset");
+
+        dbg::emu::OnGuestStateReplaced();
     }
 
     int StartGame(const string& path)
     {
+        dbg::emu::LifetimeLock lifetime;
+
         cfgSetVirtual("config", "image", path.c_str());
 
         if (settings.bios.UseReios || !LoadRomFiles(get_readonly_data_path(DATA_PATH)))
@@ -879,6 +1038,8 @@ struct Dreamcast_impl : VirtualDreamcast {
 
     bool Init()
     {
+        dbg::emu::LifetimeLock lifetime;
+
         audio_stream.reset(AudioStream::Create());
         audio_stream->InitAudio();
 
@@ -966,12 +1127,49 @@ struct Dreamcast_impl : VirtualDreamcast {
         ds_schid = sh4_sched_register(this, 0, STATIC_FORWARD(Dreamcast_impl, DreamcastSecond));
         sh4_sched_request(ds_schid, SH4_MAIN_CLOCK);
 
-        return sh4_cpu->Init();
+        if (!sh4_cpu->Init())
+            return false;
+
+        dbg::emu::OnMachineCreated();
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "machine created");
+
+        return true;
     }
 
 
+    // callback_lock held, an emulator thread is live: records why it ends. Until that thread takes its stop
+    // callback the machine goes on counting as running (SuperH4_impl::thread_live), whatever the cpu and a
+    // debugger stop say: the caller stops the cpu next
+    void Stopping(u32 reasons)
+    {
+        stop_reasons |= reasons;
+    }
+
+    // The wait is made without the lifetime lock, which the emulator thread takes on its way out
+    void StopAndWait()
+    {
+        callback_lock.Lock();
+        bool live = thread_live;
+        if (live)
+            Stopping(HOST_STOP | HOST_WAITS);
+        callback_lock.Unlock();
+
+        if (live)
+            sh4_cpu->Stop();
+
+        emu_thread.WaitToEnd();
+    }
+
     void Term()
     {
+        // The machine is never taken apart under its emulator thread
+        StopAndWait();
+
+        dbg::emu::LifetimeLock lifetime;
+
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "machine destroyed");
+        dbg::emu::OnMachineDestroying();
+
         sh4_cpu->Term();
         
 #if DC_PLATFORM != DC_PLATFORM_DREAMCAST
@@ -995,25 +1193,121 @@ struct Dreamcast_impl : VirtualDreamcast {
 
     void Stop(function<void()> callback)
     {
-        verify(sh4_cpu->IsRunning());
-
         callback_lock.Lock();
-        verify(this->callback == nullptr);
-        this->callback = callback;
+
+        if (!thread_live)
+        {
+            // stopped already, or about to run the callback of the stop that ends it
+            callback_lock.Unlock();
+
+            if (callback)
+                callback();
+            return;
+        }
+
+        Stopping(HOST_STOP);
+
+        if (this->callback)
+        {
+            // a stop is on its way: this one's callback runs behind the one that is waiting
+            function<void()> first = this->callback;
+            this->callback = [first, callback] {
+                first();
+                if (callback)
+                    callback();
+            };
+        }
+        else
+        {
+            this->callback = callback;
+        }
+
         callback_lock.Unlock();
+
         sh4_cpu->Stop();
     }
 
     // Called on the emulator thread for soft reset
     void RequestReset()
     {
-        reset_requested = true;
+        callback_lock.Lock();
+        stop_reasons |= GUEST_RESET;
+        callback_lock.Unlock();
+
+        // The machine goes on counting as running while its cpu is stopped for the reset
+        // (SuperH4_impl::thread_live): a host that takes it for stopped ends its user interface under this
+        // thread
         sh4_cpu->Stop();
+    }
+
+    // Called on the emulator thread when the guest program has ended
+    bool RequestExit()
+    {
+        callback_lock.Lock();
+
+        // one exit per thread, and none behind a stop: the guest goes on executing to the end of its slice
+        bool first = thread_live && !(stop_reasons & (HOST_STOP | GUEST_EXIT));
+
+        if (first)
+            Stopping(GUEST_EXIT);
+
+        callback_lock.Unlock();
+
+        if (first)
+            sh4_cpu->Stop();
+
+        return first;
+    }
+
+    bool StartCpu(bool leavePark)
+    {
+        callback_lock.Lock();
+
+        bool start = stop_reasons == 0;
+
+        if (start)
+        {
+            sh4_cpu->Start();
+
+            if (leavePark)
+                dbg::g_parked = false;
+        }
+        else
+        {
+            // stopped it stays, also where the request came in between the start of the thread and here
+            p_sh4rcb->cntx.CpuRunning = false;
+        }
+
+        callback_lock.Unlock();
+
+        return start;
     }
 
     void Resume()
     {
+        callback_lock.Lock();
+        verify(!thread_live);
+        callback_lock.Unlock();
+
+        // The thread before this one has run its stop callback and is on its way out. It takes the lifetime
+        // lock for that, so it is waited for before the lock is taken here
+        emu_thread.WaitToEnd();
+
+        dbg::emu::LifetimeLock lifetime;
+
         verify(!sh4_cpu->IsRunning());
+
+        // The machine counts as running from here on (SuperH4_impl::IsRunning), before its thread exists: a
+        // stop request is taken for that thread from here on, too
+        callback_lock.Lock();
+        stop_reasons = 0;
+        thread_live = true;
+        static_cast<SuperH4_impl*>(sh4_cpu)->thread_live = true;
+        callback_lock.Unlock();
+
+        dbg::emu::OnThreadStarting();
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "emulator thread started");
+
         emu_thread.Start();
         emu_started.Wait();
     }
@@ -1044,6 +1338,8 @@ struct Dreamcast_impl : VirtualDreamcast {
         void* data = NULL;
         void* data_ptr = NULL;
         FILE* f;
+
+        dbg::emu::LifetimeLock lifetime;
 
         verify(!sh4_cpu->IsRunning());
 
@@ -1091,6 +1387,8 @@ struct Dreamcast_impl : VirtualDreamcast {
         cleanup_serialize(data);
         printf("Saved state to %s\n size %d", filename.c_str(), total_size);
         g_GUI->DisplayNotification("State saved", 1000);
+
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "state saved, %u bytes", total_size);
     }
 
     void LoadState()
@@ -1100,6 +1398,8 @@ struct Dreamcast_impl : VirtualDreamcast {
         void* data = NULL;
         void* data_ptr = NULL;
         FILE* f;
+
+        dbg::emu::LifetimeLock lifetime;
 
         verify(!sh4_cpu->IsRunning());
 
@@ -1139,6 +1439,9 @@ struct Dreamcast_impl : VirtualDreamcast {
             printf("Failed to load state - could not unserialize data\n");
             g_GUI->DisplayNotification("Invalid save state", 2000);
             cleanup_serialize(data);
+
+            // part of the old state is gone all the same
+            dbg::emu::OnGuestStateReplaced();
             return;
         }
 
@@ -1150,6 +1453,10 @@ struct Dreamcast_impl : VirtualDreamcast {
 
         cleanup_serialize(data);
         printf("Loaded state from %s size %d\n", filename.c_str(), total_size);
+
+        DBG_EVENT(dbg::EV_SYSTEM_STATE, "state loaded, %u bytes", total_size);
+
+        dbg::emu::OnGuestStateReplaced();
     }
 
 #if defined(TARGET_NO_EXCEPTIONS)
@@ -1165,7 +1472,9 @@ struct Dreamcast_impl : VirtualDreamcast {
 
         fault_printf("dc_handle_fault: %p from %p\n", (u8*)addr, (u8*)ctx->pc);
 
+#if FEAT_SHREC != DYNAREC_NONE
         bool dyna_cde = ((unat)CC_RX2RW(ctx->pc) > (unat)CodeCache) && ((unat)CC_RX2RW(ctx->pc) < (unat)(CodeCache + CODE_SIZE));
+#endif
 
         u8* address = (u8*)addr;
 
@@ -1181,6 +1490,8 @@ struct Dreamcast_impl : VirtualDreamcast {
 
             return true;
         }
+#if FEAT_SHREC != DYNAREC_NONE
+        // faults in the pages of compiled blocks and in the code cache: only a build with the recompiler has them
         else if (bm_LockedWrite(address))
         {
             fault_printf("dc_handle_fault: bm_LockedWrite!\n");
@@ -1191,6 +1502,7 @@ struct Dreamcast_impl : VirtualDreamcast {
             fault_printf("dc_handle_fault: rdv_ngen->Rewrite!\n");
             return true;
         }
+#endif
         else
         {
             fault_printf("dc_handle_fault: not handled!\n");

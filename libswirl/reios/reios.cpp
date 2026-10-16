@@ -24,6 +24,8 @@
 #include "hw/sh4/sh4_mem.h"
 
 #include "hw/naomi/naomi_cart.h"
+#include "utils/run_control.h"
+#include "debugger/debugger.h"
 
 #include <map>
 
@@ -382,11 +384,16 @@ void reios_sys_misc() {
 }
 
 void reios_exit() {
-	if (sh4_cpu->IsRunning()) {
+	// The emulator thread ends for a guest exit, and has to know that this is why its cpu stopped. Once: the
+	// pc stays on this hook, which the guest calls again until its time slice ends, and a machine that has
+	// been asked to stop counts as running until its thread has stopped
+	if (virtualDreamcast->RequestExit()) {
 		printf("-----------------\n");
 		printf("REIOS: Exit\n");
 		printf("-----------------\n");
-		sh4_cpu->Stop();
+
+		// an automated run ends with it
+		runctl_guest_exit();
 	}
 
 	p_sh4rcb->cntx.pc = hook_addr(&reios_exit);
@@ -622,6 +629,9 @@ void reios_boot() {
 		fread(GetMemPtr(0x8C000000, 0), 1, 64 * 1024, f);
 		fclose(f);
 	}
+
+	// The debugger's symbols are those of the program this boot loads: none, until an ELF is loaded below
+	dbg::symbols::OnElfLoaded(nullptr, 0);
 
 	if (settings.reios.ElfFile.size()) {
 		if (!reios_loadElf(settings.reios.ElfFile)) {

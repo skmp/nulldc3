@@ -15,11 +15,6 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmacro-redefined"
 #endif
-#ifdef _ANDROID
-#include <sys/mman.h>
-#undef REI_PAGE_MASK
-#define REI_PAGE_MASK (REI_PAGE_SIZE-1)
-#else
 #if HOST_OS == OS_DARWIN
 #define REI_PAGE_SIZE 16384
 #else
@@ -27,7 +22,6 @@
 #endif
 #undef REI_PAGE_MASK
 #define REI_PAGE_MASK (REI_PAGE_SIZE-1)
-#endif
 #if BUILD_COMPILER==COMPILER_CLANG
 #pragma clang diagnostic pop
 #endif
@@ -172,11 +166,9 @@ public:
 	}
 };
 
-#if HOST_OS != OS_DARWIN
-	#define DATA_PATH "/data/"
-#else
-	#define DATA_PATH "/"
-#endif
+// The BIOS, the flash and the save states are in the subdirectory data of the data directory, on every system
+// (README.md has the layout)
+#define DATA_PATH "/data/"
 
 //Set the path !
 void set_user_config_dir(const string& dir);
@@ -192,6 +184,9 @@ string get_readonly_config_path(const string& filename);
 string get_readonly_data_path(const string& filename);
 bool file_exists(const string& filename);
 bool make_directory(const string& path);
+// data/dumps/ of the data directory, made when it is missing, with a / at its end: where the debugging dumps of
+// the renderers and of the modem go, never the working directory (README.md has the layout)
+string get_writable_dumps_path();
 
 string get_game_save_prefix();
 string get_game_basename();

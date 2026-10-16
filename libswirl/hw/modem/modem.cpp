@@ -435,8 +435,10 @@ struct ModemDevice_impl : MMIODevice {
 #ifndef RELEASE
 		if (recv_fp == NULL)
 		{
-			recv_fp = fopen("ppp_recv.dump", "w");
-			sent_fp = fopen("ppp_sent.dump", "w");
+			// in data/dumps/ of the emulator's directory, not in the working directory
+			string dumps = get_writable_dumps_path();
+			recv_fp = fopen((dumps + "ppp_recv.dump").c_str(), "w");
+			sent_fp = fopen((dumps + "ppp_sent.dump").c_str(), "w");
 		}
 #endif
 		//if (!module_download && reg != 0x10)

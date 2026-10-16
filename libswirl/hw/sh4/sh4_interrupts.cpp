@@ -16,6 +16,7 @@
 */
 
 #include "types.h"
+#include "debugger/debugger.h"
 #include "sh4_interrupts.h"
 #include "sh4_core.h"
 #include "sh4_mmr.h"
@@ -117,6 +118,14 @@ bool SRdecode()
 
 int UpdateINTC()
 {
+	// A debugger stop is decided: nothing is accepted on the way into the park context. The acceptance is
+	// owed, and is made when the emulator thread leaves the park context
+	if (unlikely(dbg::g_stop_latched))
+	{
+		dbg::g_intc_deferred = true;
+		return 0;
+	}
+
 	if (!Sh4cntx.interrupt_pend)
 		return 0;
 
@@ -154,6 +163,9 @@ bool Do_Interrupt(u32 intEvn)
 {
 	auto sh4mmr = sh4_cpu->sh4mmr.get();
 
+	dbg_sh4_OnException();
+	DBG_EVENT(dbg::EV_SH4_INTERRUPT, "interrupt, INTEVT %03X, from pc %08X", intEvn, next_pc);
+
 	CCN_INTEVT = intEvn;
 
 	ssr = sh4_sr_GetFull();
@@ -172,7 +184,28 @@ bool Do_Exception(u32 epc, u32 expEvn, u32 CallVect)
 {
 	auto sh4mmr = sh4_cpu->sh4mmr.get();
 
-	verify(sr.BL == 0);
+	dbg_sh4_OnException();
+	DBG_EVENT(dbg::EV_SH4_EXCEPTION, "exception, EXPEVT %03X, at pc %08X%s", expEvn, epc, sr.BL ? ", with SR.BL set: manual reset" : "");
+
+	if (sr.BL)
+	{
+		//SH7091 hardware manual 5.5.3, 5.6.1 (2): a general exception with SR.BL = 1 is a manual reset of the CPU,
+		//the other modules keep their registers. EXPEVT = H'020, SR, VBR, FPSCR and PC as after a reset (table 2.1)
+		CCN_EXPEVT = 0x020;
+
+		vbr = 0;
+
+		sh4_sr_SetFull(0x700000F0);
+		UpdateSR();
+
+		fpscr.full = 0x00040001;
+		UpdateFPSCR();
+
+		next_pc = 0xA0000000;
+
+		return true;
+	}
+
 	CCN_EXPEVT = expEvn;
 
 	ssr = sh4_sr_GetFull();

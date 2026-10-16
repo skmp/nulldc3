@@ -6,13 +6,10 @@ if (CCACHE_FOUND AND NOT CMAKE_HOST_WIN32)
   set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
 endif()
 
-set(TNAME devcast)
-# option(LIBRETRO_CORE "Build as libretro core" OFF)
+# The executable: nulldc3 on every system (macOS: nulldc3.app, reicast/apple/emulator-osx/emulator-osx/build_app_bundle.sh)
+set(TNAME nulldc3)
 
 project(${TNAME})
-
-enable_language(ASM)
-enable_language(ASM_MASM)
 
 set(DEBUG_CMAKE ON)
 
@@ -110,32 +107,16 @@ endif()
 
 if(${FEAT_SHREC} EQUAL ${DYNAREC_JIT}) 
 
-  if(${HOST_CPU} EQUAL ${CPU_X86})
-    list(APPEND core_SRCS 
-      ${d_core}/jit/backend/x86/rec_x86_driver.cpp
-      ${d_core}/jit/backend/x86/rec_x86_asm.cpp	# change for linux , rec_lin86_asm.S
-	  ${d_core}/jit/backend/x86/rec_x86_ngen.h
-
-      ${d_core}/jit/emitter/x86/x86_emitter.cpp
-     )
-  elseif(${HOST_CPU} EQUAL ${CPU_ARM})
-    list(APPEND core_SRCS 
-      ${d_core}/rec-ARM/ngen_arm.S
-      ${d_core}/rec-ARM/rec_arm.cpp
-	)
-  elseif(${HOST_CPU} EQUAL ${CPU_X64})
+  if(${HOST_CPU} EQUAL ${CPU_X64})
 
     list(APPEND core_SRCS ${d_core}/jit/backend/x64/rec_x64.cpp ${d_core}/jit/backend/x64/x64_regalloc.h)
 
   elseif(${HOST_CPU} EQUAL ${CPU_A64})
     list(APPEND core_SRCS ${d_core}/jit/backend/arm64/rec_arm64.cpp ${d_core}/jit/backend/arm64/arm64_regalloc.h)
   else()
-    message(" FEAT_SHREC==DYNAREC_JIT && HOST_CPU Unknown Default add arch or disable rec if not avail.")
-	error()
+    message(FATAL_ERROR "FEAT_SHREC is DYNAREC_JIT and this host CPU has no SH4 recompiler: there is one for x86_64 and one for arm64")
   endif()
 
-elseif(${FEAT_SHREC} EQUAL ${DYNAREC_CPP})
-    list(APPEND core_SRCS ${d_core}/jit/backend/cpp/rec_cpp.cpp)
 endif()
 
 # add_definitions(/DFEAT_HAS_SOFTREND=1)
@@ -144,6 +125,7 @@ if(${HOST_OS} EQUAL ${OS_LINUX})
   add_definitions(-DLUA_USE_LINUX)
 endif()
 # add_definitions(-DFEAT_NO_RWX_PAGES)
+include(${d_core}/debugger/debugger.cmake)
 
 ### deps.cmake #################################################################################
 
@@ -230,14 +212,6 @@ set(osd_SRCS "")
 
 list(APPEND osd_SRCS ${d_aout}/audiostream.cpp)
 
-if (LIBRETRO_CORE)
-
-  list(APPEND osd_SRCS ${d_core}/libretro/reicore/libretro_proxy.cpp)
-	list(APPEND osd_SRCS ${d_aout}/audiobackend_libretro.cpp)
-
-	include_directories ("${d_core}/libretro-common/include")
-endif()
-
 if (${HOST_OS} EQUAL ${OS_WINDOWS})
   list(APPEND osd_SRCS ${d_core}/windows/win_common.cpp)
   list(APPEND osd_SRCS ${d_core}/windows/winmain.cpp)
@@ -245,7 +219,7 @@ if (${HOST_OS} EQUAL ${OS_WINDOWS})
   list(APPEND osd_SRCS ${d_core}/oslib/windows/threading.cpp)
   list(APPEND osd_SRCS ${d_aout}/audiobackend_directsound.cpp)
   link_libraries(dsound.lib winmm.lib xinput.lib wsock32.lib opengl32.lib)
-elseif (${HOST_OS} EQUAL ${OS_LINUX} OR ${HOST_OS} EQUAL ${OS_ANDROID})
+elseif (${HOST_OS} EQUAL ${OS_LINUX})
 
     list(APPEND osd_SRCS
       ${d_core}/linux-dist/main.cpp
@@ -291,23 +265,7 @@ include_directories ("${reicast_core_path}")
 
 set(reicast_SRCS ${core_SRCS} ${deps_SRCS} ${osd_SRCS})
 
-if (LIBRETRO_CORE)
-
-    add_library(${TNAME} SHARED ${reicast_SRCS})
-    set_property(TARGET ${TNAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
-
-    if (${HOST_OS} EQUAL ${OS_WINDOWS})
-      include (GenerateExportHeader)
-      GENERATE_EXPORT_HEADER (reicast
-        BASE_NAME reicast
-        EXPORT_MACRO_NAME reicast_EXPORT
-        EXPORT_FILE_NAME reicast_Export.h
-        STATIC_DEFINE reicast_BUILT_AS_STATIC
-      )
-    endif()
-else()
   add_executable(${TNAME}${binSuffix} ${reicast_SRCS}) 
-endif()
 set_target_properties(${TNAME}${binSuffix} PROPERTIES
     XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS
     "${CMAKE_CURRENT_LIST_DIR}/reicast.entitlements")
@@ -339,7 +297,6 @@ if(${HOST_OS} EQUAL ${OS_LINUX})
     target_link_libraries(${TNAME} ${ALSA_LIBRARIES})
   endif()
 
-  if (NOT LIBRETRO_CORE)
   find_package(OpenGL REQUIRED)
   if(OpenGL_EGL_FOUND)
     target_compile_definitions(${TNAME} PUBLIC SUPPORT_EGL)
@@ -351,7 +308,6 @@ if(${HOST_OS} EQUAL ${OS_LINUX})
     target_link_libraries(${TNAME} OpenGL::GLX)
   else()
     message(FATAL_ERROR "EGL or GLX required")
-  endif()
   endif()
 
 
@@ -405,14 +361,12 @@ if(${HOST_OS} EQUAL ${OS_LINUX})
   find_package(Threads REQUIRED)
   target_link_libraries(${TNAME} Threads::Threads)
 
-  if (NOT LIBRETRO_CORE)
   find_package(X11 REQUIRED)
   if(X11_FOUND)
     target_sources(${TNAME} PUBLIC ${d_core}/linux-dist/x11.cpp)
     target_compile_definitions(${TNAME} PUBLIC SUPPORT_X11)
     target_include_directories(${TNAME} PUBLIC ${X11_INCLUDE_DIR})
     target_link_libraries(${TNAME} ${X11_LIBRARIES})
-  endif()
   endif()
 
   target_link_libraries(${TNAME} ${CMAKE_DL_LIBS} rt)
@@ -451,7 +405,7 @@ if(${HOST_OS} EQUAL ${OS_DARWIN})
 
   # Create the macOS app bundle
   add_custom_command(TARGET ${TNAME} POST_BUILD
-    COMMAND bash "-c" "D_OSX=\"${d_osx}\" CMAKE_CURRENT_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\" CMAKE_CURRENT_BINARY_DIR=\"${CMAKE_CURRENT_BINARY_DIR}\" \"${d_osx}/build_app_bundle.sh\""
+    COMMAND bash "-c" "APP_NAME=\"${TNAME}\" D_OSX=\"${d_osx}\" CMAKE_CURRENT_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\" CMAKE_CURRENT_BINARY_DIR=\"${CMAKE_CURRENT_BINARY_DIR}\" \"${d_osx}/build_app_bundle.sh\""
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Creating macOS app bundle..."
   )
@@ -473,11 +427,6 @@ endif()
 
 
 
-if (LIBRETRO_CORE)
-  add_definitions(/DBUILD_RETROARCH_CORE=1)
-else()
-  add_definitions(/DBUILD_RETROARCH_CORE=0)
-endif()
 
 
 

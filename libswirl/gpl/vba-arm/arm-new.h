@@ -656,8 +656,8 @@ static const u8 cpuBitsSet[256] = { 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3,
           C_OUT = (value & 0x80000000 ? true : false);\
         }\
       } else {\
+        /* ARM7DI 4.4.2: a register amount of 0 leaves the operand and C as they are */\
         value = reg[opcode & 0x0F].I;\
-        C_OUT = (value & 0x80000000 ? true : false);\
       }\
       if(dest == 15) {\
         OPCODE2\
@@ -975,8 +975,8 @@ static const u8 cpuBitsSet[256] = { 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3,
           C_OUT = (value & 0x80000000 ? true : false);\
         }\
       } else {\
+        /* ARM7DI 4.4.2: a register amount of 0 leaves the operand and C as they are */\
         value = reg[opcode & 0x0F].I;\
-        C_OUT = (value & 0x80000000 ? true : false);\
       }\
       if(dest == 15) {\
         OPCODE2\
@@ -1427,7 +1427,11 @@ if(cond_res) {
       int dest = (opcode >> 16) & 0x0F;
       int mult = (opcode & 0x0F);
       u32 rs = reg[(opcode >> 8) & 0x0F].I;
-      reg[dest].I = reg[mult].I * rs;
+      if(dest == mult) {
+        bool c = C_FLAG;
+        reg[dest].I = arm_MulRdRm(0, rs, c);
+      } else
+        reg[dest].I = reg[mult].I * rs;
       if(((s32)rs)<0)
         rs = ~rs;
       if((rs & 0xFFFFFF00) == 0)
@@ -1446,9 +1450,17 @@ if(cond_res) {
       int dest = (opcode >> 16) & 0x0F;
       int mult = (opcode & 0x0F);
       u32 rs = reg[(opcode >> 8) & 0x0F].I;
-      reg[dest].I = reg[mult].I * rs;
+      u32 rm = reg[mult].I;
+      bool c = C_FLAG;
+      if(dest == mult)
+        reg[dest].I = arm_MulRdRm(0, rs, c);
+      else {
+        reg[dest].I = rm * rs;
+        c = arm_MulCarry(rm, rs, c);
+      }
       N_FLAG = (reg[dest].I & 0x80000000) ? true : false;
       Z_FLAG = (reg[dest].I) ? false : true;
+      C_FLAG = c;
       if(((s32)rs)<0)
         rs = ~rs;
       if((rs & 0xFFFFFF00) == 0)
@@ -2069,7 +2081,11 @@ if(cond_res) {
       int dest = (opcode >> 16) & 0x0F;
       int mult = (opcode & 0x0F);
       u32 rs = reg[(opcode >> 8) & 0x0F].I;
-      reg[dest].I = reg[mult].I * rs + reg[(opcode>>12)&0x0f].I;
+      if(dest == mult) {
+        bool c = C_FLAG;
+        reg[dest].I = arm_MulRdRm(reg[(opcode>>12)&0x0f].I, rs, c);
+      } else
+        reg[dest].I = reg[mult].I * rs + reg[(opcode>>12)&0x0f].I;
       if(((s32)rs)<0)
         rs = ~rs;
       if((rs & 0xFFFFFF00) == 0)
@@ -2088,9 +2104,17 @@ if(cond_res) {
       int dest = (opcode >> 16) & 0x0F;
       int mult = (opcode & 0x0F);
       u32 rs = reg[(opcode >> 8) & 0x0F].I;
-      reg[dest].I = reg[mult].I * rs + reg[(opcode>>12)&0x0f].I;
+      u32 rm = reg[mult].I;
+      bool c = C_FLAG;
+      if(dest == mult)
+        reg[dest].I = arm_MulRdRm(reg[(opcode>>12)&0x0f].I, rs, c);
+      else {
+        reg[dest].I = rm * rs + reg[(opcode>>12)&0x0f].I;
+        c = arm_MulCarry(rm, rs, c);
+      }
       N_FLAG = (reg[dest].I & 0x80000000) ? true : false;
       Z_FLAG = (reg[dest].I) ? false : true;
+      C_FLAG = c;
       if(((s32)rs)<0)
         rs = ~rs;
       if((rs & 0xFFFFFF00) == 0)

@@ -9,6 +9,7 @@
 
 #include "arm7.h"
 #include "arm7_context.h"
+#include "arm7_mul.h"
 #include "hw/sh4/sh4_core.h"
 #include "hw/aica/aica_mmio.h"
 
@@ -223,7 +224,8 @@ void DYNACALL ARM7Backend::CPUUpdateCPSR(Arm7Context* ctx)
 
 static void CPUSoftwareInterrupt(Arm7Context* ctx, int comment)
 {
-	u32 PC = reg[R15_ARM_NEXT].I + 4;
+	//ARM7DI 3.4: R14_svc is the address of the instruction behind the SWI, which the PC is past already
+	u32 PC = reg[R15_ARM_NEXT].I;
 	//bool savedArmState = armState;
 	ARM7Backend::CPUSwitchMode(ctx, 0x13, true);
 	reg[14].I = PC;
@@ -237,7 +239,8 @@ static void CPUSoftwareInterrupt(Arm7Context* ctx, int comment)
 static void CPUUndefinedException(Arm7Context* ctx)
 {
 	printf("arm7: CPUUndefinedException(). SOMETHING WENT WRONG\n");
-	u32 PC = reg[R15_ARM_NEXT].I + 4;
+	//ARM7DI 3.4: R14_und is the address of the instruction behind the undefined one
+	u32 PC = reg[R15_ARM_NEXT].I;
 	ARM7Backend::CPUSwitchMode(ctx, 0x1b, true);
 	reg[14].I = PC;
 	//	reg[15].I = 0x04;
@@ -305,6 +308,25 @@ u32 DYNACALL ARM7Backend::StepMany(Arm7Context* ctx, u32 minCycles) {
 	{
 		clockTicks += Step(ctx);
 	}
+
+	return clockTicks;
+}
+
+//The two halves of Step, in the order Step has them (arm7.h). They are functions of their own and Step is not
+//made of them: Step is what StepMany runs for every instruction of every run, and stays the one body it was
+void DYNACALL ARM7Backend::StepIrq(Arm7Context* ctx) {
+	if (reg[INTR_PEND].I)
+	{
+		CPUFiq(ctx);
+	}
+}
+
+u32 DYNACALL ARM7Backend::StepExec(Arm7Context* ctx) {
+	u32 clockTicks = 0;
+
+	reg[15].I = armNextPC + 8;
+
+	#include "gpl/vba-arm/arm-new.h"
 
 	return clockTicks;
 }

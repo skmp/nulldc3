@@ -5,14 +5,13 @@
 
 
 #include "arm7.h"
-#include "virt_arm.h"
 #include "arm7_context.h"
 #include "hw/aica/aica_mmio.h"
 #include <memory>
 
 #include "arm7_jit_virt_backend.h"
 
-#include "jit/emitter/arm32/arm_coding.h"
+#include "arm_coding.h"
 
 
 using namespace ARM;
@@ -35,18 +34,7 @@ static const u8 cpuBitsSet[256] = { 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3,
 #endif
 
 //findfirstset -- used in LDM/STM handling
-#if HOST_CPU==CPU_X86 && BUILD_COMPILER != COMPILER_GCC
-#include <intrin.h>
-
-u32 findfirstset(u32 v)
-{
-	unsigned long rv;
-	_BitScanForward(&rv, v);
-	return rv + 1;
-}
-#else
 #define findfirstset __builtin_ffs
-#endif
 
 
 #if FEAT_AREC != DYNAREC_NONE
@@ -806,11 +794,6 @@ struct Arm7JitVirt_impl : ARM7Backend {
             //Read opcode ...
             u32 opcd = CPUReadMemoryQuick(pc);
 
-#if HOST_CPU==CPU_X86
-            //Sanity check: Stale cache
-            armv->check_cache(opcd, pc);
-#endif
-
             u32 op_flags;
 
             //Decode & handle opcode
@@ -827,17 +810,9 @@ struct Arm7JitVirt_impl : ARM7Backend {
                 /*
                 if (op_flags & OP_READS_PC)
                     armv->imm_to_reg(15,pc+8);
-
-                else*/
-#if HOST_CPU==CPU_X86
-                armv->imm_to_reg(15, rand());
-#endif
+                */
 
                 VirtualizeOpcode(opcd, op_flags, pc);
-
-#if HOST_CPU==CPU_X86
-                armv->imm_to_reg(15, rand());
-#endif
             }
             break;
 
@@ -1066,24 +1041,7 @@ struct Arm7JitVirt_impl : ARM7Backend {
                 if (op_flags & OP_SETS_PC)
                     armv->imm_to_reg(R15_ARM_NEXT, pc + 4);
 
-#if HOST_CPU==CPU_X86
-                if (!(op_flags & OP_SETS_PC))
-                    armv->imm_to_reg(R15_ARM_NEXT, pc + 4);
-#endif
-
                 armv->intpr(opcd);
-
-#if HOST_CPU==CPU_X86
-                if (!(op_flags & OP_SETS_PC))
-                {
-                    //Sanity check: next pc
-                    armv->check_pc(pc + 4);
-#if 0
-                    x86e->Emit(op_mov32, ECX, opcd);
-                    x86e->Emit(op_call, x86_ptr_imm(PrintOp));
-#endif
-                }
-#endif
             }
             break;
 
@@ -1094,26 +1052,10 @@ struct Arm7JitVirt_impl : ARM7Backend {
             //Lets say each opcode takes 9 cycles for now ..
             Cycles += 9;
 
-#if HOST_CPU==CPU_X86
-            armv->imm_to_reg(15, 0xF87641FF);
-
-            armv->prof(opt, opcd, op_flags);
-#endif
-
             //Branch ?
             if (op_flags & OP_SETS_PC)
             {
-                //x86e->Emit(op_call,x86_ptr_imm(DumpRegs)); // great debugging tool
                 arm_printf("ARM: %06X: Block End %d\n", pc, ops);
-
-#if HOST_CPU==CPU_X86 && 0
-                //Great fallback finder, also spams console
-                if (opt == VOT_Fallback)
-                {
-                    x86e->Emit(op_mov32, ECX, opcd);
-                    x86e->Emit(op_call, x86_ptr_imm(PrintOp));
-                }
-#endif
                 break;
             }
 

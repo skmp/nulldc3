@@ -79,7 +79,7 @@ INLINE void Denorm32(float &value)
 
 
 #define CHECK_FPU_32(v) v = fixNaN(v)
-#define CHECK_FPU_64(v)
+#define CHECK_FPU_64(v) v = fixNaN64(v)
 
 
 //fadd <FREG_M>,<FREG_N>
@@ -123,6 +123,7 @@ sh4op(i1111_nnnn_mmmm_0001)
 		double drn=GetDR(n), drm=GetDR(m);
 		drn-=drm;
 		//dr[n] -= dr[m];
+		CHECK_FPU_64(drn);
 		SetDR(n,drn);
 	}
 }
@@ -144,6 +145,7 @@ sh4op(i1111_nnnn_mmmm_0010)
 		double drn=GetDR(n), drm=GetDR(m);
 		drn*=drm;
 		//dr[n] *= dr[m];
+		CHECK_FPU_64(drn);
 		SetDR(n,drn);
 	}
 }
@@ -166,6 +168,7 @@ sh4op(i1111_nnnn_mmmm_0011)
 
 		double drn=GetDR(n), drm=GetDR(m);
 		drn/=drm;
+		CHECK_FPU_64(drn);
 		SetDR(n,drn);
 	}
 }
@@ -436,6 +439,7 @@ sh4op(i1111_nnn0_1111_1101)
 	int n=GetN(op) & 0xE;
 
 
+	// SH7091: FSCA does nothing with FPSCR.PR = 1 (console)
 	//cosine(x) = sine(pi/2 + x).
 	if (fpscr.PR==0)
 	{
@@ -455,22 +459,18 @@ sh4op(i1111_nnn0_1111_1101)
 	#endif
 
 	}
-	else
-		iNimp("FSCA : Double precision mode");
 }
 
 //FSRRA //1111_nnnn_0111_1101
 sh4op(i1111_nnnn_0111_1101)
 {
-	// What about double precision?
+	// SH7091: FSRRA does nothing with FPSCR.PR = 1 (console)
 	u32 n = GetN(op);
 	if (fpscr.PR==0)
 	{
 		fr[n] = (float)(1/sqrtf(fr[n]));
 		CHECK_FPU_32(fr[n]);
 	}
-	else
-		iNimp("FSRRA : Double precision mode");
 }
 
 //fcnvds <DR_N>,FPUL
@@ -482,6 +482,7 @@ sh4op(i1111_nnnn_1011_1101)
 		u32 n = (op >> 9) & 0x07;
 		u32*p=&fpul;
 		*((float*)p) = (float)GetDR(n);
+		CHECK_FPU_32(*((float*)p));
 	}
 	else
 	{
@@ -497,7 +498,9 @@ sh4op(i1111_nnnn_1010_1101)
 	{
 		u32 n = (op >> 9) & 0x07;
 		u32* p = &fpul;
-		SetDR(n,(double)*((float*)p));
+		f64 d = (double)*((float*)p);
+		CHECK_FPU_64(d);
+		SetDR(n,d);
 	}
 	else
 	{
@@ -510,20 +513,10 @@ sh4op(i1111_nnmm_1110_1101)
 {
 	int n=GetN(op)&0xC;
 	int m=(GetN(op)&0x3)<<2;
+	// SH7091: FIPR does nothing with FPSCR.PR = 1 (console)
 	if(fpscr.PR ==0)
 	{
-		float idp;
-		idp=fr[n+0]*fr[m+0];
-		idp+=fr[n+1]*fr[m+1];
-		idp+=fr[n+2]*fr[m+2];
-		idp+=fr[n+3]*fr[m+3];
-
-		CHECK_FPU_32(idp);
-		fr[n+3]=idp;
-	}
-	else
-	{
-		die("FIPR Precision=1");
+		fr[n+3]=sh4_fipr(&fr[n], &fr[m]);
 	}
 }
 
@@ -623,7 +616,9 @@ sh4op(i1111_nnnn_0110_1101)
 		//Operation _can_ be done on sh4
 		u32 n = GetN(op)>>1;
 
-		SetDR(n,sqrt(GetDR(n)));
+		f64 d = sqrt(GetDR(n));
+		CHECK_FPU_64(d);
+		SetDR(n,d);
 	}
 }
 
@@ -634,27 +629,12 @@ sh4op(i1111_nnnn_0011_1101)
 	if (fpscr.PR == 0)
 	{
 		u32 n = GetN(op);
-		fpul = (u32)(s32)std::min(fr[n], 2147483520.0f);     // IEEE 754: 0x4effffff
-
-		// Intel CPUs convert out of range float numbers to 0x80000000. Manually set the correct sign
-		if (fpul == 0x80000000)
-		{
-			if (*(int *)&fr[n] > 0) // Using integer math to avoid issues with Inf and NaN
-				fpul--;
-		}
+		fpul = ftrc32(fr[n]);
 	}
 	else
 	{
 		u32 n = (op >> 9) & 0x07;
-		f64 f = GetDR(n);
-		fpul = (u32)(s32)f;
-
-		// Intel CPUs convert out of range float numbers to 0x80000000. Manually set the correct sign
-		if (fpul == 0x80000000)
-		{
-			if (*(s64 *)&f > 0)     // Using integer math to avoid issues with Inf and NaN
-				fpul--;
-		}
+		fpul = ftrc64(GetDR(n));
 	}
 }
 
@@ -668,7 +648,8 @@ sh4op(i1111_nnnn_mmmm_1110)
 		u32 n = GetN(op);
 		u32 m = GetM(op);
 
-		fr[n] =(f32) ((f64)fr[n]+(f64)fr[0] * (f64)fr[m]);
+		// SH7091: FR0 * FRm + FRn is rounded once (console)
+		fr[n] = fmaf(fr[0], fr[m], fr[n]);
 		CHECK_FPU_32(fr[n]);
 	}
 	else
@@ -694,45 +675,10 @@ sh4op(i1111_nn01_1111_1101)
 
 	u32 n=GetN(op)&0xC;
 
+	// SH7091: FTRV does nothing with FPSCR.PR = 1 (console)
 	if (fpscr.PR==0)
 	{
-
-		float v1, v2, v3, v4;
-
-		v1 = xf[0]  * fr[n + 0] +
-			 xf[4]  * fr[n + 1] +
-			 xf[8]  * fr[n + 2] +
-			 xf[12] * fr[n + 3];
-
-		v2 = xf[1]  * fr[n + 0] +
-			 xf[5]  * fr[n + 1] +
-			 xf[9]  * fr[n + 2] +
-			 xf[13] * fr[n + 3];
-
-		v3 = xf[2]  * fr[n + 0] +
-			 xf[6]  * fr[n + 1] +
-			 xf[10] * fr[n + 2] +
-			 xf[14] * fr[n + 3];
-
-		v4 = xf[3]  * fr[n + 0] +
-			 xf[7]  * fr[n + 1] +
-			 xf[11] * fr[n + 2] +
-			 xf[15] * fr[n + 3];
-
-		CHECK_FPU_32(v1);
-		CHECK_FPU_32(v2);
-		CHECK_FPU_32(v3);
-		CHECK_FPU_32(v4);
-
-		fr[n + 0] = v1;
-		fr[n + 1] = v2;
-		fr[n + 2] = v3;
-		fr[n + 3] = v4;
-
-	}
-	else
-	{
-		iNimp("FTRV in dp mode");
+		sh4_ftrv(&fr[n], &fr[n], xf);
 	}
 }
 
@@ -741,4 +687,46 @@ void iNimp(const char*str)
 {
 	printf("Unimplemented sh4 FPU instruction: %s\n", str);
 	//Sh4_int_Stop();
+}
+
+// FIPR and FTRV on the host FPU: single precision products and sums, each of them rounded. FIPR adds its four
+// products in pairs, (p0 + p1) + (p2 + p3), FTRV one by one, ((p0 + p1) + p2) + p3, as the x64 backend's code does.
+// The interpreter, the canonical helpers and that code give the same bits. It is not the SH4's sum, which is
+// rounded once; of the two orders these are the ones that leave the SH4's result more often (tests/sh4_fpu).
+// A product and a sum contracted into a fused multiply-add would be another result: off, to the end of the file
+#if BUILD_COMPILER == COMPILER_CLANG
+#pragma STDC FP_CONTRACT OFF
+#elif BUILD_COMPILER == COMPILER_GCC
+#pragma GCC optimize("fp-contract=off")
+#elif BUILD_COMPILER == COMPILER_VC
+#pragma fp_contract(off)
+#endif
+
+f32 sh4_fipr(const f32* fn, const f32* fm)
+{
+	f32 p0 = fn[0] * fm[0];
+	f32 p1 = fn[1] * fm[1];
+	f32 p2 = fn[2] * fm[2];
+	f32 p3 = fn[3] * fm[3];
+
+	return fixNaN((p0 + p1) + (p2 + p3));
+}
+
+//XMTRX in fm, column by column
+void sh4_ftrv(f32* fd, const f32* fn, const f32* fm)
+{
+	f32 v[4];
+
+	for (u32 i = 0; i < 4; i++)
+	{
+		f32 p0 = fm[i] * fn[0];
+		f32 p1 = fm[i + 4] * fn[1];
+		f32 p2 = fm[i + 8] * fn[2];
+		f32 p3 = fm[i + 12] * fn[3];
+
+		v[i] = fixNaN(((p0 + p1) + p2) + p3);
+	}
+
+	for (u32 i = 0; i < 4; i++)
+		fd[i] = v[i];
 }

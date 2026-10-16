@@ -19,7 +19,7 @@ void gui_settings_about()
 	if (ImGui::BeginTabItem("About"))
 	{
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
-	    if (ImGui::CollapsingHeader("devcast", ImGuiTreeNodeFlags_DefaultOpen))
+	    if (ImGui::CollapsingHeader("nullDC", ImGuiTreeNodeFlags_DefaultOpen))
 	    {
 			ImGui::Text("Version: %s", REICAST_VERSION);
 			ImGui::Text("Git Hash: %s", GIT_HASH);
@@ -39,13 +39,7 @@ void gui_settings_about()
 	    if (ImGui::CollapsingHeader("Platform", ImGuiTreeNodeFlags_DefaultOpen))
 	    {
 	    	ImGui::Text("CPU: %s",
-#if HOST_CPU == CPU_X86
-				"x86"
-#elif HOST_CPU == CPU_ARM
-				"ARM"
-#elif HOST_CPU == CPU_MIPS
-				"MIPS"
-#elif HOST_CPU == CPU_X64
+#if HOST_CPU == CPU_X64
 				"x86/64"
 #elif HOST_CPU == CPU_GENERIC
 				"Generic"
@@ -56,16 +50,10 @@ void gui_settings_about()
 #endif
 					);
 	    	ImGui::Text("Operating System: %s",
-#ifdef _ANDROID
-				"Android"
-#elif HOST_OS == OS_LINUX
+#if HOST_OS == OS_LINUX
 				"Linux"
 #elif HOST_OS == OS_DARWIN
-#if TARGET_IPHONE
-	    		"iOS"
-#else
 				"OSX"
-#endif
 #elif HOST_OS == OS_WINDOWS
 				"Windows"
 #else
@@ -78,13 +66,6 @@ void gui_settings_about()
 			ImGui::Text("Renderer: %s", (const char *)glGetString(GL_RENDERER));
 			ImGui::Text("Version: %s", (const char *)glGetString(GL_VERSION));
 	    }
-#ifdef _ANDROID
-	    ImGui::Separator();
-	    if (ImGui::Button("Send Logs")) {
-	    	void android_send_logs();
-	    	android_send_logs();
-	    }
-#endif
 		ImGui::PopStyleVar();
 		ImGui::EndTabItem();
 	}

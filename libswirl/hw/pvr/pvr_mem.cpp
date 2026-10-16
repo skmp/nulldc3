@@ -133,7 +133,6 @@ void NOINLINE MemWrite32(void* dst, void* src)
 	memcpy((u64*)dst,(u64*)src,32);
 }
 
-#if HOST_CPU!=CPU_ARM
 extern "C" void DYNACALL TAWriteSQ(u32 address,u8* sqb)
 {
 	u32 address_w=address&0x1FFFFFF;//correct ?
@@ -172,7 +171,6 @@ extern "C" void DYNACALL TAWriteSQ(u32 address,u8* sqb)
 		}
 	}
 }
-#endif
 
 //Misc interface
 

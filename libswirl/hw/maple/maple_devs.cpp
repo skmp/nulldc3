@@ -13,19 +13,15 @@
 #include "hw/naomi/naomi.h"
 #include "hw/naomi/naomi_cart.h"
 #include "hw/pvr/spg.h"
+#include "hw/aica/aica_mmio.h"
 #include "input/gamepad.h"
 #include <time.h>
 
 #include "deps/zlib/zlib.h"
 #include "deps/xxhash/xxhash.h"
 
-#if _ANDROID
-#include <android/log.h>
-#include <jni.h>
-#else
 #define LOGW printf
 #define LOGI printf
-#endif
 #ifndef RELEASE
 #define LOGJVS(...) LOGI(__VA_ARGS__)
 #else
@@ -632,8 +628,19 @@ struct maple_sega_vmu: maple_base
 							w32(MFID_3_Clock);
 
 							time_t now;
-							time(&now);
-							tm* timenow=localtime(&now);
+							tm* timenow;
+
+							if (settings.dreamcast.RTC != 0)
+							{
+								// a pinned clock (config:Dreamcast.RTC; config:Debug.FixedRtc pins the same value and wins): the VMU has the time of the console's
+								now = (time_t)libAICA_GetRTC() - (20 * 365 + 5) * 24 * 60 * 60;
+								timenow = gmtime(&now);
+							}
+							else
+							{
+								time(&now);
+								timenow = localtime(&now);
+							}
 
 							u8* timebuf=dma_buffer_out;
 
@@ -979,12 +986,10 @@ struct maple_microphone: maple_base
 					w8(0x04);//status (just the bit for recording)
 					w8(0x0f);//gain (default)
 					w8(0);//exp ?
-#ifndef TARGET_PANDORA
 					if(get_mic_data(micdata)){
 						w8(240);//ct (240 samples)
 						wptr(micdata, SIZE_OF_MIC_DATA);
 					}else
-#endif
 					{
 						w8(0);
 					}

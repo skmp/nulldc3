@@ -61,27 +61,31 @@ void* _vmem_get_ptr2(u32 addr,u32& mask)
 	return ptr;
 }
 
-void* _vmem_read_const(u32 addr,bool& ismem,u32 sz)
+//ctx is what the returned handler has to be called with
+void* _vmem_read_const(u32 addr,bool& ismem,u32 sz,void*& ctx)
 {
 	u32   page=addr>>24;
 	unat  iirf=(unat)_vmem_MemInfo_ptr[page];
 	void* ptr=(void*)(iirf&~HANDLER_MAX);
 
+	ctx=0;
+
 	if (ptr==0)
 	{
 		ismem=false;
 		const unat id=iirf;
+		ctx=_vmem_CTX[id];
 		if (sz==1)
 		{
-			return (void*)_vmem_RF8[id/4];
+			return (void*)_vmem_RF8[id];
 		}
 		else if (sz==2)
 		{
-			return (void*)_vmem_RF16[id/4];
+			return (void*)_vmem_RF16[id];
 		}
 		else if (sz==4)
 		{
-			return (void*)_vmem_RF32[id/4];
+			return (void*)_vmem_RF32[id];
 		}
 		else
 		{
@@ -101,28 +105,31 @@ void* _vmem_read_const(u32 addr,bool& ismem,u32 sz)
 	return 0;
 }
 
-void* _vmem_page_info(u32 addr,bool& ismem,u32 sz,u32& page_sz,bool rw)
+void* _vmem_page_info(u32 addr,bool& ismem,u32 sz,u32& page_sz,bool rw,void*& ctx)
 {
 	u32   page=addr>>24;
 	unat  iirf=(unat)_vmem_MemInfo_ptr[page];
 	void* ptr=(void*)(iirf&~HANDLER_MAX);
 	
+	ctx=0;
+
 	if (ptr==0)
 	{
 		ismem=false;
 		const unat id=iirf;
+		ctx=_vmem_CTX[id];
 		page_sz=24;
 		if (sz==1)
 		{
-			return rw?(void*)_vmem_RF8[id/4]:(void*)_vmem_WF8[id/4];
+			return rw?(void*)_vmem_RF8[id]:(void*)_vmem_WF8[id];
 		}
 		else if (sz==2)
 		{
-			return rw?(void*)_vmem_RF16[id/4]:(void*)_vmem_WF16[id/4];
+			return rw?(void*)_vmem_RF16[id]:(void*)_vmem_WF16[id];
 		}
 		else if (sz==4)
 		{
-			return rw?(void*)_vmem_RF32[id/4]:(void*)_vmem_WF32[id/4];
+			return rw?(void*)_vmem_RF32[id]:(void*)_vmem_WF32[id];
 		}
 		else
 		{
@@ -140,6 +147,23 @@ void* _vmem_page_info(u32 addr,bool& ismem,u32 sz,u32& page_sz,bool rw)
 	die("Invalid memory size");
 
 	return 0;
+}
+
+//unaligned accesses
+static void _vmem_unaligned_default(u32 addr,u32 sz,bool write)
+{
+	EMUERROR2("Unaligned %dbit %s at 0x%X",sz*8,write?"write":"read",addr);
+	die("Unaligned memory access");
+}
+
+_vmem_UnalignedFP* _vmem_unaligned_handler=&_vmem_unaligned_default;
+
+void _vmem_unaligned(u32 addr,u32 sz,bool write)
+{
+	_vmem_unaligned_handler(addr,sz,write);
+
+	//the access was never made, there is nothing to go back to
+	abort();
 }
 
 //0xDEADC0D3 or 0
@@ -318,21 +342,27 @@ void free_pages(void* ptr) {
 #endif
 }
 
+// The FPCB table is the recompiler's: a build without one never reads it, has nothing to fill it with
+// (bm_vmem_pagefill) and takes no fault in it.
+
 // Resets the FPCB table (by either clearing it to the default val
 // or by flushing it and making it fault on access again.
 void _vmem_bm_reset() {
+#if FEAT_SHREC != DYNAREC_NONE
 	// If we allocated it via vmem:
 	if (virt_ram_base)
 		vmem_platform_reset_mem(p_sh4rcb->fpcb, sizeof(p_sh4rcb->fpcb));
 	else
 		// We allocated it via a regular malloc/new/whatever on the heap
 		bm_vmem_pagefill((void**)p_sh4rcb->fpcb, sizeof(p_sh4rcb->fpcb));
+#endif
 }
 
 // This gets called whenever there is a pagefault, it is possible that it lands
 // on the fpcb memory range, which is allocated on miss. Returning true tells the
 // fault handler this was us, and that the page is resolved and can continue the execution.
 bool _vmem_bm_LockedWrite(u8* address) {
+#if FEAT_SHREC != DYNAREC_NONE
 	if (!virt_ram_base)
 		return false;  // No vmem, therefore not us who caused this.
 
@@ -347,6 +377,7 @@ bool _vmem_bm_LockedWrite(u8* address) {
 		bm_vmem_pagefill((void**)aligned_addr, REI_PAGE_SIZE);
 		return true;
 	}
+#endif
 	return false;
 }
 
@@ -369,7 +400,9 @@ bool _vmem_reserve(VLockedMemory* mram, VLockedMemory* vram, VLockedMemory* aica
 
 		// Allocate it all and initialize it.
 		p_sh4rcb = (Sh4RCB*)malloc_pages(sizeof(Sh4RCB));
+#if FEAT_SHREC != DYNAREC_NONE
 		bm_vmem_pagefill((void**)p_sh4rcb->fpcb, sizeof(p_sh4rcb->fpcb));
+#endif
 
 		mram->size = RAM_SIZE;
 		mram->data = (u8*)malloc_pages(RAM_SIZE);

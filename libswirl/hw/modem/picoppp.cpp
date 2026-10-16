@@ -9,7 +9,7 @@
 
 #include "build.h"
 
-#if !defined(_MSC_VER) && !defined(TARGET_NO_THREADS)
+#if !defined(_MSC_VER)
 
 #ifdef __MINGW32__
 #define _POSIX_SOURCE
@@ -169,7 +169,7 @@ void set_tcp_nodelay(sock_t fd)
 #if defined(_WIN32)
 	struct protoent *tcp_proto = getprotobyname("TCP");
 	setsockopt(fd, tcp_proto->p_proto, TCP_NODELAY, (const char *)&optval, optlen);
-#elif !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__NetBSD__)
+#elif !defined(__APPLE__)
 	setsockopt(fd, SOL_TCP, TCP_NODELAY, (const void *)&optval, optlen);
 #else
 	struct protoent *tcp_proto = getprotobyname("TCP");

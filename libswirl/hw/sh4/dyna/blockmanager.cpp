@@ -40,6 +40,7 @@ bm_List page_blocks[RAM_SIZE/REI_PAGE_SIZE];
 bool	page_has_data[RAM_SIZE/REI_PAGE_SIZE];
 
 std::map<void*, RuntimeBlockInfo*> blkmap;
+static RuntimeBlockInfo* temp_block;
 u32 bm_gc_luc,bm_gcf_luc;
 
 
@@ -73,10 +74,14 @@ RuntimeBlockInfo* DYNACALL bm_GetBlock(u32 addr)
 // This takes a RX address and returns the info block ptr (RW space)
 RuntimeBlockInfo* bm_GetBlock(void* dynarec_code)
 {
+	void *dynarecrw = CC_RX2RW(dynarec_code);
+
+	if (temp_block && temp_block->contains_code((u8*)dynarecrw))
+		return temp_block;
+
 	if (blkmap.empty())
 		return 0;
 
-	void *dynarecrw = CC_RX2RW(dynarec_code);
 	// Returns a block who's code addr is bigger than dynarec_code (or end)
 	auto iter = blkmap.upper_bound(dynarecrw);
 	
@@ -182,6 +187,38 @@ void bm_DiscardAddress(u32 codeaddr)
 			bm_DiscardBlock(*it);
 		}
 	}
+}
+
+void bm_DiscardAddrPage(u32 addr)
+{
+	u32 ram_page = (addr & RAM_MASK) / REI_PAGE_SIZE;
+
+	// Make a local copy so we can remove from the page_blocks list while iterating
+	auto list = page_blocks[ram_page];
+
+	for (auto it = list.begin(); it != list.end(); it++)
+	{
+		bm_DiscardBlock(*it);
+	}
+}
+
+void bm_DiscardFlowBlocks(bool instrumented_only)
+{
+	// Make a local copy so we can remove from the all_blocks list while iterating
+	auto blocks = all_blocks;
+
+	for (auto it = blocks.begin(); it != blocks.end(); it++)
+	{
+		RuntimeBlockInfo* blk = *it;
+
+		if (blk->dbg_flow || (!instrumented_only && dec_BlockFlow(blk->BlockType)))
+			bm_DiscardBlock(blk);
+	}
+}
+
+void bm_SetTempBlock(RuntimeBlockInfo* blk)
+{
+	temp_block = blk;
 }
 
 void bm_Periodical_1s()
@@ -339,16 +376,45 @@ void bm_sh4_jitsym(FILE* out)
 	die("bm_sh4_jitsym is noop");
 }
 
-bool bm_LockedWrite(u8* addy)
+// The page of main memory that addy is in, as an offset into main memory, or false when addy is in none.
+// With the virtual memory layout addy is measured from its base, where the guest's address space is mapped. Without
+// it (virt_ram_base is null: _vmem_reserve could not make the layout) main memory is a buffer of its own,
+// sh4_cpu->mram.data, whose pages bm_AddBlock protects all the same: a fault of a guest store there is measured from
+// that buffer. Any other address is measured as before, from virt_ram_base: the machine of the sh4bp tests, which
+// has no layout, hands over guest addresses that way (tests/debugger/sh4bp/machine.cpp).
+static bool bm_RamOffset(u8* addy, u32* ram_offset)
 {
+	if (virt_ram_base == nullptr && sh4_cpu->mram.data != nullptr)
+	{
+		uintptr_t in_ram = (uintptr_t)addy - (uintptr_t)sh4_cpu->mram.data;
+
+		if (in_ram < sh4_cpu->mram.size)
+		{
+			*ram_offset = (u32)in_ram;
+			return true;
+		}
+	}
+
 	ptrdiff_t offset=addy-virt_ram_base;
-
-	//printf_bm("BM_LW: Checking @ %p %08X\n", addy, offset);
-
 
 	if (offset > 0 && offset <= 0xFFFFFFFF && IsOnRam((u32)offset))
 	{
-		u32 ram_offset = offset & RAM_MASK;
+		*ram_offset = offset & RAM_MASK;
+		return true;
+	}
+
+	return false;
+}
+
+bool bm_LockedWrite(u8* addy)
+{
+	u32 ram_offset;
+
+	//printf_bm("BM_LW: Checking @ %p\n", addy);
+
+
+	if (bm_RamOffset(addy, &ram_offset))
+	{
 		u32 ram_page = ram_offset / REI_PAGE_SIZE;
 		u32 ram_obase = ram_page * REI_PAGE_SIZE;
 

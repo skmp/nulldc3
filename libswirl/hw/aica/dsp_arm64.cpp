@@ -89,12 +89,10 @@ public:
 		Mov(ADRS_REG, 0);
 		Ldr(MDEC_CT, dsp_operand(&DSP->regs.MDEC_CT));
 
-#ifndef _ANDROID
 		Instruction* instr_cur = GetBuffer()->GetEndAddress<Instruction*>();
 		printf("DSP PROLOGUE\n");
 		Disassemble(instr_start, instr_cur);
 		instr_start = instr_cur;
-#endif
 		for (int step = 0; step < 128; ++step)
 		{
 			u32 *mpro = &DSPData->MPRO[step * 4];
@@ -346,12 +344,10 @@ public:
 				Add(w1, w1, w2);
 				Str(w1, mem_operand);
 			}
-#ifndef _ANDROID
 			instr_cur = GetBuffer()->GetEndAddress<Instruction*>();
 			printf("DSP STEP %d: %04x %04x %04x %04x\n", step, mpro[0], mpro[1], mpro[2], mpro[3]);
 			Disassemble(instr_start, instr_cur);
 			instr_start = instr_cur;
-#endif
 		}
 		// DSP->regs.MDEC_CT--
 		Subs(MDEC_CT, MDEC_CT, 1);
@@ -368,12 +364,10 @@ public:
 		Ldp(x19, x20, MemOperand(sp, 80));
 		Ldp(x29, x30, MemOperand(sp, 96, PostIndex));
 		Ret();
-#ifndef _ANDROID
 		instr_cur = GetBuffer()->GetEndAddress<Instruction*>();
 		printf("DSP EPILOGUE\n");
 		Disassemble(instr_start, instr_cur);
 		instr_start = instr_cur;
-#endif
 		FinalizeCode();
 
 		vmem_platform_flush_cache(

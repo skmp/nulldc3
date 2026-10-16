@@ -9,9 +9,6 @@
 
 #if defined(SUPPORT_EGL)
 #include "khronos/EGL/egl.h"
-#if defined(_ANDROID)
-#include <dlfcn.h>
-#endif
 #endif
 
 #if defined(SUPPORT_SDL)
@@ -27,10 +24,6 @@ bool load_gles_symbols()
 		for (int i = 0; rglgen_symbol_map[i].sym != NULL; i++)
 		{
 		    *(void **)rglgen_symbol_map[i].ptr = nullptr;
-#if defined(_ANDROID)
-		    //try to load via dlsym -- older android can't load everything via eglGetProcAddress
-		    *(void **)rglgen_symbol_map[i].ptr = (void*)dlsym(RTLD_DEFAULT, rglgen_symbol_map[i].sym);
-#endif
 
 #if defined(SUPPORT_EGL)
 		    // try to load via eglGetProcAddress

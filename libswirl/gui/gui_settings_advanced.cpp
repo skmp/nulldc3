@@ -90,11 +90,9 @@ void gui_settings_advanced()
 
 		if (ImGui::CollapsingHeader("Other", ImGuiTreeNodeFlags_DefaultOpen))
 	    {
-#ifndef _ANDROID
 			ImGui::Checkbox("Serial Console", &settings.debug.SerialConsole);
             ImGui::SameLine();
             gui_ShowHelpMarker("Dump the Dreamcast serial console to stdout");
-#endif
 
 #if FEAT_HAS_SERIAL_TTY
 			ImGui::Checkbox("Create Virtual Serial Port", &settings.debug.VirtualSerialPort);

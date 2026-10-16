@@ -44,7 +44,7 @@ bool sdlgl_CreateWindow(bool gles, int flags, int window_width, int window_heigh
 	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
-	auto win = SDL_CreateWindow("devcast Emulator", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,	window_width, window_height, flags);
+	auto win = SDL_CreateWindow("nullDC", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,	window_width, window_height, flags);
 	if (!win)
 	{
 		return false;
