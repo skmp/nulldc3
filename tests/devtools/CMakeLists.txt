@@ -9,6 +9,19 @@
 #
 #	Needs NULLDC_DEVTOOLS_DIR (a missing UI is missing data, like for the tests that read it).
 #
+## devtools.lookup: where the tests look for the UI when they are given none ##
+#
+#	nulldc_find_devtools (lookup.cmake), the look-up of tests/CMakeLists.txt and of tests/debugger/{disasm,net,
+#	regs}, on scratch layouts (lookup_check.cmake): an uninitialised submodule devtools/ (an empty directory) or one
+#	without node_modules is passed over for the checkout beside the tree, a complete one is taken first, with
+#	neither the result is empty.
+#
+#	Needs no data.
+#
+
+add_test(NAME devtools.lookup
+         COMMAND "${CMAKE_COMMAND}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/lookup" -P "${CMAKE_CURRENT_SOURCE_DIR}/lookup_check.cmake")
+set_tests_properties(devtools.lookup PROPERTIES TIMEOUT 60)
 
 if(NOT NULLDC_DEVTOOLS_DIR)
   nulldc_add_missing_data_test(devtools.commit
