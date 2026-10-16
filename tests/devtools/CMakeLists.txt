@@ -9,6 +9,13 @@
 #
 #	Needs NULLDC_DEVTOOLS_DIR (a missing UI is missing data, like for the tests that read it).
 #
+## devtools.commit_check: check_commit.cmake, the script of devtools.commit, on scratch repositories ##
+#
+#	Each outcome it has (commit_check.cmake): a UI at the commit the tree pins, at another one, a tree without
+#	the gitlink, a UI directory that is no git checkout or not the top of one, a tree that is no git checkout.
+#
+#	Needs git.
+#
 ## devtools.lookup: where the tests look for the UI when they are given none ##
 #
 #	nulldc_find_devtools (lookup.cmake), the look-up of tests/CMakeLists.txt and of tests/debugger/{disasm,net,
@@ -23,13 +30,22 @@ add_test(NAME devtools.lookup
          COMMAND "${CMAKE_COMMAND}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/lookup" -P "${CMAKE_CURRENT_SOURCE_DIR}/lookup_check.cmake")
 set_tests_properties(devtools.lookup PROPERTIES TIMEOUT 60)
 
+find_package(Git QUIET)
+if(GIT_FOUND)
+  add_test(NAME devtools.commit_check
+           COMMAND "${CMAKE_COMMAND}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/commit_check" "-DGIT=${GIT_EXECUTABLE}"
+                   -P "${CMAKE_CURRENT_SOURCE_DIR}/commit_check.cmake")
+  set_tests_properties(devtools.commit_check PROPERTIES TIMEOUT 60)
+else()
+  nulldc_add_missing_data_test(devtools.commit_check "no git to make the repositories of the test with")
+endif()
+
 if(NOT NULLDC_DEVTOOLS_DIR)
   nulldc_add_missing_data_test(devtools.commit
     "NULLDC_DEVTOOLS_DIR is empty: no UI checkout to compare with the submodule devtools/")
   return()
 endif()
 
-find_package(Git QUIET)
 add_test(NAME devtools.commit
          COMMAND "${CMAKE_COMMAND}" "-DTREE=${nulldc_root_path}" "-DUI=${NULLDC_DEVTOOLS_DIR}" "-DGIT=${GIT_EXECUTABLE}"
                  -P "${CMAKE_CURRENT_SOURCE_DIR}/check_commit.cmake")
