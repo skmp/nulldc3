@@ -18,6 +18,9 @@ Get the source, with the UI:
     cd nulldc3
     git submodule update --init devtools
 
+The submodule's URL is relative (`../dreamcast-devtools.git`), so the UI comes the way the emulator was cloned: over
+https as above, or over ssh after `git clone git@github.com:skmp/nulldc3.git`.
+
 Build the UI (it writes `devtools/dist-native/`; the emulator's build runs no npm):
 
     (cd devtools && npm ci && npm run build:native)

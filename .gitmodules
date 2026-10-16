@@ -7,4 +7,4 @@
 	url = https://github.com/emudev-org/arm7di-tests-dreamcast.git
 [submodule "devtools"]
 	path = devtools
-	url = https://github.com/skmp/dreamcast-devtools.git
+	url = ../dreamcast-devtools.git
