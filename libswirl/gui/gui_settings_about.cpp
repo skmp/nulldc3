@@ -19,7 +19,7 @@ void gui_settings_about()
 	if (ImGui::BeginTabItem("About"))
 	{
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
-	    if (ImGui::CollapsingHeader("devcast", ImGuiTreeNodeFlags_DefaultOpen))
+	    if (ImGui::CollapsingHeader("nullDC", ImGuiTreeNodeFlags_DefaultOpen))
 	    {
 			ImGui::Text("Version: %s", REICAST_VERSION);
 			ImGui::Text("Git Hash: %s", GIT_HASH);

@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Constants
-readonly APP_NAME="devcast"
+# the name of the executable, from CMakeLists.txt (TNAME): the bundle is ${APP_NAME}.app
+readonly APP_NAME="${APP_NAME:-nulldc3}"
 readonly APP_BUNDLE_IDENTIFIER="com.reicast.${APP_NAME}"
 readonly APP_DEPLOYMENT_TARGET="10.9"
 readonly SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
@@ -24,7 +25,7 @@ mkdir -p ${BUNDLE_RESOURCES_ROOT}
 echo "Copying the bundle root directory files"
 cp ${MACOS_SOURCE_ROOT}/Info.plist ${INFO_PLIST}
 echo "Copying the bundle MacOS directory files"
-cp ${BUILD_ROOT}/reicast ${BUNDLE_MACOS_ROOT}/${APP_NAME}
+cp ${BUILD_ROOT}/${APP_NAME} ${BUNDLE_MACOS_ROOT}/${APP_NAME}
 echo "Copying the bundle Resources directory files"
 cp ${MACOS_SOURCE_ROOT}/AppIcon.icns ${BUNDLE_RESOURCES_ROOT}
 cp ${LICENSE_ROOT}/bsd ${BUNDLE_RESOURCES_ROOT}

@@ -98,8 +98,9 @@ def machine():
 
 
 def run_once(options, engine, environment, directory):
-    for sub in ('home', 'config', 'data'):
-        os.makedirs(os.path.join(directory, sub))
+    # the directory of the run's files (--portable)
+    portable = os.path.join(directory, 'portable')
+    os.makedirs(portable)
 
     keys = ['audio:backend=none', 'config:Dreamcast.RTC=%d' % RTC_PIN,
             'config:Dynarec.Enabled=' + ('yes' if engine == 'jit' else 'no'),
@@ -111,15 +112,16 @@ def run_once(options, engine, environment, directory):
         keys += ['config:pvr.backend=gles']
         base = dict(environment)
 
-    args = [options.emulator, '-config']
+    args = [options.emulator, '--portable', portable, '--config']
     for i, key in enumerate(keys):
         if i:
             args.append(',')
         args.append(key)
     args.append(options.program)
 
-    base.update({'HOME': os.path.join(directory, 'home'), 'XDG_CONFIG_HOME': os.path.join(directory, 'config'),
-                 'XDG_DATA_HOME': os.path.join(directory, 'data')})
+    if options.renderer != 'none':
+        # the shader cache of the GL driver starts empty in every run, as it did when each run had a HOME of its own
+        base['XDG_CACHE_HOME'] = os.path.join(directory, 'cache')
 
     def limit_core():
         resource.setrlimit(resource.RLIMIT_CORE, (1, resource.getrlimit(resource.RLIMIT_CORE)[1]))

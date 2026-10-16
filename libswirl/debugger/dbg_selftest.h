@@ -12,7 +12,7 @@
 	dbg::selftest: tests that run inside the emulator, on the emulator thread, against the live machine
 	(driver: dbg_selftest.cpp; tests: one dbg_selftest_<package>.cpp per package).
 
-	    devcast -config Debugger:SelfTest=<filter> <game>
+	    nulldc3 --config Debugger:SelfTest=<filter> <game>
 
 	runs the tests the filter selects and ends the process with exit code 0 when every one of them passed and
 	1 otherwise, also when the filter selects nothing. The filter is a comma-separated list; an item selects

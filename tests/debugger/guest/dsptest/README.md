@@ -1,7 +1,7 @@
 # The sounding guest (`dsptest`) and the sound lines
 
 `dsptest.elf` is a guest program of the tree: a bare-metal SH4 program with a small ARM7 program inside it, written
-for the tests of the debugger's sound side and for the sound regression harness (`-config config:Debug.AicaHash=<N>`,
+for the tests of the debugger's sound side and for the sound regression harness (`--config config:Debug.AicaHash=<N>`,
 `docs/nulldc3/automated-runs.md`). It plays two channels of the sound generator, its ARM7 runs all the time, and a
 timer interrupt of the AICA changes what is heard. `2ndmix.elf`, the program the harness was accepted with, plays
 nothing under reios (its ARM7 player waits for a timer interrupt that it never enables), so its lines say nothing
@@ -169,7 +169,7 @@ a test that holds and releases the ARM7 starts this sequence of entries again.
 `soundlines.py` runs the emulator on a program, headless, with no audio device, the clock pinned, in an
 environment of its own, and parses the line of the harness:
 
-    python3 tests/debugger/guest/dsptest/soundlines.py --emulator <devcast> --work /tmp/w \
+    python3 tests/debugger/guest/dsptest/soundlines.py --emulator <nulldc3> --work /tmp/w \
             --guest tests/debugger/guest/dsptest/dsptest.elf --ticks 2000 --mode same --mode sounds --engine interp --render persample
 
     AicaHash: samples=<hex> regs=<hex> arm7=<hex> sh4=<hex> ticks=<N> cycles=<decimal>

@@ -8,7 +8,7 @@
 	The selftest of dbg::emu: the lifetime of the machine as the debugger tracks it, calls, the slice hook, the
 	stop latch, the park loop and its arbitration with the host and the guest.
 
-	    devcast -config config:Headless=yes , audio:backend=none , Debugger:SelfTest=emu tests/debugger/selftest/emu_guest.bin
+	    nulldc3 --config config:Headless=yes , audio:backend=none , Debugger:SelfTest=emu tests/debugger/selftest/emu_guest.bin
 
 	The tests are guest tests but for emu.machine: each stands where a client stands and is handed every stop.
 	What another thread of the debugger does (a call, a pause request) and what the host does (a stop, a reset

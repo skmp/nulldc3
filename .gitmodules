@@ -5,3 +5,6 @@
 [submodule "tests/vendor/arm7di-tests-dreamcast"]
 	path = tests/vendor/arm7di-tests-dreamcast
 	url = https://github.com/emudev-org/arm7di-tests-dreamcast.git
+[submodule "devtools"]
+	path = devtools
+	url = https://github.com/skmp/dreamcast-devtools.git

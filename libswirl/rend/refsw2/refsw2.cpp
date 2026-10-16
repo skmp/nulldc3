@@ -66,30 +66,31 @@ struct refsw2rend : Renderer
 
 	virtual bool RenderPVR() {        
         if (refsw2_do_dump) {
-            static char dump_folder[256];
-            static char dump_log[256];
-            static char dump_textures_path[256];
+            static string dump_folder;
+            static string dump_log;
+            static string dump_textures_path;
 
-            static char vram_dump_path[256];
-            static char pvr_regs_dump_path[256];
+            static string vram_dump_path;
+            static string pvr_regs_dump_path;
 
+            // in data/dumps/ of the emulator's directory, not in the working directory
             auto time_now = time(nullptr);
-            snprintf(dump_folder, sizeof(dump_folder), "refsw2-dump-%lld", (long long)time_now);
-            snprintf(dump_log, sizeof(dump_log), "%s/refsw2.log", dump_folder, (long long)time_now);
-            snprintf(dump_textures_path, sizeof(dump_textures_path), "%s/textures", dump_folder, (long long)time_now);
+            dump_folder = get_writable_dumps_path() + "refsw2-dump-" + std::to_string((long long)time_now);
+            dump_log = dump_folder + "/refsw2.log";
+            dump_textures_path = dump_folder + "/textures";
 
-            snprintf(vram_dump_path, sizeof(vram_dump_path), "%s/vram.bin", dump_folder, (long long)time_now);
-            snprintf(pvr_regs_dump_path, sizeof(pvr_regs_dump_path), "%s/pvr_regs.bin", dump_folder, (long long)time_now);
+            vram_dump_path = dump_folder + "/vram.bin";
+            pvr_regs_dump_path = dump_folder + "/pvr_regs.bin";
 
             make_directory(dump_folder);
             make_directory(dump_textures_path);
-            rendlog = fopen(dump_log, "w");
+            rendlog = fopen(dump_log.c_str(), "w");
             texture_dumps.clear();
-            dump_textures = dump_textures_path;
+            dump_textures = dump_textures_path.c_str();
 
-            printf("Dumping VRAM to %s\n", vram_dump_path);
+            printf("Dumping VRAM to %s\n", vram_dump_path.c_str());
             {
-                FILE* v0 = fopen(vram_dump_path, "wb");
+                FILE* v0 = fopen(vram_dump_path.c_str(), "wb");
                 if (!v0) {
                     return false;
                 }
@@ -104,9 +105,9 @@ struct refsw2rend : Renderer
                 fclose(v0);
             }
 
-            printf("Dumping PVR registers to %s\n", pvr_regs_dump_path);
+            printf("Dumping PVR registers to %s\n", pvr_regs_dump_path.c_str());
             {
-                FILE* v0 = fopen(pvr_regs_dump_path, "wb");
+                FILE* v0 = fopen(pvr_regs_dump_path.c_str(), "wb");
                 if (!v0) {
                     return false;
                 }
@@ -118,7 +119,7 @@ struct refsw2rend : Renderer
             }
 
             printf("Dumping textures to %s\n", dump_textures);
-            printf("Dumping render log to %s\n", dump_log);
+            printf("Dumping render log to %s\n", dump_log.c_str());
 
         }
         

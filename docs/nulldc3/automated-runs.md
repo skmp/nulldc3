@@ -1,12 +1,12 @@
 # Runs without a person: headless mode, exit conditions, the exit line
 
-Everything here is a `-config` key (`-config section:key=value , section:key=value ...`, the commas are arguments of
+Everything here is a `--config` key (`--config section:key=value , section:key=value ...`, the commas are arguments of
 their own). The keys can also sit in `emu.cfg`, but they are meant for the command line of a test or a measurement.
 The code is `libswirl/utils/run_control.cpp` and `libswirl/gui/gui_headless.cpp`; the tests are `tests/system`.
 
 A complete headless run:
 
-    devcast -config config:Headless=yes , audio:backend=none , config:Debug.SerialConsoleEnabled=yes , \
+    nulldc3 --config config:Headless=yes , audio:backend=none , config:Debug.SerialConsoleEnabled=yes , \
                     config:Dreamcast.RTC=946684800 , config:Exit.AfterVblanks=600 , config:Exit.StateHash=yes \
             2ndmix.elf
 
@@ -46,12 +46,13 @@ ended, with the CPU stopped, for the person in front of it.
 
 A run with `Headless` or with one of `Exit.AfterVblanks`, `Exit.AfterSeconds`, `Exit.OnGuestExit` never writes
 `emu.cfg`: settings are not saved, the file is byte for byte what it was (an `emu.cfg` that does not exist is still
-created, empty). Independently of that, a value given with `-config` is never what a save writes for its key (the
+created, empty). Independently of that, a value given with `--config` is never what a save writes for its key (the
 file keeps what it had), so a normal run with overrides does not change the defaults of the next one either; only
 a setting that was changed during the run, in the settings of the GUI, is written.
 
 Other things a run writes are not affected: the VMU images and `dc_nvmem.bin` in the data directory. A test gives every
-run its own `HOME`, `XDG_CONFIG_HOME` and `XDG_DATA_HOME`.
+run a directory of its own with `--portable <dir>`: without it a run writes beside the executable (the README of the
+tree has the layout of the directory).
 
 ## The exit line
 
@@ -129,8 +130,8 @@ that makes these runs and compares their lines (`soundlines.py`), and the tests 
 `config:Headless=yes` on Linux:
 
 * No X11 window is created, no display is opened, no GL context exists. The process needs neither `DISPLAY` nor
-  anything else from its environment (it runs under `env -i`; without `HOME` and `XDG_*` the config and data
-  directories are the current directory).
+  anything else from its environment (it runs under `env -i`): its files are in the directory of the executable,
+  or in the one of `--portable <dir>`; only `--shared` reads `HOME` and `XDG_*`.
 * The thread that would draw the user interface starts the program of the command line and waits. What the emulator
   thread queues for the user interface (the frames) runs on the emulator thread itself, at the point where it is
   queued: the guest never waits for another thread, and nothing another thread does reaches the guest.
@@ -190,6 +191,9 @@ On WSL2 the kernel pipes core files to a handler that ignores `ulimit -c 0`; the
 from running is exactly 1 byte (`prlimit --core=1:`, `resource.setrlimit(RLIMIT_CORE, (1, hard))`; `ulimit -c 1` in
 bash is 1024 bytes and does not do it). `tests/system` and `tests/perf` set it for every run.
 
-## `-help`
+## `--help`
 
-Prints the usage text and exits with code 0, without opening a display or reading the config.
+Prints the usage text and exits with code 0, without opening a display or reading the config, and without making
+or choosing a directory. A command line that is refused (a one-dash switch, an unknown one, `--portable` without a
+directory, a directory that cannot be written, ...) prints one line `nulldc3: <why>` on stderr and exits with code 2
+before a machine is made.

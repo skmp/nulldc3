@@ -2,7 +2,7 @@
 #
 #	dsptest.elf is the guest of this directory (README.md): a bare-metal program for the SH4 and the ARM7 that
 #	plays two channels and whose ARM7 state differs behind every sample. soundlines.py runs the emulator on it,
-#	or on another program, with the sound regression harness (-config config:Debug.AicaHash=<N>), headless, on
+#	or on another program, with the sound regression harness (--config config:Debug.AicaHash=<N>), headless, on
 #	the emulator the system tests build (tests/debugger/guest/CMakeLists.txt), and says what the lines have to
 #	agree on. No line is stored in the tree: a test makes its runs itself.
 #

@@ -1,5 +1,5 @@
 #!/bin/bash
-# selftest.sh <devcast> <elf> [work dir] [config item ...]
+# selftest.sh <nulldc3> <elf> [work dir] [config item ...]
 #
 # Runs the sh4bp selftest of the emulator (libswirl/debugger/dbg_selftest_sh4bp.cpp) in three sessions: the SH4 on
 # the JIT, on the interpreter, and on the JIT with the debugger told to use the interpreter fallback. Every
@@ -20,15 +20,16 @@
 # How the baselines of the fallback compare with the JIT's is printed (B12): their FPU arithmetic differs.
 #
 # Every session is headless (config:Headless=yes) and has no display in its environment: it opens no window, and
-# a binary that does not know the key ends with an error instead of opening one. Every session runs with its own
-# HOME and configuration under the work dir, and with the real-time clock pinned: the guest reads the clock. The
-# config items are given to every session as well, section:key=value each, behind the script's own.
+# a binary that does not know the key ends with an error instead of opening one. Every session keeps its files
+# in a directory of its own under the work dir (--portable), and runs with the real-time clock pinned: the guest
+# reads the clock. The config items are given to every session as well, section:key=value each, behind the
+# script's own.
 # Exit code 0 when all of it held.
 
 bin=$1; elf=$2; work=${3:-$(mktemp -d)}
 
 if [ ! -x "$bin" ] || [ ! -f "$elf" ]; then
-	echo "usage: selftest.sh <devcast> <elf> [work dir] [config item ...]"
+	echo "usage: selftest.sh <nulldc3> <elf> [work dir] [config item ...]"
 	exit 2
 fi
 
@@ -44,11 +45,11 @@ session() {
 	local name=$1; shift
 	local dir="$work/$name"
 
-	rm -rf "$dir"; mkdir -p "$dir/home" "$dir/cfg" "$dir/data"
+	rm -rf "$dir"; mkdir -p "$dir/portable"
 
 	( cd "$dir" && ulimit -S -c 1 2>/dev/null
-	  exec env -u DISPLAY -u WAYLAND_DISPLAY HOME="$dir/home" XDG_CONFIG_HOME="$dir/cfg" XDG_DATA_HOME="$dir/data" \
-		stdbuf -oL -eL "$bin" -config config:Headless=yes , audio:backend=none , config:Debug.FixedRtc=946684800 , Debugger:Port=0 , \
+	  exec env -u DISPLAY -u WAYLAND_DISPLAY \
+		stdbuf -oL -eL "$bin" --portable "$dir/portable" --config config:Headless=yes , audio:backend=none , config:Debug.FixedRtc=946684800 , Debugger:Port=0 , \
 		Debugger:SelfTest=sh4bp , Debugger:StartPaused=yes "${more[@]}" "$@" "$elf" \
 		> "$work/$name.log" 2>&1 ) &
 	local pid=$!

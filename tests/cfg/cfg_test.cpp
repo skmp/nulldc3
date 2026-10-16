@@ -5,7 +5,7 @@
 	    cfg_overrides <work directory>
 
 	SaveSettings writes every setting back with cfgSave*. The checks are on what that leaves in emu.cfg when
-	some of the settings came from -config.
+	some of the settings came from --config.
 */
 #include "types.h"
 #include "cfg/cfg.h"
@@ -86,7 +86,7 @@ int main(int argc, char* argv[])
 
 	// the command line of a test run, as main gets it
 	std::vector<std::string> words = {
-		"emulator", "-config",
+		"emulator", "--portable", work_dir, "--config",
 		"config:Dynarec.Enabled=0", ",",			// a boolean, not spelled the way a save spells it
 		"config:pvr.backend=none", ",",
 		"config:Debug.SerialConsoleEnabled=true", ",",	// not in the file at all
@@ -97,7 +97,7 @@ int main(int argc, char* argv[])
 	for (auto& word : words)
 		args.push_back(&word[0]);
 
-	CHECK(!ParseCommandLine((int)args.size(), args.data()));
+	CHECK(ParseCommandLine((int)args.size(), args.data()) == rv_ok);
 	CHECK(cfgOpen());
 
 	// the command line is what the run sees

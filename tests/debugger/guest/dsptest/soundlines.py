@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """The sound lines of the emulator: runs with the sound regression harness, and what they have to agree on.
 
-    soundlines.py --emulator <devcast> --work <dir> --guest <program> --ticks <N> --mode <mode> [--mode <mode>]...
+    soundlines.py --emulator <nulldc3> --work <dir> --guest <program> --ticks <N> --mode <mode> [--mode <mode>]...
                   [--engine jit|interp] [--render batch|persample] [--fields <field,...>] [--file <path>]
                   [--vblanks <V>] [--selftest <filter>] [--expect <text>]... [--config <section:key=value>]...
     soundlines.py --mode files [--dir <the directory of the guest>]
 
 A run is the emulator on the program, headless, with no audio device (audio:backend=none), the real-time clock
 pinned, the SH4 on the recompiler or on the interpreter (--engine) and the sound rendered in batches of 32
-samples or sample by sample (--render: config:aica.NoBatch no or yes), in an environment of its own: fresh HOME,
-XDG_CONFIG_HOME and XDG_DATA_HOME under the work directory, no display, a core file size limit of 1 byte, and a
+samples or sample by sample (--render: config:aica.NoBatch no or yes), with its files in a directory of its own
+under the work directory (--portable), an empty environment (no display), a core file size limit of 1 byte, and a
 watchdog. A process this script starts is ended by its pid.
 
 Every run has to be made on the engine it was asked for. The emulator takes config:Dynarec.Enabled=yes for a wish:
@@ -40,7 +40,7 @@ README.md has the modes:
               for one build on one host. Every run is made --runs times and has to give one line. Entries of
               other programs and of other N or V stay in the file
     compare   the same runs, against the entries of that file: every line and every part of the state hash
-    neutral   the debugger in use changes nothing: a run with -config Debugger:SelfTest=<filter> prints the line
+    neutral   the debugger in use changes nothing: a run with --config Debugger:SelfTest=<filter> prints the line
               of the run without it, and ends in its state hash, part for part, at --vblanks; and the session did
               something (see mode_neutral)
     release   the guest only: a release of the ARM7 starts the same program whatever the AICA holds for it. The
@@ -106,8 +106,8 @@ class Run:
         self.guest = guest or args.guest
         self.dir = os.path.join(args.work, name)
         shutil.rmtree(self.dir, ignore_errors=True)
-        for sub in ('home', 'cfg', os.path.join('data', 'reicast', 'data')):
-            os.makedirs(os.path.join(self.dir, sub))
+        # the directory of the run's files (--portable), with the data subdirectory the flash is saved in
+        os.makedirs(os.path.join(self.dir, 'portable', 'data'))
         self.log_path = os.path.join(self.dir, 'log.txt')
         self.log = ''
         self.code = None
@@ -117,7 +117,7 @@ class Run:
                  'config:Dynarec.Enabled=' + ('yes' if self.engine == 'jit' else 'no'),
                  'config:aica.NoBatch=' + ('yes' if self.render == 'persample' else 'no')]
         items += keys + self.args.config
-        command = [self.args.emulator, '-config']
+        command = [self.args.emulator, '--portable', os.path.join(self.dir, 'portable'), '--config']
         for i, item in enumerate(items):
             if i:
                 command.append(',')
@@ -126,8 +126,8 @@ class Run:
         return command
 
     def run(self, keys):
-        env = {'HOME': os.path.join(self.dir, 'home'), 'XDG_CONFIG_HOME': os.path.join(self.dir, 'cfg'),
-               'XDG_DATA_HOME': os.path.join(self.dir, 'data')}
+        # nothing of the environment but the options of the sanitizers: the directory is the one of --portable
+        env = {}
         for name in ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'TSAN_OPTIONS', 'LSAN_OPTIONS'):
             if name in os.environ:
                 env[name] = os.environ[name]

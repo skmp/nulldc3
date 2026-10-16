@@ -132,10 +132,10 @@ int main(int argc, char* argv[])
 	std::filesystem::create_directories(work_dir);
 
 	// the command line of the run, as main gets it
-	std::vector<std::string> words = { "emulator" };
+	std::vector<std::string> words = { "emulator", "--portable", work_dir };
 	if (test->key != nullptr)
 	{
-		words.push_back("-config");
+		words.push_back("--config");
 		words.push_back(test->key);
 	}
 	words.push_back("program.elf");
@@ -144,7 +144,7 @@ int main(int argc, char* argv[])
 	for (auto& word : words)
 		args.push_back(&word[0]);
 
-	CHECK(!ParseCommandLine((int)args.size(), args.data()));
+	CHECK(ParseCommandLine((int)args.size(), args.data()) == rv_ok);
 
 	TestDreamcast* machine = new TestDreamcast();
 	TestGUIRenderer* gui = new TestGUIRenderer();

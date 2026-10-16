@@ -23,6 +23,8 @@
 #include "hw/maple/maple_cfg.h"
 #include <unistd.h>
 #include <pty.h>
+#include <errno.h>
+#include <string.h>
 
 #include "libswirl.h"
 #include "hw/pvr/Renderer_if.h"
@@ -192,134 +194,82 @@ void os_CreateWindow()
 }
 
 
-string find_user_config_dir()
+// The directories a run can keep its files in (cfg/cl.cpp chooses): the one of the executable, and the XDG ones
+// of --shared, $XDG_CONFIG_HOME/nulldc3 and $XDG_DATA_HOME/nulldc3 with the XDG system lists behind them. The
+// reicast directories of before (~/.reicast, the XDG ones named reicast) are not read.
+static string xdg_home(const char* variable, const char* fallback, string& why)
 {
-	struct stat info;
-	string home = "";
-	if(getenv("HOME") != NULL)
-	{
-		// Support for the legacy config dir at "$HOME/.reicast"
-		string legacy_home = (string)getenv("HOME") + "/.reicast";
-		if((stat(legacy_home.c_str(), &info) == 0) && (info.st_mode & S_IFDIR))
-		{
-			// "$HOME/.reicast" already exists, let's use it!
-			return legacy_home;
-		}
-
-		/* If $XDG_CONFIG_HOME is not set, we're supposed to use "$HOME/.config" instead.
-		 * Consult the XDG Base Directory Specification for details:
-		 *   http://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html#variables
-		 */
-		home = (string)getenv("HOME") + "/.config/reicast";
-	}
-	if(getenv("XDG_CONFIG_HOME") != NULL)
-	{
-		// If XDG_CONFIG_HOME is set explicitly, we'll use that instead of $HOME/.config
-		home = (string)getenv("XDG_CONFIG_HOME") + "/reicast";
-	}
-
-	if(!home.empty())
-	{
-		if((stat(home.c_str(), &info) != 0) || !(info.st_mode & S_IFDIR))
-		{
-			// If the directory doesn't exist yet, create it!
-			mkdir(home.c_str(), 0755);
-		}
-		return home;
-	}
-
-	// Unable to detect config dir, use the current folder
-	return ".";
+	// a value that is not an absolute path is invalid and ignored (XDG Base Directory Specification)
+	const char* value = getenv(variable);
+	if (value != NULL && value[0] == '/')
+		return string(value) + "/nulldc3";
+	const char* home = getenv("HOME");
+	if (home != NULL && home[0] == '/')
+		return string(home) + fallback + "/nulldc3";
+	why = string("neither ") + variable + " nor HOME is set to an absolute path";
+	return "";
 }
 
-string find_user_data_dir()
+static vector<string> xdg_list(const char* variable, const char* fallback)
 {
-	struct stat info;
-	string data = "";
-	if(getenv("HOME") != NULL)
+	const char* value = getenv(variable);
+	string list = value != NULL && value[0] != 0 ? value : fallback;
+	vector<string> dirs;
+	string::size_type pos = 0;
+	for (;;)
 	{
-		// Support for the legacy config dir at "$HOME/.reicast"
-		string legacy_data = (string)getenv("HOME") + "/.reicast";
-		if((stat(legacy_data.c_str(), &info) == 0) && (info.st_mode & S_IFDIR))
-		{
-			// "$HOME/.reicast" already exists, let's use it!
-			return legacy_data;
-		}
-
-		/* If $XDG_DATA_HOME is not set, we're supposed to use "$HOME/.local/share" instead.
-		 * Consult the XDG Base Directory Specification for details:
-		 *   http://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html#variables
-		 */
-		data = (string)getenv("HOME") + "/.local/share/reicast";
-	}
-	if(getenv("XDG_DATA_HOME") != NULL)
-	{
-		// If XDG_DATA_HOME is set explicitly, we'll use that instead of $HOME/.config
-		data = (string)getenv("XDG_DATA_HOME") + "/reicast";
-	}
-
-	if(!data.empty())
-	{
-		if((stat(data.c_str(), &info) != 0) || !(info.st_mode & S_IFDIR))
-		{
-			// If the directory doesn't exist yet, create it!
-			mkdir(data.c_str(), 0755);
-		}
-		return data;
-	}
-
-	// Unable to detect config dir, use the current folder
-	return ".";
-}
-
-std::vector<string> find_system_config_dirs()
-{
-	std::vector<string> dirs;
-	if (getenv("XDG_CONFIG_DIRS") != NULL)
-	{
-		string s = (string)getenv("XDG_CONFIG_DIRS");
-
-		string::size_type pos = 0;
-		string::size_type n = s.find(":", pos);
-		while(n != std::string::npos)
-		{
-			dirs.push_back(s.substr(pos, n-pos) + "/reicast");
-			pos = n + 1;
-			n = s.find(":", pos);
-		}
-		// Separator not found
-		dirs.push_back(s.substr(pos) + "/reicast");
-	}
-	else
-	{
-		dirs.push_back("/etc/reicast"); // This isn't part of the XDG spec, but much more common than /etc/xdg/
-		dirs.push_back("/etc/xdg/reicast");
+		string::size_type n = list.find(':', pos);
+		string dir = list.substr(pos, n == string::npos ? string::npos : n - pos);
+		while (dir.size() > 1 && dir.back() == '/')
+			dir.pop_back();
+		if (!dir.empty() && dir[0] == '/')
+			dirs.push_back(dir + "/nulldc3");
+		if (n == string::npos)
+			break;
+		pos = n + 1;
 	}
 	return dirs;
 }
 
-std::vector<string> find_system_data_dirs()
+static HostDirs find_host_dirs()
 {
-	std::vector<string> dirs;
-	if (getenv("XDG_DATA_DIRS") != NULL)
-	{
-		string s = (string)getenv("XDG_DATA_DIRS");
+	HostDirs dirs;
 
-		string::size_type pos = 0;
-		string::size_type n = s.find(":", pos);
-		while(n != std::string::npos)
+	// /proc/self/exe is the file the kernel runs, with every symbolic link resolved: started through a link, the
+	// directory is the one of the file the link points at. Never the working directory.
+	vector<char> path(4096);
+	for (;;)
+	{
+		ssize_t n = readlink("/proc/self/exe", path.data(), path.size());
+		if (n < 0)
 		{
-			dirs.push_back(s.substr(pos, n-pos) + "/reicast");
-			pos = n + 1;
-			n = s.find(":", pos);
+			dirs.exe_dir_error = string("/proc/self/exe: ") + strerror(errno);
+			break;
 		}
-		// Separator not found
-		dirs.push_back(s.substr(pos) + "/reicast");
+		if ((size_t)n < path.size())
+		{
+			string exe(path.data(), n);
+			string::size_type slash = exe.find_last_of('/');
+			if (slash == string::npos)
+				dirs.exe_dir_error = "/proc/self/exe is " + exe;
+			else
+				dirs.exe_dir = slash == 0 ? "/" : exe.substr(0, slash);
+			break;
+		}
+		path.resize(path.size() * 2);
 	}
+
+	string why_config, why_data;
+	string config = xdg_home("XDG_CONFIG_HOME", "/.config", why_config);
+	string data = xdg_home("XDG_DATA_HOME", "/.local/share", why_data);
+	if (config.empty() || data.empty())
+		dirs.shared_error = config.empty() ? why_config : why_data;
 	else
 	{
-		dirs.push_back("/usr/local/share/reicast");
-		dirs.push_back("/usr/share/reicast");
+		dirs.shared_config = config;
+		dirs.shared_data = data;
+		dirs.shared_config_ro = xdg_list("XDG_CONFIG_DIRS", "/etc/xdg");
+		dirs.shared_data_ro = xdg_list("XDG_DATA_DIRS", "/usr/local/share/:/usr/share/");
 	}
 	return dirs;
 }
@@ -378,21 +328,8 @@ int main(int argc, wchar* argv[])
 	setvbuf(stdout, nullptr, _IOLBF, 0);
 
 
-	/* Set directories */
-	set_user_config_dir(find_user_config_dir());
-	set_user_data_dir(find_user_data_dir());
-	std::vector<string> dirs;
-	dirs = find_system_config_dirs();
-	for(unsigned int i = 0; i < dirs.size(); i++)
-	{
-		add_system_data_dir(dirs[i]);
-	}
-	dirs = find_system_data_dirs();
-	for(unsigned int i = 0; i < dirs.size(); i++)
-	{
-		add_system_data_dir(dirs[i]);
-	}
-	add_system_data_dir(find_user_data_dir());
+	// the directories to choose from, the command line chooses in reicast_init()
+	cl_SetHostDirs(find_host_dirs());
 
 	#if defined(USE_SDL)
 		if (SDL_Init(0) != 0)
@@ -407,9 +344,11 @@ int main(int argc, wchar* argv[])
 
 	int init_rv = reicast_init(argc, argv);
 	if (init_rv == rv_cli_finish)
-		return 0;	// -help: the usage text is all that was asked for
+		return 0;	// --help: the usage text is all that was asked for
+	if (init_rv == rv_cli_error)
+		return 2;	// the command line was refused, cfg/cl.cpp has said why on stderr
 	if (init_rv)
-		die("Reicast initialization failed\n");
+		die("nullDC initialization failed\n");
 
 	// see fatal_error() in linux/common.cpp, the environment has the same switch for faults before this point
 	if (cfgLoadBool("config", "Debug.BlockOnFault", false))

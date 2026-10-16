@@ -10,7 +10,7 @@
 /*
 	The sound regression harness: a run that folds what the sound side produces into hashes and ends by itself.
 
-	    -config config:Debug.AicaHash=N
+	    --config config:Debug.AicaHash=N
 
 	After N AICA ticks (a tick is 32 samples) the emulator prints
 

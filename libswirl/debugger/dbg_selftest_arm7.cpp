@@ -9,7 +9,7 @@
 	breakpoints and steps of the ARM7 (dbg_arm7.cpp), what the park loop does with them (dbg_emu.cpp), and the
 	register writer of the ARM7 (SoundCPU::DebugSetReg).
 
-	    devcast -config config:Headless=yes , audio:backend=none , Debugger:SelfTest=arm7 tests/debugger/guest/dsptest/dsptest.elf
+	    nulldc3 --config config:Headless=yes , audio:backend=none , Debugger:SelfTest=arm7 tests/debugger/guest/dsptest/dsptest.elf
 
 	The guest is the sounding guest of the tree (tests/debugger/guest/dsptest, README.md there): an SH4 program that
 	counts in a loop and an ARM7 program of its own, whose addresses come from dsptest_labels.inc. Every test

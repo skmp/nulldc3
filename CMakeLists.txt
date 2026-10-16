@@ -6,7 +6,8 @@ if (CCACHE_FOUND AND NOT CMAKE_HOST_WIN32)
   set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
 endif()
 
-set(TNAME devcast)
+# The executable: nulldc3 on every system (macOS: nulldc3.app, reicast/apple/emulator-osx/emulator-osx/build_app_bundle.sh)
+set(TNAME nulldc3)
 
 project(${TNAME})
 
@@ -404,7 +405,7 @@ if(${HOST_OS} EQUAL ${OS_DARWIN})
 
   # Create the macOS app bundle
   add_custom_command(TARGET ${TNAME} POST_BUILD
-    COMMAND bash "-c" "D_OSX=\"${d_osx}\" CMAKE_CURRENT_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\" CMAKE_CURRENT_BINARY_DIR=\"${CMAKE_CURRENT_BINARY_DIR}\" \"${d_osx}/build_app_bundle.sh\""
+    COMMAND bash "-c" "APP_NAME=\"${TNAME}\" D_OSX=\"${d_osx}\" CMAKE_CURRENT_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\" CMAKE_CURRENT_BINARY_DIR=\"${CMAKE_CURRENT_BINARY_DIR}\" \"${d_osx}/build_app_bundle.sh\""
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Creating macOS app bundle..."
   )

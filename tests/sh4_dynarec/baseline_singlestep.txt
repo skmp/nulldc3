@@ -1,4 +1,4 @@
-# sh4.singlestep.dynarec baseline: what devcast passes of the single-step vectors, per file.
+# sh4.singlestep.dynarec baseline: what nullDC passes of the single-step vectors, per file.
 # The test fails when a file runs or passes fewer vectors than listed here, has more during which the
 # emulator code raises a notification (msgboxf) and carries on, or fewer whose instruction is compiled to
 # native code.

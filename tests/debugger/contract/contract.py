@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """The emulator's debugger server against the contract runner of the devtools UI, and what goes with it.
 
-    contract.py --emulator <devcast> --work <dir> --guest <2ndmix.elf> --mode <mode> [--engine jit|interp]
+    contract.py --emulator <nulldc3> --work <dir> --guest <2ndmix.elf> --mode <mode> [--engine jit|interp]
                 [--fallback] [--devtools <dreamcast-devtools checkout>] [--npm <npm>] [--idle-symbol <symbol>]
                 [--parts <scenario>:<part>[+<part>...]] [--only <scenario>[,<scenario>...]] [--require-note <text>]...
     contract.py --mode hash-listening-rule
 
-Every emulator is run as tests/system runs one: headless, an environment of its own with fresh HOME,
-XDG_CONFIG_HOME and XDG_DATA_HOME under the work directory, no display, the real-time clock pinned, a core file
-size limit of 1 byte, and a watchdog. A process this script starts is ended by its pid. README.md has the modes:
+Every emulator is run as tests/system runs one: headless, its files in a directory of its own under the work
+directory (--portable), an empty environment (no display), the real-time clock pinned, a core file size limit
+of 1 byte, and a watchdog. A process this script starts is ended by its pid. README.md has the modes:
 
     m1             the gate of milestone M1: the emulator at its StartPaused stop, and the contract runner of the
                    devtools UI against it (npm run contract -- --url ... --profile emulator --elf ... --milestone M1)
@@ -123,8 +123,8 @@ class Run:
         self.name = name
         self.dir = os.path.join(args.work, name)
         shutil.rmtree(self.dir, ignore_errors=True)
-        for sub in ('home', 'cfg', os.path.join('data', 'reicast', 'data')):
-            os.makedirs(os.path.join(self.dir, sub))
+        # the directory of the run's files (--portable), with the data subdirectory a state or the flash is saved in
+        os.makedirs(os.path.join(self.dir, 'portable', 'data'))
         self.out_path = os.path.join(self.dir, 'stdout.txt')
         self.err_path = os.path.join(self.dir, 'stderr.txt')
         self.process = None
@@ -139,7 +139,7 @@ class Run:
         if self.args.fallback:
             items.append('Debugger:ForceFallback=yes')
         items += keys
-        command = [self.args.emulator, '-config']
+        command = [self.args.emulator, '--portable', os.path.join(self.dir, 'portable'), '--config']
         for i, item in enumerate(items):
             if i:
                 command.append(',')
@@ -148,8 +148,8 @@ class Run:
         return command
 
     def start(self, keys):
-        env = {'HOME': os.path.join(self.dir, 'home'), 'XDG_CONFIG_HOME': os.path.join(self.dir, 'cfg'),
-               'XDG_DATA_HOME': os.path.join(self.dir, 'data')}
+        # nothing of the environment but the options of the sanitizers: the directory is the one of --portable
+        env = {}
         for name in ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'TSAN_OPTIONS', 'LSAN_OPTIONS'):
             if name in os.environ:
                 env[name] = os.environ[name]

@@ -7,7 +7,8 @@ project(dbg_regs_tests CXX)
 #
 #   cmake -S tests/debugger/regs -B <builddir> -G Ninja && cmake --build <builddir> && ctest --test-dir <builddir>
 #
-# The panel id test compares with the devtools UI and is reported as skipped without it:
+# The panel id test compares with the devtools UI and is reported as skipped without it (default: the submodule
+# devtools/ of the tree, else ../dreamcast-devtools beside it):
 #   -DDEVTOOLS_DIR=<dreamcast-devtools checkout>
 #
 # The tests project (tests/CMakeLists.txt) adds this directory as well. What it sets is all optional here:
@@ -55,7 +56,14 @@ add_test(NAME ${NULLDC_TEST_PREFIX}sources COMMAND regs_test sources "${LIBSWIRL
 if(DEFINED NULLDC_DEVTOOLS_DIR)
   set(devtools_option NULLDC_DEVTOOLS_DIR)
 else()
-  set(DEVTOOLS_DIR "${DEVCAST_DIR}/../dreamcast-devtools" CACHE PATH "dreamcast-devtools checkout (panel id list)")
+  # the submodule devtools/ of the tree, else a checkout beside it; a place counts when it has the list (an
+  # uninitialised submodule is an empty directory, tests/devtools/lookup.cmake)
+  include("${CMAKE_CURRENT_LIST_DIR}/../../devtools/lookup.cmake")
+  nulldc_find_devtools(devtools_default "${DEVCAST_DIR}" src/lib/debuggerSchema.ts)
+  if(NOT devtools_default)
+    set(devtools_default "${DEVCAST_DIR}/../dreamcast-devtools")
+  endif()
+  set(DEVTOOLS_DIR "${devtools_default}" CACHE PATH "dreamcast-devtools checkout (panel id list)")
   set(devtools_option DEVTOOLS_DIR)
 endif()
 set(DEVTOOLS_SCHEMA "${${devtools_option}}/src/lib/debuggerSchema.ts")

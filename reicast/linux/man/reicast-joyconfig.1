@@ -12,7 +12,9 @@ reicast-joyconfig \- An editor for Reicast controller mappings.
 
 .SH "DESCRIPTION"
 
-\fBreicast-joyconfig\fR assists you when creating custom mappings for the \fBreicast\fR Dreamcast emulator.
+\fBreicast-joyconfig\fR assists you when creating custom mappings for \fBnulldc3\fR, the nullDC Dreamcast emulator.
+It reads them from mappings/ in its directory: the directory of its executable, the one of \fB--portable\fR \fIdir\fR,
+or with \fB--shared\fR ~/.config/nulldc3 ($XDG_CONFIG_HOME/nulldc3).
 
 .SH "EXAMPLE COMMANDLINE"
 
@@ -25,8 +27,12 @@ reicast-joyconfig
 reicast-joyconfig -d 3
 
 .TP
-\fBCreate a mapping for /dev/input/event3 and save the mapping file to ~/.config/reicast/mappings/my_mapping.cfg.\fR
-reicast-joyconfig -d 3 -f ~/.config/reicast/mappings/my_mapping.cfg
+\fBCreate a mapping for /dev/input/event3 and save the mapping file to mappings/my_mapping.cfg of a nulldc3 whose executable is in ~/nulldc3.\fR
+reicast-joyconfig -d 3 -f ~/nulldc3/mappings/my_mapping.cfg
+
+.TP
+\fBThe same for a nulldc3 that is run with --shared.\fR
+reicast-joyconfig -d 3 -f ~/.config/nulldc3/mappings/my_mapping.cfg
 
 .SH "GENERAL OPTIONS"
 
@@ -71,4 +77,4 @@ Head over to reicast's git repository if you want to contibute:
 This is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License (Version 2).
 
 .SH "SEE ALSO"
-\fBreicast\fR(1)
+\fBnulldc3\fR(1)

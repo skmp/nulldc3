@@ -1,5 +1,5 @@
 #!/bin/bash
-# window_checklist.sh <devcast> <work dir> [once]
+# window_checklist.sh <nulldc3> <work dir> [once]
 #
 # Does at the window of the emulator what a person does there, with the emulator thread parked by the debugger
 # (session emuwin.parked) and again with a pause asked for all the time (session emuwin.pending):
@@ -31,7 +31,7 @@ bin=$(readlink -f "$1"); work=$2; once=$3
 here=$(dirname "$(readlink -f "$0")")
 
 if [ ! -x "$bin" ] || [ -z "$work" ] || { [ -n "$once" ] && [ "$once" != once ]; }; then
-	echo "usage: window_checklist.sh <devcast> <work dir> [once]"
+	echo "usage: window_checklist.sh <nulldc3> <work dir> [once]"
 	exit 2
 fi
 
@@ -66,16 +66,16 @@ wait_line() {
 # start <run>: the emulator with the session, and its window
 start() {
 	dir="$work/$session.$1"; log="$dir/log.txt"; at=0
-	rm -rf "$dir"; mkdir -p "$dir/home" "$dir/cfg/reicast/mappings" "$dir/data/reicast/data"
+	rm -rf "$dir"; mkdir -p "$dir/portable/mappings" "$dir/portable/data"
 
 	# the escape key is a button of the emulator only when a mapping says so
-	printf '[emulator]\nmapping_name = X11 Keyboard\nbtn_escape = %d\nbtn_menu = %d\n' $KEY_ESC $KEY_TAB > "$dir/cfg/reicast/mappings/X11_Keyboard.cfg"
+	printf '[emulator]\nmapping_name = X11 Keyboard\nbtn_escape = %d\nbtn_menu = %d\n' $KEY_ESC $KEY_TAB > "$dir/portable/mappings/X11_Keyboard.cfg"
 
 	local before=$("$xsend" list | sort)
 
 	( cd "$dir" && ulimit -S -c 1 2>/dev/null
-	  exec env -i DISPLAY="$DISPLAY" HOME="$dir/home" XDG_CONFIG_HOME="$dir/cfg" XDG_DATA_HOME="$dir/data" \
-		"$bin" -config audio:backend=none , config:Dreamcast.RTC=946684800 , config:SavePopup.isShown=yes , \
+	  exec env -i DISPLAY="$DISPLAY" \
+		"$bin" --portable "$dir/portable" --config audio:backend=none , config:Dreamcast.RTC=946684800 , config:SavePopup.isShown=yes , \
 		Debugger:SelfTest=emuwin.$session "$here/emu_guest.bin" > "$log" 2>&1 ) &
 	pid=$!
 
@@ -134,7 +134,7 @@ checklist() {
 
 		if menu "the menu key stops the machine and opens the menu"; then
 			"$xsend" click $win $SAVE
-			if wait_line 10 'emuwin: state Running' && [ -s "$dir/data/reicast/data/nodisk.state" ]; then
+			if wait_line 10 'emuwin: state Running' && [ -s "$dir/portable/data/nodisk.state" ]; then
 				pass "the menu key stops the machine and opens the menu"
 				pass "menu Save State saves and resumes"
 			else
@@ -238,11 +238,11 @@ twice() {
 with_window() {
 	session=$1
 	dir="$work/$1"; log="$dir/log.txt"
-	rm -rf "$dir"; mkdir -p "$dir/home" "$dir/cfg" "$dir/data/reicast/data"
+	rm -rf "$dir"; mkdir -p "$dir/portable/data"
 
 	( cd "$dir" && ulimit -S -c 1 2>/dev/null
-	  exec env -i DISPLAY="$DISPLAY" HOME="$dir/home" XDG_CONFIG_HOME="$dir/cfg" XDG_DATA_HOME="$dir/data" \
-		timeout 120 "$bin" -config audio:backend=none , config:Dreamcast.RTC=946684800 , \
+	  exec env -i DISPLAY="$DISPLAY" \
+		timeout 120 "$bin" --portable "$dir/portable" --config audio:backend=none , config:Dreamcast.RTC=946684800 , \
 		Debugger:SelfTest=$1 "$here/emu_guest.bin" > "$log" 2>&1 )
 
 	if [ $? -eq 0 ] && grep -a -q '^SelfTest: 1 passed, 0 failed' "$log"; then

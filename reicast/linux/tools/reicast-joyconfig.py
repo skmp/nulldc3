@@ -299,7 +299,9 @@ if __name__ == "__main__":
         print("\nMapping file saved to: %s\n" % os.path.abspath(args.file))
     else:
         print("\nHere's your mapping file:")
-        print("Save this as \"~/.local/share/reicast/mappings/%s.cfg\"\n" % mapping.get("emulator", "mapping_name"))
+        print("Save this as mappings/%s.cfg in the directory of nulldc3 (the directory of its executable, or the "
+              "one of --portable <dir>; ~/.config/nulldc3/mappings/ for nulldc3 --shared)\n"
+              % mapping.get("emulator", "mapping_name"))
         mapping.write(sys.stdout)
 
     sys.exit(0)

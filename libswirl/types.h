@@ -209,7 +209,8 @@ struct vram_block
 enum ndc_error_codes
 {
 	rv_ok = 0,			//no error
-	rv_cli_finish=69,	//clean exit after -help or -version , should we just use rv_ok?
+	rv_cli_finish=69,	//clean exit after --help
+	rv_cli_error=70,	//the command line was refused (cfg/cl.cpp), the message is on stderr: exit status 2
 
 	rv_error=-2,		//error
 	rv_serror=-1,		//silent error , it has been reported to the user
@@ -401,13 +402,13 @@ using namespace std;
 
 
 #if DC_PLATFORM==DC_PLATFORM_DREAMCAST
-	#define VER_EMUNAME		"devcast"
+	#define VER_EMUNAME		"nullDC"
 #elif DC_PLATFORM==DC_PLATFORM_DEV_UNIT
-	#define VER_EMUNAME		"devcast-DevKit-SET5.21"
+	#define VER_EMUNAME		"nullDC-DevKit-SET5.21"
 #elif DC_PLATFORM==DC_PLATFORM_NAOMI
-	#define VER_EMUNAME		"devcast-Naomi"
+	#define VER_EMUNAME		"nullDC-Naomi"
 #elif DC_PLATFORM==DC_PLATFORM_ATOMISWAVE
-	#define VER_EMUNAME		"devcast-AtomisWave"
+	#define VER_EMUNAME		"nullDC-AtomisWave"
 #else
 	#error unknown target platform
 #endif

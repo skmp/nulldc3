@@ -9,7 +9,7 @@
 	real park loop and the real machine. There is no sh4bp.b11: that gate compares the build with the debugger
 	against the build without, which a session cannot (tests/debugger/sh4bp, debugger.sh4bp.b11).
 
-	    devcast -config Debugger:SelfTest=sh4bp , Debugger:StartPaused=yes <elf>
+	    nulldc3 --config Debugger:SelfTest=sh4bp , Debugger:StartPaused=yes <elf>
 
 	The tests are guest tests: each stands where a client stands, arms breakpoints and steps through dbg::emu
 	and is handed every stop. Most of them run the guest programs of tests/debugger/sh4bp, which they write

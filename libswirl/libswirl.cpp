@@ -600,10 +600,10 @@ int reicast_init(int argc, char* argv[])
 #endif
 
     // TODO: Move vmem_reserve back here
-    if (ParseCommandLine(argc, argv))
-    {
-        return 69;
-    }
+    // --help, or a command line that is refused: nothing else is done, no machine is made
+    int cl_result = ParseCommandLine(argc, argv);
+    if (cl_result != rv_ok)
+        return cl_result;
     printf("Config dir is: %s\n", get_writable_config_path("/").c_str());
 	printf("Data dir is:   %s\n", get_writable_data_path("/").c_str());
 

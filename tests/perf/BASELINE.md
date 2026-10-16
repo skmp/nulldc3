@@ -89,6 +89,6 @@ machine as quiet as this one was, and then no more than the spread above allows:
 
 With a 1 minute load average below 10 in `uptime` first, and `--json <file>` to keep every run with its load:
 
-    python3 tests/perf/perf.py --emulator <build>/system/emulator/devcast --program 2ndmix.elf
-    python3 tests/perf/perf.py --emulator <build>/system/emulator-ta-hle/devcast --program 2ndmix.elf
-    python3 tests/perf/perf.py --emulator <build>/system/emulator-ta-hle/devcast --program 2ndmix.elf --renderer gl
+    python3 tests/perf/perf.py --emulator <build>/system/emulator/nulldc3 --program 2ndmix.elf
+    python3 tests/perf/perf.py --emulator <build>/system/emulator-ta-hle/nulldc3 --program 2ndmix.elf
+    python3 tests/perf/perf.py --emulator <build>/system/emulator-ta-hle/nulldc3 --program 2ndmix.elf --renderer gl

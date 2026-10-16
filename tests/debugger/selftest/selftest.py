@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """A selftest session of the emulator, headless, and what it has to end with.
 
-    selftest.py --emulator <devcast> --work <dir> --selftest <filter> [--mode <mode>] [--engine jit|interp]
+    selftest.py --emulator <nulldc3> --work <dir> --selftest <filter> [--mode <mode>] [--engine jit|interp]
                 [--guest <image>] [--config <section:key=value>]... [--watchdog <seconds>]
 
-The emulator is run as tests/system runs it: an environment of its own with fresh HOME, XDG_CONFIG_HOME and
-XDG_DATA_HOME under the work directory, no display, a core file size limit of 1 byte, and a watchdog. The
+The emulator is run as tests/system runs it: its files in a directory of its own under the work directory
+(--portable), an empty environment (no display), a core file size limit of 1 byte, and a watchdog. The
 real-time clock is pinned. README.md has the modes:
 
-    session     -config Debugger:SelfTest=<filter>: exit code 0 and the summary line of the driver, nothing failed
+    session     --config Debugger:SelfTest=<filter>: exit code 0 and the summary line of the driver, nothing failed
     guest-exit  a session whose guest returns to the BIOS: the run ends with its exit line, reason guest-exit
     same-hash   a session that runs to the end an Exit.* key gives it, and the same run without a session:
                 the two exit lines have the same state hash, part for part
@@ -78,9 +78,9 @@ class Run:
         self.args = args
         self.dir = os.path.join(args.work, name)
         shutil.rmtree(self.dir, ignore_errors=True)
-        # a state is saved into <data>/data, which the emulator does not make
-        for sub in ('home', 'cfg', os.path.join('data', 'reicast', 'data')):
-            os.makedirs(os.path.join(self.dir, sub))
+        # the directory of the run's files (--portable); a state is saved into its data/, which the emulator
+        # does not make
+        os.makedirs(os.path.join(self.dir, 'portable', 'data'))
         self.log_path = os.path.join(self.dir, 'log.txt')
         self.process = None
         self.log = ''
@@ -91,7 +91,7 @@ class Run:
         items = ['config:Headless=yes', 'audio:backend=none', 'config:Debug.SerialConsoleEnabled=yes',
                  'config:Dynarec.Enabled=' + engine, 'config:Dreamcast.RTC=%d' % RTC_PIN, 'config:pvr.backend=none']
         items += keys + self.args.config
-        command = [self.args.emulator, '-config']
+        command = [self.args.emulator, '--portable', os.path.join(self.dir, 'portable'), '--config']
         for i, item in enumerate(items):
             if i:
                 command.append(',')
@@ -100,8 +100,8 @@ class Run:
         return command
 
     def start(self, keys):
-        env = {'HOME': os.path.join(self.dir, 'home'), 'XDG_CONFIG_HOME': os.path.join(self.dir, 'cfg'),
-               'XDG_DATA_HOME': os.path.join(self.dir, 'data')}
+        # nothing of the environment but the options of the sanitizers: the directory is the one of --portable
+        env = {}
         for name in ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'TSAN_OPTIONS', 'LSAN_OPTIONS'):
             if name in os.environ:
                 env[name] = os.environ[name]

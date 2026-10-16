@@ -8,7 +8,8 @@ project(dbg_disasm_tests CXX)
 # The oracle tests are reported as skipped when their tool is missing:
 #   -DSH_OBJDUMP=<sh-elf-objdump>
 #   -DARM_OBJDUMP=<arm-eabi-objdump>
-#   -DDEVTOOLS_DIR=<dreamcast-devtools checkout with node_modules installed>
+#   -DDEVTOOLS_DIR=<dreamcast-devtools checkout with node_modules installed> (default: the submodule devtools/ of
+#                   the tree, else ../dreamcast-devtools beside it)
 #
 # The tests project (tests/CMakeLists.txt) adds this directory as well. What it sets is all optional here:
 #   NULLDC_TEST_PREFIX          put in front of every test name (debugger.disasm.)
@@ -105,7 +106,14 @@ disasm_oracle_test(arm7_objdump_selftest "${Python3_Interpreter_FOUND}" "python3
 if(DEFINED NULLDC_DEVTOOLS_DIR)
   set(devtools_option NULLDC_DEVTOOLS_DIR)
 else()
-  set(DEVTOOLS_DIR "${DEVCAST_DIR}/../dreamcast-devtools" CACHE PATH "dreamcast-devtools checkout (DSP playground oracle)")
+  # the submodule devtools/ of the tree, else a checkout beside it; a place counts when it has tsx (npm ci was run
+  # there) and dspUtils.ts: an uninitialised submodule is an empty directory (tests/devtools/lookup.cmake)
+  include("${CMAKE_CURRENT_LIST_DIR}/../../devtools/lookup.cmake")
+  nulldc_find_devtools(devtools_default "${DEVCAST_DIR}" node_modules/.bin/tsx src/app/dsp/dspUtils.ts)
+  if(NOT devtools_default)
+    set(devtools_default "${DEVCAST_DIR}/../dreamcast-devtools")
+  endif()
+  set(DEVTOOLS_DIR "${devtools_default}" CACHE PATH "dreamcast-devtools checkout (DSP playground oracle)")
   set(devtools_option DEVTOOLS_DIR)
 endif()
 set(devtools_dir "${${devtools_option}}")

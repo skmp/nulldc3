@@ -8,7 +8,7 @@
 	The selftest hostcycles: the host stops the running machine and starts it again, hundreds of times in one
 	process, while a program runs to the end that an Exit.* key gives the run.
 
-	    devcast -config config:Headless=yes , audio:backend=none , config:Exit.AfterVblanks=1200 , config:Exit.StateHash=yes ,
+	    nulldc3 --config config:Headless=yes , audio:backend=none , config:Exit.AfterVblanks=1200 , config:Exit.StateHash=yes ,
 	            Debugger:SelfTestHostCycleFrom=300 , Debugger:SelfTest=hostcycles 2ndmix.elf
 
 	Every start of the machine is a new emulator thread, and every emulator thread makes its backends anew. For

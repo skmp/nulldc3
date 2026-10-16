@@ -8,7 +8,7 @@
 	The selftest of the core: the wire protocol, the tables, the tick builder and the event log, against the
 	live machine.
 
-	    devcast -config config:Headless=yes , audio:backend=none , Debugger:SelfTest=core 2ndmix.elf
+	    nulldc3 --config config:Headless=yes , audio:backend=none , Debugger:SelfTest=core 2ndmix.elf
 
 	The session has no server, and so no client and no core thread: Debugger:SelfTest keeps the server off
 	unless Debugger:Enabled is set explicitly. With a server running every test fails its first check instead

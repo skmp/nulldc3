@@ -8,7 +8,7 @@ and compare what each leaves with what a Dreamcast leaves, bit for bit:
 | `sh4.fpu.scalar` | FADD FSUB FMUL FDIV FSQRT FTRC FCMP/EQ FCMP/GT FABS FNEG in single and double precision, FMAC, FSRRA, FCNVDS, FCNVSD | 225,036 records taken on a console |
 | `sh4.fpu.vector` | FIPR FTRV FSCA FSRRA | shrike4-rtl's bit-exact model on 1,355,584 generated cases, and 15,642 records taken on a console |
 
-They are the fast tier's FPU baseline: devcast computes with the host's FPU, and the baselines say how much of
+They are the fast tier's FPU baseline: nullDC computes with the host's FPU, and the baselines say how much of
 the hardware's behaviour that gives, per kind of instruction, setting and operand. `KNOWN_FAILURES.md` has the
 reason for everything that is below 100 %.
 
@@ -75,7 +75,7 @@ There is no guest memory: 16 bit reads return the opcode or `nop`, any other acc
 | `native` | the dynarec compiled the instruction to native code. With PR = 1, and for FCNVDS and FCNVSD, its block calls the interpreter's handler: the dynarec's counts are then the interpreter's |
 | `crash` | an engine ends in `die()`, `verify()` or a signal |
 
-A trap case can only pass `value` once devcast raises the FPU exception. Today it has none.
+A trap case can only pass `value` once nullDC raises the FPU exception. Today it has none.
 
 ## The groups
 

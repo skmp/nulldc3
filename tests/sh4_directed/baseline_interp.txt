@@ -1,4 +1,4 @@
-# sh4.directed.interp baseline: what devcast passes of the single-step vectors, per file.
+# sh4.directed.interp baseline: what nullDC passes of the single-step vectors, per file.
 # The test fails when a file runs or passes fewer vectors than listed here, or has more during which the
 # emulator code raises a notification (msgboxf) and carries on.
 # Written by the test's --update-baseline, see tests/README.md.

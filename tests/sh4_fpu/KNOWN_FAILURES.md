@@ -1,4 +1,4 @@
-# Where devcast's FPU is not the hardware's (sh4.fpu.*)
+# Where nullDC's FPU is not the hardware's (sh4.fpu.*)
 
 Why the counts of `baseline_scalar.txt` and `baseline_vector.txt` are below their totals. Every case that is
 not as on the hardware has one of the reasons below; `sh4_fpu scalar --why` and `sh4_fpu vector --why` print the
@@ -31,7 +31,7 @@ destination as it is when
   for FIPR, FTRV, FSCA and FSRRA with PR = 1 as well, where they do nothing else, on the hardware and in both
   engines (the 85 records of the `console.specials.pr1.trap` groups).
 
-devcast carries the instruction out and goes on: `sh4_ex_FPU` exists only in a commented-out enum
+nullDC carries the instruction out and goes on: `sh4_ex_FPU` exists only in a commented-out enum
 (`hw/sh4/sh4_interrupts.h`), neither engine can raise it.
 
     FADD.dn0.rn.trap   part 1 FADD #8 [+dmin +1.5], FPSCR 00000000: FR0 is 3FC00000, hardware 00000001 (not written), FPSCR 00020000
@@ -43,7 +43,7 @@ devcast carries the instruction out and goes on: `sh4_ex_FPU` exists only in a c
 vector: 1,357,822 cases.
 
 On the hardware (console; manual 6.5) every instruction that computes rewrites the cause field (an exact
-result clears it) and ORs what it raises into the flag field, also when it traps. devcast writes neither in
+result clears it) and ORs what it raises into the flag field, also when it traps. nullDC writes neither in
 any instruction of either engine: in every one of these cases FPSCR behind the instruction is the FPSCR in
 front of it. What the hardware does in them:
 
@@ -104,7 +104,7 @@ result's sign, with no cause at all and without the FPU error. The host divides 
 
 The hardware (console) forms the four products in truncating multipliers that keep 28 bits, aligns them to
 the largest by cutting bits off, adds them exactly and rounds once. It recodes one of the two factors (FVn for
-FIPR, the matrix element for FTRV), so a product is not even commutative. devcast multiplies and adds floats:
+FIPR, the matrix element for FTRV), so a product is not even commutative. nullDC multiplies and adds floats:
 every product is rounded and every sum is. FIPR adds its four products in pairs, `(p0 + p1) + (p2 + p3)`, FTRV
 one by one, `((p0 + p1) + p2) + p3`. That is `sh4_fipr` and `sh4_ftrv` (`hw/sh4/interpr/sh4_fpu.cpp`) in the
 interpreter and in the canonical helpers, and `mulps` with `haddps` twice (FTRV: four `mulps` and three `addps`
@@ -161,7 +161,7 @@ product round to zero is much worse than round to nearest: the hardware cuts onc
 
 The hardware (console: every positive number in round to nearest, and [1, 4) in round to zero) computes a
 cubic around a table node on the multipliers of FIPR and rounds once. That is not the correctly rounded
-1/sqrt(x), and for the flags it is never exact (2.). devcast takes a square root and divides, with two
+1/sqrt(x), and for the flags it is never exact (2.). nullDC takes a square root and divides, with two
 roundings: `1 / sqrtf(x)` in the interpreter, `sqrtss` and `divss` in the x64 backend.
 
 | class | rn | rz |
