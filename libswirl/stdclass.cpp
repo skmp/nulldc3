@@ -172,4 +172,15 @@ bool make_directory(const string& path)
 #endif
 }
 
+string get_writable_dumps_path()
+{
+	string data = get_writable_data_path(DATA_PATH);
+	if (!file_exists(data))
+		make_directory(data);
+	string dumps = data + "dumps/";
+	if (!file_exists(dumps))
+		make_directory(dumps);
+	return dumps;
+}
+
 

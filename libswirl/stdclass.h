@@ -184,6 +184,9 @@ string get_readonly_config_path(const string& filename);
 string get_readonly_data_path(const string& filename);
 bool file_exists(const string& filename);
 bool make_directory(const string& path);
+// data/dumps/ of the data directory, made when it is missing, with a / at its end: where the debugging dumps of
+// the renderers and of the modem go, never the working directory (README.md has the layout)
+string get_writable_dumps_path();
 
 string get_game_save_prefix();
 string get_game_basename();

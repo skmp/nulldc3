@@ -554,8 +554,11 @@ struct refrend : Renderer
     virtual bool RenderPVR() {
         if (DoDump.exchange(false)) {
             printf("doing dump... likely to not work for 16mb vram ...\n");
+            // in data/dumps/ of the emulator's directory, not in the working directory
+            string dumps = get_writable_dumps_path();
+            printf("Dumping VRAM and the PVR registers to %s\n", dumps.c_str());
             {
-                FILE *v0 = fopen("vram0.bin", "wb");
+                FILE *v0 = fopen((dumps + "vram0.bin").c_str(), "wb");
                 for (size_t i = 0; i < VRAM_SIZE/2; i+= 4)
                 {
                     auto v = vri(vram, i);
@@ -565,7 +568,7 @@ struct refrend : Renderer
             }
 
             {
-                FILE *v1 = fopen("vram1.bin", "wb");
+                FILE *v1 = fopen((dumps + "vram1.bin").c_str(), "wb");
                 for (size_t i = VRAM_SIZE/2; i < VRAM_SIZE; i+= 4)
                 {
                     auto v = vri(vram, i);
@@ -575,7 +578,7 @@ struct refrend : Renderer
             }
             
             {
-                FILE* regs = fopen("pvr_regs", "wb");
+                FILE* regs = fopen((dumps + "pvr_regs").c_str(), "wb");
                 fwrite(pvr_regs, sizeof(pvr_regs), 1, regs);
                 fclose(regs);
             }

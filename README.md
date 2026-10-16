@@ -77,6 +77,8 @@ The layout is the same in every mode:
     data/dc_nvmem.bin         the flash as the emulator writes it back
     data/<game>.state         the save states
     data/textures/<game id>/  custom textures, read; data/texdump/ textures dumped by the GL renderer
+    data/dumps/               the debugging dumps of the renderers: refsw2-dump-<time>/ (refsw2,
+                              refmister), vram0.bin, vram1.bin and pvr_regs (refsw)
     nulldc3-log.txt           Windows, with --log
 
 `--shared` uses the per-user directories of the system, named `nulldc3`: on Linux `$XDG_CONFIG_HOME/nulldc3`
