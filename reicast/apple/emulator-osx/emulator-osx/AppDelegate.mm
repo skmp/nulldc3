@@ -142,12 +142,20 @@ static bool _isInitializing = true;
 - (void)mainSetup {
     [self setupPaths];
     common_linux_setup();
-    // Older macOS starts an application from the Finder with -psn_<n>_<n>, its process serial number: not a
-    // switch of the command line (cfg/cl.cpp refuses every word that begins with a dash)
+    // Words that macOS and Xcode put on the command line of an application, not switches of the command line
+    // (cfg/cl.cpp refuses every word that begins with a dash): -psn_<n>_<n>, the process serial number of a start
+    // from the Finder on older macOS, and -NSDocumentRevisionsDebugMode YES|NO, which a run from Xcode gets
+    // when its scheme has "Allow debugging when using document Versions Browser" (debugDocumentVersioning) on
     std::vector<char*> args;
     for (int i = 0; i < _argc; i++) {
-        if (i == 0 || strncmp(_argv[i], "-psn_", 5) != 0)
-            args.push_back(_argv[i]);
+        if (i > 0 && strncmp(_argv[i], "-psn_", 5) == 0)
+            continue;
+        if (i > 0 && strcmp(_argv[i], "-NSDocumentRevisionsDebugMode") == 0) {
+            if (i + 1 < _argc)
+                i++;
+            continue;
+        }
+        args.push_back(_argv[i]);
     }
     args.push_back(nullptr);
     int result = reicast_init((int)args.size() - 1, args.data());

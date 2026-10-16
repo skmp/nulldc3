@@ -15,7 +15,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "84A388B21B1CDD3E000166C0"
-               BuildableName = "Reicast.app"
+               BuildableName = "nulldc3.app"
                BlueprintName = "reicast-osx"
                ReferencedContainer = "container:emulator-osx/reicast-osx.xcodeproj">
             </BuildableReference>
@@ -59,7 +59,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "84A388B21B1CDD3E000166C0"
-            BuildableName = "Reicast.app"
+            BuildableName = "nulldc3.app"
             BlueprintName = "reicast-osx"
             ReferencedContainer = "container:emulator-osx/reicast-osx.xcodeproj">
          </BuildableReference>
@@ -84,7 +84,7 @@
       launchStyle = "0"
       useCustomWorkingDirectory = "NO"
       ignoresPersistentStateOnLaunch = "NO"
-      debugDocumentVersioning = "YES"
+      debugDocumentVersioning = "NO"
       debugServiceExtension = "internal"
       allowLocationSimulation = "YES">
       <BuildableProductRunnable
@@ -92,7 +92,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "84A388B21B1CDD3E000166C0"
-            BuildableName = "Reicast.app"
+            BuildableName = "nulldc3.app"
             BlueprintName = "reicast-osx"
             ReferencedContainer = "container:emulator-osx/reicast-osx.xcodeproj">
          </BuildableReference>
@@ -103,13 +103,13 @@
       shouldUseLaunchSchemeArgsEnv = "YES"
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
-      debugDocumentVersioning = "YES">
+      debugDocumentVersioning = "NO">
       <BuildableProductRunnable
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "84A388B21B1CDD3E000166C0"
-            BuildableName = "Reicast.app"
+            BuildableName = "nulldc3.app"
             BlueprintName = "reicast-osx"
             ReferencedContainer = "container:emulator-osx/reicast-osx.xcodeproj">
          </BuildableReference>
