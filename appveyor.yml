@@ -21,20 +21,20 @@ before_build:
       
 build_script:
   - cmd: >-
-      msbuild reicast.sln /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll"
+      msbuild nulldc3.sln /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll"
       
 
 after_build:
   - cmd: >-      
-      cd .. && set EXE_PATH=build\RelWithDebInfo\reicast.exe
+      cd .. && set EXE_PATH=build\RelWithDebInfo\nulldc3.exe
       
       mkdir artifacts
       
-      move %EXE_PATH% artifacts\reicast-win_%PLATFORM%-%CONFIGURATION%-%APPVEYOR_REPO_COMMIT%.exe
+      move %EXE_PATH% artifacts\nulldc3-win_%PLATFORM%-%CONFIGURATION%-%APPVEYOR_REPO_COMMIT%.exe
       
 artifacts:
   - path: artifacts
-    name: reicast-win_$(PLATFORM)-$(CONFIGURATION)-$(APPVEYOR_REPO_COMMIT)
+    name: nulldc3-win_$(PLATFORM)-$(CONFIGURATION)-$(APPVEYOR_REPO_COMMIT)
 
 deploy:
 - provider: S3
@@ -44,5 +44,5 @@ deploy:
   region: eu-central-1
   bucket: reicast-builds-windows
   folder: 'builds/heads/$(APPVEYOR_REPO_BRANCH)-$(APPVEYOR_REPO_COMMIT)'
-  artifact: reicast-win_$(PLATFORM)-$(CONFIGURATION)-$(APPVEYOR_REPO_COMMIT)
+  artifact: nulldc3-win_$(PLATFORM)-$(CONFIGURATION)-$(APPVEYOR_REPO_COMMIT)
   set_public: true

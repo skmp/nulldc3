@@ -1,6 +1,6 @@
-# Reicast Modem Configuration
+# nullDC Modem Configuration
 
-You need to assign an IP address from your local LAN to the Dreamcast. Do not use the address of the computer on which reicast is running. 
+You need to assign an IP address from your local LAN to the Dreamcast. Do not use the address of the computer on which nullDC is running. 
 Add it to your `emu.cfg` file in the `[network]` section.
 
 For example:
@@ -18,7 +18,7 @@ Make sure this address is not being used on your network. Ping it just in case..
 2. In your Network Connections you should see a new network with a TAP-Windows Adapter V9 device. 
    *Make sure it is enabled.*
 
-3. Run `reicast.exe` as an administrator (right-click on the program and select "Run as administrator")
+3. Run `nulldc3.exe` as an administrator (right-click on the program and select "Run as administrator")
 
 4. That's it! Now you need to configure internet access in the Dreamcast itself.
 

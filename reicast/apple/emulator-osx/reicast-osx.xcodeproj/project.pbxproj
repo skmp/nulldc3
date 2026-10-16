@@ -1217,7 +1217,7 @@
 		5381D70C2408886B0078E797 /* refsw_pixel.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = refsw_pixel.cpp; sourceTree = "<group>"; };
 		53836183240EDBE2006AE5B4 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		53D572EA2427099200E3FAFE /* libomp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libomp.a; path = deps/libomp/lib/libomp.a; sourceTree = "<group>"; };
-		84A388B31B1CDD3E000166C0 /* Reicast.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Reicast.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		84A388B31B1CDD3E000166C0 /* nulldc3.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = nulldc3.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		84A388B71B1CDD3E000166C0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		84A388BA1B1CDD3E000166C0 /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Images.xcassets; sourceTree = "<group>"; };
 		84A388C31B1CDD3F000166C0 /* reicast-osxTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "reicast-osxTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -2903,7 +2903,7 @@
 		84A388B41B1CDD3E000166C0 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				84A388B31B1CDD3E000166C0 /* Reicast.app */,
+				84A388B31B1CDD3E000166C0 /* nulldc3.app */,
 				84A388C31B1CDD3F000166C0 /* reicast-osxTests.xctest */,
 			);
 			name = Products;
@@ -2969,7 +2969,7 @@
 			);
 			name = "reicast-osx";
 			productName = "reicast-osx";
-			productReference = 84A388B31B1CDD3E000166C0 /* Reicast.app */;
+			productReference = 84A388B31B1CDD3E000166C0 /* nulldc3.app */;
 			productType = "com.apple.product-type.application";
 		};
 		84A388C21B1CDD3F000166C0 /* reicast-osxTests */ = {
@@ -3612,7 +3612,7 @@
 					"-fopenmp",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.reicast.$(PRODUCT_NAME:rfc1034identifier)";
-				PRODUCT_NAME = Reicast;
+				PRODUCT_NAME = nulldc3;
 			};
 			name = Debug;
 		};
@@ -3648,7 +3648,7 @@
 					"-fopenmp",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.reicast.$(PRODUCT_NAME:rfc1034identifier)";
-				PRODUCT_NAME = Reicast;
+				PRODUCT_NAME = nulldc3;
 			};
 			name = Release;
 		};
