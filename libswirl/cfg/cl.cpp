@@ -185,7 +185,8 @@ bool parse(int argc, wchar* argv[], CommandLine& cl)
 		{
 			if (is_switch(word.substr(1)))
 				return fail(word + " is written with two dashes: -" + word);
-			return fail("unknown switch " + word + " (switches have two dashes; --help lists them)");
+			return fail("unknown switch " + word + " (switches have two dashes, --help lists them; a game whose name "
+				"begins with a dash goes behind --)");
 		}
 
 		string name = word.substr(2);
@@ -251,6 +252,13 @@ bool parse(int argc, wchar* argv[], CommandLine& cl)
 		else if (name == "console" || name == "log")
 			return fail(word + " is a switch of the Windows build only");
 #endif
+		else if (name.find('=') != string::npos && is_switch(name.substr(0, name.find('='))))
+		{
+			string base = name.substr(0, name.find('='));
+			if (base == "config" || base == "portable")
+				return fail("unknown switch " + word + ": the value of --" + base + " is the next word, not one behind =");
+			return fail("unknown switch " + word + ": --" + base + " takes no value");
+		}
 		else
 			return fail("unknown switch " + word + " (--help lists the switches)");
 	}
