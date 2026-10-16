@@ -361,10 +361,15 @@ bool make_dirs(const string& path, string& why, vector<string>& made)
 			continue;
 		if (make_one(part) == 0)
 			made.push_back(part);
-		else if (!is_dir(part))
+		else
 		{
-			why = part + ": " + strerror(errno);
-			return false;
+			// the reason is mkdir's: is_dir's stat would replace it with its own
+			int error = errno;
+			if (!is_dir(part))
+			{
+				why = part + ": " + strerror(error);
+				return false;
+			}
 		}
 	}
 	if (!is_dir(path))

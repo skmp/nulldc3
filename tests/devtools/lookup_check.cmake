@@ -89,6 +89,11 @@ expect(nothing none ${tests})
 file(MAKE_DIRECTORY "${WORK}/empty_only/tree/devtools")
 expect(empty_only none ${tests})
 
+# an uninitialised submodule, and beside the tree a checkout where npm ci was not run
+file(MAKE_DIRECTORY "${WORK}/both_incomplete/tree/devtools")
+make_place("${WORK}/both_incomplete/dreamcast-devtools" package.json)
+expect(both_incomplete none ${tests})
+
 # a submodule with one of the two paths, both beside the tree
 make_place("${WORK}/half/tree/devtools" node_modules/.bin/tsx)
 make_place("${WORK}/half/dreamcast-devtools" ${disasm})

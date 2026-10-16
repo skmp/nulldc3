@@ -924,7 +924,8 @@ def case_dirs_shared(h):
 # The command lines that are refused: what follows the program on the command line (the headless keys and
 # guest_exit are in front, so that one taken by mistake starts a run, which writes), and the text of the message.
 # DIR is a directory that is not there, FILE a file, RO a directory that cannot be written, LONG a directory below
-# DIR whose name is longer than a name can be (DIR is made on the way to it, and has to be removed again).
+# DIR/a/b whose name is longer than a name can be (DIR, DIR/a and DIR/a/b are made on the way to it, and have to be
+# removed again, the deepest first).
 ERRORS = (
     ('one_dash_config', ['-config', 'config:Headless=yes'], '-config is written with two dashes: --config'),
     ('one_dash_portable', ['-portable', 'DIR'], '-portable is written with two dashes: --portable'),
@@ -937,12 +938,14 @@ ERRORS = (
     ('portable_unwritable', ['--portable', 'RO'], 'cannot be written'),
     ('portable_unmakable', ['--portable', 'RO_NEW'], 'the directory cannot be made'),
     ('portable_unmakable_below', ['--portable', 'LONG'], 'the directory cannot be made'),
+    ('portable_unmakable_reason', ['--portable', 'RO_NEW'], 'new: Permission denied)'),
     ('portable_twice', ['--portable', 'DIR', '--portable', 'DIR2'], '--portable is given twice'),
     ('portable_shared', ['--portable', 'DIR', '--shared'], '--portable <dir> and --shared cannot be given together'),
     ('shared_portable', ['--shared', '--portable', 'DIR'], '--portable <dir> and --shared cannot be given together'),
     ('shared_twice', ['--shared', '--shared'], '--shared is given twice'),
     ('shared_no_home', ['--shared'], 'there are no per-user directories'),
     ('shared_unmakable', ['--shared'], 'nulldc3 cannot be made'),
+    ('shared_unmakable_reason', ['--shared'], 'data: Permission denied)'),
     ('unknown', ['--bogus'], 'unknown switch --bogus'),
     ('unknown_one_dash', ['-x'], 'unknown switch -x'),
     ('dash_alone', ['-'], 'unknown switch -'),
@@ -961,8 +964,10 @@ ERRORS = (
 
 # The rows of ERRORS that need a directory without write permission, made so for the run, and their environment
 # when it is not the one of scratch(): shared_unmakable has the data directory below RO, so that the config
-# directory is made before the data directory cannot be
-LOCKED = {'portable_unwritable': 'RO', 'portable_unmakable': 'RO', 'shared_unmakable': 'RO', 'exe_unwritable': 'BIN'}
+# directory is made before the data directory cannot be. The rows *_reason are the same command lines again, for the
+# reason the message gives: the one of the mkdir that failed
+LOCKED = {'portable_unwritable': 'RO', 'portable_unmakable': 'RO', 'portable_unmakable_reason': 'RO',
+          'shared_unmakable': 'RO', 'shared_unmakable_reason': 'RO', 'exe_unwritable': 'BIN'}
 # The rows whose message has to name --portable <dir> and --shared: a portable directory that cannot be used
 CHOOSE_ANOTHER = ('portable_unwritable', 'portable_unmakable', 'portable_unmakable_below', 'exe_unwritable')
 
@@ -980,7 +985,7 @@ def case_dirs_errors(h):
     as_root = hasattr(os, 'geteuid') and os.geteuid() == 0
     names = {'DIR': os.path.join(top, 'dir'), 'DIR2': os.path.join(top, 'dir2'), 'FILE': os.path.join(top, 'file'),
              'RO': os.path.join(top, 'ro'), 'RO_NEW': os.path.join(top, 'ro', 'new'), 'BIN': os.path.join(top, 'bin'),
-             'LONG': os.path.join(top, 'dir', 'x' * 300)}
+             'LONG': os.path.join(top, 'dir', 'a', 'b', 'x' * 300)}
     command = [binary, '--config']
     for i, key in enumerate(headless()):
         command += [','] if i else []
@@ -997,7 +1002,7 @@ def case_dirs_errors(h):
         environment = env
         if tag == 'shared_no_home':
             environment = {}
-        elif tag == 'shared_unmakable':
+        elif tag in ('shared_unmakable', 'shared_unmakable_reason'):
             environment = dict(env, XDG_DATA_HOME=os.path.join(names['RO'], 'data'))
         locked = names[LOCKED[tag]] if tag in LOCKED else None
         before = listing(top)
