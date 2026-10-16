@@ -7,6 +7,7 @@
 
 #include <shlobj.h>		// SHGetKnownFolderPath
 #include <knownfolders.h>
+#include <io.h>			// _get_osfhandle
 
 // Gamepads
 u16 kcode[4] = { 0xffff, 0xffff, 0xffff, 0xffff };
@@ -284,6 +285,25 @@ BOOL CtrlHandler( DWORD fdwCtrlType )
 }
 
 
+// Whether what the emulator wrote to stream can still be read when the process has ended: in a file or a pipe, or
+// in the console of the cmd.exe or PowerShell it was started from. Not when there is no console, nor in a console
+// that has this process alone (the one Windows opens for a start from Explorer or a shortcut, or the one of
+// --console): that one closes with it.
+static bool output_is_kept(FILE* stream)
+{
+	int fd = _fileno(stream);
+	if (fd < 0)
+		return false;
+	HANDLE handle = (HANDLE)_get_osfhandle(fd);
+	if (handle == INVALID_HANDLE_VALUE || handle == NULL)
+		return false;
+	DWORD mode;
+	if (!GetConsoleMode(handle, &mode))
+		return true;	// a file, a pipe, or a device that is no console
+	DWORD processes[2];
+	return GetConsoleProcessList(processes, 2) > 1;
+}
+
 void ReserveBottomMemory()
 {
 #ifdef _DEBUG
@@ -530,14 +550,16 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 		CoInitialize(nullptr);
 
 		int init_rv = reicast_init(argc, argv);
-		if (init_rv == rv_cli_finish)
-			return 0;	// --help: the usage text is all that was asked for
-		if (init_rv == rv_cli_error)
+		if (init_rv == rv_cli_finish || init_rv == rv_cli_error)
 		{
-			// the command line was refused: on stderr, which nobody sees without a console window
-			if (GetConsoleWindow() == NULL)
-				MessageBoxA(NULL, cl_ErrorText().c_str(), "nullDC", MB_OK | MB_ICONERROR);
-			return 2;
+			// --help (the usage text is on stdout, and is all that was asked for) or a command line that was refused
+			// (the reason is on stderr): where that cannot be read once the process has ended, without a console
+			// or in one that closes with the process, a message box shows it as well
+			bool help = init_rv == rv_cli_finish;
+			if (!output_is_kept(help ? stdout : stderr))
+				MessageBoxA(NULL, (help ? cl_HelpText() : cl_ErrorText()).c_str(), "nullDC",
+				            MB_OK | (help ? MB_ICONINFORMATION : MB_ICONERROR));
+			return help ? 0 : 2;
 		}
 		if (init_rv != 0)
 			die("nullDC initialization failed");

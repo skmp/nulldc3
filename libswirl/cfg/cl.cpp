@@ -491,40 +491,58 @@ const string& cl_ErrorText()
 	return error_text;
 }
 
-static int showhelp()
+const string& cl_HelpText()
 {
-	printf("\nUsage: nulldc3 [switches] [game]\n\n");
-	printf("  game                  a disc image (.gdi .chd .cdi .cue .iso .lst), a program that runs under reios\n");
-	printf("                        (.elf .bin), or nodisk. Without one the emulator starts at its menu\n\n");
-	printf("Switches:\n");
-	printf("  --config section:key=value [ , section:key=value ]...\n");
-	printf("                        values of the configuration for this run; they are not written to emu.cfg.\n");
-	printf("                        The comma between two of them is a word of its own: blanks around it\n");
-	printf("                        Keys for runs without a person, see docs/nulldc3/automated-runs.md:\n");
-	printf("                          config:Headless=yes  config:Exit.AfterVblanks=N  config:Exit.AfterSeconds=S\n");
-	printf("                          config:Exit.OnGuestExit=yes  config:Exit.StateHash=yes  config:Dreamcast.RTC=N\n");
-	printf("  --portable <dir>      keep the configuration, BIOS and flash, VMUs, mappings and everything else the\n");
-	printf("                        emulator writes in <dir> (made when it is missing), not in the directory of the\n");
-	printf("                        executable\n");
-	printf("  --shared              keep them in the per-user directories (nulldc3) of the system instead:\n");
+	static const string text =
+		"\nUsage: nulldc3 [switches] [game]\n\n"
+		"  game                  a disc image (.gdi .chd .cdi .cue .iso .lst), a program that runs under reios\n"
+		"                        (.elf .bin), or nodisk. Without one the emulator starts at its menu\n\n"
+		"Switches:\n"
+		"  --config section:key=value [ , section:key=value ]...\n"
+		"                        values of the configuration for this run; they are not written to emu.cfg.\n"
+		"                        The comma between two of them is a word of its own: blanks around it\n"
+		"                        Keys for runs without a person, see docs/nulldc3/automated-runs.md:\n"
+		"                          config:Headless=yes  config:Exit.AfterVblanks=N  config:Exit.AfterSeconds=S\n"
+		"                          config:Exit.OnGuestExit=yes  config:Exit.StateHash=yes  config:Dreamcast.RTC=N\n"
+		"  --portable <dir>      keep the configuration, BIOS and flash, VMUs, mappings and everything else the\n"
+		"                        emulator writes in <dir> (made when it is missing), not in the directory of the\n"
+		"                        executable\n"
+		"  --shared              keep them in the per-user directories (nulldc3) of the system instead:\n"
 #if HOST_OS == OS_WINDOWS
-	printf("                        %%APPDATA%%\\nulldc3\n");
+		"                        %APPDATA%\\nulldc3\n"
 #elif HOST_OS == OS_DARWIN
-	printf("                        ~/Library/Application Support/nulldc3\n");
+		"                        ~/Library/Application Support/nulldc3\n"
 #else
-	printf("                        $XDG_CONFIG_HOME/nulldc3 (~/.config/nulldc3) and $XDG_DATA_HOME/nulldc3\n");
-	printf("                        (~/.local/share/nulldc3), with the XDG system directories behind them\n");
+		"                        $XDG_CONFIG_HOME/nulldc3 (~/.config/nulldc3) and $XDG_DATA_HOME/nulldc3\n"
+		"                        (~/.local/share/nulldc3), with the XDG system directories behind them\n"
 #endif
 #if HOST_OS == OS_WINDOWS
-	printf("  --console             open a console window for the output of the emulator\n");
-	printf("  --log                 write the output of the emulator to nulldc3-log.txt in that directory\n");
+		"  --console             open a console window for the output of the emulator\n"
+		"  --log                 write the output of the emulator to nulldc3-log.txt in that directory\n"
 #endif
-	printf("  --help                show this text\n");
-	printf("  --                    every word after it is a game, also one that begins with a dash\n\n");
-	printf("Without --portable and --shared the emulator keeps its files in the directory of its executable.\n");
-	printf("Every word that begins with a dash is a switch: an unknown one, or one written with one dash, is an\n");
-	printf("error.\n\n");
-	return 0;
+		"  --help                show this text\n"
+		"  --                    every word after it is a game, also one that begins with a dash\n\n"
+		"Without --portable and --shared the emulator keeps its files in the directory of its executable.\n"
+		"Every word that begins with a dash is a switch: an unknown one, or one written with one dash, is an\n"
+		"error.\n\n";
+	return text;
+}
+
+bool cl_LogToFile(const string& path)
+{
+	// made empty once; then two streams that each write at the end of the file, so that what one writes is never
+	// written over by the other, and with no buffer, so that nothing is lost when the process ends without a flush
+	FILE* file = fopen(path.c_str(), "w");
+	if (file == nullptr)
+		return false;
+	fclose(file);
+	for (FILE* stream : { stdout, stderr })
+	{
+		if (freopen(path.c_str(), "a", stream) == nullptr)
+			return false;
+		setvbuf(stream, nullptr, _IONBF, 0);
+	}
+	return true;
 }
 
 int ParseCommandLine(int argc,wchar* argv[])
@@ -540,7 +558,7 @@ int ParseCommandLine(int argc,wchar* argv[])
 	}
 	if (cl.help)
 	{
-		showhelp();
+		fputs(cl_HelpText().c_str(), stdout);
 		return rv_cli_finish;
 	}
 	if (!choose_dirs(cl))
@@ -553,8 +571,12 @@ int ParseCommandLine(int argc,wchar* argv[])
 	if (cl.log)
 	{
 		string logfile = get_writable_config_path("/nulldc3-log.txt");
-		freopen(logfile.c_str(), "w", stdout);
-		freopen(logfile.c_str(), "w", stderr);
+		if (!cl_LogToFile(logfile))
+		{
+			fail("--log: " + logfile + " cannot be written (" + strerror(errno) + ")");
+			fprintf(stderr, "%s\n", error_text.c_str());
+			return rv_cli_error;
+		}
 	}
 #endif
 

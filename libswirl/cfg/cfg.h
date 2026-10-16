@@ -53,6 +53,13 @@ void cl_SetHostDirs(const HostDirs& dirs);
 // chose, cannot be used; the message is on stderr and in cl_ErrorText(), nothing else was done.
 int ParseCommandLine(int argc,wchar* argv[]);
 const string& cl_ErrorText();
+// the usage text that --help prints
+const string& cl_HelpText();
+
+// Windows' --log: stdout and stderr into the file path, made empty first. Both streams write at the end of the
+// file and without a buffer, so the lines are there in the order they were written and none is lost when the
+// process ends without a flush. false when the file cannot be opened.
+bool cl_LogToFile(const string& path);
 
 void cfgSetGameId(const char *id);
 const char *cfgGetGameId();

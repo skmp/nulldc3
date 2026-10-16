@@ -78,6 +78,7 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
 | `arm7.vendor.halves` `arm7.directed.halves` `arm7.wren7.vendor.halves` `arm7.wren7.qemu_diff.halves` `arm7.wren7.mulsem.halves` `arm7.wren7.bringup.halves` | the six suites above a second time, with every step of the ARM7 made of `ARM7Backend::StepIrq` and `ARM7Backend::StepExec` (`ARM7M_STEP=halves`): the two halves of a step that the debug loop of the sound burst runs in place of `ARM7Backend::Step`, which is not made of them. Same conditions and the same baseline as their twins (`arm7/README.md`) | as its twin |
 | `cfg.overrides` | the config store and the command line parser on a config file of their own: a value `--config` gave is in effect for the run and is not what a save of the settings writes to `emu.cfg`, a changed one is written, and a read-only store (the automated runs) writes nothing | none |
+| `cfg.log_file` | `cl_LogToFile` of the command line parser, what the Windows switch `--log` does with stdout and stderr: one file, made empty first, with every line of both streams in the order they were written and none lost when the process ends without a flush (a child process that ends with `_exit`); a log that cannot be opened leaves the streams as they were | none |
 | `runctl.guest_exit.*` | `utils/run_control.cpp` on the config store, with stand-ins for the machine and the user interface, one process per run (`window`: no key, `key`: `Exit.OnGuestExit`, `vblanks`: `Exit.AfterVblanks`, `seconds`: `Exit.AfterSeconds`, `headless`): a guest program that returns to the BIOS ends every run but the first, with `reason=guest-exit` on the exit line and the user interface stopped, and leaves the first to its window | none |
 | `system.*` | the emulator binary of the default build, headless: `--help`, the keys that end a run and the line it prints, the pinned RTC with its keys in section `config` and in the section of a game, `emu.cfg` left alone, the directory a run keeps its files in (the one of the executable, `--portable <dir>`, `--shared`) and every command line that is refused, what a fatal fault and a signal that is sent do and that the faults of the guest are still handled, programs that boot under reios on the JIT and on the interpreter with their serial output, the software renderer into a PNG, a run that is repeated and has to end in the same state hash every time, emulators started together that each get the memory of their layout, a run on the JIT without the layout, and the speed script of `tests/perf` on one of them (`system/README.md` has the list, and what a deterministic run takes) | none, or the programs of `NULLDC_ELF_DIR` |
 | `system.hle.*` | the same on the emulator built with `-DHAS_TA_LLE=OFF` | none, or the programs of `NULLDC_ELF_DIR` |
@@ -146,11 +147,11 @@ and their `.interp.` tests pass. The `debugger.selftest.*` and `debugger.contrac
 runs: on such a binary every one of them that asks for the JIT fails.
 
 Every test of this table but `common.selftest`, `sh4.core`, the `debugger.sh4bp.*`, `debugger.selftest.*` and
-`debugger.contract.*` tests, `cfg.overrides`, `runctl.guest_exit.*`, the system tests, `aica.dsp.capi` and the `aica.dsp.wasm` tests is
+`debugger.contract.*` tests, `cfg.overrides`, `cfg.log_file`, `runctl.guest_exit.*`, the system tests, `aica.dsp.capi` and the `aica.dsp.wasm` tests is
 gated on a baseline file, and ctest runs them with `--strict`: a count that is worse than its baseline fails, and
 so does one that is better, until the baseline is updated and committed. `common.selftest`, `sh4.core`, each
-`debugger.sh4bp.*` test, each `debugger.selftest.*` test, each `debugger.contract.*` test, `cfg.overrides`, each
-`runctl.guest_exit.*` test, each
+`debugger.sh4bp.*` test, each `debugger.selftest.*` test, each `debugger.contract.*` test, `cfg.overrides`,
+`cfg.log_file`, each `runctl.guest_exit.*` test, each
 system test, `aica.dsp.capi` and `aica.dsp.wasm` are lists of checks that all have to hold;
 `aica.dsp.wasm.emsdk` and `aica.dsp.wasm.noemcc` are what the build script returns and prints.
 
@@ -185,7 +186,7 @@ More about the suites:
                        FP mode, also across threads, EXPEVT and TRA)
     arm7/              the ARM7 interpreter: vendor programs, directed cases, wren7 console suites (README.md,
                        KNOWN_FAILURES.md)
-    cfg/               the config store: --config overrides and what a save writes
+    cfg/               the config store: --config overrides and what a save writes; the log of --log
     run_control/       the keys that end a run: which runs the end of the guest program ends
     system/            the emulator binary, headless, on guest programs (README.md)
     perf/              not a test: perf.py measures the speed of the emulator on a guest program (README.md),
