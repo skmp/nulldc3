@@ -721,8 +721,10 @@ def listing(top):
 def scratch(h, name, env_dirs=True):
     """<work>/<name>: bin/nulldc3, a copy of the emulator; cwd/, an empty working directory; home/, an empty HOME;
     and with env_dirs xdg/config and xdg/data, empty, for XDG_CONFIG_HOME and XDG_DATA_HOME. Returns the
-    directory, the copy and the environment."""
-    top = os.path.join(h.work, name)
+    directory, the copy and the environment. The directory is named with every symbolic link resolved, the way
+    the emulator names the directory of its executable (/proc/self/exe) and a relative --portable (getcwd): --work
+    may be reached through a link."""
+    top = os.path.realpath(os.path.join(h.work, name))
     for sub in ('bin', 'cwd', 'home'):
         os.makedirs(os.path.join(top, sub))
     binary = os.path.join(top, 'bin', 'nulldc3')

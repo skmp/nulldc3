@@ -85,6 +85,12 @@ if(NOT nulldc_system_skip)
   add_library(nulldc_vmem_shim MODULE vmem_shim.cpp)
   target_link_libraries(nulldc_vmem_shim PRIVATE ${CMAKE_DL_LIBS})
   set_target_properties(nulldc_vmem_shim PROPERTIES PREFIX "" OUTPUT_NAME vmem_shim)
+
+  # work.link -> work: the scratch of the dirs.* cases is reached through a symbolic link, as a build directory
+  # in a linked home is. The emulator names its directory with every link resolved (/proc/self/exe, getcwd), and
+  # the cases expect the names it says from the directory as it is, not as --work spells it
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/work")
+  file(CREATE_LINK "work" "${CMAKE_CURRENT_BINARY_DIR}/work.link" SYMBOLIC)
 endif()
 
 # The cases of vmem_test.py: the memory of every emulator is its own, also when emulators start together; and an
@@ -122,8 +128,13 @@ function(nulldc_system_emulator prefix given dir ta_hle)
       continue()
     endif()
 
+    # the dirs.* cases are given their scratch through a symbolic link, see work.link above
+    set(work "${CMAKE_CURRENT_BINARY_DIR}/work")
+    if(case MATCHES "^dirs\\.")
+      set(work "${CMAKE_CURRENT_BINARY_DIR}/work.link")
+    endif()
     set(command "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/system_test.py"
-                --emulator "${binary}" --case ${case} --work "${CMAKE_CURRENT_BINARY_DIR}/work/${name}"
+                --emulator "${binary}" --case ${case} --work "${work}/${name}"
                 --shim "$<TARGET_FILE:nulldc_fault_shim>")
     if(nulldc_system_have_elf)
       list(APPEND command --elf-dir "${NULLDC_ELF_DIR}")

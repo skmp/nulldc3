@@ -194,7 +194,9 @@ the fix 2ndmix runs 600 and 4000 vblanks without the layout to the state hashes 
 `system_test.py` gives every run of the emulator a directory of its own for its files, `--portable
 <build dir>/system/work/<test>/<run>/portable`, and an empty environment: no `DISPLAY`, no `HOME`, nothing of the
 user's config. A run therefore writes nothing beside the binary under test, nor anywhere else outside its work
-directory; the cases `dirs.*` run a copy of the binary without `--portable`, and with `--shared`. A core file size
+directory; the cases `dirs.*` run a copy of the binary without `--portable`, and with `--shared`. Their work
+directory is reached through a symbolic link, `<build dir>/system/work.link` (to `work`): the emulator names its
+directory with every link resolved, and the cases expect those names. A core file size
 limit of 1 byte keeps a crash from being piped to a core handler (WSL2). A
 wall-clock watchdog (120 s per run, `--watchdog`) kills a run that does not end and fails the test; ctest has a
 second one behind it. The directories of a failed test are kept, with the output of every run in `log.txt`; the
