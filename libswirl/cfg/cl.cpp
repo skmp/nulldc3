@@ -6,7 +6,8 @@
 	A switch is written with two dashes. Every word that begins with a dash is a switch, up to a "--", behind which
 	every word is a game: a one-dash word is an error that names the two-dash form, an unknown switch is an error,
 	neither is ever taken for a game. Nothing is done before the whole command line is read: an error leaves the
-	directories and the configuration as they were.
+	directories and the configuration as they were (a directory made on the way to one that cannot be used is
+	removed again).
 
 	The directory: the one of the executable (portable, the default), the one --portable names, or with --shared
 	the per-user ones of the operating system. The operating system layer says which those are (cl_SetHostDirs);
@@ -327,8 +328,17 @@ int make_one(const string& path)
 #endif
 }
 
-// mkdir -p; false with the reason in why
-bool make_dirs(const string& path, string& why)
+void remove_one(const string& path)
+{
+#if HOST_OS == OS_WINDOWS
+	_rmdir(path.c_str());
+#else
+	rmdir(path.c_str());
+#endif
+}
+
+// mkdir -p; false with the reason in why. Each directory it makes is added to made, in the order it was made
+bool make_dirs(const string& path, string& why, vector<string>& made)
 {
 	if (is_dir(path))
 		return true;
@@ -349,7 +359,9 @@ bool make_dirs(const string& path, string& why)
 		string part = path.substr(0, i);
 		if (part.empty() || is_separator(part.back()) || (part.size() == 2 && part[1] == ':') || is_dir(part))
 			continue;
-		if (make_one(part) != 0 && !is_dir(part))
+		if (make_one(part) == 0)
+			made.push_back(part);
+		else if (!is_dir(part))
 		{
 			why = part + ": " + strerror(errno);
 			return false;
@@ -406,16 +418,24 @@ const char* const choose_another =
 bool choose_dirs(const CommandLine& cl)
 {
 	string why;
+	// what make_dirs made: removed again, the last one first, when the directory cannot be used
+	vector<string> made;
+	auto refuse = [&made](const string& message) {
+		for (auto dir = made.rbegin(); dir != made.rend(); ++dir)
+			remove_one(*dir);
+		return fail(message);
+	};
+
 	if (cl.shared)
 	{
 		if (host_dirs.shared_config.empty())
 			return fail("--shared: there are no per-user directories (" + host_dirs.shared_error + ")");
 		for (const string* dir : { &host_dirs.shared_config, &host_dirs.shared_data })
 		{
-			if (!make_dirs(*dir, why))
-				return fail("--shared: the directory " + *dir + " cannot be made (" + why + ")");
+			if (!make_dirs(*dir, why, made))
+				return refuse("--shared: the directory " + *dir + " cannot be made (" + why + ")");
 			if (!writable(*dir, why))
-				return fail("--shared: the directory " + *dir + " cannot be written (" + why + ")");
+				return refuse("--shared: the directory " + *dir + " cannot be written (" + why + ")");
 		}
 		clear_dirs();
 		set_user_config_dir(host_dirs.shared_config);
@@ -433,10 +453,11 @@ bool choose_dirs(const CommandLine& cl)
 			dir = absolute(cl.portable_dir);
 			if (exists(dir) && !is_dir(dir))
 				return fail("--portable " + cl.portable_dir + ": " + dir + " is not a directory");
-			if (!make_dirs(dir, why))
-				return fail("--portable " + cl.portable_dir + ": the directory cannot be made (" + why + ")");
+			if (!make_dirs(dir, why, made))
+				return refuse("--portable " + cl.portable_dir + ": the directory cannot be made (" + why + "); "
+					+ choose_another);
 			if (!writable(dir, why))
-				return fail("--portable " + cl.portable_dir + ": " + dir + " cannot be written (" + why + "); "
+				return refuse("--portable " + cl.portable_dir + ": " + dir + " cannot be written (" + why + "); "
 					+ choose_another);
 		}
 		else
