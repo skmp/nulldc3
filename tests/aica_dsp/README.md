@@ -192,9 +192,9 @@ The case sources use C that is not C++, so the tests project enables C when the 
 from the emulator's own `aica_mmio.cpp`, `sgc_if.cpp` and `dsp.cpp` with the emulator's definitions and flags;
 `emu_aica.cpp` has what they reference of the rest of the emulator, after the stubs of `tests/arm7` and
 `tests/debugger/regs/aica` (no SH4, no ARM7, no scheduler). A register access is `AICA::ReadReg` /
-`AICA::WriteReg`, the CPU's path with its byte and slot handling; a sample is `libAICA_TimeStep()`, sample by
-sample (`config:aica.NoBatch` on); the wave memory is the device's. The audio stream is a stand-in that keeps
-what each sample hands it, and so is the CD-DA drive: off it gives silence, on a pair of its own in every sample,
+`AICA::WriteReg`, the CPU's path with its byte and slot handling; a sample is `libAICA_TimeStep()`, the
+emulator's time step of the AICA; the wave memory is the device's. The audio stream is a stand-in that keeps what
+each sample hands it, and so is the CD-DA drive: off it gives silence, on a pair of its own in every sample,
 neither half 0 (`EmuCddaPair`).
 
 * **`aica.dsp.case.<case>.emu`**: `dsp_basic`, `dsp_mem`, `dsp_mem2`, `dsp_mem3`, `dsp_wslot`, `dsp_unpack` and

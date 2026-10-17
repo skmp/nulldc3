@@ -78,9 +78,9 @@ struct VirtualDreamcast {
     // time passes (it is the rest of the AICA tick that was due), and an interrupt it raises waits for the next
     // acceptance of the SH4. checks true: the ARM phases use the debugger's check while dbg_arm7_armed is not 0
     // (the park loop). checks false: nothing can stop it (dc_run, in front of the stop callback of a host stop
-    // or a guest exit). Returns true when the burst ran to its end, the rest of the callback included (the
-    // batch render, the tick of the sound regression harness: once per burst, behind the last sample), and at
-    // once when none is suspended. Returns false when it is suspended again, which it never is with checks false.
+    // or a guest exit). Returns true when the burst ran to its end, the rest of the callback included (the tick
+    // of the sound regression harness: once per burst, behind the last sample), and at once when none is
+    // suspended. Returns false when it is suspended again, which it never is with checks false.
     // The body here is that of a machine that never suspends
     virtual bool RunSoundBurst(bool checks) { return true; }
 

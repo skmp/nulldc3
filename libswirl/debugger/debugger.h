@@ -545,9 +545,8 @@ bool dbg_sh4_TakeRemainder(u32 pc, u32* end_pc, u32* cycles);
 
 	A sound burst is the work of one AICA scheduler callback (Dreamcast_impl::AicaUpdate): if the ARM7 is
 	clocked, 32 samples, each { the ARM phase: the ARM7 for its ticks; the time step of the AICA: its timers,
-	the sample - in the batch mode, while it exists, made by the batch render instead - (the sound
-	generator's sweep, the DSP phase of the DSP block below, the mix), the interrupt lines }, then the rest of
-	the callback (the batch render while it exists, the tick of the sound regression harness).
+	the sample (the sound generator's sweep, the DSP phase of the DSP block below, the mix), the interrupt
+	lines }, then the rest of the callback (the tick of the sound regression harness).
 	The ARM phase runs through the backend's Run() while dbg_arm7_armed is 0, and through the debug loop while
 	it is not. The debug loop is, per instruction: the entry of a pending FIQ (ARM7Backend::StepIrq), the
 	check below, the instruction (ARM7Backend::StepExec); it tests the ticks of the sample behind every

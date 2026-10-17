@@ -199,9 +199,6 @@ namespace
 			sh4_cpu = &sh4;
 			cdda_pairs = 0;
 
-			//sample by sample: the path that steps the DSP
-			settings.aica.NoBatch = true;
-
 			dsp = DSP::Create(&context, ram.data(), ram_size);
 			aica = AICA::Create(&stream, &sb, &asic, dsp, &context, ram.data(), ram_size);
 			sh4.SetA0Handler(A0H_AICA, aica);

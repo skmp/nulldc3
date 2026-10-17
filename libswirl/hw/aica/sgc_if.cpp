@@ -1293,132 +1293,6 @@ struct SGC_impl : SGC {
 	s16 cdda_sector[CDDA_SIZE] = { 0 };
 	u32 cdda_index = CDDA_SIZE << 1;
 
-
-	SampleType mxlr[64];
-
-	u32 samples_gen;
-
-	//no DSP for now in this version
-	void AICA_Sample32()
-	{
-		if (settings.aica.NoBatch)
-		{
-			return;
-		}
-
-		memset(mxlr, 0, sizeof(mxlr));
-
-		//Generate 32 samples for each channel, before moving to next channel
-		//much more cache efficient !
-		u32 sg = 0;
-		for (int ch = 0; ch < 64; ch++)
-		{
-			for (int i = 0; i < 32; i++)
-			{
-				SampleType oLeft, oRight, oDsp;
-				//stop working on this channel if its turned off ...
-				if (!Chans[ch].Step(oLeft, oRight, oDsp))
-					break;
-
-				sg++;
-
-				if (0 == (oLeft + oRight))
-				{
-					oLeft = oRight = oDsp;
-				}
-
-				mxlr[i * 2 + 0] += oLeft;
-				mxlr[i * 2 + 1] += oRight;
-			}
-		}
-#if HOST_OS==OS_WINDOWS
-		samples_gen += sg;
-#endif
-		//OK , generated all Channels  , now DSP/ect + final mix ;p
-		//CDDA EXTS input
-
-		for (int i = 0; i < 32; i++)
-		{
-			SampleType mixl, mixr;
-
-			mixl = mxlr[i * 2 + 0];
-			mixr = mxlr[i * 2 + 1];
-
-			if (cdda_index >= CDDA_SIZE)
-			{
-				cdda_index = 0;
-				libCore_CDDA_Sector(cdda_sector);
-			}
-			s32 EXTS0L = cdda_sector[cdda_index];
-			s32 EXTS0R = cdda_sector[cdda_index + 1];
-			cdda_index += 2;
-
-			//Final MIX ..
-			//Add CDDA / DSP effect(s)
-
-			//CDDA
-			if (settings.aica.CDDAMute == 0)
-			{
-				VOLPAN(EXTS0L, dsp_out_vol[16].EFSDL, dsp_out_vol[16].EFPAN, mixl, mixr);
-				VOLPAN(EXTS0R, dsp_out_vol[17].EFSDL, dsp_out_vol[17].EFPAN, mixl, mixr);
-			}
-
-			/*
-			no dsp for now -- needs special handling of oDSP for ch paraller version ...
-			if (settings.aica.DSPEnabled)
-			{
-				dsp_step();
-
-				for (int i=0;i<16;i++)
-				{
-					VOLPAN( (*(s16*)&DSPData->EFREG[i]) ,dsp_out_vol[i].EFSDL,dsp_out_vol[i].EFPAN,mixl,mixr);
-				}
-			}
-			*/
-
-			//Mono !
-			if (CommonData->Mono)
-			{
-				//Yay for mono =P
-				mixl += mixr;
-				mixr = mixl;
-			}
-
-			//MVOL !
-			//we want to make sure mix* is *At least* 23 bits wide here, so 64 bit mul !
-			u32 mvol = CommonData->MVOL;
-			s32 val = volume_lut[mvol];
-			mixl = (s32)FPMul((s64)mixl, val, 15);
-			mixr = (s32)FPMul((s64)mixr, val, 15);
-
-
-			if (CommonData->DAC18B)
-			{
-				//If 18 bit output , make it 16b :p
-				mixl = FPs(mixl, 2);
-				mixr = FPs(mixr, 2);
-			}
-
-			//Sample is ready ! clip/saturate and store :}
-
-#ifdef CLIP_WARN
-			if (((s16)mixl) != mixl)
-				printf("Clipped mixl %d\n", mixl);
-			if (((s16)mixr) != mixr)
-				printf("Clipped mixr %d\n", mixr);
-#endif
-
-			clip16(mixl);
-			clip16(mixr);
-
-			pl = mixl;
-			pr = mixr;
-
-			aica_hash_sample(mixr, mixl);
-			audio_stream->WriteSample(mixr, mixl);
-		}
-	}
-
 	void SampleSweep()
 	{
 		s32 sends[16] = { };
@@ -1450,19 +1324,11 @@ struct SGC_impl : SGC {
 		cdda_index += 2;
 
 		//CDDA
-		if (settings.aica.CDDAMute == 0)
-		{
-			VOLPAN(EXTS0L, dsp_out_vol[16].EFSDL, dsp_out_vol[16].EFPAN, mixl, mixr);
-			VOLPAN(EXTS0R, dsp_out_vol[17].EFSDL, dsp_out_vol[17].EFPAN, mixl, mixr);
+		VOLPAN(EXTS0L, dsp_out_vol[16].EFSDL, dsp_out_vol[16].EFPAN, mixl, mixr);
+		VOLPAN(EXTS0R, dsp_out_vol[17].EFSDL, dsp_out_vol[17].EFPAN, mixl, mixr);
 
-			dsp->EXTS[0] = (s16)EXTS0L;
-			dsp->EXTS[1] = (s16)EXTS0R;
-		}
-		else
-		{
-			dsp->EXTS[0] = 0;
-			dsp->EXTS[1] = 0;
-		}
+		dsp->EXTS[0] = (s16)EXTS0L;
+		dsp->EXTS[1] = (s16)EXTS0R;
 	}
 
 	void SampleMix()
@@ -1524,8 +1390,6 @@ struct SGC_impl : SGC {
 	{
 		REICAST_SA(cdda_sector, CDDA_SIZE);
 		REICAST_S(cdda_index);
-		REICAST_SA(mxlr, 64);
-		REICAST_S(samples_gen);
 
 		int i = 0;
 		int addr = 0;
@@ -1584,8 +1448,6 @@ struct SGC_impl : SGC {
 	{
 		REICAST_USA(cdda_sector, CDDA_SIZE);
 		REICAST_US(cdda_index);
-		REICAST_USA(mxlr, 64);
-		REICAST_US(samples_gen);
 
 		int i = 0;
 		int addr = 0;

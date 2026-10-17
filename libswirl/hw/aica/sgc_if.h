@@ -60,17 +60,15 @@ typedef s32 SampleType;
 #define clip16(x) clip(x,-32768,32767)
 
 struct SGC {
-	// The sound generator's part of one sample, sample by sample (config:aica.NoBatch), in two halves with the DSP's
-	// phase between them (AICA::SampleSweep, DSP::RunPhase, AICA::SampleMix). SampleSweep: the 64 channels step,
-	// their direct outputs and the CD-DA pair make the direct mix, which the sound generator keeps; the sends to
-	// the DSP (AicaDsp::SweepBegin, then for each bus a channel's ISEL names one AicaDsp::MixsSend of the sum of
-	// the sends to it, oDsp << 4); the CD-DA pair into AicaDsp::EXTS. SampleMix: EFREG of the DSP through
-	// EFSDL / EFPAN into the kept mix, mono, MVOL, the DAC, the harness's fold of the pair, the audio stream
+	// The sound generator's part of one sample, in two halves with the DSP's phase between them
+	// (AICA::SampleSweep, DSP::RunPhase, AICA::SampleMix). SampleSweep: the 64 channels step, their direct outputs
+	// and the CD-DA pair make the direct mix, which the sound generator keeps; the sends to the DSP
+	// (AicaDsp::SweepBegin, then for each bus a channel's ISEL names one AicaDsp::MixsSend of the sum of the sends
+	// to it, oDsp << 4); the CD-DA pair into AicaDsp::EXTS. SampleMix: EFREG of the DSP through EFSDL / EFPAN into
+	// the kept mix, mono, MVOL, the DAC; the pair goes to the audio stream, which is also the speed limit of the
+	// emulator (LimitFPS), and the harness folds it
 	virtual void SampleSweep() = 0;
 	virtual void SampleMix() = 0;
-
-	// The batch render: the 32 samples of a sound burst at its end, without the DSP
-	virtual void AICA_Sample32() = 0;
 
 	virtual void WriteChannelReg8(u32 channel, u32 reg) = 0;
 

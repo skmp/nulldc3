@@ -54,7 +54,6 @@ struct NoChannels : SGC
 
 	void SampleSweep() { }
 	void SampleMix() { }
-	void AICA_Sample32() { }
 	void WriteChannelReg8(u32, u32) { }
 	void ReadCommonReg(u32, bool) { }
 	void WriteCommonReg8(u32 reg, u32 data) { aica_reg[reg] = (u8)data; }

@@ -6,7 +6,7 @@
 	tests/debugger/regs/aica): no SH4, no ARM7, no scheduler.
 
 	The register accesses are those of a CPU: AICA::ReadReg / AICA::WriteReg, with the AICA's byte and slot
-	handling. A sample is libAICA_TimeStep(), sample by sample (config:aica.NoBatch on). The wave memory is the
+	handling. A sample is libAICA_TimeStep(), the emulator's time step of the AICA. The wave memory is the
 	device's. What the sample hands to the audio stream is kept, and the CD-DA pairs come from a stand-in that,
 	when it is on, gives a pair of its own in every sample, none of its halves 0.
 
