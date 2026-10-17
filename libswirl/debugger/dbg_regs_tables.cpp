@@ -37,8 +37,7 @@ static const Register dc_regs[] = {
 	{ "BUILD",  0, 0, kNoAddr, MakeKey(kSrcText, kTextBuild) },
 };
 
-// A node lists the events this build raises. EV_DEBUGGER_DSP_FORCED names this node and is not listed: nothing
-// raises it (per-sample forcing of the DSP is transitional and not built).
+// A node lists the events this build raises.
 static const uint8_t dc_events[] = { EV_SYSTEM_RESET, EV_SYSTEM_STATE, EV_DEBUGGER_ENGINE, EV_DEBUGGER_NOTE };
 
 /*

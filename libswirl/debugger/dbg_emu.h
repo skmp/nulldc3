@@ -145,8 +145,6 @@ enum : u32 {
 										// recompiler, whatever is armed at that stop (a step and a temporary
 										// breakpoint end before the stop is published). Never set where that
 										// backend is the interpreter, which is every x86-64 build
-	NOTICE_DSP_FORCED          = 8,		// the per-sample DSP path is forced on by the debugger. Transitional: it can
-										// be set only while the AICA has a path without the DSP, and goes with it
 };
 const u32 kNoticeLineMax = 200;			// characters of one notice line
 

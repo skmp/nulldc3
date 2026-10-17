@@ -921,7 +921,8 @@ DBG_SELFTEST(core_tables, "core.tables")
 	// the order of the checks of breakpoints.add
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.no.such.event" }, { "kind", "event" } })) == kErrNotSupported, "an event that no node lists: -32004");
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.no.such.event" } })) == kErrNotSupported, "the same without kind (no address: an event breakpoint)");
-	Check(InBand(Send("breakpoints.add", { { "event", "dc.debugger.dsp_forced" }, { "kind", "event" } })) == kErrNotSupported, "a row of the event table that no node lists: -32004");
+	Check(InBand(Send("breakpoints.add", { { "event", "dc.debugger.dsp_forced" }, { "kind", "event" } })) == kErrNotSupported && FindEvent("dc.debugger.dsp_forced") == EV_ID_COUNT,
+		"a name that is in no row of the event table, the one the forcing of the DSP had: -32004");
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.sh4.cpu.pc" }, { "kind", "event" } })) == kErrNotSupported, "the event of a code breakpoint is no event: -32004");
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.holly.core.vblank" }, { "kind", "code" }, { "address", 0 } })) == kErrNotSupported,
 		"a code breakpoint on a name that is no target's: -32004");

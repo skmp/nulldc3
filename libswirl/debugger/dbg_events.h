@@ -54,7 +54,6 @@
 	X(EV_SYSTEM_RESET,        "dc.system.reset",              "system",   "info", EVR_LOW,  "dc")            /* libswirl.cpp (E4a) */ \
 	X(EV_SYSTEM_STATE,        "dc.system.state",              "system",   "info", EVR_LOW,  "dc")            /* libswirl.cpp: lifetime changes, load state (E4a) */ \
 	X(EV_DEBUGGER_ENGINE,     "dc.debugger.engine",           "debugger", "info", EVR_LOW,  "dc")            /* debugger/dbg_emu.cpp: switch to or from the fallback loop of the SH4 (E4a); the ARM7 starts or stops running on its interpreter fallback (M2) */ \
-	X(EV_DEBUGGER_DSP_FORCED, "dc.debugger.dsp_forced",       "debugger", "info", EVR_LOW,  "dc")            /* nothing raises it: per-sample forcing is transitional and not built; no node lists it */ \
 	X(EV_DEBUGGER_NOTE,       "dc.debugger.note",             "debugger", "info", EVR_LOW,  "dc")            /* debugger/dbg_core.cpp: the grace period expired (appended with the gates closed), a client of another protocol version (E5) */
 
 namespace dbg {

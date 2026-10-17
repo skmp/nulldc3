@@ -583,9 +583,6 @@ std::string NoticeText(u32 notice)
 	if (notice & NOTICE_ARM7_FALLBACK)
 		line("ARM7 runs on the interpreter fallback: timing differs");
 
-	if (notice & NOTICE_DSP_FORCED)
-		line("the per-sample DSP path is forced on by the debugger");
-
 	return text;
 }
 
