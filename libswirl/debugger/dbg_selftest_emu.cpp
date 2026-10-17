@@ -46,6 +46,7 @@
 #include "hw/sh4/sh4_sched.h"
 #include "hw/sh4/sh4_interpreter.h"
 #include "hw/arm7/SoundCPU.h"
+#include "hw/aica/dsp.h"
 
 #include "../../tests/debugger/selftest/emu_guest.inc"
 
@@ -2772,6 +2773,7 @@ struct {
 	u32 stop0, pc0, n;
 	u32 bad;
 	bool can;
+	u32 dspStep0;
 	std::atomic<bool> otherFailed { false };
 
 	// a host stop during a step
@@ -2800,6 +2802,15 @@ bool StepArm()
 // The five instructions in front of the SLEEP of g_sleep_masked
 const u32 kStepsToSleep = 5;
 
+// The step the DSP stands in front of (DSP::DebugGetState); 128, which is no step, when it cannot be given
+u32 DspStep()
+{
+	DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
+	DspDebugState state = { };
+
+	return dsp != nullptr && dsp->DebugGetState(&state) ? state.step : 128;
+}
+
 }
 
 DBG_SELFTEST_GUEST(emu_step, "emu.step")
@@ -2809,20 +2820,62 @@ DBG_SELFTEST_GUEST(emu_step, "emu.step")
 	switch (sp.phase)
 	{
 	case 0:
-	{
 		if (!Ready(stop))
 			return false;
 
 		Goto(EMU_G_spin);
 
 		// The ARM7 answers by its state: the guest of this session never releases it. (A step of a clocked ARM7
-		// is armed by the same call: the session "arm7" has those.) The DSP has no run control
+		// is armed by the same call: the session "arm7" has those.)
 		Check(!sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU)->DebugEnabled() && emu::Step(Target::Arm7, StepKind::Into) == kErrNotClocked
 			&& emu::Step(Target::Arm7, StepKind::Over) == kErrNotClocked && emu::Step(Target::Arm7, StepKind::Out) == kErrNotClocked,
 			"the ARM7 is held in reset: a step, a step over and a step out of it answer -32012");
-		Check(emu::Step(Target::Dsp, StepKind::Into) == kErrNotSupported && emu::Step(Target::Dsp, StepKind::Over) == kErrNotSupported
-			&& emu::Step(Target::Dsp, StepKind::Out) == kErrNotSupported, "the DSP has no steps: -32004");
 
+		// The DSP as emu::TargetSteps() has it. Without run control its three steps are -32004. With it a step over
+		// and a step out are -32004 still, and a step is taken with the ARM7 held, since the AICA is clocked
+		// whatever ARMRST says: one step of the DSP, one stop that says step, and no Running
+		if (!emu::TargetSteps(Target::Dsp))
+		{
+			Check(emu::Step(Target::Dsp, StepKind::Into) == kErrNotSupported && emu::Step(Target::Dsp, StepKind::Over) == kErrNotSupported
+				&& emu::Step(Target::Dsp, StepKind::Out) == kErrNotSupported, "the DSP has no steps: -32004");
+		}
+		else
+		{
+			Check(emu::Step(Target::Dsp, StepKind::Over) == kErrNotSupported && emu::Step(Target::Dsp, StepKind::Out) == kErrNotSupported,
+				"the DSP steps: a step over and a step out of it answer -32004");
+
+			TakeSeen();
+			sp.stop0 = stop.stopId;
+			sp.dspStep0 = DspStep();
+
+			const int rv = emu::Step(Target::Dsp, StepKind::Into);
+
+			Check(rv == 0, "a step of the DSP with the ARM7 held is armed (%d)", rv);
+
+			if (rv == 0)
+			{
+				sp.phase = 8;
+				return false;
+			}
+		}
+		[[fallthrough]];
+
+	case 8:
+		if (sp.phase == 8)
+		{
+			std::vector<Seen> list = TakeSeen();
+			const u32 at = DspStep();
+
+			Check(stop.cause == StopCause::Step && stop.stopId == sp.stop0 + 1 && stop.lifetime == Lifetime::Parked && at == (sp.dspStep0 + 1) % 128
+				&& SeenIs(list, { { Lifetime::Parked, StopCause::Step } }),
+				"a step of the DSP with the ARM7 held: one stop that says step (\"%s\"), the DSP in front of step %u after %u, and no Running in between: %s",
+				StopCauseName(stop.cause), at, sp.dspStep0, SeenText(list).c_str());
+
+			// the steps of the SH4 below start where they start without it
+			Goto(EMU_G_spin);
+		}
+
+	{
 		const char* why = "";
 		int rv = emu::Step(Target::Sh4, StepKind::Into, &why);
 

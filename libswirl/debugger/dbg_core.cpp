@@ -364,7 +364,7 @@ void PushPresence()
 // Inside a table call that changed a breakpoint: the enabled sets, all of them, and what follows them
 void PushBreakpoints()
 {
-	std::vector<u32> sh4_ids, sh4_addrs, arm7_ids, arm7_addrs, event_ids;
+	std::vector<u32> sh4_ids, sh4_addrs, arm7_ids, arm7_addrs, dsp_ids, dsp_steps, event_ids;
 	std::vector<u8> events;
 
 	for (const auto& entry : breakpoints)
@@ -389,10 +389,17 @@ void PushBreakpoints()
 			arm7_ids.push_back(bp.id);
 			arm7_addrs.push_back(bp.address);
 		}
+		else if (bp.target == Target::Dsp)
+		{
+			// the address of a code breakpoint of the DSP is its step, 0..127
+			dsp_ids.push_back(bp.id);
+			dsp_steps.push_back(bp.address);
+		}
 	}
 
 	emu::SetSh4Breakpoints(sh4_ids.data(), sh4_addrs.data(), (u32)sh4_ids.size());
 	emu::SetArm7Breakpoints(arm7_ids.data(), arm7_addrs.data(), (u32)arm7_ids.size());
+	emu::SetDspBreakpoints(dsp_ids.data(), dsp_steps.data(), (u32)dsp_ids.size());
 	emu::SetEventBreakpoints(event_ids.data(), events.data(), (u32)event_ids.size());
 
 	PushPresence();
@@ -2566,6 +2573,10 @@ void Step(const Request& req, Outcome& out, StepKind kind)
 		return Fail(out, kErrCannotStep, std::string("cannot step: ") + (job->why != nullptr ? job->why : "a precondition failed"));
 
 	case kErrNotSupported:
+		// the DSP steps into only, on every backend (M3-ROUND, M3-D30)
+		if (t == Target::Dsp && kind != StepKind::Into)
+			return Unsupported(out, std::string("step over and step out of target ") + target->id);
+
 		return Unsupported(out, std::string("stepping target ") + target->id + " on this backend");
 
 	default:

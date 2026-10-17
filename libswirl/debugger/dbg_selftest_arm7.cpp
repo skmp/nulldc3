@@ -2474,7 +2474,8 @@ BOUNDED_GUEST_TEST(arm7_step_unclocked, "arm7.step.unclocked")
 }
 
 /*
-	arm7.step.notclocked: with the ARM7 held in reset the three steps answer -32012, and arm nothing
+	arm7.step.notclocked: with the ARM7 held in reset the three steps answer -32012, and arm nothing; the DSP's
+	step over and step out answer -32004 (and its step too, while it has no run control)
 */
 namespace {
 
@@ -2500,9 +2501,20 @@ BOUNDED_GUEST_TEST(arm7_step_notclocked, "arm7.step.notclocked")
 	Check(!ArmClocked() && arm7::StepCheck() == kErrNotClocked, "the guest holds its ARM7: dbg::arm7::StepCheck() answers %d", arm7::StepCheck());
 	Check(emu::Step(Target::Arm7, StepKind::Into) == kErrNotClocked && emu::Step(Target::Arm7, StepKind::Over) == kErrNotClocked
 		&& emu::Step(Target::Arm7, StepKind::Out) == kErrNotClocked, "a step, a step over and a step out of the ARM7 answer -32012");
-	Check(emu::Step(Target::Dsp, StepKind::Into) == kErrNotSupported && emu::Step(Target::Dsp, StepKind::Over) == kErrNotSupported
-		&& emu::Step(Target::Dsp, StepKind::Out) == kErrNotSupported && !emu::TargetSteps(Target::Dsp) && emu::TargetSteps(Target::Arm7)
-		&& emu::TargetSteps(Target::Sh4), "the DSP has no steps: -32004; the SH4 and the ARM7 have");
+	// The DSP as emu::TargetSteps() has it: without run control its three steps are -32004; with it a step over and
+	// a step out are -32004 still, and a step is taken whether the ARM7 is held or not (the DSP's own tests hold
+	// that step: this one arms nothing)
+	if (!emu::TargetSteps(Target::Dsp))
+	{
+		Check(emu::Step(Target::Dsp, StepKind::Into) == kErrNotSupported && emu::Step(Target::Dsp, StepKind::Over) == kErrNotSupported
+			&& emu::Step(Target::Dsp, StepKind::Out) == kErrNotSupported && emu::TargetSteps(Target::Arm7) && emu::TargetSteps(Target::Sh4),
+			"the DSP has no steps: -32004; the SH4 and the ARM7 have");
+	}
+	else
+	{
+		Check(emu::Step(Target::Dsp, StepKind::Over) == kErrNotSupported && emu::Step(Target::Dsp, StepKind::Out) == kErrNotSupported
+			&& emu::TargetSteps(Target::Arm7) && emu::TargetSteps(Target::Sh4), "the DSP steps: a step over and a step out of it are -32004, with the ARM7 held as always");
+	}
 	Check(dbg_arm7_armed == 0 && !arm7::test::GetState().step, "nothing was armed");
 
 	// nothing was armed in the park loop either: a resume is taken
