@@ -578,7 +578,8 @@ static const char* const sgc_actions[]  = { "sgc" };
 
 /*
 	dc.aica.dsp. STEP is the program step that executes next; MDEC_CT is the counter that counts down from the
-	ring buffer length; RBP and RBL are the fields of the common register 0x2804 (12 and 2 bits of it).
+	ring buffer length; RBP and RBL are fields of the word of 0x2804 as the DSP uses it (DspDebugState::rbpl),
+	12 and 2 bits of it.
 	The widths are those of the registers: MDEC_CT has 16 bits on the hardware. The emulator keeps the counter
 	as a 32-bit value and reloads it with the ring buffer length, which can be 0x10000, so the register shows
 	the counter modulo 2^16 and can read 0x0000 for one sample.
@@ -595,7 +596,8 @@ static const char* const dsp_actions[] = { "dsp-disassembly" };
 /*
 	The register file of the AICA, by field. A register of the file is a word of 16 bits in the low half of four
 	bytes; addr is the area 0 address of the word a row is in (of its first word, for a row of two). The rows are
-	read through AICA::DebugReadRegs, which gives the file as a read by the SH4 delivers it and changes nothing.
+	read through AICA::DebugReadRegs, which gives the file as a read by the SH4 delivers it and changes nothing,
+	but for the word of 0x2804 (below).
 
 	Names are those of the data sheet, which are the members of the structs of hw/aica (CommonData_struct in
 	aica.h, ChannelCommonData in sgc_if.cpp) in upper case, without the '$' of two of them. A quantity that the
@@ -612,6 +614,8 @@ static const char* const dsp_actions[] = { "dsp-disassembly" };
 /*
 	dc.aica.common: the fields of the 23 words of the common block, 0x2800 to 0x2C00.
 
+	  RBP, RBL, TESTB0      the word of 0x2804 as the DSP uses it (DspDebugState::rbpl, DSP::DebugGetState), not
+	                        what a read by the SH4 gives: the two are equal while the old DSP runs
 	  MIEMP, MOEMP          set, as every read has them
 	  EG, SGC, LP, CA       of the channel MSLC selects, worked out at the read; the read of the debugger does not
 	                        clear the loop flag LP, as a read by the guest does
