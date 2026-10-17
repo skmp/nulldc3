@@ -26,12 +26,15 @@
 #	    debugger.sound.ignored.dsptest                      config:aica.NoBatch, which an older build read and
 #	                                                        wrote into every configuration file, changes nothing:
 #	                                                        a run with it, no or yes, prints the line without it
-#	    debugger.sound.names                                no test of this build is named after a render of the
-#	                                                        sound (.batch, .persample): there is one way to make
-#	                                                        the sound
+#	    debugger.sound.names                                no test of the sound or of the session arm7 of the
+#	                                                        selftests is named after a render of the sound
+#	                                                        (.batch, .persample): there is one way to make the
+#	                                                        sound
 #	    debugger.sound.runner                               soundlines.py fails a run that was not made on the SH4
-#	                                                        engine it was asked for (soundlines_test.py, on
-#	                                                        stand-ins for the emulator: no emulator is run)
+#	                                                        engine it was asked for, and its mode names fails
+#	                                                        those names and no other test's (soundlines_test.py,
+#	                                                        on stand-ins for the emulator and for a build: no
+#	                                                        emulator is run)
 #
 #	Every run of these tests has to say that it was made on the engine it was asked for. An emulator without a
 #	recompiler (-DNULLDC_EMULATOR= with a TARGET_NO_REC build, or a generic host) runs config:Dynarec.Enabled=yes

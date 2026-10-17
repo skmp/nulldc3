@@ -55,9 +55,11 @@ README.md has the modes:
               is the line of the guest, in the fields of --fields (see mode_release)
     files     the committed files of the guest are those of its manifest, SHA256SUMS; and where the assemblers
               are, gen.sh --check: they are what the sources give
-    names     the tests of a build (the CTestTestfile.cmake files of --build): no name has a part batch or
-              persample. The sound was made in batches of 32 samples by default and sample by sample with
-              config:aica.NoBatch=yes until that render went, and the tests of both had it in their names
+    names     the tests of a build (the CTestTestfile.cmake files of --build): no test of the sound
+              (debugger.sound.*) or of the session arm7 of the selftests (debugger.selftest.arm7*) has a part
+              batch or persample. The sound was made in batches of 32 samples by default and sample by sample with
+              config:aica.NoBatch=yes until that render went, and the tests of both had it in their names. Other
+              tests may: there the words name something else (a batch of requests of the debugger's protocol)
 """
 
 import argparse
@@ -81,7 +83,7 @@ HASH_FIELDS = ('reason', 'vblanks', 'hash', 'sh4', 'sched', 'ram', 'vram', 'aram
 
 ENGINES = ('jit', 'interp')
 
-# the parts of a test name that named the two renders of the sound (mode names)
+# the parts of a test name that named the two renders of the sound (mode names), in the tests that had them
 RENDER_PARTS = ('batch', 'persample')
 
 # what the emulator thread prints when it has chosen the engine of the SH4 (dc_run of libswirl/libswirl.cpp)
@@ -603,16 +605,27 @@ def build_tests(directory, names):
     return names
 
 
+def render_named(name):
+    """A test named after a render of the sound: a test of the sound (debugger.sound.*) or of the session arm7 of the
+    selftests (debugger.selftest.arm7, debugger.selftest.arm7.*), where the tests of the two renders were, with a
+    part batch or persample behind those first parts. Another test's name may have the words: they name something
+    else there (a batch of requests of the debugger's protocol)."""
+    parts = name.split('.')
+    ours = parts[:2] == ['debugger', 'sound'] or parts[:3] == ['debugger', 'selftest', 'arm7']
+    return ours and bool(set(parts[2:]) & set(RENDER_PARTS))
+
+
 def mode_names(args, lines):
-    """No test of the build is named after a render of the sound: the tests that ran in both had .batch or
-    .persample in their names, and those that stayed lost it (a name with a part batch or persample fails)."""
+    """No test of the sound or of the session arm7 of the selftests is named after a render of the sound: the tests
+    that ran in both had .batch or .persample in their names, and those that stayed lost it (render_named)."""
     check(args.build, 'the mode names needs --build')
     names = build_tests(os.path.abspath(args.build), [])
     sound = [name for name in names if name.startswith('debugger.sound.')]
     check(sound, 'the build in %s registers no test debugger.sound.*: it is not the build of the tests' % args.build)
-    old = [name for name in names if set(name.split('.')) & set(RENDER_PARTS)]
+    old = [name for name in names if render_named(name)]
     check(not old, '%d of the %d tests are named after a render of the sound: %s' % (len(old), len(names), ', '.join(old)))
-    print('%d tests, %d of them debugger.sound.*: none has a part %s' % (len(names), len(sound), ' or '.join(RENDER_PARTS)))
+    print('%d tests, %d of them debugger.sound.*: none of those and of debugger.selftest.arm7* has a part %s'
+          % (len(names), len(sound), ' or '.join(RENDER_PARTS)))
 
 
 def main():

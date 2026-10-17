@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""What soundlines.py makes of a run that was not made on the engine it was asked for, on stand-ins for the emulator.
+"""What soundlines.py makes of a run that was not made on the engine it was asked for, on stand-ins for the emulator;
+and what its mode names makes of the names of a build, on stand-ins for a build directory.
 
     soundlines_test.py --work <dir>
 
@@ -21,6 +22,12 @@ the harness, an exit line with a state hash. Its kind says which engine it claim
 
 Each case is one call of soundlines.py as a test makes it, with the exit code and the text it has to end with.
 The cases on the kind asked pass: what fails the other kinds is the engine, and nothing else of the stand-in.
+
+A stand-in for a build directory is a tree of CTestTestfile.cmake files, as CMake writes them (add_test with the
+name in brackets or in quotes, subdirs), that register the names of the case. The names of the tests of the sound
+(debugger.sound.*) and of the session arm7 of the selftests (debugger.selftest.arm7*) must not have a part batch or
+persample, the renders their tests were named after; other tests may have those words, which name something else
+there (a batch of requests of the debugger's protocol), and a build of the tests with such a test passes.
 """
 
 import argparse
@@ -92,6 +99,43 @@ CASES = [
 ]
 
 
+# (what the build is, the names of its directories: the top one first, each behind the one before, the exit code,
+# text of the output)
+NAME_CASES = [
+    ('the names of this build, and other tests with the words',
+     [['debugger.sound.lines.dsptest.jit', 'debugger.selftest.arm7', 'debugger.selftest.arm7.interp', 'debugger.selftest.arm7.fallback'],
+      ['debugger.sound.neutral.idlebp.jit', 'debugger.net.batch', 'devtools.rpc.batch.call'],
+      ['debugger.selftest.writes.persample', 'arm7.persample.vectors', 'batch']],
+     0, '10 tests, 2 of them debugger.sound.*: none of those and of debugger.selftest.arm7* has a part batch or persample'),
+    ('a sound line of the batch render',
+     [['debugger.sound.lines.dsptest.jit'], ['debugger.net.batch', 'debugger.sound.lines.dsptest.jit.batch']],
+     1, 'FAIL: 1 of the 3 tests are named after a render of the sound: debugger.sound.lines.dsptest.jit.batch'),
+    ('a neutrality test of the per-sample render, two directories down',
+     [['debugger.sound.lines.dsptest.jit'], ['debugger.contract.m2'], ['debugger.sound.neutral.idlebp.jit.persample']],
+     1, 'FAIL: 1 of the 3 tests are named after a render of the sound: debugger.sound.neutral.idlebp.jit.persample'),
+    ('the session arm7 of the per-sample render',
+     [['debugger.sound.lines.dsptest.jit', 'debugger.selftest.arm7', 'debugger.selftest.arm7.persample.interp']],
+     1, 'FAIL: 1 of the 3 tests are named after a render of the sound: debugger.selftest.arm7.persample.interp'),
+    ('no test of the sound',
+     [['debugger.selftest.arm7', 'debugger.net.batch']],
+     1, 'registers no test debugger.sound.*: it is not the build of the tests'),
+]
+
+
+def name_build(directory, levels):
+    """A stand-in for a build directory: levels[0] registered in directory, levels[1] in its subdirectory, ..."""
+    os.makedirs(directory)
+    with open(os.path.join(directory, 'CTestTestfile.cmake'), 'w', encoding='utf-8') as f:
+        f.write('# CMake generated Testfile for a stand-in\n')
+        for n, name in enumerate(levels[0]):
+            quoted = '"%s"' % name if n % 2 else '[=[%s]=]' % name
+            f.write('add_test(%s "/bin/true" "--case" "%d")\nset_tests_properties(%s PROPERTIES  TIMEOUT "120")\n' % (quoted, n, quoted))
+        if len(levels) > 1:
+            f.write('subdirs("sub")\n')
+    if len(levels) > 1:
+        name_build(os.path.join(directory, 'sub'), levels[1:])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--work', required=True)
@@ -131,7 +175,28 @@ def main():
         else:
             print('ok: %s: %s' % (what, 'passes' if code == 0 else 'fails, "%s"' % text))
 
-    print('%d cases, %d failed' % (len(CASES), failed))
+    for n, (what, levels, code, text) in enumerate(NAME_CASES, 1):
+        build = os.path.join(work, 'names-%d' % n)
+        name_build(build, levels)
+        command = [sys.executable, os.path.join(HERE, 'soundlines.py'), '--mode', 'names', '--build', build]
+        done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
+        said = done.stdout.decode('utf-8', 'replace')
+
+        what = 'the names of a build, %s' % what
+        wrong = []
+        if done.returncode != code:
+            wrong.append('exit code %d, not %d' % (done.returncode, code))
+        if text not in said:
+            wrong.append('the output has no "%s"' % text)
+        if ('PASS' in said.splitlines()) != (code == 0):
+            wrong.append('the output has a line PASS' if code else 'the output has no line PASS')
+        if wrong:
+            failed += 1
+            print('FAILED: %s: %s\n--- the output ---\n%s' % (what, '; '.join(wrong), said))
+        else:
+            print('ok: %s: %s' % (what, 'passes' if code == 0 else 'fails, "%s"' % text))
+
+    print('%d cases, %d failed' % (len(CASES) + len(NAME_CASES), failed))
     if failed:
         print('the output of every case is in ' + work)
         return 1
