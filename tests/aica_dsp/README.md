@@ -230,10 +230,11 @@ neither half 0 (`EmuCddaPair`).
   0x1234; `reset`, the DSP device's `Reset(false)` behind a program that ran leaves the core's blob that of a core
   after `Reset()`; `save-load`, the DSP device's save state, a CPU write and a sample, the save state loaded:
   the core's blob of before, and the save state is the core's blob, `StateSize()` bytes; `refused-blob`, a save
-  state whose DSP part has another header resets the DSP; `save-bus`, a channel keyed with IMXL 15 and ISEL 6, the
-  AICA's and the DSP's save states, ISEL written with 11 and a sample (it sends to bus 11), the states loaded: the
-  two samples behind the load send to bus 6 and to no bus 11, and the core is that of a machine that ran the same
-  samples with no save, write and load.
+  state whose DSP part has another header resets the DSP; `save-bus`, a channel keyed with IMXL 15 and ISEL 13, the
+  AICA's and the DSP's save states, ISEL written with 6 and a sample (it sends to bus 6), the states loaded: the
+  two samples behind the load send to bus 13 and to no bus 6, and the core is that of a machine that ran the same
+  samples with no save, write and load. 13 has bit 3 set and differs from 6 in the low three bits: a load that kept
+  three bits of the bus would send to bus 5.
 
 ## Looking at a failure
 

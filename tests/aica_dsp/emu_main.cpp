@@ -732,12 +732,14 @@ namespace state
 			delete emu;
 		}
 
-		//(4) The AICA's save state keeps the DSP's bus each channel sends to (save state V5: its ISEL). Channel 0 keyed
+		//(4) The AICA's save state keeps the DSP's bus each channel sends to (its ISEL, all four bits). Channel 0 keyed
 		//with IMXL 15 and ISEL k; the AICA's and the DSP's states saved; the channel's ISEL written with j and a
 		//sample: it sends to j; both states loaded: in the two samples behind the load it sends to k again, and no
-		//channel to j, and the DSP has what a machine has that ran the same samples with no save, write and load
+		//channel to j, and the DSP has what a machine has that ran the same samples with no save, write and load.
+		//k has bit 3 set and j differs from it in the low three bits: a load that kept three bits of the bus would
+		//send to k & 7, another bus than both
 		{
-			const uint32_t k = 6, j = 11, sa = 0x10000;
+			const uint32_t k = 13, j = 6, sa = 0x10000;
 			std::vector<uint8_t> straight;
 			uint32_t ok = 0;
 
