@@ -75,11 +75,9 @@
 		5312CF6024081FE600C67C85 /* arm7_jit_virt.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5312CBEF24081FE500C67C85 /* arm7_jit_virt.cpp */; };
 		5312CF6324081FE600C67C85 /* SoundCPU.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5312CBF424081FE500C67C85 /* SoundCPU.cpp */; };
 		5312CF6424081FE600C67C85 /* arm7_jit_virt_arm64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5312CBF524081FE500C67C85 /* arm7_jit_virt_arm64.cpp */; };
-		5312CF6524081FE600C67C85 /* dsp_arm64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5312CBFB24081FE500C67C85 /* dsp_arm64.cpp */; };
 		5312CF6624081FE600C67C85 /* dsp.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5312CBFC24081FE500C67C85 /* dsp.cpp */; };
 		5312CF6824081FE600C67C85 /* aica_mmio.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5312CBFF24081FE500C67C85 /* aica_mmio.cpp */; };
 		5312CF6924081FE600C67C85 /* aica.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5312CC0024081FE500C67C85 /* aica.cpp */; };
-		5312CF6A24081FE600C67C85 /* dsp_interp.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5312CC0324081FE500C67C85 /* dsp_interp.cpp */; };
 		5312CF6B24081FE600C67C85 /* sgc_if.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5312CC0524081FE500C67C85 /* sgc_if.cpp */; };
 		5312CF6C24081FE600C67C85 /* _vmem.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5312CC0924081FE500C67C85 /* _vmem.cpp */; };
 		5312CF6D24081FE600C67C85 /* lgpl in Resources */ = {isa = PBXBuildFile; fileRef = 5312CC0B24081FE500C67C85 /* lgpl */; };
@@ -333,7 +331,6 @@
 		5317CF4C24086456008A1850 /* nixprof.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5312CC9024081FE500C67C85 /* nixprof.cpp */; };
 		5337C6512433CF3D0054BA28 /* ConsoleViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 5337C6502433CF3D0054BA28 /* ConsoleViewController.m */; };
 		5337C6542433E94B0054BA28 /* MainMenu.m in Sources */ = {isa = PBXBuildFile; fileRef = 5337C6532433E94B0054BA28 /* MainMenu.m */; };
-		537E069D242699A10011E92A /* dsp_helpers.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 537E069C242699A10011E92A /* dsp_helpers.cpp */; };
 		5381D6D5240887FD0078E797 /* tacore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5381D65A240887FC0078E797 /* tacore.cpp */; };
 		5381D6D8240887FD0078E797 /* xbrz.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5381D663240887FC0078E797 /* xbrz.cpp */; };
 		5381D6EC240887FD0078E797 /* pico_device.c in Sources */ = {isa = PBXBuildFile; fileRef = 5381D69C240887FC0078E797 /* pico_device.c */; };
@@ -533,15 +530,12 @@
 		5312CBF624081FE500C67C85 /* arm7_jit_virt_backend.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = arm7_jit_virt_backend.h; sourceTree = "<group>"; };
 		5312CBF724081FE500C67C85 /* arm-new.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "arm-new.h"; sourceTree = "<group>"; };
 		5312CBF924081FE500C67C85 /* aica.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = aica.h; sourceTree = "<group>"; };
-		5312CBFA24081FE500C67C85 /* dsp_backend.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = dsp_backend.h; sourceTree = "<group>"; };
-		5312CBFB24081FE500C67C85 /* dsp_arm64.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = dsp_arm64.cpp; sourceTree = "<group>"; };
 		5312CBFC24081FE500C67C85 /* dsp.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = dsp.cpp; sourceTree = "<group>"; };
 		5312CBFD24081FE500C67C85 /* aica_mmio.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = aica_mmio.h; sourceTree = "<group>"; };
 		5312CBFF24081FE500C67C85 /* aica_mmio.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = aica_mmio.cpp; sourceTree = "<group>"; };
 		5312CC0024081FE500C67C85 /* aica.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = aica.cpp; sourceTree = "<group>"; };
 		5312CC0124081FE500C67C85 /* aica_mem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = aica_mem.h; sourceTree = "<group>"; };
 		5312CC0224081FE500C67C85 /* dsp.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = dsp.h; sourceTree = "<group>"; };
-		5312CC0324081FE500C67C85 /* dsp_interp.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = dsp_interp.cpp; sourceTree = "<group>"; };
 		5312CC0424081FE500C67C85 /* sgc_if.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = sgc_if.h; sourceTree = "<group>"; };
 		5312CC0524081FE500C67C85 /* sgc_if.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = sgc_if.cpp; sourceTree = "<group>"; };
 		5312CC0624081FE500C67C85 /* StaticForward.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = StaticForward.h; sourceTree = "<group>"; };
@@ -1090,7 +1084,6 @@
 		5337C6502433CF3D0054BA28 /* ConsoleViewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ConsoleViewController.m; sourceTree = "<group>"; };
 		5337C6522433E94B0054BA28 /* MainMenu.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MainMenu.h; sourceTree = "<group>"; };
 		5337C6532433E94B0054BA28 /* MainMenu.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = MainMenu.m; sourceTree = "<group>"; };
-		537E069C242699A10011E92A /* dsp_helpers.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = dsp_helpers.cpp; sourceTree = "<group>"; };
 		5381D65A240887FC0078E797 /* tacore.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = tacore.cpp; sourceTree = "<group>"; };
 		5381D65B240887FC0078E797 /* tacore.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = tacore.h; sourceTree = "<group>"; };
 		5381D65E240887FC0078E797 /* xbrz.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = xbrz.h; sourceTree = "<group>"; };
@@ -1555,16 +1548,12 @@
 			isa = PBXGroup;
 			children = (
 				5312CBF924081FE500C67C85 /* aica.h */,
-				5312CBFA24081FE500C67C85 /* dsp_backend.h */,
-				5312CBFB24081FE500C67C85 /* dsp_arm64.cpp */,
-				537E069C242699A10011E92A /* dsp_helpers.cpp */,
 				5312CBFC24081FE500C67C85 /* dsp.cpp */,
 				5312CBFD24081FE500C67C85 /* aica_mmio.h */,
 				5312CBFF24081FE500C67C85 /* aica_mmio.cpp */,
 				5312CC0024081FE500C67C85 /* aica.cpp */,
 				5312CC0124081FE500C67C85 /* aica_mem.h */,
 				5312CC0224081FE500C67C85 /* dsp.h */,
-				5312CC0324081FE500C67C85 /* dsp_interp.cpp */,
 				5312CC0424081FE500C67C85 /* sgc_if.h */,
 				5312CC0524081FE500C67C85 /* sgc_if.cpp */,
 			);
@@ -3214,7 +3203,6 @@
 				5312CFBA24081FE600C67C85 /* simulator-aarch64.cc in Sources */,
 				5312D03724081FE600C67C85 /* lparser.c in Sources */,
 				5312D01C24081FE600C67C85 /* lstate.c in Sources */,
-				537E069D242699A10011E92A /* dsp_helpers.cpp in Sources */,
 				5312CF4F24081FE600C67C85 /* decrypt.cpp in Sources */,
 				5312CF2D24081FE600C67C85 /* sh4_opcode_list.cpp in Sources */,
 				5312D03624081FE600C67C85 /* ldebug.c in Sources */,
@@ -3276,7 +3264,6 @@
 				5312D06F24081FE700C67C85 /* zip_unchange_archive.c in Sources */,
 				5312D08F24081FE700C67C85 /* zip_unchange_all.c in Sources */,
 				5312CF5924081FE600C67C85 /* picoppp.cpp in Sources */,
-				5312CF6524081FE600C67C85 /* dsp_arm64.cpp in Sources */,
 				5312D02724081FE600C67C85 /* ltable.c in Sources */,
 				5312D02124081FE600C67C85 /* lfunc.c in Sources */,
 				5312CFD124081FE600C67C85 /* pngwtran.c in Sources */,
@@ -3367,7 +3354,6 @@
 				5312D0F72408216000C67C85 /* compress.c in Sources */,
 				5312CF6624081FE600C67C85 /* dsp.cpp in Sources */,
 				5312CFC924081FE600C67C85 /* pngerror.c in Sources */,
-				5312CF6A24081FE600C67C85 /* dsp_interp.cpp in Sources */,
 				5312D03D24081FE700C67C85 /* memory.c in Sources */,
 				5381D6EE240887FD0078E797 /* pico_frame.c in Sources */,
 				5381D6FD240887FD0078E797 /* pico_dns_common.c in Sources */,
