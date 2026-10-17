@@ -268,18 +268,6 @@ struct SoundCPU_impl : SoundCPU {
 		ctx.enabled = enabled;
 	}
 
-	//Mainloop
-	void Update(u32 Cycles)
-	{
-		if (ctx.enabled) {
-			for (int i = 0; i < 32; i++)
-			{
-				arm->Run(Cycles / 32 / arm_sh4_bias);
-				libAICA_TimeStep();
-			}
-		}
-	}
-
 	//The ARM phase of a sample (SoundCPU.h). A new phase that no debugger looks into is the backend's Run(), as it
 	//was before the burst could be suspended: this is the path of every run, and it is kept to a test and a call.
 	//Everything else is the debug loop
