@@ -1,7 +1,7 @@
 ## The debugger at work on the ARM7 of the sounding guest: the run is the run nobody touched ##
 #
-#	Sixteen tests, debugger.sound.neutral.<idlebp|hitresume|steps|hoststop>.<jit|interp>.<batch|persample>, made
-#	by nulldc_sound_neutral of ../dsptest/CMakeLists.txt: the mode neutral of ../dsptest/soundlines.py on a
+#	Eight tests, debugger.sound.neutral.<idlebp|hitresume|steps|hoststop>.<jit|interp>, made by
+#	nulldc_sound_neutral of ../dsptest/CMakeLists.txt: the mode neutral of ../dsptest/soundlines.py on a
 #	selftest session whose one test never returns (libswirl/debugger/dbg_selftest_arm7.cpp, arm7n.*). Each makes
 #	four runs of dsptest.elf and holds two things against the run without the session: the sound line at 2000
 #	ticks, whole, and the state hash at 90 vblanks, part for part. The line has no field for wave memory, main

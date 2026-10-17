@@ -172,8 +172,8 @@ register writer of the ARM7 (`SoundCPU::DebugSetReg`). Their guest is the soundi
 SH4 in its loop, the ARM7 clocked and in its own, no breakpoint listed, no burst suspended.
 
 A sound burst is the work of one scheduler callback of the AICA: with the ARM7 clocked, 32 times an ARM phase
-(the ARM7 for the 256 ticks of a sample) and a time step of the AICA, then the tail (the batch render, the tick
-of the sound regression harness). The machine counts what its bursts did (`VirtualDreamcast::SoundBurstCounts`:
+(the ARM7 for the 256 ticks of a sample) and a time step of the AICA, which makes the sample, then the tail (the
+tick of the sound regression harness). The machine counts what its bursts did (`VirtualDreamcast::SoundBurstCounts`:
 bursts started, ARM phases that ran to their end, time steps, tails), and the tests read those counts: they say
 in which burst a stop was made, whether a step stayed inside one ARM phase, and how often a tail ran.
 
@@ -185,7 +185,6 @@ exit or a guest reset in the first slice of a run, or in the tick in which a bur
 | test | what has to hold |
 |---|---|
 | `debugger.selftest.arm7` `.interp` `.fallback` | the session `arm7`, the forty-three tests below, on the JIT, on the interpreter, and on the JIT with `Debugger:ForceFallback=yes` |
-| `debugger.selftest.arm7.persample` `.persample.interp` | the same session with `config:aica.NoBatch=yes`: the sound is rendered sample by sample, in the time step of the AICA, which then also renders in the park context. It is the path that stays when the batch render goes |
 | `arm7.burst.plain` | between two pauses of a run a burst is 32 ARM phases, 32 time steps and one tail while the ARM7 is clocked, and no ARM phase, no time step and one tail while the guest holds it in reset |
 | `arm7.bp.hit` | a breakpoint on the first instruction of the ARM7's loop stops within one burst of the resume: the burst is suspended in front of the instruction, its tail has not run, the stop is latched in the slice of its tick and no slice comes behind it. A resume from there executes the instruction and stops at the next arrival, in the same burst, with no Running published and no time passed |
 | `arm7.bp.context` | the debug loop leaves the context of the ARM7 as the interpreter's own loop leaves it, word for word of the save state, which the sound line and the state hash fold. At a breakpoint on the first instruction of the FIQ handler: the stored CPSR word is the one the entry composed, with F as the loop had it, where the core has F set (the debug loop composed none); R15 is what the branch of the vector left; nothing is kept in the tick remainder of the recompiler; and the debugger's reads leave the save state as it is. No tick of the guest falls inside the handler, so no sound line shows these words |

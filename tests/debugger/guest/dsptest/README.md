@@ -66,16 +66,15 @@ of the machine: the interpreter has executed 56 instructions by then, the recomp
 first lines of this guest showed it: the interpreter's line was the recompiler's a tick late in `samples`, `regs`
 and `arm7`. So `_start` waits for that tick, in a way that is the same on every engine: it writes one ARM
 instruction that branches to itself to wave memory 0 and releases the ARM7 onto it, which gives the AICA its clock
-(while the ARM7 is held no timer steps and, sample by sample, no sample is made), and reads `SCIPD` until
+(while the ARM7 is held no timer steps and no sample is made), and reads `SCIPD` until
 `SAMPLE_DONE` is set. Then it holds the ARM7 again and does the set-up, which is over 6600 cycles later on the
 interpreter and far sooner on the recompiler: between the first tick and the second on both. A reset of the
 machine goes the same way, whenever it comes. So:
 
 - the ARM7 is held at the entry of the program (`ENABLED` 0), clocked for one tick on a one-word program, held
   again and released onto `a_reset`: a debugger that looks during the first two ticks sees that;
-- the first tick has 32 pairs of silence in it sample by sample, as it has in batches; a guest whose second
-  release is taken out is silent sample by sample (the line of 32 zero pairs) and sounds in batches, where the
-  channels the SH4 keyed on are rendered without the ARM7.
+- the first tick has 32 pairs of silence in it; a guest whose second release is taken out is silent (the line of
+  32 zero pairs).
 
 **The ARM7** (`arm7.s`, 88 instructions). `a_main_loop` runs in **SVC mode** (the mode the reset leaves, a mode with
 an SPSR), the handler in FIQ mode; IRQ stays masked.
@@ -170,13 +169,16 @@ a test that holds and releases the ARM7 starts this sequence of entries again.
 environment of its own, and parses the line of the harness:
 
     python3 tests/debugger/guest/dsptest/soundlines.py --emulator <nulldc3> --work /tmp/w \
-            --guest tests/debugger/guest/dsptest/dsptest.elf --ticks 2000 --mode same --mode sounds --engine interp --render persample
+            --guest tests/debugger/guest/dsptest/dsptest.elf --ticks 2000 --mode same --mode sounds --engine interp
 
     AicaHash: samples=<hex> regs=<hex> arm7=<hex> sh4=<hex> dsp=<hex> ticks=<N> cycles=<decimal>
 
-`--engine jit|interp` is the SH4 engine, `--render batch|persample` is `config:aica.NoBatch` no or yes. A second
-kind of run gives the exit line of the same program with its state hash (`config:Exit.AfterVblanks=<V> ,
-config:Exit.StateHash=yes` in place of the harness key: the harness ends the process without an exit line).
+`--engine jit|interp` is the SH4 engine. The sound has one way to be made: sample by sample, with the DSP, in
+every time step of the AICA (until the M3 round it was made in batches of 32 samples without the DSP by default,
+and sample by sample with `config:aica.NoBatch=yes`; the runner chose with `--render`, and the tests had `.batch`
+and `.persample` in their names). A second kind of run gives the exit line of the same program with its state
+hash (`config:Exit.AfterVblanks=<V> , config:Exit.StateHash=yes` in place of the harness key: the harness ends the
+process without an exit line).
 
 **Every run has to be made on the engine it was asked for.** The emulator takes `config:Dynarec.Enabled=yes` for a
 wish: a build without a recompiler (`-DTARGET_NO_REC=ON`, a generic host), or one whose recompiler cannot be set
@@ -191,13 +193,16 @@ check on stand-ins for the emulator, scripts that print the line of one engine w
 | mode | what has to hold |
 |---|---|
 | `same` | two runs with the same keys print the same line, field for field. Every line of every mode has to have `ticks=<N>` |
-| `sounds` | `samples` is none of the hashes of silence. Silence is not one value: the hash of `k * 32` pairs of zeroes is `basis * prime^(128 k)`, and a silent run prints one of them for a `k` from 0 to N (N in batches; fewer sample by sample, where no pair exists while the ARM7 is held) |
-| `engines` | the line of the recompiler and the line of the interpreter agree in the fields of `--fields` |
-| `record` | the lines of the four configurations (or of the one `--engine` and `--render` name), and with `--vblanks <V>` their exit lines, into `--file`, each run made `--runs` times (2) and giving one line. For a before / after between two builds |
+| `sounds` | `samples` is none of the hashes of silence. Silence is not one value: the hash of `k * 32` pairs of zeroes is `basis * prime^(128 k)`, and a silent run prints one of them for a `k` from 0 to N (fewer than N where no pair exists while the ARM7 is held) |
+| `muted` | "Disable Sound" mutes and keeps the pace: the run with `config:aica.NoSound=yes` makes every sample and hands the audio stream, which is the speed limit of the emulator (`config:aica.LimitFPS`), a pair of zeroes in place of each, the pair the harness folds. Its line is the line of the run without the key in every field but `samples`, and `samples` is the hash of `N * 32` pairs of zeroes: a pair for every sample of every tick, which holds for a program whose bursts all find its ARM7 clocked (the guest releases it in front of its first tick) |
+| `ignored` | `--ignored <section:key=value>`, once or more: keys an older build read and this one does not (a configuration file keeps them). A run with each prints the line of the run without it, field for field |
+| `engines` | the line of the recompiler and the line of the interpreter agree in the fields of `--fields`, and in `dsp` |
+| `record` | the lines of both engines (or of the one `--engine` names), and with `--vblanks <V>` their exit lines, into `--file`, each run made `--runs` times (2) and giving one line. For a before / after between two builds |
 | `compare` | the same runs against that file: every line whole, every part of the state hash |
 | `neutral` | `--selftest <filter> [--expect <text>]...`: four runs with the same N, V and keys, the line and the exit line with `Debugger:SelfTest=<filter>` and without. The two lines are equal in every field and the two exit lines in every part of the state hash; and each of the two runs with the session has no `SelfTest:` line with `: FAILED: ` or `: FAIL, `, at least one with `: ok: `, every `--expect` text in a `SelfTest:` line, and **no** summary line `SelfTest: <p> passed, <f> failed`. The session of such a run is one whose test never returns true: the run ends by the harness or by the exit key, and a summary means that the session ended the process before the run was over |
 | `release` | the guest only: a release of the ARM7 that finds a request of the AICA latched starts the program of the run without one. Five runs on copies of the guest, made in the work directory, that differ from it in data. *A request latched*: three entries in the reserved part of the table, which `_start` writes while it holds the ARM7 (`SCILV1` and `SCIEB` bit 5, then `SCIPD` bit 5, the one request a program can raise: it is latched with the level of the timer's, and again by the release). *Without the end of the service*: the read of L or the write of M of `a_reset` goes to a word of the wave memory that nothing uses, at the same cost. The copy without a change gives the line; the copy with a request latched has to print it, in the fields of `--fields` (`sh4` is not among them: that SH4 has made three more writes when it enters its loop); so has the copy with no request and without the read and the write; and each of the two copies with a request latched and without one of the two has to print another `arm7` field, which says that the request was there |
 | `files` | `SHA256SUMS` lists the six files and each has its sum; and, where bash and the sh-elf binutils are, `gen.sh --check` |
+| `names` | `--ctest <ctest> --build <the build directory of the tests>`, no emulator: the tests `ctest -N` lists there, none of whose names has a part `batch` or `persample`, and some `debugger.sound.*` among them |
 
 **No line is stored in the tree.** The generator's tables come from `pow()`: a line is good for one build on one
 host. A test makes its runs itself; `record` refuses a file among the tests of the tree.
@@ -205,15 +210,18 @@ host. A test makes its runs itself; `record` refuses a file among the tests of t
 | test | what it runs |
 |---|---|
 | `debugger.guest.dsptest.files` | the mode `files` |
-| `debugger.sound.lines.dsptest.<jit\|interp>.<batch\|persample>` | `same` and `sounds` on the guest, N = 2000 (1.45 emulated seconds: the 13 ticks in which the FIQ meets every sample of a tick, and the 26 ticks between two key ons, more than seventy times) |
-| `debugger.sound.engines.dsptest.<batch\|persample>` | `engines` on the guest, N = 2000, fields `samples`, `regs`, `arm7`, `ticks`, `cycles` |
-| `debugger.sound.release.dsptest.<jit\|interp>.<batch\|persample>` | `release` on the guest, N = 2000, fields `samples`, `regs`, `arm7`, `ticks`, `cycles` |
-| `debugger.sound.lines.2ndmix.<jit\|interp>.<batch\|persample>` | `same` on `2ndmix.elf` of `NULLDC_ELF_DIR`, N = 40000; a test whose data is missing without that directory |
+| `debugger.sound.lines.dsptest.<jit\|interp>` | `same` and `sounds` on the guest, N = 2000 (1.45 emulated seconds: the 13 ticks in which the FIQ meets every sample of a tick, and the 26 ticks between two key ons, more than seventy times) |
+| `debugger.sound.engines.dsptest` | `engines` on the guest, N = 2000, fields `samples`, `regs`, `arm7`, `ticks`, `cycles` and `dsp` |
+| `debugger.sound.release.dsptest.<jit\|interp>` | `release` on the guest, N = 2000, fields `samples`, `regs`, `arm7`, `ticks`, `cycles` |
+| `debugger.sound.lines.2ndmix.<jit\|interp>` | `same` on `2ndmix.elf` of `NULLDC_ELF_DIR`, N = 40000; a test whose data is missing without that directory |
+| `debugger.sound.muted.dsptest.<jit\|interp>` | `sounds` and `muted` on the guest, N = 2000: the run without the key sounds, the run with `config:aica.NoSound=yes` is its line with the silence of 2000 ticks in `samples` |
+| `debugger.sound.ignored.dsptest` | `ignored` on the guest, N = 2000, on the JIT, with `config:aica.NoBatch=no` and `config:aica.NoBatch=yes`: the key of the render that went, which every configuration file an older build saved has |
+| `debugger.sound.names` | `names` on the build of the tests |
 | `debugger.sound.runner` | `soundlines_test.py`: fifteen calls of the runner on stand-ins for the emulator; no emulator is run |
 
 `nulldc_sound_neutral(<name> SELFTEST <filter> [EXPECT <text>...] [CONFIG <section:key=value>...] [TIMEOUT
 <seconds>])`, defined in `CMakeLists.txt` for the directories behind this one, makes
-`debugger.sound.neutral.<name>.<jit|interp>.<batch|persample>`: the mode `neutral` on the guest with N = 2000 and
+`debugger.sound.neutral.<name>.<jit|interp>`: the mode `neutral` on the guest with N = 2000 and
 V = 90. Nothing is registered with it here; the package of the sound burst registers its sessions in a directory
 of its own (`../neutral`). Sessions of the selftests and of the contract that boot the guest are registered in
 `tests/debugger/selftest` and `tests/debugger/contract`, whose functions take the path of `dsptest.elf`.

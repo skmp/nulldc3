@@ -2,15 +2,17 @@
 """The sound lines of the emulator: runs with the sound regression harness, and what they have to agree on.
 
     soundlines.py --emulator <nulldc3> --work <dir> --guest <program> --ticks <N> --mode <mode> [--mode <mode>]...
-                  [--engine jit|interp] [--render batch|persample] [--fields <field,...>] [--file <path>]
-                  [--vblanks <V>] [--selftest <filter>] [--expect <text>]... [--config <section:key=value>]...
+                  [--engine jit|interp] [--fields <field,...>] [--file <path>] [--vblanks <V>]
+                  [--selftest <filter>] [--expect <text>]... [--ignored <section:key=value>]...
+                  [--config <section:key=value>]...
     soundlines.py --mode files [--dir <the directory of the guest>]
+    soundlines.py --mode names --ctest <ctest> --build <the build directory of the tests>
 
 A run is the emulator on the program, headless, with no audio device (audio:backend=none), the real-time clock
-pinned, the SH4 on the recompiler or on the interpreter (--engine) and the sound rendered in batches of 32
-samples or sample by sample (--render: config:aica.NoBatch no or yes), with its files in a directory of its own
+pinned and the SH4 on the recompiler or on the interpreter (--engine), with its files in a directory of its own
 under the work directory (--portable), an empty environment (no display), a core file size limit of 1 byte, and a
-watchdog. A process this script starts is ended by its pid.
+watchdog. A process this script starts is ended by its pid. The sound is made sample by sample, with the DSP, in
+every time step of the AICA: the emulator has no other way to make it.
 
 Every run has to be made on the engine it was asked for. The emulator takes config:Dynarec.Enabled=yes for a wish:
 a build without a recompiler, or one whose recompiler cannot be set up, goes on with the interpreter and says
@@ -32,13 +34,18 @@ README.md has the modes:
 
     same      two runs with the same keys print the same line, field for field
     sounds    samples is none of the hashes of silence. The hash of k * 32 pairs of zeroes is one value for each
-              k, and a silent run prints one of them for a k from 0 to N: N in batches, fewer sample by sample,
-              where no pair exists while the ARM7 is held in reset
+              k, and a silent run prints one of them for a k from 0 to N: fewer than N where no pair exists while
+              the ARM7 is held in reset
+    muted     "Disable Sound" mutes and keeps the pace: a run with config:aica.NoSound=yes prints the line of the
+              run without it in every field but samples, and samples is the hash of N * 32 pairs of zeroes (see
+              mode_muted)
+    ignored   keys that an older build read and this one does not: a run with each key of --ignored prints the
+              line of the run without it, field for field
     engines   the line of the recompiler and the line of the interpreter agree in the fields of --fields, and in dsp
-    record    the lines (and with --vblanks the exit lines) of the four configurations, or of the one that
-              --engine and --render name, into the file of --file, which is outside of the tree: a line is good
-              for one build on one host. Every run is made --runs times and has to give one line. Entries of
-              other programs and of other N or V stay in the file
+    record    the lines (and with --vblanks the exit lines) of both engines, or of the one that --engine names,
+              into the file of --file, which is outside of the tree: a line is good for one build on one host.
+              Every run is made --runs times and has to give one line. Entries of other programs and of other N
+              or V stay in the file
     compare   the same runs, against the entries of that file: every line and every part of the state hash
     neutral   the debugger in use changes nothing: a run with --config Debugger:SelfTest=<filter> prints the line
               of the run without it, and ends in its state hash, part for part, at --vblanks; and the session did
@@ -48,6 +55,9 @@ README.md has the modes:
               is the line of the guest, in the fields of --fields (see mode_release)
     files     the committed files of the guest are those of its manifest, SHA256SUMS; and where the assemblers
               are, gen.sh --check: they are what the sources give
+    names     the tests of a build (ctest -N in --build): no name has a part batch or persample. The sound was
+              made in batches of 32 samples by default and sample by sample with config:aica.NoBatch=yes until
+              that render went, and the tests of both had it in their names
 """
 
 import argparse
@@ -70,7 +80,9 @@ LINE_FIELDS = ('samples', 'regs', 'arm7', 'sh4', 'dsp', 'ticks', 'cycles')
 HASH_FIELDS = ('reason', 'vblanks', 'hash', 'sh4', 'sched', 'ram', 'vram', 'aram', 'arm7')
 
 ENGINES = ('jit', 'interp')
-RENDERS = ('batch', 'persample')
+
+# the parts of a test name that named the two renders of the sound (mode names)
+RENDER_PARTS = ('batch', 'persample')
 
 # what the emulator thread prints when it has chosen the engine of the SH4 (dc_run of libswirl/libswirl.cpp)
 ENGINE_SAYS = {'jit': 'Using MCPU Recompiler', 'interp': 'Using MCPU Interpreter'}
@@ -98,11 +110,10 @@ def check(ok, what, log=None):
 class Run:
     """One run of the emulator. Its output goes to a file of the work directory."""
 
-    def __init__(self, args, name, engine, render, guest=None):
+    def __init__(self, args, name, engine, guest=None):
         self.args = args
         self.name = name
         self.engine = engine
-        self.render = render
         self.guest = guest or args.guest
         self.dir = os.path.join(args.work, name)
         shutil.rmtree(self.dir, ignore_errors=True)
@@ -114,8 +125,7 @@ class Run:
 
     def command(self, keys):
         items = ['config:Headless=yes', 'audio:backend=none', 'config:Dreamcast.RTC=%d' % RTC_PIN,
-                 'config:Dynarec.Enabled=' + ('yes' if self.engine == 'jit' else 'no'),
-                 'config:aica.NoBatch=' + ('yes' if self.render == 'persample' else 'no')]
+                 'config:Dynarec.Enabled=' + ('yes' if self.engine == 'jit' else 'no')]
         items += keys + self.args.config
         command = [self.args.emulator, '--portable', os.path.join(self.dir, 'portable'), '--config']
         for i, item in enumerate(items):
@@ -180,9 +190,9 @@ def exit_line(log):
     return dict(pair.split('=', 1) for pair in lines[-1][len('nulldc-exit: '):].split(' ') if '=' in pair)
 
 
-def line_run(args, name, engine, render, more=(), guest=None):
+def line_run(args, name, engine, more=(), guest=None):
     """A run that the harness ends: the Run, the text of its line and the fields."""
-    run = Run(args, name, engine, render, guest).run(['config:Debug.AicaHash=%d' % args.ticks] + list(more))
+    run = Run(args, name, engine, guest).run(['config:Debug.AicaHash=%d' % args.ticks] + list(more))
     found = sound_line(run.log)
     check(found is not None, 'the run %s printed no line of the sound harness, or more than one' % name, run.log)
     check(run.code == 0, 'the run %s ended with exit code %s' % (name, run.code), run.log)
@@ -192,9 +202,9 @@ def line_run(args, name, engine, render, more=(), guest=None):
     return run, text, fields
 
 
-def hash_run(args, name, engine, render, more=()):
+def hash_run(args, name, engine, more=()):
     """A run that config:Exit.AfterVblanks ends: the Run and the fields of its exit line."""
-    run = Run(args, name, engine, render).run(['config:Exit.AfterVblanks=%d' % args.vblanks, 'config:Exit.StateHash=yes'] + list(more))
+    run = Run(args, name, engine).run(['config:Exit.AfterVblanks=%d' % args.vblanks, 'config:Exit.StateHash=yes'] + list(more))
     line = exit_line(run.log)
     check(line is not None and 'hash' in line, 'the run %s printed no exit line with a state hash' % name, run.log)
     check(run.code == 0, 'the run %s ended with exit code %s' % (name, run.code), run.log)
@@ -228,7 +238,7 @@ class Lines:
 
     def get(self, count):
         while len(self.made) < count:
-            self.made.append(line_run(self.args, 'line-%d' % (len(self.made) + 1), self.args.engine, self.args.render))
+            self.made.append(line_run(self.args, 'line-%d' % (len(self.made) + 1), self.args.engine))
         return self.made[:count]
 
 
@@ -246,42 +256,76 @@ def mode_sounds(args, lines):
     print('it sounds: samples=%s is none of the %d hashes of silence' % (fields['samples'], args.ticks + 1))
 
 
+def mode_muted(args, lines):
+    """"Disable Sound" mutes, and keeps the pace. With config:aica.NoSound=yes the emulator makes every sample as
+    without it and hands the audio stream a pair of zeroes in its place, the pair the harness folds: the stream gets
+    a pair every sample, and it is the speed limit of the emulator (config:aica.LimitFPS). So the run with the key
+    prints the line of the run without it in every field but samples, and samples is the hash of N * 32 pairs of
+    zeroes: one pair for each sample of each of the N ticks, which holds for a program whose bursts all find its
+    ARM7 clocked (the guest releases it in front of its first tick). A sound that is folded where zeroes go out, a
+    sample that is not handed over, or one that is not made (the ARM7, the DSP, the register file of the run
+    would differ), fails."""
+    (plain, plain_text, plain_fields), = lines.get(1)
+    muted, text, fields = line_run(args, 'muted', args.engine, ['config:aica.NoSound=yes'])
+    k = silence(args.ticks).get(fields['samples'])
+    check(k is not None, 'the run with config:aica.NoSound=yes is not silent: samples=%s is none of the hashes of 0 to %d * 32 pairs of zeroes\n%s'
+          % (fields['samples'], args.ticks, text), muted.log)
+    check(k == args.ticks, 'the run with config:aica.NoSound=yes handed the audio stream %d * 32 pairs of zeroes, not %d * 32: a sample of a tick went '
+          'without its pair\n%s' % (k, args.ticks, text), muted.log)
+    others = [f for f in LINE_FIELDS if f != 'samples']
+    check(not different(plain_fields, fields, others), 'the run with config:aica.NoSound=yes differs from the run without it in '
+          + different(plain_fields, fields, others) + '\n' + plain_text + '\n' + text, muted.log)
+    print('muted: samples=%s is the hash of %d * 32 pairs of zeroes, and %s as without the key' % (fields['samples'], k,
+          ' '.join('%s=%s' % (f, fields[f]) for f in others)))
+
+
+def mode_ignored(args, lines):
+    """Keys of an older build that this one does not read: a configuration file keeps them (the emulator writes it
+    back with every key it found), and a run with one is the run without it."""
+    check(args.ignored, 'the mode ignored needs --ignored')
+    (plain, plain_text, plain_fields), = lines.get(1)
+    for n, key in enumerate(args.ignored, 1):
+        run, text, fields = line_run(args, 'ignored-%d' % n, args.engine, [key])
+        check(text == plain_text, 'the run with %s prints another line than the run without it: they differ in %s\n%s\n%s'
+              % (key, different(plain_fields, fields, LINE_FIELDS), plain_text, text), run.log)
+    print('with each of %s and without it: one line, %s' % (', '.join(args.ignored), plain_text))
+
+
 def mode_engines(args, lines):
     names = [f for f in args.fields.split(',') if f]
     check(names and all(f in LINE_FIELDS for f in names), '--fields takes names of ' + ', '.join(LINE_FIELDS))
     # the DSP's whole state, which the SH4's engine does not reach: what the guest's DSP does is the same on both
     if 'dsp' not in names:
         names.append('dsp')
-    jit, jit_text, jit_fields = line_run(args, 'jit', 'jit', args.render)
-    interp, interp_text, interp_fields = line_run(args, 'interp', 'interp', args.render)
+    jit, jit_text, jit_fields = line_run(args, 'jit', 'jit')
+    interp, interp_text, interp_fields = line_run(args, 'interp', 'interp')
     check(not different(jit_fields, interp_fields, names), 'the line of the recompiler and the line of the interpreter differ in '
           + different(jit_fields, interp_fields, names) + '\n' + jit_text + '\n' + interp_text, interp.log)
     print('the recompiler and the interpreter agree in ' + ' '.join('%s=%s' % (f, jit_fields[f]) for f in names))
 
 
 def configurations(args):
-    return [(engine, render) for engine in ENGINES for render in RENDERS
-            if args.engine in (None, engine) and args.render in (None, render)]
+    return [engine for engine in ENGINES if args.engine in (None, engine)]
 
 
 def entries(args):
     """What record stores and compare looks at: key -> text, for every configuration that is asked for."""
     guest = os.path.basename(args.guest)
     found = {}
-    for engine, render in configurations(args):
+    for engine in configurations(args):
         texts = set()
         for n in range(args.runs):
-            run, text, fields = line_run(args, 'line-%s-%s-%d' % (engine, render, n + 1), engine, render)
+            run, text, fields = line_run(args, 'line-%s-%d' % (engine, n + 1), engine)
             texts.add(text)
-        check(len(texts) == 1, '%d runs on %s, %s print %d lines:\n%s' % (args.runs, engine, render, len(texts), '\n'.join(sorted(texts))))
-        found['%s ticks=%d %s %s' % (guest, args.ticks, engine, render)] = texts.pop()
+        check(len(texts) == 1, '%d runs on %s print %d lines:\n%s' % (args.runs, engine, len(texts), '\n'.join(sorted(texts))))
+        found['%s ticks=%d %s' % (guest, args.ticks, engine)] = texts.pop()
         if args.vblanks:
             texts = set()
             for n in range(args.runs):
-                run, line = hash_run(args, 'hash-%s-%s-%d' % (engine, render, n + 1), engine, render)
+                run, line = hash_run(args, 'hash-%s-%d' % (engine, n + 1), engine)
                 texts.add('nulldc-exit: ' + ' '.join('%s=%s' % (f, line.get(f)) for f in HASH_FIELDS))
-            check(len(texts) == 1, '%d runs on %s, %s end in %d state hashes:\n%s' % (args.runs, engine, render, len(texts), '\n'.join(sorted(texts))))
-            found['%s vblanks=%d %s %s' % (guest, args.vblanks, engine, render)] = texts.pop()
+            check(len(texts) == 1, '%d runs on %s end in %d state hashes:\n%s' % (args.runs, engine, len(texts), '\n'.join(sorted(texts))))
+            found['%s vblanks=%d %s' % (guest, args.vblanks, engine)] = texts.pop()
     return found
 
 
@@ -314,7 +358,7 @@ def mode_record(args, lines):
     stored, comments = read_file(path)
     stored.update(found)
     if not comments:
-        comments = ['# Sound lines and state hashes, recorded by soundlines.py: <program> <ticks=N or vblanks=V> <engine> <render> | <line>.',
+        comments = ['# Sound lines and state hashes, recorded by soundlines.py: <program> <ticks=N or vblanks=V> <engine> | <line>.',
                     '# A line is good for one build on one host.']
     for note in args.note:
         if '# ' + note not in comments:
@@ -370,7 +414,7 @@ def mode_neutral(args, lines):
     session_key = ['Debugger:SelfTest=' + args.selftest]
 
     # (the runs with the session first: what they have to show is asked of them before they are compared)
-    session = Run(args, 'session-line', args.engine, args.render).run(['config:Debug.AicaHash=%d' % args.ticks] + session_key)
+    session = Run(args, 'session-line', args.engine).run(['config:Debug.AicaHash=%d' % args.ticks] + session_key)
     session_did(args, session, 'the line')
     found = sound_line(session.log)
     check(found is not None, 'the run with the session printed no line of the sound harness, or more than one', session.log)
@@ -378,18 +422,18 @@ def mode_neutral(args, lines):
     session_text, session_fields = found
     check(session_fields['ticks'] == str(args.ticks), 'the line of the run with the session has ticks=%s, not %d' % (session_fields['ticks'], args.ticks), session.log)
 
-    plain, plain_text, plain_fields = line_run(args, 'plain-line', args.engine, args.render)
+    plain, plain_text, plain_fields = line_run(args, 'plain-line', args.engine)
     check(not different(plain_fields, session_fields, LINE_FIELDS), 'the line of the run with the session differs from the line of the run nobody touched in '
           + different(session_fields, plain_fields, LINE_FIELDS) + '\n' + session_text + '\n' + plain_text, session.log)
 
-    session_hash = Run(args, 'session-hash', args.engine, args.render).run(
+    session_hash = Run(args, 'session-hash', args.engine).run(
         ['config:Exit.AfterVblanks=%d' % args.vblanks, 'config:Exit.StateHash=yes'] + session_key)
     session_did(args, session_hash, 'the state hash')
     line = exit_line(session_hash.log)
     check(line is not None and 'hash' in line, 'the run with the session printed no exit line with a state hash', session_hash.log)
     check(session_hash.code == 0, 'the run with the session ended with exit code %s' % session_hash.code, session_hash.log)
 
-    plain_hash, base = hash_run(args, 'plain-hash', args.engine, args.render)
+    plain_hash, base = hash_run(args, 'plain-hash', args.engine)
     check(not different(base, line, HASH_FIELDS), 'the run with the session differs from the run nobody touched in '
           + different(line, base, HASH_FIELDS), session_hash.log)
 
@@ -489,7 +533,7 @@ def mode_release(args, lines):
     request = ((SH4_SCILV1, 0x20), (SH4_SCIEB, 0x20), (SH4_SCIPD, 0x20))
 
     def made(name, table=(), arm=()):
-        return line_run(args, name, args.engine, args.render, guest=guest_copy(args, labels, name, table, arm))
+        return line_run(args, name, args.engine, guest=guest_copy(args, labels, name, table, arm))
 
     plain, plain_text, plain_fields = made('plain')
 
@@ -540,17 +584,33 @@ def mode_files(args, lines):
     print(said)
 
 
+def mode_names(args, lines):
+    """No test of the build is named after a render of the sound: the tests that ran in both had .batch or
+    .persample in their names, and those that stayed lost it (a name with a part batch or persample fails)."""
+    check(args.ctest and args.build, 'the mode names needs --ctest and --build')
+    done = subprocess.run([args.ctest, '-N'], cwd=args.build, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          timeout=args.watchdog)
+    said = done.stdout.decode('utf-8', 'replace')
+    check(done.returncode == 0, 'ctest -N in %s ended with exit code %d:\n%s' % (args.build, done.returncode, said))
+    names = re.findall(r'^\s*Test\s+#\d+: (\S+)\s*$', said, re.M)
+    sound = [name for name in names if name.startswith('debugger.sound.')]
+    check(sound, 'ctest -N in %s lists no test debugger.sound.*: it is not the build of the tests\n%s' % (args.build, said))
+    old = [name for name in names if set(name.split('.')) & set(RENDER_PARTS)]
+    check(not old, '%d of the %d tests are named after a render of the sound: %s' % (len(old), len(names), ', '.join(old)))
+    print('%d tests, %d of them debugger.sound.*: none has a part %s' % (len(names), len(sound), ' or '.join(RENDER_PARTS)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    modes = {'same': mode_same, 'sounds': mode_sounds, 'engines': mode_engines, 'record': mode_record, 'compare': mode_compare,
-             'neutral': mode_neutral, 'release': mode_release, 'files': mode_files}
+    modes = {'same': mode_same, 'sounds': mode_sounds, 'muted': mode_muted, 'ignored': mode_ignored, 'engines': mode_engines,
+             'record': mode_record, 'compare': mode_compare, 'neutral': mode_neutral, 'release': mode_release, 'files': mode_files,
+             'names': mode_names}
     parser.add_argument('--mode', action='append', required=True, choices=sorted(modes), help='one or more; they share their runs')
     parser.add_argument('--emulator', default='')
     parser.add_argument('--work', default='')
     parser.add_argument('--guest', default='', help='the program: dsptest.elf of this directory, or another')
     parser.add_argument('--ticks', type=int, default=0, help='N: config:Debug.AicaHash')
     parser.add_argument('--engine', default=None, choices=ENGINES, help='default jit; record, compare: both')
-    parser.add_argument('--render', default=None, choices=RENDERS, help='default batch; record, compare: both')
     parser.add_argument('--fields', default='samples,regs,arm7,dsp,ticks,cycles', help='engines, release: the fields the lines agree in (engines: and dsp)')
     parser.add_argument('--file', default='', help='record, compare: the file of lines, outside of the tree')
     parser.add_argument('--note', action='append', default=[], help='record: a comment line for the file (the commit, the build)')
@@ -558,13 +618,16 @@ def main():
     parser.add_argument('--vblanks', type=int, default=0, help='V: config:Exit.AfterVblanks of the runs for the exit line (record, compare, neutral)')
     parser.add_argument('--selftest', default='', help='neutral: the filter of the session')
     parser.add_argument('--expect', action='append', default=[], help='neutral: text a line of the session has to have')
+    parser.add_argument('--ignored', action='append', default=[], help='ignored: section:key=value, a key this build does not read')
+    parser.add_argument('--ctest', default='', help='names: the ctest of the build')
+    parser.add_argument('--build', default='', help='names: the build directory of the tests')
     parser.add_argument('--config', action='append', default=[], help='section:key=value, for every run')
     parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release: the directory of the guest, with its manifest and its labels')
     parser.add_argument('--watchdog', type=int, default=300, help='seconds a run may take')
     parser.add_argument('--keep', action='store_true', help='keep the work directory of a test that passed')
     args = parser.parse_args()
 
-    runs_emulator = [mode for mode in args.mode if mode != 'files']
+    runs_emulator = [mode for mode in args.mode if mode not in ('files', 'names')]
     if runs_emulator:
         for name in ('emulator', 'work', 'guest'):
             if not getattr(args, name):
@@ -583,10 +646,9 @@ def main():
             print('FAIL: no program at ' + args.guest)
             return 1
 
-    # one configuration, but for record and compare, which take every configuration that is not excluded
+    # one engine, but for record and compare, which take both unless one is named
     if not set(args.mode) & {'record', 'compare'}:
         args.engine = args.engine or 'jit'
-        args.render = args.render or 'batch'
 
     lines = Lines(args)
     try:
