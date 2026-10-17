@@ -113,8 +113,9 @@ The line has no field for wave memory, main memory or the scheduler: those are i
 Two runs of one binary with the same program and keys print the same line when the run does not depend on the
 host, which takes what every deterministic run takes: `audio:backend=none`, the clock pinned (`Dreamcast.RTC` or
 `Debug.FixedRtc`) and no host input (`Headless`). The sound is made sample by sample, with the DSP, in every time
-step of the AICA, and there is no pair at all while the ARM7 is held in reset (`config:aica.NoBatch`, which chose a
-render of 32 samples a burst without the DSP in older builds, is read no more); `config:aica.NoSound=yes` hands the
+step of the AICA, and every tick has its 32 time steps, whether the ARM7 is held in reset or not: the AICA is clocked
+whatever `ARMRST` says, and only the ARM7 is held (`config:aica.NoBatch`, which chose a render of 32 samples a burst
+without the DSP in older builds, is read no more); `config:aica.NoSound=yes` hands the
 audio stream a pair of zeroes for every sample, and `samples` is then the hash of those. The SH4 engine
 (`config:Dynarec.Enabled`) is another `sh4`, and for a program whose SH4 reaches the sound at times of its own
 another everything. A line is good for one build on one host (the generator's tables come from `pow()`), so no
@@ -125,7 +126,7 @@ up, runs the SH4 on its interpreter, prints `Using MCPU Interpreter` where the o
 and ends like any other run. Whoever compares the lines of the two engines looks for that line first.
 
 A program that plays nothing has a `samples` field too: the hash of `k * 32` pairs of zeroes, one value for each
-`k`. `tests/debugger/guest/dsptest/` has a program that does play (`dsptest.elf`, part of the tree), the script
+`k`, and `k` is N for a line at N ticks. `tests/debugger/guest/dsptest/` has a program that does play (`dsptest.elf`, part of the tree), the script
 that makes these runs and compares their lines (`soundlines.py`), and the tests `debugger.sound.*`.
 
 ## Headless mode
