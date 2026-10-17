@@ -65,16 +65,18 @@ starts with the first tick due, so it runs at the end of the first slice of the 
 of the machine: the interpreter has executed 56 instructions by then, the recompiler all of a set-up of 800. The
 first lines of this guest showed it: the interpreter's line was the recompiler's a tick late in `samples`, `regs`
 and `arm7`. So `_start` waits for that tick, in a way that is the same on every engine: it writes one ARM
-instruction that branches to itself to wave memory 0 and releases the ARM7 onto it, which gives the AICA its clock
-(while the ARM7 is held no timer steps and no sample is made), and reads `SCIPD` until
-`SAMPLE_DONE` is set. Then it holds the ARM7 again and does the set-up, which is over 6600 cycles later on the
-interpreter and far sooner on the recompiler: between the first tick and the second on both. A reset of the
-machine goes the same way, whenever it comes. So:
+instruction that branches to itself to wave memory 0 and releases the ARM7 onto it, so that the first tick finds
+the ARM7 clocked on both engines, and reads `SCIPD` until `SAMPLE_DONE` is set. (The AICA is clocked whatever
+`ARMRST` says: its timers step, its samples are made and its DSP runs in every tick, also while the ARM7 is
+held; the release decides only whether the ARM7 runs in that tick.) Then it holds the ARM7 again and does the
+set-up, which is over 6600 cycles later on the interpreter and far sooner on the recompiler: between the first tick
+and the second on both. A reset of the machine goes the same way, whenever it comes. So:
 
 - the ARM7 is held at the entry of the program (`ENABLED` 0), clocked for one tick on a one-word program, held
   again and released onto `a_reset`: a debugger that looks during the first two ticks sees that;
-- the first tick has 32 pairs of silence in it; a guest whose second release is taken out is silent (the line of
-  32 zero pairs).
+- the first tick has 32 pairs of silence in it; a guest whose second release is taken out sounds all the same,
+  with the two channels the SH4 keyed, at the pitches the table gives them (the ARM7 that moves them is held).
+  `debugger.sound.held.dsptest.*` run that copy.
 
 **The ARM7** (`arm7.s`, 88 instructions). `a_main_loop` runs in **SVC mode** (the mode the reset leaves, a mode with
 an SPSR), the handler in FIQ mode; IRQ stays masked.
@@ -193,14 +195,15 @@ check on stand-ins for the emulator, scripts that print the line of one engine w
 | mode | what has to hold |
 |---|---|
 | `same` | two runs with the same keys print the same line, field for field. Every line of every mode has to have `ticks=<N>` |
-| `sounds` | `samples` is none of the hashes of silence. Silence is not one value: the hash of `k * 32` pairs of zeroes is `basis * prime^(128 k)`, and a silent run prints one of them for a `k` from 0 to N (fewer than N where no pair exists while the ARM7 is held) |
-| `muted` | "Disable Sound" mutes: the run with `config:aica.NoSound=yes` makes every sample, and the pair the harness folds, where the sample hands its pair to the audio stream, is a pair of zeroes. Its line is the line of the run without the key in every field but `samples`, and `samples` is the hash of `N * 32` pairs of zeroes: a pair for every sample of every tick, which holds for a program whose bursts all find its ARM7 clocked (the guest releases it in front of its first tick). The line is the harness's fold, not the stream: that the audio stream itself, the speed limit of the emulator (`config:aica.LimitFPS`), is handed a pair of zeroes in every sample, which no run with `audio:backend=none` shows, is the check `nosound` of `aica.dsp.emu.state` (`tests/aica_dsp/`) |
+| `sounds` | `samples` is none of the hashes of silence. Silence is not one value: the hash of `k * 32` pairs of zeroes is `basis * prime^(128 k)`, and every tick makes its 32 pairs, whether the ARM7 is held or not, so a silent run of N ticks prints the one for `k` = N; the mode checks against the whole family, `k` from 0 to N, a superset |
+| `muted` | "Disable Sound" mutes: the run with `config:aica.NoSound=yes` makes every sample, and the pair the harness folds, where the sample hands its pair to the audio stream, is a pair of zeroes. Its line is the line of the run without the key in every field but `samples`, and `samples` is the hash of `N * 32` pairs of zeroes: a pair for every sample of every tick, which every burst makes, whether it finds the ARM7 clocked or held. The line is the harness's fold, not the stream: that the audio stream itself, the speed limit of the emulator (`config:aica.LimitFPS`), is handed a pair of zeroes in every sample, which no run with `audio:backend=none` shows, is the check `nosound` of `aica.dsp.emu.state` (`tests/aica_dsp/`) |
 | `ignored` | `--ignored <section:key=value>`, once or more: keys an older build read and this one does not (a configuration file keeps them). A run with each prints the line of the run without it, field for field |
 | `engines` | the line of the recompiler and the line of the interpreter agree in the fields of `--fields`, and in `dsp` |
 | `record` | the lines of both engines (or of the one `--engine` names), and with `--vblanks <V>` their exit lines, into `--file`, each run made `--runs` times (2) and giving one line. For a before / after between two builds |
 | `compare` | the same runs against that file: every line whole, every part of the state hash |
 | `neutral` | `--selftest <filter> [--expect <text>]...`: four runs with the same N, V and keys, the line and the exit line with `Debugger:SelfTest=<filter>` and without. The two lines are equal in every field and the two exit lines in every part of the state hash; and each of the two runs with the session has no `SelfTest:` line with `: FAILED: ` or `: FAIL, `, at least one with `: ok: `, every `--expect` text in a `SelfTest:` line, and **no** summary line `SelfTest: <p> passed, <f> failed`. The session of such a run is one whose test never returns true: the run ends by the harness or by the exit key, and a summary means that the session ended the process before the run was over |
 | `release` | the guest only: a release of the ARM7 that finds a request of the AICA latched starts the program of the run without one. Five runs on copies of the guest, made in the work directory, that differ from it in data. *A request latched*: three entries in the reserved part of the table, which `_start` writes while it holds the ARM7 (`SCILV1` and `SCIEB` bit 5, then `SCIPD` bit 5, the one request a program can raise: it is latched with the level of the timer's, and again by the release). *Without the end of the service*: the read of L or the write of M of `a_reset` goes to a word of the wave memory that nothing uses, at the same cost. The copy without a change gives the line; the copy with a request latched has to print it, in the fields of `--fields` (`sh4` is not among them: that SH4 has made three more writes when it enters its loop); so has the copy with no request and without the read and the write; and each of the two copies with a request latched and without one of the two has to print another `arm7` field, which says that the request was there |
+| `held` | the guest only: a held ARM7 is an idle one for the rest of the AICA. Two runs on copies of the guest, made in the work directory, each with one instruction changed. *Held*: the last release of `_start`, the `mov #0, r0` at `g_main - 4`, made `mov #1, r0` (the halfword has to be `0xE000`, else the mode fails): the ARM7 stays held behind the set-up, and every burst from the second on finds it held. *Idle*: the ARM7 program's instruction at `a_reset` made `b .` (`0xEAFFFFFE`): the released ARM7 stays on it with FIQ and IRQ masked by its reset and touches nothing of the AICA. The two lines agree in `samples`, `regs`, `sh4`, `dsp`, `ticks` and `cycles`; and the controls: their `arm7` fields differ (both patches took), the held copy's `samples` is none of the hashes of silence (the channels the SH4 keyed play while the ARM7 is held), and the idle copy's `samples` is not the guest's (the guest's FIQ handler is heard) |
 | `files` | `SHA256SUMS` lists the six files and each has its sum; and, where bash and the sh-elf binutils are, `gen.sh --check` |
 | `names` | `--build <the build directory of the tests>`, no emulator: the tests its `CTestTestfile.cmake` files register (read, not asked of a ctest, which would write its log over that of the ctest that runs the test), some `debugger.sound.*` among them, and no name of the sound (`debugger.sound.*`) or of the session `arm7` of the selftests (`debugger.selftest.arm7*`) with a part `batch` or `persample`, where the tests of the two renders were. Other tests may have those words: they name something else there (a batch of requests of the debugger's protocol) |
 
@@ -213,11 +216,12 @@ host. A test makes its runs itself; `record` refuses a file among the tests of t
 | `debugger.sound.lines.dsptest.<jit\|interp>` | `same` and `sounds` on the guest, N = 2000 (1.45 emulated seconds: the 13 ticks in which the FIQ meets every sample of a tick, and the 26 ticks between two key ons, more than seventy times) |
 | `debugger.sound.engines.dsptest` | `engines` on the guest, N = 2000, fields `samples`, `regs`, `arm7`, `ticks`, `cycles` and `dsp` |
 | `debugger.sound.release.dsptest.<jit\|interp>` | `release` on the guest, N = 2000, fields `samples`, `regs`, `arm7`, `ticks`, `cycles` |
+| `debugger.sound.held.dsptest.<jit\|interp>` | `held` on the guest, N = 2000 |
 | `debugger.sound.lines.2ndmix.<jit\|interp>` | `same` on `2ndmix.elf` of `NULLDC_ELF_DIR`, N = 40000; a test whose data is missing without that directory |
 | `debugger.sound.muted.dsptest.<jit\|interp>` | `sounds` and `muted` on the guest, N = 2000: the run without the key sounds, the run with `config:aica.NoSound=yes` is its line with the silence of 2000 ticks in `samples` |
 | `debugger.sound.ignored.dsptest` | `ignored` on the guest, N = 2000, on the JIT, with `config:aica.NoBatch=no` and `config:aica.NoBatch=yes`: the key of the render that went, which every configuration file an older build saved has |
 | `debugger.sound.names` | `names` on the build of the tests |
-| `debugger.sound.runner` | `soundlines_test.py`: fifteen calls of the runner on stand-ins for the emulator, and five of its mode `names` on stand-ins for a build directory; no emulator is run |
+| `debugger.sound.runner` | `soundlines_test.py`: twenty-three calls of the runner on stand-ins for the emulator (eight of them of the mode `held`, on a copy of `dsptest.elf` at the labels of this directory and on stand-ins whose line depends on the guest they are given: green on the one that agrees, red naming the field on one whose held copy has another `regs`, red naming the halfword on a copy whose `g_main - 4` is no `mov #0, r0`, and red on each control), and five of its mode `names` on stand-ins for a build directory; no emulator is run |
 
 `nulldc_sound_neutral(<name> SELFTEST <filter> [EXPECT <text>...] [CONFIG <section:key=value>...] [TIMEOUT
 <seconds>])`, defined in `CMakeLists.txt` for the directories behind this one, makes
