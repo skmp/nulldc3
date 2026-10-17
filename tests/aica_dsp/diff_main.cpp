@@ -15,6 +15,7 @@
 	Everything is drawn from fixed seeds: a run compares the same steps every time, and the baseline has their
 	number.
 */
+#include "dsp_gen.h"
 #include "dsp_lockstep.h"
 #include "dsp_suite.h"
 
@@ -82,12 +83,8 @@ static void put(int step, const AicaDspInst& inst, uint32_t junk = 0)
 {
 	uint16_t w[4];
 
-	AicaDspEncode(&inst, w);
-
 	//the bits no field has are register bits like the others
-	w[0] |= junk & 0x0001;
-	w[1] |= (junk >> 1) & 0x0001;
-	w[3] |= (junk >> 2) & 0x007F;
+	dsp_gen_encode(inst, junk, w);
 
 	for (int k = 0; k < 4; k++)
 		ls->RegWrite(0x3400 + 16 * step + 4 * k, w[k]);
@@ -150,23 +147,10 @@ static void fill_ram_random(DspRandom& rnd)
 	ls->RamFill(image.data());
 }
 
-//Numbers from the ends of a range of `bits` bits, and around its powers of two
+//Numbers from the ends of a range of `bits` bits, and around its powers of two (dsp_gen.h)
 static uint32_t edge_value(DspRandom& rnd, int bits)
 {
-	uint32_t mask = bits >= 32 ? 0xFFFFFFFFu : (1u << bits) - 1;
-	uint32_t pow = 1u << rnd.Below(bits);
-
-	switch (rnd.Below(8))
-	{
-	case 0: return 0;
-	case 1: return mask;							//-1
-	case 2: return mask >> 1;						//the largest
-	case 3: return (mask >> 1) + 1;					//the smallest
-	case 4: return pow & mask;
-	case 5: return (pow - 1) & mask;
-	case 6: return (0 - pow) & mask;
-	default: return rnd.Bits(32) & mask;
-	}
+	return dsp_gen_edge(rnd, bits);
 }
 
 
@@ -174,62 +158,22 @@ static uint32_t edge_value(DspRandom& rnd, int bits)
 	Random programs
 */
 
-struct RandomProfile
-{
-	bool sparse;		//a step does little
-	bool edges;			//operands from the edges of their ranges
-	uint32_t fetches;	//channel fetches: 0 none, 1 few, 2 half of the slots, 3 every slot
-	uint32_t bus_reads;	//0 none, 1 one in some samples, 2 several a sample
-	uint32_t cpu;		//CPU accesses between two samples, up to
-};
+//What a random program is like (dsp_gen.h)
+typedef DspGenProfile RandomProfile;
 
 static uint16_t random_word(DspRandom& rnd, const RandomProfile& p, int bits)
 {
-	return (uint16_t)(p.edges ? edge_value(rnd, bits) : rnd.Bits(bits));
+	return dsp_gen_word(rnd, p, bits);
 }
 
 static void random_step(DspRandom& rnd, const RandomProfile& p, int step)
 {
-	if (!p.sparse)
-	{
-		for (int k = 0; k < 4; k++)
-			ls->RegWrite(0x3400 + 16 * step + 4 * k, rnd.Bits(16));
+	uint16_t w[4];
 
-		return;
-	}
+	dsp_gen_step(rnd, p, w);
 
-	AicaDspInst inst = nop();
-
-	//about every third step of a sparse program is left empty
-	if (!rnd.Chance(3))
-	{
-		inst.TRA = (uint8_t)rnd.Bits(7);
-		inst.TWT = rnd.Chance(4);
-		inst.TWA = (uint8_t)rnd.Bits(7);
-		inst.XSEL = (uint8_t)rnd.Bits(1);
-		inst.YSEL = (uint8_t)rnd.Bits(2);
-		inst.IRA = (uint8_t)(rnd.Chance(8) ? rnd.Bits(6) : rnd.Below(0x32));
-		inst.IWT = rnd.Chance(6);
-		inst.IWA = (uint8_t)rnd.Bits(5);
-		inst.TABLE = (uint8_t)rnd.Bits(1);
-		inst.MWT = rnd.Chance(8);
-		inst.MRD = rnd.Chance(5);
-		inst.EWT = rnd.Chance(8);
-		inst.EWA = (uint8_t)rnd.Bits(4);
-		inst.ADRL = rnd.Chance(12);
-		inst.FRCL = rnd.Chance(12);
-		inst.SHIFT = (uint8_t)rnd.Bits(2);
-		inst.YRL = rnd.Chance(12);
-		inst.NEGB = rnd.Chance(6);
-		inst.ZERO = rnd.Chance(3);
-		inst.BSEL = rnd.Chance(3);
-		inst.NOFL = rnd.Chance(3);
-		inst.MASA = (uint8_t)rnd.Bits(6);
-		inst.ADREB = rnd.Chance(4);
-		inst.NXADR = rnd.Chance(4);
-	}
-
-	put(step, inst, rnd.Bits(16));
+	for (int k = 0; k < 4; k++)
+		ls->RegWrite(0x3400 + 16 * step + 4 * k, w[k]);
 }
 
 static void random_cpu_access(DspRandom& rnd, const RandomProfile& p)

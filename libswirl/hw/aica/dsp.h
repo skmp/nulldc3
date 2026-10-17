@@ -7,12 +7,6 @@
 #pragma once
 #include "hw/sh4/sh4_mmio.h"
 
-enum DspBackends {
-	DSPBE_INTERPRETER,
-	DSPBE_DYNAREC,
-};
-
-struct dsp_context_t;
 struct AicaContext;
 
 // What the debugger shows of the DSP beyond the registers in the AICA register file (DSP::DebugGetState).
@@ -33,11 +27,22 @@ struct DspDebugState {
 	u32 mixsBank;   // the MIXS bank the DSP and the CPU read, 0 or 1
 };
 
+struct AicaDsp;
+
 struct DSP : MMIODevice {
-	virtual void Step() = 0;
-	virtual void WritenMem(u32 addr) = 0;
-	virtual bool setBackend(DspBackends backend) = 0;
-	virtual dsp_context_t* GetDspContext() = 0;
+	// The DSP phase of one sample: the steps from AicaDsp::step to the end of the sample (all 128 behind a
+	// SampleSweep). Emulator thread: from the sound burst between AICA::SampleSweep and AICA::SampleMix, or from
+	// AICA::TimeStep. checks false, or dbg_dsp_armed (debugger/debugger.h) 0: AicaDsp::RunSample(); returns true.
+	// checks true and dbg_dsp_armed not 0: the debug loop, AicaDsp::StepOne() behind dbg_dsp_Check() for each
+	// step; returns false when the debugger suspended it in front of a step (the core's step is that step, nothing
+	// of it has executed), true when the sample's last step has executed. A phase that was suspended is gone on
+	// with by the same call.
+	virtual bool RunPhase(bool checks) = 0;
+
+	// The DSP core (hw/aica/dsp_core/aica_dsp_core.h), for the sound generator, the register routing and the sound
+	// regression harness of hw/aica. Debugger modules read the DSP through the accessors of the debug block; a
+	// selftest may read the core within one call.
+	virtual AicaDsp* Core() = 0;
 
 	/*
 		Debugger access. Called on the emulator thread between two steps of the DSP - outside a sound burst, or
@@ -54,8 +59,4 @@ struct DSP : MMIODevice {
 
 	static DSP* Create(AicaContext* aica_ctx, u8* aica_ram, u32 aram_size);
 };
-
-static inline void libDSP_Step() {
-	sh4_cpu->GetA0H<DSP>(A0H_DSP)->Step();
-}
 

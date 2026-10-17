@@ -4,111 +4,66 @@
 #include "license/bsd"
 
 
+#include "aica.h"
 #include "aica_mmio.h"
 #include "dsp.h"
-#include "dsp_backend.h"
+#include "dsp_core/aica_dsp_core.h"
 #include "aica_mem.h"
 #include "oslib/oslib.h"
-#include <memory>
+#include <vector>
 
-DECL_ALIGN(4096) dsp_context_t dsp;
-
+/*
+	The DSP of the AICA is the T5.0 core (dsp_core/aica_dsp_core.h): one AicaDsp, on the wave memory. The sound
+	generator sends to it and mixes its EFREG, the AICA routes the CPUs' accesses of its registers to it
+	(aica_mmio.cpp), and the sample's DSP phase is RunPhase.
+*/
 struct DSP_impl final : DSP {
+	u8* aica_reg;
 	u8* aica_ram;
 	u32 aram_size;
-	DSPData_struct* DSPData;
 
-	unique_ptr<DSPBackend> backend;
+	AicaDsp core = {};
 
-	DSP_impl(u8* aica_reg, u8* aica_ram, u32 aram_size) : aica_ram(aica_ram), aram_size(aram_size) {
-		
-		DSPData = (DSPData_struct*)&aica_reg[0x3000];
-		
-		setBackend(DSPBE_INTERPRETER);
-
-		
-	}
+	DSP_impl(u8* aica_reg, u8* aica_ram, u32 aram_size) : aica_reg(aica_reg), aica_ram(aica_ram), aram_size(aram_size) { }
 
 	bool Init() {
-		// XX is this the right place for this?
-		memset(DSPData, 0, sizeof(*DSPData));
+		// the DSP's part of the register file, as the CPUs wrote it: nothing yet
+		memset(&aica_reg[0x3000], 0, sizeof(DSPData_struct));
 
-		memset(&dsp, 0, sizeof(dsp));
-		dsp.RBL = 0x8000 - 1;
-		dsp.Stopped = 1;
-		dsp.regs.MDEC_CT = 1;
-		dsp.dyndirty = true;
-
+		core.Init(aica_ram, aram_size);
 
 		return true;
 	}
 
-	void WritenMem(u32 addr)
-	{
-		if (addr >= 0x3400 && addr < 0x3C00)
-		{
-			dsp.dyndirty = true;
-		}
-		else if (addr >= 0x4000 && addr < 0x4400)
-		{
-			// TODO proper sharing of memory with sh4 through DSPData
-			memset(dsp.TEMP, 0, sizeof(dsp.TEMP));
-		}
-		else if (addr >= 0x4400 && addr < 0x4500)
-		{
-			// TODO proper sharing of memory with sh4 through DSPData
-			memset(dsp.MEMS, 0, sizeof(dsp.MEMS));
-		}
+	// a machine reset is the DSP's power on: MDEC_CT 1, everything else 0
+	void Reset(bool manual) {
+		core.Reset();
 	}
 
-	void Step() {
-		if (dsp.dyndirty) {
-			backend->Recompile();
-			dsp.dyndirty = false;
-		}
+	bool RunPhase(bool checks) {
+		core.RunSample();
 
-		backend->Step();
+		return true;
 	}
 
-	bool setBackend(DspBackends type) {
-		dsp.dyndirty = true;
-
-		if (type == DSPBE_INTERPRETER) {
-			backend.reset(DSPBackend::CreateInterpreter(DSPData, &dsp, aica_ram, aram_size));
-			return true;
-		}
-#if FEAT_DSPREC == DYNAREC_JIT
-		else if (type == DSPBE_DYNAREC) {
-			backend.reset(DSPBackend::CreateJIT(DSPData, &dsp, aica_ram, aram_size));
-			return true;
-		}
-#endif
-
-		return false;
+	AicaDsp* Core() {
+		return &core;
 	}
 
-	dsp_context_t* GetDspContext() {
-		return &dsp;
-	}
-
-	//Every backend runs the 128 steps of a sample in one call: between two calls the next step is the first.
-	//RBP and RBL are decoded from the register file's word at 0x2804 (DSPData is the file's block at 0x3000),
-	//and the datapath lives in locals of the backend, reset every sample
+	//The core keeps every field inside the bits of its register; the masks say which bits those are
 	bool DebugGetState(DspDebugState* out) {
-		const u8* file = (const u8*)DSPData - 0x3000;
-
-		out->step = 0;
-		out->mdecCt = dsp.regs.MDEC_CT;
-		out->rbpl = file[0x2804] | (file[0x2805] << 8);
-		out->acc = 0;
-		out->yReg = 0;
-		out->frcReg = 0;
-		out->adrsReg = 0;
-		out->latch = 0;
-		out->latchCopy = 0;
-		out->memval = 0;
-		out->noflPipe = 0;
-		out->mixsBank = 0;
+		out->step = core.step & 127;
+		out->mdecCt = core.MDEC_CT;
+		out->rbpl = core.RBPL;
+		out->acc = (s32)((u32)core.ACC << 6) >> 6;
+		out->yReg = (s32)((u32)core.Y_REG << 8) >> 8;
+		out->frcReg = core.FRC_REG & 0x1FFF;
+		out->adrsReg = core.ADRS_REG & 0xFFF;
+		out->latch = core.latch;
+		out->latchCopy = core.latch_copy;
+		out->memval = core.memval;
+		out->noflPipe = core.nofl_pipe & 3;
+		out->mixsBank = core.mixs_dsp & 1;
 		return true;
 	}
 
@@ -117,17 +72,31 @@ struct DSP_impl final : DSP {
 			return false;
 
 		for (int i = 0; i < 4; i++)
-			mpro[i] = (u16)DSPData->MPRO[step * 4 + i];
+			mpro[i] = core.MPRO[step][i];
 
 		return true;
 	}
 
+	//The core's state blob, AicaDsp::StateSize() bytes
 	void serialize(void** data, unsigned int* total_size) {
-		REICAST_S(dsp);
+		std::vector<u8> blob(AicaDsp::StateSize());
+
+		core.SaveState(blob.data());
+		rc_serialize(blob.data(), (unsigned int)blob.size(), data, total_size);
 	}
 
+	//A blob the core refuses (a save state this build did not write) resets the DSP, and the load goes on
 	void unserialize(void** data, unsigned int* total_size) {
-		REICAST_US(dsp);
+		std::vector<u8> blob(AicaDsp::StateSize());
+		const bool given = *data != nullptr;
+
+		rc_unserialize(blob.data(), (unsigned int)blob.size(), data, total_size);
+
+		if (given && !core.LoadState(blob.data(), (u32)blob.size()))
+		{
+			printf("DSP: the save state has no DSP state this build reads; the DSP is reset\n");
+			core.Reset();
+		}
 	}
 };
 

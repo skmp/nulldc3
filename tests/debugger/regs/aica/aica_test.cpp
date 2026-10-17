@@ -1,7 +1,9 @@
 /*
 	Test driver for the sound generator of the AICA (libswirl/hw/aica/sgc_if.cpp) and for the settings of the
-	sound regression harness (libswirl/hw/aica/aica_hash.cpp), linked without the rest of the emulator: what
-	they reference from there is at the end of this file.
+	sound regression harness (libswirl/hw/aica/aica_hash.cpp), linked with the DSP core they drive
+	(libswirl/hw/aica/dsp_core) and without the rest of the emulator: what they reference from there is at the end
+	of this file. The generator renders sample by sample, its sweep, the DSP's sample and its mix, as the AICA's
+	time step makes them
 
 	aica_test channels    the state of a channel that no register write sets: the same whatever the memory the
 	                      generator was created in held, for the guest, for the debugger and in what is played;
@@ -13,7 +15,7 @@
 #include "cfg/cfg.h"
 #include "hw/aica/aica_hash.h"
 #include "hw/aica/aica_mmio.h"
-#include "hw/aica/dsp_backend.h"
+#include "hw/aica/dsp_core/aica_dsp_core.h"
 #include "hw/aica/sgc_if.h"
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_sched.h"
@@ -89,7 +91,15 @@ namespace
 
 	u8 aica_reg[0x8000];
 	u8 aica_ram[2 * 1024 * 1024];
-	dsp_context_t dsp;
+	AicaDsp dsp;
+
+	// One sample of the generator, with the DSP between its two halves (AICA::TimeStep)
+	void Sample(SGC* sgc)
+	{
+		sgc->SampleSweep();
+		dsp.RunSample();
+		sgc->SampleMix();
+	}
 
 	// MSLC, the channel whose status the common registers 0x2810 and 0x2814 show: bits 8..13 of 0x280C
 	void SelectChannel(u32 channel)
@@ -180,6 +190,8 @@ namespace
 		memset(aica_reg, 0, sizeof(aica_reg));
 		memset(aica_ram, 0, sizeof(aica_ram));
 
+		dsp.Init(aica_ram, sizeof(aica_ram));
+
 		alloc_fill = fill;
 		SGC* sgc = SGC::Create(&sink, aica_reg, &dsp, aica_ram, sizeof(aica_ram));
 		alloc_fill = 0xFF;
@@ -209,7 +221,8 @@ namespace
 
 		for (u32 tick = 0; tick < played_ticks; tick++)
 		{
-			sgc->AICA_Sample32();
+			for (u32 sample = 0; sample < 32; sample++)
+				Sample(sgc);
 
 			for (u32 channel : { played_channel, silent_channel })
 			{
@@ -314,6 +327,7 @@ namespace
 	void TestChannels()
 	{
 		size_t allocated = alloc_bytes;
+		dsp.Init(aica_ram, sizeof(aica_ram));
 		SGC* sgc = SGC::Create(nullptr, aica_reg, &dsp, aica_ram, sizeof(aica_ram));
 
 		allocated = alloc_bytes - allocated;

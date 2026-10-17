@@ -13,6 +13,12 @@
 #	aica_dsp_wasm_trace   aica.dsp.capi: the C interface of the core against the core called itself, on random
 #	                      programs and on the known-answer programs. And what aica.dsp.wasm replays on
 #	                      aica_dsp_core.wasm: wasm_test.mjs, with node
+#	aica_dsp_emu <mode>   aica.dsp.emu.<mode>: the core as the emulator's own sound chip drives it (emu_aica.h),
+#	                      against a core of the test's own (lockstep) and in the mix, the reset and the save
+#	                      state of the DSP device (state). No data needed
+#	aica_dsp_cases <case>.emu
+#	                      aica.dsp.case.<case>.emu: the cases anchored directly on the console's files on the
+#	                      emulator's sound chip, against those files
 #	aica_dsp_bench        samples a second, not a test
 #
 #	The model, the programs and the console's files are caique-rtl's and stay there: the tests are compiled with
@@ -38,7 +44,7 @@ if(NOT MSVC)
   target_compile_options(nulldc_aica_dsp_core PRIVATE -Wall -Wextra -Wconversion -Wsign-conversion -Werror)
 endif()
 
-add_library(nulldc_aica_dsp_test STATIC dsp_suite.cpp dsp_suite.h dsp_known.cpp dsp_known.h)
+add_library(nulldc_aica_dsp_test STATIC dsp_suite.cpp dsp_suite.h dsp_known.cpp dsp_known.h dsp_gen.cpp dsp_gen.h)
 target_include_directories(nulldc_aica_dsp_test PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(nulldc_aica_dsp_test PUBLIC nulldc_aica_dsp_core)
 
@@ -63,6 +69,34 @@ add_executable(aica_dsp_bench bench_main.cpp)
 target_link_libraries(aica_dsp_bench PRIVATE nulldc_aica_dsp_core)
 
 
+## The core in the emulator's sound chip ##
+#
+#	The emulator's hw/aica/aica_mmio.cpp, sgc_if.cpp and dsp.cpp, with the definitions and flags of the emulator
+#	build (tests/common/libswirl.cmake; the permissive mode this directory leaves out for the core is the
+#	emulator's), and emu_aica.cpp, what they reference of the rest of the emulator. The core is the one above
+#
+
+nulldc_add_libswirl_library(nulldc_aica_dsp_emu_units
+  SOURCES hw/aica/aica_mmio.cpp hw/aica/sgc_if.cpp hw/aica/dsp.cpp
+)
+target_sources(nulldc_aica_dsp_emu_units PRIVATE emu_aica.cpp emu_aica.h)
+target_include_directories(nulldc_aica_dsp_emu_units PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(nulldc_aica_dsp_emu_units PUBLIC nulldc_aica_dsp_core)
+
+if(NOT MSVC)
+  target_compile_options(nulldc_aica_dsp_emu_units PRIVATE -fpermissive)
+endif()
+
+add_executable(aica_dsp_emu emu_main.cpp)
+target_link_libraries(aica_dsp_emu PRIVATE nulldc_aica_dsp_emu_units nulldc_aica_dsp_test)
+target_compile_definitions(aica_dsp_emu PRIVATE NULLDC_BASELINE="${nulldc_dsp_baseline}")
+
+foreach(mode lockstep state)
+  add_test(NAME aica.dsp.emu.${mode} COMMAND aica_dsp_emu ${mode} --strict)
+  set_tests_properties(aica.dsp.emu.${mode} PROPERTIES TIMEOUT 300)
+endforeach()
+
+
 ## Against the caique model and its console captures ##
 
 set(nulldc_dsp_diff_sets random sparse directed)
@@ -72,6 +106,9 @@ set(nulldc_dsp_cases dsp_basic dsp_mem dsp_mem2 dsp_mem3 dsp_wslot dsp_unpack ds
 set(nulldc_dsp_cases_model_only dsp_coll sh4_latch mdec_hold)
 set(nulldc_dsp_cases_core_only dsp_pack)
 
+# The cases anchored directly on the console's files, which also run on the emulator's sound chip
+set(nulldc_dsp_cases_emu dsp_basic dsp_mem dsp_mem2 dsp_mem3 dsp_wslot dsp_unpack dsp_pack)
+
 if(NOT NULLDC_HAVE_CAIQUE)
   foreach(set ${nulldc_dsp_diff_sets})
     nulldc_add_missing_data_test(aica.dsp.diff.${set} "${NULLDC_CAIQUE_MISSING}")
@@ -79,6 +116,10 @@ if(NOT NULLDC_HAVE_CAIQUE)
 
   foreach(case ${nulldc_dsp_cases})
     nulldc_add_missing_data_test(aica.dsp.case.${case} "${NULLDC_CAIQUE_MISSING}")
+  endforeach()
+
+  foreach(case ${nulldc_dsp_cases_emu})
+    nulldc_add_missing_data_test(aica.dsp.case.${case}.emu "${NULLDC_CAIQUE_MISSING}")
   endforeach()
 else()
   # The model as it is in the checkout. Its warnings are its own
@@ -105,7 +146,7 @@ else()
   # Every case is a C program with a test_main and static data of its own: one object per machine it runs on, with
   # its entry point under a name of its own
   add_executable(aica_dsp_cases cases_main.cpp)
-  target_link_libraries(aica_dsp_cases PRIVATE nulldc_aica_dsp_caique)
+  target_link_libraries(aica_dsp_cases PRIVATE nulldc_aica_dsp_caique nulldc_aica_dsp_emu_units)
   target_compile_definitions(aica_dsp_cases PRIVATE
     NULLDC_BASELINE="${nulldc_dsp_baseline}"
     NULLDC_CAIQUE_DIR="${NULLDC_CAIQUE_DIR}"
@@ -118,6 +159,10 @@ else()
       set(machines model)
     elseif(case IN_LIST nulldc_dsp_cases_core_only)
       set(machines core)
+    endif()
+
+    if(case IN_LIST nulldc_dsp_cases_emu)
+      list(APPEND machines emu)
     endif()
 
     foreach(machine ${machines})
@@ -135,6 +180,11 @@ else()
 
     add_test(NAME aica.dsp.case.${case} COMMAND aica_dsp_cases ${case} --strict ${nulldc_dsp_require_data})
     set_tests_properties(aica.dsp.case.${case} PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE ${nulldc_dsp_skip_code})
+
+    if(case IN_LIST nulldc_dsp_cases_emu)
+      add_test(NAME aica.dsp.case.${case}.emu COMMAND aica_dsp_cases ${case}.emu --strict ${nulldc_dsp_require_data})
+      set_tests_properties(aica.dsp.case.${case}.emu PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE ${nulldc_dsp_skip_code})
+    endif()
   endforeach()
 
   # mdec_hold ends with the measurement that caique's harness runs in front of every case

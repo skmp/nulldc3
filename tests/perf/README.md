@@ -14,6 +14,8 @@ has the figures of the machine this was written on, measured while it was quiet.
     --engines jit,interp     which SH4 engines (both)
     --seconds 60             emulated seconds per run
     --runs 5                 runs per engine; the median is the result
+    --config <keys>          section:key=value for every run, behind the script's own keys (more than once, or
+                             a list separated by commas): config:aica.NoBatch=yes measures the per-sample path
     --json <file>            the result as JSON: per engine the median, the lowest and the highest of both
                              figures, every run (both figures, its CPU seconds and emulated seconds), the load
                              of the machine (1 minute average) in front of every run, the renderer, the date,

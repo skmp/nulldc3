@@ -21,7 +21,7 @@ and two of them agree in every field.
 There are two kinds of run:
 
     the line        config:Debug.AicaHash=<N>: after N ticks of the AICA (a tick is 32 samples) the emulator prints
-                        AicaHash: samples=<hex> regs=<hex> arm7=<hex> sh4=<hex> ticks=<N> cycles=<decimal>
+                        AicaHash: samples=<hex> regs=<hex> arm7=<hex> sh4=<hex> dsp=<hex> ticks=<N> cycles=<decimal>
                     and ends the process, with no exit line (docs/nulldc3/automated-runs.md). The line of every
                     run has to have ticks=<N>
     the exit line   config:Exit.AfterVblanks=<V> , config:Exit.StateHash=yes in place of the harness key: the
@@ -34,7 +34,7 @@ README.md has the modes:
     sounds    samples is none of the hashes of silence. The hash of k * 32 pairs of zeroes is one value for each
               k, and a silent run prints one of them for a k from 0 to N: N in batches, fewer sample by sample,
               where no pair exists while the ARM7 is held in reset
-    engines   the line of the recompiler and the line of the interpreter agree in the fields of --fields
+    engines   the line of the recompiler and the line of the interpreter agree in the fields of --fields, and in dsp
     record    the lines (and with --vblanks the exit lines) of the four configurations, or of the one that
               --engine and --render name, into the file of --file, which is outside of the tree: a line is good
               for one build on one host. Every run is made --runs times and has to give one line. Entries of
@@ -64,7 +64,7 @@ RTC_PIN = 946684800
 
 BAD = ('Fatal error', 'Verify Failed', 'fault_handler', 'AddressSanitizer', 'ThreadSanitizer', 'runtime error:')
 
-LINE_FIELDS = ('samples', 'regs', 'arm7', 'sh4', 'ticks', 'cycles')
+LINE_FIELDS = ('samples', 'regs', 'arm7', 'sh4', 'dsp', 'ticks', 'cycles')
 
 # the parts of the state hash, as the mode same-hash of tests/debugger/selftest/selftest.py compares them
 HASH_FIELDS = ('reason', 'vblanks', 'hash', 'sh4', 'sched', 'ram', 'vram', 'aram', 'arm7')
@@ -249,6 +249,9 @@ def mode_sounds(args, lines):
 def mode_engines(args, lines):
     names = [f for f in args.fields.split(',') if f]
     check(names and all(f in LINE_FIELDS for f in names), '--fields takes names of ' + ', '.join(LINE_FIELDS))
+    # the DSP's whole state, which the SH4's engine does not reach: what the guest's DSP does is the same on both
+    if 'dsp' not in names:
+        names.append('dsp')
     jit, jit_text, jit_fields = line_run(args, 'jit', 'jit', args.render)
     interp, interp_text, interp_fields = line_run(args, 'interp', 'interp', args.render)
     check(not different(jit_fields, interp_fields, names), 'the line of the recompiler and the line of the interpreter differ in '
@@ -548,7 +551,7 @@ def main():
     parser.add_argument('--ticks', type=int, default=0, help='N: config:Debug.AicaHash')
     parser.add_argument('--engine', default=None, choices=ENGINES, help='default jit; record, compare: both')
     parser.add_argument('--render', default=None, choices=RENDERS, help='default batch; record, compare: both')
-    parser.add_argument('--fields', default='samples,regs,arm7,ticks,cycles', help='engines, release: the fields the lines agree in')
+    parser.add_argument('--fields', default='samples,regs,arm7,dsp,ticks,cycles', help='engines, release: the fields the lines agree in (engines: and dsp)')
     parser.add_argument('--file', default='', help='record, compare: the file of lines, outside of the tree')
     parser.add_argument('--note', action='append', default=[], help='record: a comment line for the file (the commit, the build)')
     parser.add_argument('--runs', type=int, default=2, help='record, compare: the runs of each kind in each configuration')

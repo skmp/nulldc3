@@ -41,13 +41,29 @@ struct AicaChannelDebug {
 };
 
 struct AICA : MMIODevice {
-	//Mainloop
+	// The tail of a sound burst, once per burst behind its last sample, also when the ARM7 is held: the tick of
+	// the sound regression harness (aica_hash.h) and, while it exists, the batch render. Samples is ignored
 	virtual void Update(u32 Samples) = 0;
 
 	//Aica reads (both sh4&arm)
 	virtual u32 ReadReg(u32 addr, u32 size) = 0;
 	virtual void WriteReg(u32 addr, u32 data, u32 size) = 0;
 
+	// One sample of the sound chip, in its phases; emulator thread. The sound burst (Dreamcast_impl, libswirl.cpp)
+	// makes them behind the ARM phase of the sample, in this order, and nothing else of the sound chip runs between
+	// them:
+	//   SampleTimers(); SampleSweep(); DSP::RunPhase(checks); SampleMix(); SampleIrq();
+	// TimeStep() is the five with RunPhase(false), for callers outside the sound burst. While the batch render
+	// exists, SampleSweep() and SampleMix() do nothing unless config:aica.NoBatch is set, and the DSP phase is not
+	// made then either
+	virtual void SampleTimers() = 0;   // the three timers count one sample; SAMPLE_DONE is set
+	virtual void SampleSweep() = 0;    // the 64 channels and the CD-DA pair of the sample: the direct mix, kept for
+	                                   // SampleMix(); the sends to the DSP (AicaDsp::SweepBegin, then one MixsSend
+	                                   // for each bus a channel sends to, of the sum of its sends at 20-bit scale);
+	                                   // the CD-DA pair into AicaDsp::EXTS
+	virtual void SampleMix() = 0;      // EFREG of the DSP through EFSDL / EFPAN into the kept mix; mono, MVOL, the
+	                                   // DAC; the harness's sample fold; the audio stream
+	virtual void SampleIrq() = 0;      // the interrupt lines of the ARM7 and of the SH4 follow the AICA's state
 	virtual void TimeStep() = 0;
 
 	/*

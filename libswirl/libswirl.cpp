@@ -280,7 +280,6 @@ void InitSettings()
     settings.dynarec.unstable_opt = false;
     settings.dynarec.safemode = true;
     settings.dynarec.ScpuEnable = true;
-    settings.dynarec.DspEnable = true;
 
     settings.savepopup.isShown = false; // if false, popup on save state should appear
 
@@ -362,7 +361,6 @@ void LoadSettings(bool game_specific)
     settings.dynarec.safemode = cfgLoadBool(config_section, "Dynarec.safe-mode", settings.dynarec.safemode);
     settings.dynarec.SmcCheckLevel = (SmcCheckEnum)cfgLoadInt(config_section, "Dynarec.SmcCheckLevel", settings.dynarec.SmcCheckLevel);
     settings.dynarec.ScpuEnable = cfgLoadInt(config_section, "Dynarec.ScpuEnabled", settings.dynarec.ScpuEnable);
-    settings.dynarec.DspEnable = cfgLoadInt(config_section, "Dynarec.DspEnabled", settings.dynarec.DspEnable);
 
     settings.savepopup.isShown = cfgLoadBool(config_section, "SavePopup.isShown", settings.savepopup.isShown);
 
@@ -499,7 +497,6 @@ void SaveSettings()
 {
     cfgSaveBool("config", "Dynarec.Enabled", settings.dynarec.Enable);
     cfgSaveInt("config", "Dynarec.ScpuEnabled", settings.dynarec.ScpuEnable);
-    cfgSaveInt("config", "Dynarec.DspEnabled", settings.dynarec.DspEnable);
     cfgSaveInt("config", "Dreamcast.Cable", settings.dreamcast.cable);
     cfgSaveInt("config", "Dreamcast.Region", settings.dreamcast.region);
     cfgSaveInt("config", "Dreamcast.Broadcast", settings.dreamcast.broadcast);
@@ -729,18 +726,6 @@ struct Dreamcast_impl : VirtualDreamcast {
         {
             scpu->setBackend(ARM7BE_INTERPRETER);
             printf("Using SCPU Interpreter\n");
-        }
-
-        auto dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
-
-        if (settings.dynarec.DspEnable && dsp->setBackend(DSPBE_DYNAREC))
-        {
-            printf("Using DSP Recompiler\n");
-        }
-        else
-        {
-            dsp->setBackend(DSPBE_INTERPRETER);
-            printf("Using DSP Interpreter\n");
         }
 
         // Not when the machine was asked to stop while this thread started. The thread then goes to the reasons

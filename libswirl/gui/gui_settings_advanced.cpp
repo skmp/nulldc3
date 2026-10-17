@@ -75,18 +75,6 @@ void gui_settings_advanced()
 			gui_ShowHelpMarker("Use the ARM7 interpreter. Very slow but may help in case of a dynarec problem");
 			ImGui::Columns(1, NULL, false);
 		}
-		if (ImGui::CollapsingHeader("DSP Mode", ImGuiTreeNodeFlags_DefaultOpen))
-		{
-			ImGui::Columns(2, "dsp_modes", false);
-			ImGui::RadioButton("DSP Dynarec", &settings.dynarec.DspEnable, 1);
-			ImGui::SameLine();
-			gui_ShowHelpMarker("Use the DSP dynamic recompiler. Recommended in most cases");
-			ImGui::NextColumn();
-			ImGui::RadioButton("DSP Interpreter", &settings.dynarec.DspEnable, 0);
-			ImGui::SameLine();
-			gui_ShowHelpMarker("Use the DSP interpreter. Very slow but may help in case of a DSP dynarec problem");
-			ImGui::Columns(1, NULL, false);
-		}
 
 		if (ImGui::CollapsingHeader("Other", ImGuiTreeNodeFlags_DefaultOpen))
 	    {

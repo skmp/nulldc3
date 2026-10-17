@@ -1,12 +1,17 @@
 # AICA DSP core tests: checks below their total
 
-`baseline.txt` has one kind of check that passes fewer cases than it has: the report of `dsp_basic` against the
-console's, 306 of 309 lines, in all four of its rows (the model and the core alone, against the console runs `hw9`
-and `hw`). The model and the core alone write the same 309 lines (`core-as-model:lines`).
+`baseline.txt` has two kinds of check that pass fewer cases than they have:
+
+* the report of `dsp_basic` against the console's, 306 of 309 lines, in all six of its rows (the model, the core
+  alone and the emulator's sound chip, against the console runs `hw9` and `hw`). The model, the core alone and the
+  emulator's sound chip write the same 309 lines (`core-as-model:lines`, `emu-as-core:lines`);
+* the report of `dsp_mem3` on the emulator's sound chip (`aica.dsp.case.dsp_mem3.emu`), 7 of 12 lines against the
+  console and against the core alone: the five lines whose IWT stores what the SH4 read last, which the emulator
+  does not put into the DSP's read latch.
 
 Nothing else is below its total, and nothing is left out of a count.
 
-## aica.dsp.case.dsp_basic: `console-hw9:*:lines`, `console-hw:*:lines`
+## aica.dsp.case.dsp_basic and aica.dsp.case.dsp_basic.emu: `console-hw9:*:lines`, `console-hw:*:lines`
 
 Three lines of each console run are not what the model and the core write. None of them is a rule of the DSP that
 is in doubt; all three are places where the console's report depends on when the SH4 did something.
@@ -42,4 +47,27 @@ writes lands in one bank, which then holds 0x12345, and the output alternates be
 console runs differ from each other in line 307 for the same reason: the alternation starts on the other sample.
 
 The model has the same three lines as the core alone, so these rows say nothing about the core that they do not
-say about the model: they are counted, and pinned at 306, so that a change of either shows.
+say about the model: they are counted, and pinned at 306, so that a change of either shows. The emulator's sound
+chip has them too (`emu-as-core:lines` is 309 of 309): its CPU writes of MIXS land in the bank the DSP reads, on
+the same time base.
+
+## aica.dsp.case.dsp_mem3.emu: `emu-as-core:lines`, `console-hw9:emu:lines`, `console-hw:emu:lines`
+
+The emulator calls no `AicaDsp::BusRead`: a read of the wave memory by the SH4 or the ARM7 goes through the
+emulator's memory map and leaves nothing in the DSP's read latch (the cut of the M3 round, M3-D10: a hook there
+would cost every read; the `cycle-similar` AICA of track 5 wires it). The core alone has the read in the latch
+(its machine calls `BusRead` with the upper half of every 32-bit read, between two samples), and so has the console.
+
+Lines 3 to 7 of the report put an MRD and an MWT in one step. That step reads nothing (aica_dsp_core.h, "An MRD
+in a step that also has MWT reads nothing"), so the IWT behind it stores the word the latch already holds: on the
+console the upper half of the SH4's last read of the wave memory, the word in front of the case's MADRS (the
+case reads the words back between its runs), here the word of the DSP's own last read:
+
+    line 3    console: MRD+MWT@5                madrs 0320: read 032300  words 031e..0323: ...
+              here:    MRD+MWT@5                madrs 0320: read 032000  words 031e..0323: ...
+    lines 4 to 7: the same, at madrs 0325, 0330, 0340 (float write) and 0350 (the even step 4)
+
+The rest of each line, the words of the wave memory around the write, is the console's: the write of the step is
+right. A scratch build of the test whose machine calls `BusRead` with the upper half of every wave memory read of
+the case writes all 12 lines as the console does; the tree does not keep that build, it would test a wiring the
+emulator does not have.

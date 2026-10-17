@@ -3,12 +3,19 @@
 	sh4_latch.c, mdec_hold.c), run here, against what the console answered (model/tests/<case>/hw*).
 
 	A case is a C program on a small register and wave RAM interface (cases/aica_io.h). It is compiled from the
-	checkout as it is, twice, and run on two machines:
+	checkout as it is, once for each machine it runs on:
 
 	  model   the caique sample model, the whole sound chip, with the DSP core next to its DSP, compared behind
 	          every step (dsp_lockstep.h). What the case writes out is the model's answer
 	  core    the DSP core alone. Around it there is only what a silent sound generator does: every channel sends
 	          0 to the bus of its ISEL in every sample. Cases that play a channel cannot run here
+	  emu     the emulator's own sound chip (emu_aica.h): its AICA device with its register routing, its sound
+	          generator and its DSP device, which holds the core. The case's register accesses are 32-bit accesses
+	          of the SH4 through AICA::ReadReg / AICA::WriteReg, a sample is libAICA_TimeStep() sample by sample,
+	          the wave memory is the device's. No channel is keyed, so every channel sends 0 to the bus of its
+	          ISEL: the silent sound generator of the core machine. The emulator gives the latch no CPU read
+	          (AicaDsp::BusRead is not wired, M3-D10). Only the cases anchored directly on the console's files run
+	          here, as aica.dsp.case.<case>.emu, next to the core machine (the check emu-as-core)
 
 	and what they write out is compared with the console's files. That makes two kinds of anchor:
 
@@ -29,6 +36,7 @@
 */
 #include "dsp_lockstep.h"
 #include "dsp_suite.h"
+#include "emu_aica.h"
 
 #include <cstring>
 #include <map>
@@ -140,6 +148,46 @@ struct CoreMachine : CaseMachine
 
 		dsp.RunSample();
 	}
+};
+
+//The emulator's sound chip: a read or a write of a register is a 32-bit access of the SH4, a read of the wave
+//memory reaches no latch
+struct EmuMachine : CaseMachine
+{
+	EmuAica* emu;
+
+	EmuMachine()
+	{
+		EmuCddaOn(false);
+		emu = EmuAica::Create(CAIQUE_RAM_SIZE);
+	}
+
+	~EmuMachine() { delete emu; }
+
+	uint32_t RegRead(uint32_t off) override { return emu->RegRead(off & 0x7FFC, 4); }
+	void RegWrite(uint32_t off, uint32_t value) override { emu->RegWrite(off & 0x7FFC, value, 4); }
+
+	uint32_t RamRead32(uint32_t off) override
+	{
+		const uint8_t* ram = emu->Ram();
+
+		off &= CAIQUE_RAM_SIZE - 4;
+
+		return ram[off] | (ram[off + 1] << 8) | (ram[off + 2] << 16) | ((uint32_t)ram[off + 3] << 24);
+	}
+
+	void RamWrite32(uint32_t off, uint32_t value) override
+	{
+		uint8_t* ram = emu->Ram();
+
+		off &= CAIQUE_RAM_SIZE - 4;
+
+		for (int i = 0; i < 4; i++)
+			ram[off + i] = (uint8_t)(value >> (8 * i));
+	}
+
+	bool Sh4Irq() override { return emu->Sh4Irq(); }
+	void Sample() override { emu->Sample(); }
 };
 
 /*
@@ -266,6 +314,13 @@ extern "C"
 	int caique_case_dsp_coll_model(void);
 	int caique_case_sh4_latch_model(void);
 	int caique_case_mdec_hold_model(void);
+	int caique_case_dsp_basic_emu(void);
+	int caique_case_dsp_mem_emu(void);
+	int caique_case_dsp_mem2_emu(void);
+	int caique_case_dsp_mem3_emu(void);
+	int caique_case_dsp_wslot_emu(void);
+	int caique_case_dsp_unpack_emu(void);
+	int caique_case_dsp_pack_emu(void);
 }
 
 typedef std::map<std::string, std::vector<uint8_t>> CaseFiles;
@@ -669,17 +724,18 @@ struct CaseDef
 	int (*on_core)(void);		//0: the case plays a channel
 	const char* text;			//its report
 	const char* console[2];		//the console runs its report is compared with, line by line
+	int (*on_emu)(void);		//the case on the emulator's sound chip, for the cases anchored directly on the console
 };
 
 static const CaseDef cases[] =
 {
-	{ "dsp_basic", caique_case_dsp_basic_model, caique_case_dsp_basic_core, "dsp_basic.txt", { "hw9", "hw" } },
-	{ "dsp_mem", caique_case_dsp_mem_model, caique_case_dsp_mem_core, "dsp_mem.txt", { "hw9", "hw" } },
-	{ "dsp_mem2", caique_case_dsp_mem2_model, caique_case_dsp_mem2_core, "dsp_mem2.txt", { "hw9", "hw" } },
-	{ "dsp_mem3", caique_case_dsp_mem3_model, caique_case_dsp_mem3_core, "dsp_mem3.txt", { "hw9", "hw" } },
-	{ "dsp_wslot", caique_case_dsp_wslot_model, caique_case_dsp_wslot_core, "dsp_wslot.txt", { "hw9", "hw" } },
-	{ "dsp_unpack", caique_case_dsp_unpack_model, caique_case_dsp_unpack_core, "dsp_unpack.txt", { "hw9", "hw" } },
-	{ "dsp_pack", 0, caique_case_dsp_pack_core, "dsp_pack.txt", { "hw9", "hw" } },
+	{ "dsp_basic", caique_case_dsp_basic_model, caique_case_dsp_basic_core, "dsp_basic.txt", { "hw9", "hw" }, caique_case_dsp_basic_emu },
+	{ "dsp_mem", caique_case_dsp_mem_model, caique_case_dsp_mem_core, "dsp_mem.txt", { "hw9", "hw" }, caique_case_dsp_mem_emu },
+	{ "dsp_mem2", caique_case_dsp_mem2_model, caique_case_dsp_mem2_core, "dsp_mem2.txt", { "hw9", "hw" }, caique_case_dsp_mem2_emu },
+	{ "dsp_mem3", caique_case_dsp_mem3_model, caique_case_dsp_mem3_core, "dsp_mem3.txt", { "hw9", "hw" }, caique_case_dsp_mem3_emu },
+	{ "dsp_wslot", caique_case_dsp_wslot_model, caique_case_dsp_wslot_core, "dsp_wslot.txt", { "hw9", "hw" }, caique_case_dsp_wslot_emu },
+	{ "dsp_unpack", caique_case_dsp_unpack_model, caique_case_dsp_unpack_core, "dsp_unpack.txt", { "hw9", "hw" }, caique_case_dsp_unpack_emu },
+	{ "dsp_pack", 0, caique_case_dsp_pack_core, "dsp_pack.txt", { "hw9", "hw" }, caique_case_dsp_pack_emu },
 	{ "dsp_temp", caique_case_dsp_temp_model, caique_case_dsp_temp_core, "dsp_temp.txt", { 0, 0 } },
 	{ "dsp_coll", caique_case_dsp_coll_model, 0, "dsp_coll.txt", { 0, 0 } },
 	{ "sh4_latch", caique_case_sh4_latch_model, 0, "sh4_latch.txt", { 0, 0 } },
@@ -692,7 +748,8 @@ int main(int argc, char** argv)
 		"aica_dsp_cases <case> [options]\n"
 		"A DSP program of the caique project on the caique sample model with the DSP core next to it, and on the\n"
 		"core alone, against what a Dreamcast answered. Cases: dsp_basic dsp_mem dsp_mem2 dsp_mem3 dsp_wslot\n"
-		"dsp_unpack dsp_pack dsp_temp dsp_coll sh4_latch mdec_hold";
+		"dsp_unpack dsp_pack dsp_temp dsp_coll sh4_latch mdec_hold. <case>.emu: the case on the emulator's sound\n"
+		"chip, next to the core alone, for dsp_basic dsp_mem dsp_mem2 dsp_mem3 dsp_wslot dsp_unpack dsp_pack";
 
 	DspOptions opt;
 
@@ -700,11 +757,18 @@ int main(int argc, char** argv)
 	opt.data_dir = NULLDC_CAIQUE_DIR;
 
 	const CaseDef* def = 0;
+	bool emu = false;
 
 	for (const CaseDef& c : cases)
 	{
 		if (argc > 1 && std::string(argv[1]) == c.name)
 			def = &c;
+
+		if (argc > 1 && c.on_emu && std::string(argv[1]) == std::string(c.name) + ".emu")
+		{
+			def = &c;
+			emu = true;
+		}
 	}
 
 	if (!def)
@@ -716,7 +780,7 @@ int main(int argc, char** argv)
 	if (!dsp_suite_options(argc, argv, 2, usage, opt))
 		return DSP_EXIT_ERROR;
 
-	std::string name = std::string("aica.dsp.case.") + def->name;
+	std::string name = std::string("aica.dsp.case.") + def->name + (emu ? ".emu" : "");
 
 	caique_dir = opt.data_dir;
 
@@ -729,7 +793,35 @@ int main(int argc, char** argv)
 	if (!dsp_suite_begin(name.c_str(), opt))
 		return DSP_EXIT_ERROR;
 
-	CaseFiles on_model, on_core;
+	CaseFiles on_model, on_core, on_emu;
+
+	if (emu)
+	{
+		EmuMachine* m = new EmuMachine();
+
+		run_case(m, def->on_emu, on_emu);
+		dsp_note("emu:   %llu samples", (unsigned long long)samples_run);
+		delete m;
+
+		CoreMachine* c = new CoreMachine();
+
+		run_case(c, def->on_core, on_core);
+		delete c;
+
+		//what the emulator's chip writes, line by line against the core alone: where the wiring differs from it
+		compare_texts("emu-as-core:lines", on_emu[def->text], on_core[def->text]);
+
+		for (const char* run : def->console)
+			compare_text(std::string("console-") + run + ":emu:lines", on_emu[def->text], console_path(def->name, run, def->text));
+
+		if (std::string(def->name) == "dsp_unpack")
+		{
+			for (const char* run : def->console)
+				compare_words(std::string("console-") + run + ":emu:words", on_emu["unpack.bin"], console_path("dsp_unpack", run, "unpack.bin"), 4);
+		}
+
+		return dsp_suite_end();
+	}
 
 	if (def->on_model)
 	{

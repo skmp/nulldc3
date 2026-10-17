@@ -3,12 +3,15 @@
 */
 #include <license/bsd>
 
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 #include <map>
 #include <string>
 #include <sstream>
 #include <fstream>
-#include "libswirl/hw/aica/dsp_backend.h"
+#include "libswirl/hw/aica/dsp_core/aica_dsp_core.h"
 
 using namespace std;
 
@@ -44,11 +47,17 @@ map<string, int> getDefaultInst()
     return rv;
 }
 
-map<string, int> decodeInst(u32 *Inst)
+// The fields of a step, as the DSP core decodes them (AicaDspDecode): the four 16-bit words are the low halves of
+// the four 32-bit words of the binary
+map<string, int> decodeInst(uint32_t *Inst)
 {
-    _INST i = {0};
+    AicaDspInst i = {0};
+    uint16_t words[4];
 
-    DSPBackend::DecodeInst(Inst, &i);
+    for (int k = 0; k < 4; k++)
+        words[k] = (uint16_t)Inst[k];
+
+    AicaDspDecode(words, &i);
 
     map<string, int> rv;
 
@@ -80,9 +89,12 @@ map<string, int> decodeInst(u32 *Inst)
     return rv;
 }
 
-void encodeInst(u32 *Inst, map<string, int> &desc)
+// A step from its fields, as the DSP core encodes it (AicaDspEncode): each field cut to its bits, the 16-bit
+// words in the low halves of the binary's 32-bit words
+void encodeInst(uint32_t *Inst, map<string, int> &desc)
 {
-    _INST i = {0};
+    AicaDspInst i = {0};
+    uint16_t words[4];
 
     i.TRA = desc["TRA"];
     i.TWT = desc["TWT"];
@@ -109,7 +121,10 @@ void encodeInst(u32 *Inst, map<string, int> &desc)
     i.ADREB = desc["ADREB"];
     i.NXADR = desc["NXADR"];
 
-    DSPBackend::EncodeInst(Inst, &i);
+    AicaDspEncode(&i, words);
+
+    for (int k = 0; k < 4; k++)
+        Inst[k] = words[k];
 }
 
 string DisassembleDesc(map<string, int> &desc)
