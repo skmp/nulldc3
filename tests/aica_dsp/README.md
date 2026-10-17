@@ -208,7 +208,10 @@ neither half 0 (`EmuCddaPair`).
   `aica_dsp_diff` (`dsp_gen.h`), random and sparse, each on a new machine with random wave memory, against a core
   of the test's own. Every write of the program and between the samples is in one of the forms a CPU has: a 16-bit
   or a 32-bit write of a slot, its two bytes, one of them, a write of the upper half of the slot (16-bit or a byte)
-  with a value other than the low half's. The test keeps the register file as its CPU wrote it and gives its core
+  with a value other than the low half's behind a write of the low half; between the samples also the upper half
+  alone, with no write of the low half in front of it, which on a TEMP, MEMS, MIXS or EFREG slot the program or the
+  sweep has written since leaves the DSP with another value than the file's word. The test keeps the register file
+  as its CPU wrote it and gives its core
   what the rules of the file make of each write: the file's word of the slot when the low half of a slot of the
   DSP was written, nothing for the upper half. One to three keyed channels on each side, IMXL = DISDL, the pan all
   to that side, MVOL 15, no output of the DSP or of the CD-DA mixed: a channel's send is then its direct output, so
@@ -218,7 +221,8 @@ neither half 0 (`EmuCddaPair`).
   CPU reads between the samples (of every form, also of the offsets next to the DSP's) give what the test's core
   answers, the upper half of a slot 0, the file elsewhere; and behind every program the two wave memories are
   equal. The checks `did:*` count what was done: samples with sends on both buses, with a CD-DA pair, writes of
-  each form, writes the core was given.
+  each form, writes the core was given, and per array the writes of an upper half alone on a slot where the DSP
+  given the file's word again would differ (`did:upper-alone-moved:*`).
 * **`aica.dsp.emu.state`** (`aica_dsp_emu state`): `efreg-mix`, a program whose EWT writes 0x1234 into EFREG3: the
   pair of each sample with EFSDL 15 differs from the pair with EFSDL 0 by the VOLPAN of the core's EFREG3, which is
   0x1234; `reset`, the DSP device's `Reset(false)` behind a program that ran leaves the core's blob that of a core

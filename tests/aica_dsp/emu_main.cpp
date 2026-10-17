@@ -6,7 +6,9 @@
 	  lockstep   generated programs (the generator of aica_dsp_diff, dsp_gen.h) through the emulator's AICA, with
 	             CPU writes of the DSP's registers in every form a CPU has between the samples (16-bit and 32-bit
 	             writes of a slot, its bytes one by one, writes of the upper half of a slot with a value other than
-	             the low half's) and channels keyed so that MIXS carries sends, against a core of the test's own.
+	             the low half's, behind a write of the low half and alone, on slots whose value the DSP has moved
+	             away from the file's word) and channels keyed so that MIXS carries sends, against a core of the
+	             test's own.
 	             The test works out what that core is given, never asking the emulator: the CPU's register
 	             writes by the rules of the register file (a slot of the DSP gets the file's word of the slot when
 	             its low half is written), the sends from what the sample handed to the audio stream (below), the
@@ -89,7 +91,8 @@ namespace lockstep
 	std::vector<uint8_t> ref_ram;
 	uint8_t file[0x8000];		//the register file as the test's CPU wrote it
 
-	uint64_t reads, reads_ok, byte_writes, upper_writes, full_writes, forwarded;
+	uint64_t reads, reads_ok, byte_writes, upper_writes, full_writes, forwarded, upper_alone;
+	uint64_t upper_alone_moved[4];	//TEMP, MEMS, MIXS, EFREG
 	std::string first;
 
 	void note_first(const char* fmt, const std::string& what)
@@ -225,6 +228,28 @@ namespace lockstep
 		}
 	}
 
+	//The upper half of the slot at off alone, with no write of its low half in front of it: a 16-bit write at off + 2
+	//or one of its two bytes. The file takes it and the DSP nothing (M3-D5). Between two samples the DSP's value of
+	//a TEMP, MEMS, MIXS or EFREG slot is often no longer the file's word (the program and the sweep wrote it since):
+	//counted are the writes on such a slot, where the DSP given the file's word again would differ
+	void put_upper(DspRandom& rnd, uint32_t off, uint16_t v)
+	{
+		if (off >= 0x4000 && off < 0x45C0)
+		{
+			AicaDsp given = ref;
+
+			given.RegWrite(off, file[off] | (file[off + 1] << 8));
+			upper_alone_moved[off < 0x4400 ? 0 : off < 0x4500 ? 1 : off < 0x4580 ? 2 : 3] += blob_of(given) != blob_of(ref);
+		}
+
+		if (rnd.Chance(2))
+			write(off + 2, v, 2);
+		else
+			write(off + 2 + rnd.Below(2), v & 0xFF, 1);
+
+		upper_alone++;
+	}
+
 	//Between two samples: writes of DSP registers in every form, reads of them, and of what is next to them
 	void cpu_access(DspRandom& rnd, const DspGenProfile& p)
 	{
@@ -236,7 +261,7 @@ namespace lockstep
 		const auto& area = areas[rnd.Below(sizeof(areas) / sizeof(areas[0]))];
 		uint32_t off = area.base + 4 * rnd.Below(area.count);
 
-		switch (rnd.Below(5))
+		switch (rnd.Below(6))
 		{
 		case 0:
 		case 1:
@@ -245,6 +270,10 @@ namespace lockstep
 				put(rnd, off, (uint16_t)((rnd.Bits(16) & 0x7FFF) | (ref.RBPL & 0x8000)));
 			else
 				put(rnd, off, dsp_gen_word(rnd, p, 16));
+			break;
+
+		case 2:
+			put_upper(rnd, off, (uint16_t)rnd.Bits(16));
 			break;
 
 		default:
@@ -464,6 +493,11 @@ namespace lockstep
 		dsp_count("did:write-16-32", full_writes, full_writes);
 		dsp_count("did:write-byte", byte_writes, byte_writes);
 		dsp_count("did:write-upper-half", upper_writes, upper_writes);
+		dsp_count("did:write-upper-alone", upper_alone, upper_alone);
+		dsp_count("did:upper-alone-moved:TEMP", upper_alone_moved[0], upper_alone_moved[0]);
+		dsp_count("did:upper-alone-moved:MEMS", upper_alone_moved[1], upper_alone_moved[1]);
+		dsp_count("did:upper-alone-moved:MIXS", upper_alone_moved[2], upper_alone_moved[2]);
+		dsp_count("did:upper-alone-moved:EFREG", upper_alone_moved[3], upper_alone_moved[3]);
 		dsp_count("did:forwarded", forwarded, forwarded);
 		dsp_note("%llu programs, %llu samples compared, %llu CPU reads; %llu samples with sends on both buses%s%s", (unsigned long long)c.programs,
 			(unsigned long long)c.samples, (unsigned long long)reads, (unsigned long long)c.sounding, first.empty() ? "" : "\nfirst: ", first.c_str());
