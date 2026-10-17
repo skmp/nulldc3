@@ -1339,11 +1339,6 @@ struct SGC_impl : SGC {
 			VOLPAN(dsp->EFREG[i], dsp_out_vol[i].EFSDL, dsp_out_vol[i].EFPAN, mixl, mixr);
 		}
 
-		if (settings.aica.NoSound)
-		{
-			return;
-		}
-
 		//Mono !
 		if (CommonData->Mono)
 		{
@@ -1378,6 +1373,15 @@ struct SGC_impl : SGC {
 
 		clip16(mixl);
 		clip16(mixr);
+
+		//"Disable Sound" mutes: the sample is made, and a pair of zeroes goes out in its place. The audio stream
+		//still gets a pair every sample, which keeps the speed limit of the emulator (LimitFPS) going, and the
+		//harness folds what goes to the stream
+		if (settings.aica.NoSound)
+		{
+			mixl = 0;
+			mixr = 0;
+		}
 
 		pl = mixl;
 		pr = mixr;

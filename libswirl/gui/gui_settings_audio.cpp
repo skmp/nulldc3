@@ -20,7 +20,7 @@ void gui_settings_audio()
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 		ImGui::Checkbox("Disable Sound", &settings.aica.NoSound);
         ImGui::SameLine();
-        gui_ShowHelpMarker("Disable the emulator sound output");
+        gui_ShowHelpMarker("Mute the emulator sound output. The sound is still emulated, and Limit FPS still keeps the speed");
 
 		ImGui::Checkbox("Limit FPS", &settings.aica.LimitFPS);
         ImGui::SameLine();

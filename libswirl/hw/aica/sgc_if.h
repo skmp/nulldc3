@@ -66,7 +66,8 @@ struct SGC {
 	// (AicaDsp::SweepBegin, then for each bus a channel's ISEL names one AicaDsp::MixsSend of the sum of the sends
 	// to it, oDsp << 4); the CD-DA pair into AicaDsp::EXTS. SampleMix: EFREG of the DSP through EFSDL / EFPAN into
 	// the kept mix, mono, MVOL, the DAC; the pair goes to the audio stream, which is also the speed limit of the
-	// emulator (LimitFPS), and the harness folds it
+	// emulator (LimitFPS), and the harness folds it. With "Disable Sound" (config:aica.NoSound) the pair is made
+	// all the same and a pair of zeroes goes out in its place, to the stream and to the harness
 	virtual void SampleSweep() = 0;
 	virtual void SampleMix() = 0;
 
