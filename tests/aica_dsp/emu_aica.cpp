@@ -9,6 +9,7 @@
 
 #include "types.h"
 #include "hw/aica/aica.h"
+#include "hw/aica/aica_hash.h"
 #include "hw/aica/aica_mmio.h"
 #include "hw/aica/dsp.h"
 #include "hw/holly/holly_intc.h"
@@ -79,6 +80,26 @@ int msgboxf(const wchar* text, unsigned int type, ...)
 void os_DebugBreak()
 {
 	abort();
+}
+
+/*
+	The settings a test changes, and the harness
+*/
+void EmuNoSound(bool on)
+{
+	settings.aica.NoSound = on;
+}
+
+void EmuHarnessOn(bool on)
+{
+	aica_hash.ticks_wanted = on ? 0xFFFFFFFFu : 0;
+	aica_hash.ticks = 0;
+	aica_hash.samples = 0xcbf29ce484222325ull;
+}
+
+uint64_t EmuHarnessSamples()
+{
+	return aica_hash.samples;
 }
 
 /*

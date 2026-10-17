@@ -15,10 +15,11 @@
 	             CD-DA pair from the stand-in that gives a pair of its own, not 0, in every sample. The two cores'
 	             state blobs are equal behind every sample, and what CPU reads give is what the test's core
 	             answers.
-	  state      four checks of what the sound chip and its save state do with the core: the mix takes EFREG from
+	  state      five checks of what the sound chip and its save state do with the core: the mix takes EFREG from
 	             the core; the DSP device's Reset is the core's power on; the DSP device's save state is the core's
 	             blob, and one the core does not read resets the DSP; the AICA's save state keeps the bus a channel
-	             sends to.
+	             sends to; "Disable Sound" (settings.aica.NoSound) hands the audio stream a pair of zeroes in every
+	             sample, which the harness folds, and changes nothing else.
 
 	The sends. The keyed channels have IMXL = DISDL, their pan all to one side, MVOL is 15, and no output of the
 	DSP or of the CD-DA is mixed (EFSDL 0): a channel's send is then its direct output on its side, from the same
@@ -821,6 +822,146 @@ namespace state
 			delete emu;
 		}
 
+		//(5) "Disable Sound" mutes, and the audio stream gets its pair in every sample all the same: the stream is
+		//the speed limit of the emulator (M3-D16). A machine that sounds (channel 0 keyed with a direct output to
+		//both sides and a send to the DSP, the program of check 1 at EFSDL 15, the CD-DA stand-in in EXTS and in the
+		//mix) runs its samples; a new one runs the same samples with settings.aica.NoSound. Behind every sample the
+		//muted machine has handed the stream one pair more, and that pair is (0, 0), where the other's is not; the
+		//harness has folded what each handed the stream, the other's pairs and as many pairs of zeroes; and the
+		//DSP's blob, the AICA's save state (its register file, the channels, the CD-DA sector) and the register file
+		//are the other's. With NoSound off again, the next sample hands the stream the other's next pair, and the
+		//states stay the same
+		{
+			const uint32_t samples = 64, sa = 0x10000;
+
+			struct After
+			{
+				uint64_t pairs, fold;
+				int16_t left, right;
+				std::vector<uint8_t> dsp, aica, file;
+			};
+
+			auto run_machine = [&](bool muted, std::vector<After>& after)
+			{
+				EmuAica* emu = EmuAica::Create(RAM_SIZE);
+
+				EmuCddaOn(true);
+				EmuHarnessOn(true);
+
+				//16-bit PCM on a loop of 0x400 words none 0
+				for (uint32_t i = 0; i < 0x800; i += 2)
+				{
+					const uint16_t w = (uint16_t)(0x0800 + 37 * i);
+
+					memcpy(emu->Ram() + sa + i, &w, 2);
+				}
+
+				emu->RegWrite(0x2800, 0x000F, 2);				// MVOL 15
+				emu->RegWrite(0x2000 + 4 * 3, 15 << 8, 2);		// EFSDL 15 of output 3, EFPAN 0
+				emu->RegWrite(0x2000 + 4 * 16, 8 << 8, 2);		// the CD-DA's left half at EFSDL 8
+				emu->RegWrite(0x2000 + 4 * 17, 8 << 8, 2);		// and its right half
+				load_known(emu);
+
+				emu->RegWrite(0x04, sa & 0xFFFF, 2);			// SA, low part
+				emu->RegWrite(0x08, 0, 2);						// LSA
+				emu->RegWrite(0x0C, 0x400, 2);					// LEA
+				emu->RegWrite(0x10, 0x001F, 2);					// AR 31
+				emu->RegWrite(0x14, 0x001F, 2);					// RR 31
+				emu->RegWrite(0x18, 0x0200, 2);					// OCT 0, FNS
+				emu->RegWrite(0x20, (15 << 4) | 2, 2);			// IMXL 15, ISEL 2
+				emu->RegWrite(0x24, 13 << 8, 2);				// DISDL 13, DIPAN 0: both sides
+				emu->RegWrite(0x28, 0x10 << 8, 2);				// TL 0x10
+				emu->RegWrite(0x00, 0xC200 | (sa >> 16), 2);	// KYONEX, KYONB, LPCTL, 16-bit PCM
+
+				EmuNoSound(muted);
+
+				for (uint32_t n = 0; n <= samples; n++)
+				{
+					if (n == samples)
+						EmuNoSound(false);
+
+					emu->Sample();
+
+					After a;
+
+					a.pairs = emu->Pairs();
+					a.fold = EmuHarnessSamples();
+					a.left = emu->LastLeft();
+					a.right = emu->LastRight();
+					a.dsp = blob_of(*emu->Core());
+					a.aica = emu->AicaSave();
+					a.file.assign(emu->File(), emu->File() + 0x8000);
+					after.push_back(a);
+				}
+
+				EmuNoSound(false);
+				EmuHarnessOn(false);
+				delete emu;
+			};
+
+			//the harness's fold of a pair (hw/aica/aica_hash.h): right then left, two bytes each, low byte first
+			auto fold = [](uint64_t hash, int16_t left, int16_t right)
+			{
+				const uint8_t bytes[4] = { (uint8_t)right, (uint8_t)((uint16_t)right >> 8), (uint8_t)left, (uint8_t)((uint16_t)left >> 8) };
+
+				for (uint8_t b : bytes)
+				{
+					hash ^= b;
+					hash *= 0x100000001b3ull;
+				}
+
+				return hash;
+			};
+
+			auto first_byte = [](const std::vector<uint8_t>& a, const std::vector<uint8_t>& b)
+			{
+				size_t i = 0;
+
+				while (i < a.size() && i < b.size() && a[i] == b[i])
+					i++;
+
+				return i;
+			};
+
+			std::vector<After> plain, muted;
+
+			run_machine(false, plain);
+			run_machine(true, muted);
+
+			uint64_t total = 0, ok = 0, plain_fold = 0xcbf29ce484222325ull, muted_fold = plain_fold;
+			bool noted = false;
+
+			for (uint32_t n = 0; n <= samples; n++)
+			{
+				const After& p = plain[n];
+				const After& m = muted[n];
+				const bool off = n == samples;
+
+				plain_fold = fold(plain_fold, p.left, p.right);
+				muted_fold = off ? fold(muted_fold, p.left, p.right) : fold(muted_fold, 0, 0);
+
+				const bool sounds = p.left != 0 && p.right != 0;
+				const bool stream = p.pairs == n + 1 && m.pairs == n + 1 && sounds && (off ? m.left == p.left && m.right == p.right : m.left == 0 && m.right == 0);
+				const bool folded = p.fold == plain_fold && m.fold == muted_fold;
+				const bool same = m.dsp == p.dsp && m.aica == p.aica && m.file == p.file;
+
+				total += 3;
+				ok += (uint64_t)stream + folded + same;
+
+				if ((!stream || !folded || !same) && !noted)
+				{
+					dsp_note("  sample %u%s: the stream was handed %llu pairs, the last %d, %d; without NoSound %llu pairs, the last %d, %d. The harness's fold %016llx "
+						"(the pairs handed over: %016llx), without NoSound %016llx (%016llx). Against the machine without NoSound: the DSP %s, the AICA's save state "
+						"from byte %zu of %zu, the register file from byte %zu", n, off ? " (NoSound off again)" : "", (unsigned long long)m.pairs, m.left, m.right,
+						(unsigned long long)p.pairs, p.left, p.right, (unsigned long long)m.fold, (unsigned long long)muted_fold, (unsigned long long)p.fold,
+						(unsigned long long)plain_fold, blob_difference(m.dsp, p.dsp).c_str(), first_byte(m.aica, p.aica), p.aica.size(), first_byte(m.file, p.file));
+					noted = true;
+				}
+			}
+
+			dsp_count("nosound", total, ok);
+		}
+
 		return dsp_suite_end();
 	}
 }
@@ -830,7 +971,7 @@ int main(int argc, char** argv)
 	static const char* usage =
 		"aica_dsp_emu lockstep|state [options]\n"
 		"The DSP core as the emulator's own sound chip drives it: generated programs and CPU writes against a core\n"
-		"of the test's own (lockstep), the mix, the reset and the save state of the DSP device (state)";
+		"of the test's own (lockstep), the mix, the reset and the save state of the DSP device, and \"Disable Sound\" (state)";
 
 	DspOptions opt;
 

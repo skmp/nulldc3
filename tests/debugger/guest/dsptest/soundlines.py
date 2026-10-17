@@ -36,9 +36,9 @@ README.md has the modes:
     sounds    samples is none of the hashes of silence. The hash of k * 32 pairs of zeroes is one value for each
               k, and a silent run prints one of them for a k from 0 to N: fewer than N where no pair exists while
               the ARM7 is held in reset
-    muted     "Disable Sound" mutes and keeps the pace: a run with config:aica.NoSound=yes prints the line of the
-              run without it in every field but samples, and samples is the hash of N * 32 pairs of zeroes (see
-              mode_muted)
+    muted     "Disable Sound" mutes: a run with config:aica.NoSound=yes prints the line of the run without it in
+              every field but samples, and samples is the hash of N * 32 pairs of zeroes (see mode_muted; the
+              audio stream itself, which no run here shows, is held by aica.dsp.emu.state)
     ignored   keys that an older build read and this one does not: a run with each key of --ignored prints the
               line of the run without it, field for field
     engines   the line of the recompiler and the line of the interpreter agree in the fields of --fields, and in dsp
@@ -257,14 +257,16 @@ def mode_sounds(args, lines):
 
 
 def mode_muted(args, lines):
-    """"Disable Sound" mutes, and keeps the pace. With config:aica.NoSound=yes the emulator makes every sample as
-    without it and hands the audio stream a pair of zeroes in its place, the pair the harness folds: the stream gets
-    a pair every sample, and it is the speed limit of the emulator (config:aica.LimitFPS). So the run with the key
-    prints the line of the run without it in every field but samples, and samples is the hash of N * 32 pairs of
-    zeroes: one pair for each sample of each of the N ticks, which holds for a program whose bursts all find its
-    ARM7 clocked (the guest releases it in front of its first tick). A sound that is folded where zeroes go out, a
-    sample that is not handed over, or one that is not made (the ARM7, the DSP, the register file of the run
-    would differ), fails."""
+    """"Disable Sound" mutes. With config:aica.NoSound=yes the emulator makes every sample as without it, and the
+    pair the harness folds, where the sample hands its pair to the audio stream, is a pair of zeroes. So the run
+    with the key prints the line of the run without it in every field but samples, and samples is the hash of
+    N * 32 pairs of zeroes: one pair for each sample of each of the N ticks, which holds for a program whose bursts
+    all find its ARM7 clocked (the guest releases it in front of its first tick). A sound that is folded where
+    zeroes go out, a sample that folds no pair, or one that is not made (the ARM7, the DSP, the register file of
+    the run would differ), fails. What a line has is the harness's fold, not the stream: the runs have no audio
+    device (audio:backend=none). That the stream itself, the speed limit of the emulator (config:aica.LimitFPS),
+    is handed a pair of zeroes in every sample is held by aica.dsp.emu.state (its check nosound), on a stand-in
+    stream."""
     (plain, plain_text, plain_fields), = lines.get(1)
     muted, text, fields = line_run(args, 'muted', args.engine, ['config:aica.NoSound=yes'])
     k = silence(args.ticks).get(fields['samples'])

@@ -63,3 +63,14 @@ struct EmuAica
 // pair n of the run (n counted from 0 for every machine) is EmuCddaPair(n)
 void EmuCddaOn(bool on);
 void EmuCddaPair(uint64_t n, int16_t* left, int16_t* right);
+
+// "Disable Sound", the emulator's config:aica.NoSound (settings.aica.NoSound): off unless a test turns it on, for every
+// machine from then on
+void EmuNoSound(bool on);
+
+// The sound regression harness (hw/aica/aica_hash.h) as far as a sample reaches it: its fold of the pairs, which the
+// sound generator makes where it hands a pair to the audio stream (aica_hash_sample). On, the fold starts again from
+// the FNV offset basis; EmuHarnessSamples is what it folded since. The harness's ticks are never made here (they
+// are the tail of a sound burst, and no burst runs). One harness for every machine
+void EmuHarnessOn(bool on);
+uint64_t EmuHarnessSamples();

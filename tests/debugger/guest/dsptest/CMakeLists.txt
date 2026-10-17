@@ -18,10 +18,11 @@
 #	                                                        latched starts the program of the run without one
 #	    debugger.sound.lines.2ndmix.<jit|interp>            two runs of 40000 ticks of 2ndmix.elf print one line
 #	                                                        (needs NULLDC_ELF_DIR; that program is silent here)
-#	    debugger.sound.muted.dsptest.<jit|interp>           "Disable Sound" (config:aica.NoSound=yes) mutes and
-#	                                                        keeps the pace: the line of the run without the key in
-#	                                                        every field but samples, which is the hash of
-#	                                                        2000 * 32 pairs of zeroes
+#	    debugger.sound.muted.dsptest.<jit|interp>           "Disable Sound" (config:aica.NoSound=yes) mutes: the
+#	                                                        line of the run without the key in every field but
+#	                                                        samples, which is the hash of 2000 * 32 pairs of
+#	                                                        zeroes (the harness's fold; the audio stream itself is
+#	                                                        held by aica.dsp.emu.state)
 #	    debugger.sound.ignored.dsptest                      config:aica.NoBatch, which an older build read and
 #	                                                        wrote into every configuration file, changes nothing:
 #	                                                        a run with it, no or yes, prints the line without it
@@ -149,9 +150,10 @@ foreach(engine jit interp)
                       --mode same --engine ${engine})
   endif()
 
-  # "Disable Sound" mutes: the samples are made, and a pair of zeroes goes to the audio stream for each, which
-  # keeps the speed limit going (the guest's bursts all find its ARM7 clocked, so a tick is 32 such pairs). The
-  # run without the key has to sound, or its silence would say nothing
+  # "Disable Sound" mutes: the samples are made, and the harness folds a pair of zeroes for each, the pair the
+  # audio stream is handed (the guest's bursts all find its ARM7 clocked, so a tick is 32 such pairs; the stream
+  # itself, which keeps the speed limit going, is held by aica.dsp.emu.state). The run without the key has to
+  # sound, or its silence would say nothing
   nulldc_sound_test(debugger.sound.muted.dsptest.${engine} "${CMAKE_CURRENT_SOURCE_DIR}/dsptest.elf" ${nulldc_sound_ticks}
                     --mode sounds --mode muted --engine ${engine})
 endforeach()
