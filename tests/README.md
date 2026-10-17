@@ -124,6 +124,8 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `aica.dsp.api` | the AICA DSP core (`libswirl/hw/aica/dsp_core`) on itself: a sample in one go against its 128 steps from every step, state out and in, two cores in turns, its registers, fields that hold more than their registers' bits, a wave RAM of 4, 8 and 16 MB; and its known-answer programs: the shifter, the address of a memory step on 2 to 16 MB, the ring, the read latch rules, the MIXS banks | none |
 | `aica.dsp.diff.random` `aica.dsp.diff.sparse` `aica.dsp.diff.directed` | the AICA DSP core against the DSP of the caique sample model on generated programs, compared behind every step | a caique-rtl checkout |
 | `aica.dsp.case.dsp_basic` `.dsp_mem` `.dsp_mem2` `.dsp_mem3` `.dsp_wslot` `.dsp_unpack` `.dsp_pack` `.dsp_temp` `.dsp_coll` `.sh4_latch` `.mdec_hold` | the DSP programs caique ran on a Dreamcast, on the model with the core in step and on the core alone, against the console's files | a caique-rtl checkout |
+| `aica.dsp.case.dsp_basic.emu` `.dsp_mem.emu` `.dsp_mem2.emu` `.dsp_mem3.emu` `.dsp_wslot.emu` `.dsp_unpack.emu` `.dsp_pack.emu` | the seven of those programs anchored directly on the console's files, on the emulator's own sound chip (its AICA device with the register routing, its sound generator, its DSP device: `aica_dsp/emu_aica.h`), against the console's files and against the core alone | a caique-rtl checkout |
+| `aica.dsp.emu.lockstep` `aica.dsp.emu.state` | the emulator's sound chip against a core of the test's own on generated programs, with CPU writes of every form and channels whose sends the test works out from the samples, behind every sample; the mix taking EFREG from the core, the DSP device's reset and its save state | none |
 | `aica.dsp.capi` | the C interface of the AICA DSP core, compiled for the host, against the core called itself, on random programs and on the known-answer programs | none |
 | `aica.dsp.wasm` | the WebAssembly build of the AICA DSP core in node, through its loader and its C interface, against the core compiled for the host, on the same programs | emcc and node, skipped without them |
 | `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | the script that builds it, run by sh on a PATH without emcc: it builds with the emsdk in `EMSDK`, and says that it has no emcc when there is no emsdk | an emcc that is in an emsdk, and node; skipped otherwise |
@@ -133,12 +135,12 @@ unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to b
 and the `debugger.selftest.*`, `debugger.contract.*` and `debugger.sound.*` tests run on Linux hosts with python3;
 the latter three are skipped where there is no emulator to run (`-DNULLDC_SYSTEM_TESTS=OFF` without
 `-DNULLDC_EMULATOR=`), but for `debugger.sound.runner`, which runs none.
-The `aica.dsp.diff.*` and `aica.dsp.case.*` tests need `-DNULLDC_CAIQUE_DIR=<path to caique-rtl>` unless caique-rtl
+The `aica.dsp.diff.*` and `aica.dsp.case.*` tests (the `.emu` ones among them) need `-DNULLDC_CAIQUE_DIR=<path to caique-rtl>` unless caique-rtl
 sits next to the repository; they compile its sample model and its DSP programs (C) from there and read its console
 captures.
 
-The emulator has an SH4 recompiler for x86-64 hosts and one for arm64 hosts, an ARM7 and a DSP recompiler for arm64
-hosts, and its interpreters on every host; it does not configure for 32-bit x86 and arm hosts. Of the recompilers the
+The emulator has an SH4 recompiler for x86-64 hosts and one for arm64 hosts, an ARM7 recompiler for arm64 hosts,
+and its interpreters on every host; its DSP is the one core of `libswirl/hw/aica/dsp_core` on every host; it does not configure for 32-bit x86 and arm hosts. Of the recompilers the
 tests here run the x86-64 backend. `-DTARGET_NO_REC=ON` builds the emulator without a recompiler on any host. A
 generic host, one whose processor `reicast/cmake/config.cmake` has no name for, gets that build without the fault
 handler, so without nvmem; on an x86-64 machine `-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=<such a name>`
@@ -173,8 +175,9 @@ More about the suites:
   grace period, the configuration errors, the slow-client rule and the state hashes, test by test; where the mock
   of the UI repository and the emulator's server differ,
 * `aica_dsp/README.md`: the AICA DSP core's tests, which of the console's captures are compared with the core
-  directly and which through the caique model; `aica_dsp/KNOWN_FAILURES.md`: the three lines of a console report
-  that depend on the console's timing.
+  directly and which through the caique model, and the tests of the core in the emulator's sound chip;
+  `aica_dsp/KNOWN_FAILURES.md`: the three lines of a console report that depend on the console's timing, and the
+  five of another that need a CPU's read in the DSP's latch, which the emulator does not wire.
 
 ## Layout
 
@@ -389,7 +392,7 @@ A check that does not hold is printed with its line, and the test fails.
 
 A suite is a directory with a `CMakeLists.txt` that is added in `tests/CMakeLists.txt`. From `common` it gets
 
-* `nulldc_add_libswirl_library(<target> [SHREC|AREC|DSPREC <DYNAREC_*>] SOURCES <files relative to libswirl>)`:
+* `nulldc_add_libswirl_library(<target> [SHREC|AREC <DYNAREC_*>] SOURCES <files relative to libswirl>)`:
   an object library of libswirl translation units, built like the emulator builds them.
 * `nulldc_test_common`: link it after the libswirl library. Stubs are taken from it only for the symbols the
   libswirl objects leave undefined; `msgboxf` and `os_DebugBreak` always come from `test_guard`.
@@ -455,7 +458,7 @@ itself only.
 | `debugger.disasm.dsp_playground` | 100,193 DSP steps against the disassembler and assembler of the devtools playground | a dreamcast-devtools checkout with `node_modules` |
 | `debugger.regs.tables` `debugger.regs.sources` | `dbg_regs_tables.cpp`, the device tree behind `debugger.describe`: the tables by themselves (104 nodes and 2940 registers from milestone M2 on, the fields of the AICA's register file bit for bit), and their on-chip, system bus and PVR rows against `hw/sh4/sh4_mmr.h`, `hw/holly/sb_regs.h` and `hw/pvr/pvr_regs.h` | nothing |
 | `debugger.regs.panels` | the panel ids of the tables against the list of the devtools UI | a dreamcast-devtools checkout |
-| `debugger.regs.aica.channels` `debugger.regs.aica.rtc` | the sound generator (`hw/aica/sgc_if.cpp`) and the settings of the sound regression harness (`hw/aica/aica_hash.cpp`), compiled as the emulator compiles them: the state of a channel that no register write sets, for the guest, for the debugger and in the samples; the two keys that pin the real-time clock | nothing |
+| `debugger.regs.aica.channels` `debugger.regs.aica.rtc` | the sound generator (`hw/aica/sgc_if.cpp`) and the settings of the sound regression harness (`hw/aica/aica_hash.cpp`), compiled as the emulator compiles them, with the DSP core: the state of a channel that no register write sets, for the guest, for the debugger and in the samples, rendered sample by sample with the core's sample between the sweep and the mix; the two keys that pin the real-time clock | nothing |
 | `debugger.symbols.table` `debugger.symbols.damaged` | `dbg_symbols.cpp`, the symbols of the ELF that reios loaded: the `.symtab` walk on images the test builds byte for byte, lookup by address and by name, `name` and `name+0x<offset>`, a symbol without a size, names with bytes above `0x7F` and control characters; and images that are cut, that are no ELF, or that name offsets outside of themselves, each in memory that ends where the image ends | nothing |
 
 What the tests of the last column look for, and the option that says where it is:
