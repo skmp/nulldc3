@@ -166,10 +166,10 @@ nulldc_sound_test(debugger.sound.engines.dsptest "${CMAKE_CURRENT_SOURCE_DIR}/ds
 nulldc_sound_test(debugger.sound.ignored.dsptest "${CMAKE_CURRENT_SOURCE_DIR}/dsptest.elf" ${nulldc_sound_ticks}
                   --mode ignored --ignored config:aica.NoBatch=no --ignored config:aica.NoBatch=yes --engine jit)
 
-# The names of the tests: ctest -N of this build, which needs python and nothing else
+# The names of the tests of this build, from its CTestTestfile.cmake files: python and nothing else
 if(Python3_Interpreter_FOUND)
   add_test(NAME debugger.sound.names
-           COMMAND "${Python3_EXECUTABLE}" "${nulldc_sound_runner}" --mode names --ctest "${CMAKE_CTEST_COMMAND}" --build "${CMAKE_BINARY_DIR}")
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_sound_runner}" --mode names --build "${CMAKE_BINARY_DIR}")
   set_tests_properties(debugger.sound.names PROPERTIES TIMEOUT 120 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 else()
   nulldc_add_skipped_test(debugger.sound.names "no python3 to run tests/debugger/guest/dsptest/soundlines.py with")

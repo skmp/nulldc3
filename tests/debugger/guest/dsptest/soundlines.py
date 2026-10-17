@@ -6,7 +6,7 @@
                   [--selftest <filter>] [--expect <text>]... [--ignored <section:key=value>]...
                   [--config <section:key=value>]...
     soundlines.py --mode files [--dir <the directory of the guest>]
-    soundlines.py --mode names --ctest <ctest> --build <the build directory of the tests>
+    soundlines.py --mode names --build <the build directory of the tests>
 
 A run is the emulator on the program, headless, with no audio device (audio:backend=none), the real-time clock
 pinned and the SH4 on the recompiler or on the interpreter (--engine), with its files in a directory of its own
@@ -55,9 +55,9 @@ README.md has the modes:
               is the line of the guest, in the fields of --fields (see mode_release)
     files     the committed files of the guest are those of its manifest, SHA256SUMS; and where the assemblers
               are, gen.sh --check: they are what the sources give
-    names     the tests of a build (ctest -N in --build): no name has a part batch or persample. The sound was
-              made in batches of 32 samples by default and sample by sample with config:aica.NoBatch=yes until
-              that render went, and the tests of both had it in their names
+    names     the tests of a build (the CTestTestfile.cmake files of --build): no name has a part batch or
+              persample. The sound was made in batches of 32 samples by default and sample by sample with
+              config:aica.NoBatch=yes until that render went, and the tests of both had it in their names
 """
 
 import argparse
@@ -584,17 +584,30 @@ def mode_files(args, lines):
     print(said)
 
 
+def build_tests(directory, names):
+    """The names of the tests the CTestTestfile.cmake of a build directory registers, and of those of the
+    directories it names, in their order. They are read, not asked of ctest: a ctest started inside a test of the
+    same build directory writes its log over that of the ctest that runs the test."""
+    path = os.path.join(directory, 'CTestTestfile.cmake')
+    check(os.path.isfile(path), 'there is no ' + path)
+    with open(path, 'r', encoding='utf-8', errors='replace') as f:
+        for line in f.read().splitlines():
+            test = re.match(r'\s*add_test\(\s*(?:\[(=*)\[(.*?)\]\1\]|"([^"]*)"|([^\s()"]+))', line)
+            if test:
+                names.append(test.group(2) or test.group(3) or test.group(4))
+            sub = re.match(r'\s*subdirs\(\s*"([^"]*)"\s*\)', line)
+            if sub:
+                build_tests(os.path.join(directory, sub.group(1)), names)
+    return names
+
+
 def mode_names(args, lines):
     """No test of the build is named after a render of the sound: the tests that ran in both had .batch or
     .persample in their names, and those that stayed lost it (a name with a part batch or persample fails)."""
-    check(args.ctest and args.build, 'the mode names needs --ctest and --build')
-    done = subprocess.run([args.ctest, '-N'], cwd=args.build, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          timeout=args.watchdog)
-    said = done.stdout.decode('utf-8', 'replace')
-    check(done.returncode == 0, 'ctest -N in %s ended with exit code %d:\n%s' % (args.build, done.returncode, said))
-    names = re.findall(r'^\s*Test\s+#\d+: (\S+)\s*$', said, re.M)
+    check(args.build, 'the mode names needs --build')
+    names = build_tests(os.path.abspath(args.build), [])
     sound = [name for name in names if name.startswith('debugger.sound.')]
-    check(sound, 'ctest -N in %s lists no test debugger.sound.*: it is not the build of the tests\n%s' % (args.build, said))
+    check(sound, 'the build in %s registers no test debugger.sound.*: it is not the build of the tests' % args.build)
     old = [name for name in names if set(name.split('.')) & set(RENDER_PARTS)]
     check(not old, '%d of the %d tests are named after a render of the sound: %s' % (len(old), len(names), ', '.join(old)))
     print('%d tests, %d of them debugger.sound.*: none has a part %s' % (len(names), len(sound), ' or '.join(RENDER_PARTS)))
@@ -619,7 +632,6 @@ def main():
     parser.add_argument('--selftest', default='', help='neutral: the filter of the session')
     parser.add_argument('--expect', action='append', default=[], help='neutral: text a line of the session has to have')
     parser.add_argument('--ignored', action='append', default=[], help='ignored: section:key=value, a key this build does not read')
-    parser.add_argument('--ctest', default='', help='names: the ctest of the build')
     parser.add_argument('--build', default='', help='names: the build directory of the tests')
     parser.add_argument('--config', action='append', default=[], help='section:key=value, for every run')
     parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release: the directory of the guest, with its manifest and its labels')
