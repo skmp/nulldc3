@@ -18,6 +18,7 @@ Without it the tests that need it are skipped, or fail with `-DNULLDC_TESTS_REQU
 | `aica.dsp.capi` | the C interface of the core (`wasm/aica_dsp_capi.h`), compiled for the host, against the core called itself, call for call, on random programs and on the known-answer programs | none |
 | `aica.dsp.wasm` | `aica_dsp_core.wasm` and its loader in node against the core compiled for the host and called itself, call for call, on the same programs | emcc (on the PATH, or an emsdk in `EMSDK` or `~/emsdk`) and node; skipped without them |
 | `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | `wasm/build.sh` finding its emcc, run by sh on a PATH that has none: with the emsdk in `EMSDK` it builds the module, with no emsdk there it says that it has no emcc | an emcc that is in an emsdk, and node; skipped otherwise |
+| `aica.dsp.wasm.devtools` | the module the UI commits, `src/wasm/aica-dsp-core/` of `NULLDC_DEVTOOLS_DIR` (the playground's DSP): its `PROVENANCE.json` has the keys `repository`, `treeCommit`, `dspCoreCommit`, `dirty`, `emscripten`, `apiVersion`, `files` and no other, and the two files beside it are those `files` names, size and SHA-256; the trace of `aica.dsp.wasm` replayed on its loader and wasm gives every answer of the native core; and where the emcc `build.sh` uses (on the `PATH`, else in the emsdk of `EMSDK`, or of `~/emsdk` when `EMSDK` is not set) says by `emcc -dumpversion` the `emscripten` of `PROVENANCE.json`, the two files are the bytes of a fresh `build.sh` of this tree (`devtools_test.mjs`) | node and the UI checkout; no emcc. A test whose data is missing without the checkout |
 | `aica.dsp.case.<case>.emu` | the seven cases anchored directly on the console's files (below) on the emulator's own sound chip, against those files and against the core alone | a caique-rtl checkout |
 | `aica.dsp.emu.lockstep` | generated programs through the emulator's sound chip, with CPU writes of every form and channels that send, against a core of the test's own, behind every sample | none |
 | `aica.dsp.emu.state` | the mix takes EFREG from the core, the DSP device's reset is the core's power on, its save state is the core's blob, the AICA's save state keeps the bus a channel sends to | none |
@@ -27,7 +28,8 @@ All but `aica.dsp.capi` and the `aica.dsp.wasm` tests count their cases into che
 ctest runs the tests with `--strict`, where more passes than the baseline fail as well until the baseline is
 updated (`<executable> ... --update-baseline`) and committed. `KNOWN_FAILURES.md` has the reason for every check
 that is below its total. `aica.dsp.capi` and `aica.dsp.wasm` are lists of answers that all have to be the same,
-the two tests of `build.sh` are what the script returns and prints.
+the two tests of `build.sh` are what the script returns and prints, and `aica.dsp.wasm.devtools` is a list of checks
+that all have to hold.
 
 ## Step for step: `dsp_lockstep`
 
@@ -265,4 +267,6 @@ machine's. The core's README has the ones of the machine it was written on.
     wasm_trace.cpp     aica.dsp.capi: the C interface against the core's own calls, on random programs and on
                        the known-answer programs; writes those calls and the core's answers for aica.dsp.wasm
     wasm_test.mjs      aica.dsp.wasm: the replay on the module, in node
+    devtools_test.mjs  aica.dsp.wasm.devtools: the UI's module against this tree, its provenance, the replay of
+                       wasm_test.mjs on it and its bytes against a fresh build
     bench_main.cpp     aica_dsp_bench

@@ -132,6 +132,7 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `aica.dsp.capi` | the C interface of the AICA DSP core, compiled for the host, against the core called itself, on random programs and on the known-answer programs | none |
 | `aica.dsp.wasm` | the WebAssembly build of the AICA DSP core in node, through its loader and its C interface, against the core compiled for the host, on the same programs | emcc and node, skipped without them |
 | `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | the script that builds it, run by sh on a PATH without emcc: it builds with the emsdk in `EMSDK`, and says that it has no emcc when there is no emsdk | an emcc that is in an emsdk, and node; skipped otherwise |
+| `aica.dsp.wasm.devtools` | the DSP module the UI commits (`src/wasm/aica-dsp-core/` of `NULLDC_DEVTOOLS_DIR`) is this tree's core: its `PROVENANCE.json` has the fixed keys and names the two files beside it, byte for byte; the trace that `aica.dsp.wasm` replays is replayed on the UI's loader and wasm with every answer the native core's; and where the emcc `build.sh` uses (the `PATH`, else the emsdk of `EMSDK`, else `~/emsdk`) has the version `PROVENANCE.json` names, the two files are the bytes of a fresh `build.sh` of the tree | node and the UI checkout (`NULLDC_DEVTOOLS_DIR`); no emcc |
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
@@ -161,7 +162,7 @@ gated on a baseline file, and ctest runs them with `--strict`: a count that is w
 so does one that is better, until the baseline is updated and committed. `common.selftest`, `sh4.core`, each
 `debugger.sh4bp.*` test, each `debugger.selftest.*` test, each `debugger.contract.*` test, `cfg.overrides`,
 `cfg.log_file`, each `runctl.guest_exit.*` test, each
-system test, each `devtools.*` test, `aica.dsp.capi` and `aica.dsp.wasm` are lists of checks that all have to hold;
+system test, each `devtools.*` test, `aica.dsp.capi`, `aica.dsp.wasm` and `aica.dsp.wasm.devtools` are lists of checks that all have to hold;
 `aica.dsp.wasm.emsdk` and `aica.dsp.wasm.noemcc` are what the build script returns and prints.
 
 More about the suites:

@@ -12,7 +12,8 @@
 #	                      core in step and on the core alone, against the console's files
 #	aica_dsp_wasm_trace   aica.dsp.capi: the C interface of the core against the core called itself, on random
 #	                      programs and on the known-answer programs. And what aica.dsp.wasm replays on
-#	                      aica_dsp_core.wasm: wasm_test.mjs, with node
+#	                      aica_dsp_core.wasm: wasm_test.mjs, with node; and aica.dsp.wasm.devtools on the module
+#	                      the UI commits (devtools_test.mjs)
 #	aica_dsp_emu <mode>   aica.dsp.emu.<mode>: the core as the emulator's own sound chip drives it (emu_aica.h),
 #	                      against a core of the test's own (lockstep) and in the mix, the reset and the save
 #	                      state of the DSP device (state). No data needed
@@ -206,6 +207,10 @@ endif()
 #	aica.dsp.wasm.
 #	aica.dsp.wasm needs emcc and node. emcc: on the PATH, or the emsdk in the environment's EMSDK or in ~/emsdk.
 #	aica.dsp.wasm.emsdk and aica.dsp.wasm.noemcc are build.sh finding its emcc, and need the emcc to be an emsdk's.
+#	aica.dsp.wasm.devtools holds the module of the UI (NULLDC_DEVTOOLS_DIR, src/wasm/aica-dsp-core/) to this
+#	tree: its provenance, the trace replayed on it, and, where build.sh finds an emcc of the version the
+#	provenance names, its bytes against a fresh build.sh. It needs node and the UI checkout, not emcc; without the
+#	checkout it is a test whose data is missing.
 #
 
 add_executable(aica_dsp_wasm_trace
@@ -222,6 +227,37 @@ set_tests_properties(aica.dsp.capi PROPERTIES TIMEOUT 120)
 find_program(NULLDC_NODE node)
 find_program(NULLDC_EMCC emcc HINTS "$ENV{EMSDK}/upstream/emscripten" "$ENV{HOME}/emsdk/upstream/emscripten")
 
+set(nulldc_dsp_wasm_trace "${CMAKE_CURRENT_BINARY_DIR}/wasm_trace.bin")
+
+# The trace of the native core, which the tests with node replay
+if(NULLDC_NODE)
+  add_custom_command(
+    OUTPUT "${nulldc_dsp_wasm_trace}"
+    COMMAND aica_dsp_wasm_trace "${nulldc_dsp_wasm_trace}"
+    DEPENDS aica_dsp_wasm_trace
+    COMMENT "Trace of the AICA DSP core for aica.dsp.wasm"
+    VERBATIM
+  )
+
+  add_custom_target(aica_dsp_wasm_trace_file ALL DEPENDS "${nulldc_dsp_wasm_trace}")
+endif()
+
+# The module of the UI against this tree
+set(nulldc_dsp_devtools_module "${NULLDC_DEVTOOLS_DIR}/src/wasm/aica-dsp-core")
+
+if(NOT NULLDC_NODE)
+  nulldc_add_skipped_test(aica.dsp.wasm.devtools "no node on the PATH")
+elseif(NOT NULLDC_DEVTOOLS_DIR OR NOT EXISTS "${NULLDC_DEVTOOLS_DIR}/package.json")
+  nulldc_add_missing_data_test(aica.dsp.wasm.devtools
+    "no checkout of the UI (NULLDC_DEVTOOLS_DIR is \"${NULLDC_DEVTOOLS_DIR}\"), configure with -DNULLDC_DEVTOOLS_DIR=<dreamcast-devtools checkout>")
+else()
+  add_test(NAME aica.dsp.wasm.devtools
+    COMMAND "${NULLDC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/devtools_test.mjs" "${nulldc_dsp_devtools_module}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wasm_test.mjs" "${nulldc_dsp_wasm_trace}" "${nulldc_dsp_core_path}/wasm/build.sh"
+            "${CMAKE_CURRENT_BINARY_DIR}/wasm_devtools")
+  set_tests_properties(aica.dsp.wasm.devtools PROPERTIES TIMEOUT 300)
+endif()
+
 if(NOT NULLDC_EMCC)
   foreach(test aica.dsp.wasm aica.dsp.wasm.emsdk aica.dsp.wasm.noemcc)
     nulldc_add_skipped_test(${test} "no emcc: not on the PATH, and no emsdk in EMSDK or ~/emsdk")
@@ -235,7 +271,6 @@ else()
   get_filename_component(nulldc_emsdk_dir "${nulldc_emcc_dir}/../.." ABSOLUTE)
 
   set(nulldc_dsp_wasm_dir "${CMAKE_CURRENT_BINARY_DIR}/wasm")
-  set(nulldc_dsp_wasm_trace "${CMAKE_CURRENT_BINARY_DIR}/wasm_trace.bin")
 
   # build.sh --check builds twice and fails when the two builds differ or have a path of this machine in them
   add_custom_command(
@@ -249,16 +284,7 @@ else()
     VERBATIM
   )
 
-  add_custom_command(
-    OUTPUT "${nulldc_dsp_wasm_trace}"
-    COMMAND aica_dsp_wasm_trace "${nulldc_dsp_wasm_trace}"
-    DEPENDS aica_dsp_wasm_trace
-    COMMENT "Trace of the AICA DSP core for aica.dsp.wasm"
-    VERBATIM
-  )
-
-  add_custom_target(aica_dsp_wasm ALL
-    DEPENDS "${nulldc_dsp_wasm_dir}/aica_dsp_core.wasm" "${nulldc_dsp_wasm_trace}")
+  add_custom_target(aica_dsp_wasm ALL DEPENDS "${nulldc_dsp_wasm_dir}/aica_dsp_core.wasm")
 
   add_test(NAME aica.dsp.wasm
     COMMAND "${NULLDC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/wasm_test.mjs"
