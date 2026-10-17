@@ -15,7 +15,7 @@
 	             answers.
 	  state      three checks of what the sound chip and its save state do with the core: the mix takes EFREG from
 	             the core; the DSP device's Reset is the core's power on; the DSP device's save state is the core's
-	             blob.
+	             blob, and one the core does not read resets the DSP.
 
 	The sends. The keyed channels have IMXL = DISDL, their pan all to one side, MVOL is 15, and no output of the
 	DSP or of the CD-DA is mixed (EFSDL 0): a channel's send is then its direct output on its side, from the same
@@ -677,6 +677,23 @@ namespace state
 					AicaDsp::StateSize(), moved ? "changed" : "did not change", blob_difference(after, before).c_str());
 
 			dsp_count("save-load", 3, (uint64_t)moved + back + (saved.size() == AicaDsp::StateSize()));
+
+			//a save state whose DSP part the core does not read (another header): the DSP is reset, and the load
+			//goes on behind it
+			std::vector<uint8_t> refused = saved;
+			AicaDsp fresh = {};
+
+			fresh.Init(emu->Ram(), emu->RamSize());
+			refused[0] ^= 0xFF;
+			emu->DspLoad(refused);
+
+			const bool reset = blob_of(*emu->Core()) == blob_of(fresh);
+
+			if (!reset)
+				dsp_note("  behind a load of a DSP state with another header the core is not at its power on: %s",
+					blob_difference(blob_of(*emu->Core()), blob_of(fresh)).c_str());
+
+			dsp_count("refused-blob", 1, reset);
 			delete emu;
 		}
 

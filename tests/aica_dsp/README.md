@@ -223,7 +223,8 @@ neither half 0 (`EmuCddaPair`).
   pair of each sample with EFSDL 15 differs from the pair with EFSDL 0 by the VOLPAN of the core's EFREG3, which is
   0x1234; `reset`, the DSP device's `Reset(false)` behind a program that ran leaves the core's blob that of a core
   after `Reset()`; `save-load`, the DSP device's save state, a CPU write and a sample, the save state loaded:
-  the core's blob of before, and the save state is the core's blob, `StateSize()` bytes.
+  the core's blob of before, and the save state is the core's blob, `StateSize()` bytes; `refused-blob`, a save
+  state whose DSP part has another header resets the DSP.
 
 ## Looking at a failure
 
