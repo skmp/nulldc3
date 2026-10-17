@@ -1,13 +1,14 @@
 # Tests of the sound generator of the AICA and of the settings of the sound regression harness from the
 # emulator's own translation units. They are compiled with the definitions and flags of the emulator build
 # (reicast/cmake/config.cmake), which is why this is a directory of its own: they stay out of the table tests.
-# What the units reference from the rest of the emulator is in aica_test.cpp. NULLDC_DEBUGGER is not defined: the
-# events of the generator compile to nothing.
+# What the units reference from the rest of the emulator is in aica_test.cpp; the DSP core the generator sends to
+# is linked. NULLDC_DEBUGGER is not defined: the events of the generator compile to nothing.
 
 list(APPEND CMAKE_MODULE_PATH "${DEVCAST_DIR}/reicast/cmake")
 include(config)
 
-add_executable(aica_test aica_test.cpp "${LIBSWIRL_DIR}/hw/aica/sgc_if.cpp" "${LIBSWIRL_DIR}/hw/aica/aica_hash.cpp")
+add_executable(aica_test aica_test.cpp "${LIBSWIRL_DIR}/hw/aica/sgc_if.cpp" "${LIBSWIRL_DIR}/hw/aica/aica_hash.cpp"
+  "${LIBSWIRL_DIR}/hw/aica/dsp_core/aica_dsp_core.cpp")
 target_include_directories(aica_test PRIVATE "${LIBSWIRL_DIR}" "${LIBSWIRL_DIR}/deps" "${DEVCAST_DIR}")
 target_compile_features(aica_test PRIVATE cxx_std_20)	# as the emulator target
 

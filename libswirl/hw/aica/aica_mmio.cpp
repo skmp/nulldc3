@@ -28,6 +28,7 @@
 #include "aica_mmio.h"
 #include "sgc_if.h"
 #include "dsp.h"
+#include "dsp_core/aica_dsp_core.h"
 
 #include "hw/sh4/sh4_mem.h"
 #include "hw/holly/sb.h"
@@ -317,6 +318,45 @@ struct AicaDevice final : AICA {
 	}
 
 
+	/*
+		The registers of the DSP (AicaDsp::RegOwned: 0x2804, COEF, MADRS, MPRO, TEMP, MEMS, MIXS, EFREG, EXTS) are the
+		DSP's. The register file keeps the bytes the CPUs write there, as everywhere else; a write in the low half of
+		such a slot then gives the DSP the file's 16-bit word of the slot (AicaDsp::RegWrite, which keeps of it what
+		the register has); a write in the upper half reaches the file only. A read there is the DSP's answer
+		(AicaDsp::RegRead), the upper half of a slot reads 0.
+	*/
+
+	// A byte of the register area as a read of the CPU gives it
+	u32 RegByte(u32 addr)
+	{
+		if (!AicaDsp::RegOwned(addr))
+			return aica_reg[addr];
+
+		u32 value = (addr & 2) ? 0 : dsp->Core()->RegRead(addr & ~3u);
+
+		return (value >> (8 * (addr & 1))) & 0xFF;
+	}
+
+	template<u32 sz>
+	u32 ReadDspReg(u32 addr)
+	{
+		if (sz == 1)
+			return RegByte(addr);
+
+		return RegByte(addr) | (RegByte((addr + 1) & 0x7FFF) << 8);
+	}
+
+	// A CPU wrote the byte at addr of the register file
+	void DspRegWritten(u32 addr)
+	{
+		if ((addr & 2) == 0 && AicaDsp::RegOwned(addr))
+		{
+			u32 slot = addr & ~3u;
+
+			dsp->Core()->RegWrite(slot, aica_reg[slot] | (aica_reg[slot + 1] << 8));
+		}
+	}
+
 	//00000000~007FFFFF @DRAM_AREA* 
 	//00800000~008027FF @CHANNEL_DATA 
 	//00802800~00802FFF @COMMON_DATA 
@@ -327,6 +367,10 @@ struct AicaDevice final : AICA {
 		if (addr < 0x2800)
 		{
 			ReadMemArrRet(aica_reg, addr, sz);
+		}
+		if (AicaDsp::RegOwned(addr))
+		{
+			return ReadDspReg<sz>(addr);
 		}
 		if (addr < 0x2818)
 		{
@@ -403,13 +447,16 @@ struct AicaDevice final : AICA {
 			if (sz == 1)
 			{
 				WriteMemArr(aica_reg, addr, data, 1);
-				dsp->WritenMem(addr);
+				DspRegWritten(addr);
 			}
 			else
 			{
 				WriteMemArr(aica_reg, addr, data, 2);
-				dsp->WritenMem(addr);
-				dsp->WritenMem(addr + 1);
+				DspRegWritten(addr);
+
+				//a write that ends in the next slot
+				if (((addr + 1) & ~3u) != (addr & ~3u))
+					DspRegWritten(addr + 1);
 			}
 		}
 		if (sz == 1)
@@ -715,7 +762,7 @@ struct AicaDevice final : AICA {
 		MCIPD = (InterruptInfo*)&aica_reg[0x28B4 + 4];
 		MCIRE = (InterruptInfo*)&aica_reg[0x28B4 + 8];
 
-		sgc.reset(SGC::Create(audio_stream, aica_reg, dsp->GetDspContext(), aica_ram, aram_size));
+		sgc.reset(SGC::Create(audio_stream, aica_reg, dsp->Core(), aica_ram, aram_size));
 		
 		for (int i = 0; i < 3; i++)
 			timers[i].Init(aica_reg, MCIPD, SCIPD, i);
@@ -806,6 +853,13 @@ struct AicaDevice final : AICA {
 		patch(0x2C00, ARMRST);
 		patch(0x2C01, VREG);
 
+		//the registers of the DSP, as the DSP answers a read
+		for (u32 addr = offset; addr < offset + len; addr++)
+		{
+			if (AicaDsp::RegOwned(addr))
+				out[addr - offset] = (u8)RegByte(addr);
+		}
+
 		return true;
 	}
 
@@ -815,19 +869,45 @@ struct AicaDevice final : AICA {
 	}
 
 
-	void TimeStep()
+	void SampleTimers()
 	{
 		for (int i = 0; i < 3; i++)
 			timers[i].StepTimer(1);
 
 		SCIPD->SAMPLE_DONE = 1;
+	}
 
+	void SampleSweep()
+	{
 		if (settings.aica.NoBatch)
-			sgc->AICA_Sample();
+			sgc->SampleSweep();
+	}
 
+	void SampleMix()
+	{
+		if (settings.aica.NoBatch)
+			sgc->SampleMix();
+	}
+
+	void SampleIrq()
+	{
 		//Make sure sh4/arm interrupt system is up to date :)
 		update_arm_interrupts();
 		UpdateSh4Ints();
+	}
+
+	void TimeStep()
+	{
+		SampleTimers();
+
+		if (settings.aica.NoBatch)
+		{
+			SampleSweep();
+			dsp->RunPhase(false);
+			SampleMix();
+		}
+
+		SampleIrq();
 	}
 
 	void serialize(void** data, unsigned int* total_size) {

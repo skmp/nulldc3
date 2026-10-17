@@ -7,7 +7,6 @@
 // serialize.cpp : save states
 #if 1
 #include "types.h"
-#include "hw/aica/dsp_backend.h"
 #include "hw/aica/aica.h"
 #include "hw/aica/sgc_if.h"
 #include "hw/arm7/arm7.h"
@@ -42,6 +41,7 @@ enum serialize_version_enum {
 	V2,
 	V3,
 	V4,
+	V5,		//the DSP is the T5.0 core: its part is the core's state blob; a channel's DSP send is its ISEL
 } ;
 
 //gdrom
@@ -74,7 +74,7 @@ enum serialize_version_enum {
 
 //./core/hw/aica/dsp.o
 
-//recheck dsp.cpp if FEAT_DSPREC == DYNAREC_JIT
+//the DSP device writes the state blob of its core (hw/aica/dsp_core)
 
 
 
@@ -685,7 +685,7 @@ bool register_unserialize(RegisterStruct* regs, size_t size,void **data, unsigne
 bool dc_serialize(void **data, unsigned int *total_size)
 {
 	int i = 0;
-	serialize_version_enum version = V4 ;
+	serialize_version_enum version = V5 ;
 
 	*total_size = 0 ;
 
@@ -897,7 +897,7 @@ bool dc_unserialize(void **data, unsigned int *total_size)
 
 	REICAST_US(version) ;
 
-	if (version != V4)
+	if (version != V5)
 	{
 		fprintf(stderr, "Save State version not supported: %d\n", version);
 		return false;

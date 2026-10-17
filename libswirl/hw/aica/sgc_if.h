@@ -8,7 +8,7 @@
 #include "aica.h"
 
 
-struct dsp_context_t;
+struct AicaDsp;
 struct AudioStream;
 struct AicaChannelDebug;
 
@@ -60,12 +60,21 @@ typedef s32 SampleType;
 #define clip16(x) clip(x,-32768,32767)
 
 struct SGC {
-	virtual void AICA_Sample() = 0;
+	// The sound generator's part of one sample, sample by sample (config:aica.NoBatch), in two halves with the DSP's
+	// phase between them (AICA::SampleSweep, DSP::RunPhase, AICA::SampleMix). SampleSweep: the 64 channels step,
+	// their direct outputs and the CD-DA pair make the direct mix, which the sound generator keeps; the sends to
+	// the DSP (AicaDsp::SweepBegin, then for each bus a channel's ISEL names one AicaDsp::MixsSend of the sum of
+	// the sends to it, oDsp << 4); the CD-DA pair into AicaDsp::EXTS. SampleMix: EFREG of the DSP through
+	// EFSDL / EFPAN into the kept mix, mono, MVOL, the DAC, the harness's fold of the pair, the audio stream
+	virtual void SampleSweep() = 0;
+	virtual void SampleMix() = 0;
+
+	// The batch render: the 32 samples of a sound burst at its end, without the DSP
 	virtual void AICA_Sample32() = 0;
 
 	virtual void WriteChannelReg8(u32 channel, u32 reg) = 0;
 
-	static SGC* Create(AudioStream* audio_stream, u8* aica_reg, dsp_context_t* dsp, u8* aica_ram, u32 aram_size);
+	static SGC* Create(AudioStream* audio_stream, u8* aica_reg, AicaDsp* dsp, u8* aica_ram, u32 aram_size);
 ;
 	virtual void ReadCommonReg(u32 reg,bool byte) = 0;
 	virtual void WriteCommonReg8(u32 reg,u32 data) = 0;

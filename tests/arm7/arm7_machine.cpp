@@ -1,8 +1,10 @@
 /*
 	hw/arm7/SoundCPU.cpp is compiled as a part of this file: SoundCPU_impl, the Arm7Context in it and the memory
-	access functions it gives the context are private to it.
+	access functions it gives the context are private to it. So is the DSP core (hw/aica/dsp_core), to which the
+	AICA routes the accesses of the DSP's registers.
 */
 #include "hw/arm7/SoundCPU.cpp"
+#include "hw/aica/dsp_core/aica_dsp_core.cpp"
 
 #include "arm7_machine.h"
 
@@ -50,7 +52,8 @@ struct NoChannels : SGC
 
 	NoChannels(u8* aica_reg) : aica_reg(aica_reg) { }
 
-	void AICA_Sample() { }
+	void SampleSweep() { }
+	void SampleMix() { }
 	void AICA_Sample32() { }
 	void WriteChannelReg8(u32, u32) { }
 	void ReadCommonReg(u32, bool) { }
@@ -59,18 +62,21 @@ struct NoChannels : SGC
 	bool channel_unserialize(void**, unsigned int*) { return true; }
 };
 
-SGC* SGC::Create(AudioStream*, u8* aica_reg, dsp_context_t*, u8*, u32)
+SGC* SGC::Create(AudioStream*, u8* aica_reg, AicaDsp*, u8*, u32)
 {
 	return new NoChannels(aica_reg);
 }
 
+//The DSP: its registers, which the AICA routes the CPU's accesses to. No sample runs it
 struct NoDsp : DSP
 {
-	void Step() { }
-	void WritenMem(u32) { }
-	bool setBackend(DspBackends) { return true; }
-	dsp_context_t* GetDspContext() { return 0; }
+	AicaDsp core;
+
+	bool RunPhase(bool) { return true; }
+	AicaDsp* Core() { return &core; }
 };
+
+static NoDsp dsp;
 
 //The system bus registers the AICA looks at: SB_ISTEXT, where its interrupt to the SH4 shows
 struct NoSystemBus : SystemBus
@@ -143,7 +149,6 @@ void arm7m_init()
 	static NoSh4 sh4;
 	static NoSystemBus sb;
 	static NoAsic asic;
-	static NoDsp dsp;
 
 	//The interpreter fetches 4 bytes from any address below the end of the RAM
 	ram = (u8*)calloc(1, ARM7M_RAM_SIZE + 4);
@@ -151,6 +156,7 @@ void arm7m_init()
 
 	memset(sh4.devices, 0, sizeof(sh4.devices));
 	sh4_cpu = &sh4;
+	dsp.core.Init(ram, ARM7M_RAM_SIZE);
 
 	aica = AICA::Create(0, &sb, &asic, &dsp, &aica_ctx, ram, ARM7M_RAM_SIZE);
 	scpu = static_cast<SoundCPU_impl*>(SoundCPU::Create(aica, ram, ARM7M_RAM_SIZE));
@@ -221,6 +227,7 @@ void arm7m_clear()
 {
 	memset(ram, 0, ARM7M_RAM_SIZE);
 	memset(aica_ctx.regs, 0, sizeof(aica_ctx.regs));
+	dsp.core.Reset();
 }
 
 //With ARM7M_STEP=halves in the environment a step is made of the two halves of ARM7Backend::Step, in its
