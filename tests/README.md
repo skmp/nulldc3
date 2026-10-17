@@ -32,9 +32,10 @@ with them, nineteen tests: `debugger.selftest.core`, `.regs`, `.sh4bp`, `.sh4bpb
 the sounding guest of the tree do not: `debugger.contract.m2arm7.guest`, `.m2writes.guest` and `.m2.guest`, each with
 its `.interp`, need the devtools checkout alone, and `.hash.listening.guest` with its `.interp` needs nothing; nor
 does `debugger.contract.hash.listening.rule`, which runs no emulator), and the
-four `debugger.sound.lines.2ndmix.*` tests. The five `debugger.selftest.arm7*`
-tests, the six `debugger.selftest.writes*` tests and the sixteen `debugger.sound.neutral.*` tests boot the guest of
-the tree, and run without the option.
+two `debugger.sound.lines.2ndmix.*` tests. The three `debugger.selftest.arm7*`
+tests, the six `debugger.selftest.writes*` tests, the eight `debugger.sound.neutral.*` tests and the other
+`debugger.sound.*` tests of the guest (`.lines.dsptest.*`, `.engines.dsptest`, `.release.dsptest.*`,
+`.muted.dsptest.*`, `.ignored.dsptest`) boot the guest of the tree, and run without the option.
 
 A skipped test has not run and is not a pass: `ctest` exits with 0 when everything that did run passes, also
 when that is only the tests that need no data. With `-DNULLDC_TESTS_REQUIRE_DATA=ON` missing data fails its
@@ -513,4 +514,4 @@ two variables, python as it was found there, `nulldc_tests_path` and cache varia
 new one needs no configure by hand. One guest is there: `dsptest`, the sounding guest, with the runner of the sound
 lines, the tests `debugger.guest.dsptest.files` and `debugger.sound.*` above, and the function
 `nulldc_sound_neutral` for the directories behind it (`debugger/guest/dsptest/README.md`). The directory `neutral`
-behind it calls that function: it has the sixteen `debugger.sound.neutral.*` tests and no program of its own.
+behind it calls that function: it has the eight `debugger.sound.neutral.*` tests and no program of its own.
