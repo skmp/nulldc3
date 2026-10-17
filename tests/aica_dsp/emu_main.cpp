@@ -15,9 +15,10 @@
 	             CD-DA pair from the stand-in that gives a pair of its own, not 0, in every sample. The two cores'
 	             state blobs are equal behind every sample, and what CPU reads give is what the test's core
 	             answers.
-	  state      three checks of what the sound chip and its save state do with the core: the mix takes EFREG from
+	  state      four checks of what the sound chip and its save state do with the core: the mix takes EFREG from
 	             the core; the DSP device's Reset is the core's power on; the DSP device's save state is the core's
-	             blob, and one the core does not read resets the DSP.
+	             blob, and one the core does not read resets the DSP; the AICA's save state keeps the bus a channel
+	             sends to.
 
 	The sends. The keyed channels have IMXL = DISDL, their pan all to one side, MVOL is 15, and no output of the
 	DSP or of the CD-DA is mixed (EFSDL 0): a channel's send is then its direct output on its side, from the same
@@ -728,6 +729,93 @@ namespace state
 					blob_difference(blob_of(*emu->Core()), blob_of(fresh)).c_str());
 
 			dsp_count("refused-blob", 1, reset);
+			delete emu;
+		}
+
+		//(4) The AICA's save state keeps the DSP's bus each channel sends to (save state V5: its ISEL). Channel 0 keyed
+		//with IMXL 15 and ISEL k; the AICA's and the DSP's states saved; the channel's ISEL written with j and a
+		//sample: it sends to j; both states loaded: in the two samples behind the load it sends to k again, and no
+		//channel to j, and the DSP has what a machine has that ran the same samples with no save, write and load
+		{
+			const uint32_t k = 6, j = 11, sa = 0x10000;
+			std::vector<uint8_t> straight;
+			uint32_t ok = 0;
+
+			//the CD-DA stand-in off: its pairs go by the sectors the machine took, which a load does not give back
+			EmuCddaOn(false);
+
+			auto key = [&](EmuAica* emu)
+			{
+				//16-bit PCM on a loop of 0x400 words none 0, attack at once, TL 0, no direct output
+				for (uint32_t i = 0; i < 0x800; i += 2)
+				{
+					const uint16_t w = (uint16_t)(0x0800 + 37 * i);
+
+					memcpy(emu->Ram() + sa + i, &w, 2);
+				}
+
+				emu->RegWrite(0x04, sa & 0xFFFF, 2);			// SA, low part
+				emu->RegWrite(0x08, 0, 2);						// LSA
+				emu->RegWrite(0x0C, 0x400, 2);					// LEA
+				emu->RegWrite(0x10, 0x001F, 2);					// AR 31
+				emu->RegWrite(0x14, 0x001F, 2);					// RR 31
+				emu->RegWrite(0x18, 0x0200, 2);					// OCT 0, FNS
+				emu->RegWrite(0x20, (15 << 4) | k, 2);			// IMXL 15, ISEL k
+				emu->RegWrite(0x24, 0, 2);						// DISDL 0
+				emu->RegWrite(0x28, 0, 2);						// TL 0
+				emu->RegWrite(0x00, 0xC200 | (sa >> 16), 2);	// KYONEX, KYONB, LPCTL, 16-bit PCM
+
+				for (int n = 0; n < 4; n++)
+					emu->Sample();
+			};
+
+			//the buses the sweep of the last sample sent to, and of the sample before it, which the DSP has read
+			auto last = [](EmuAica* emu) { return (uint32_t)emu->Core()->mixs_sent[emu->Core()->mixs_fill & 1]; };
+			auto read = [](EmuAica* emu) { return (uint32_t)emu->Core()->mixs_sent[emu->Core()->mixs_dsp & 1]; };
+			auto to = [](uint32_t sent, uint32_t bus) { return ((sent >> bus) & 1) != 0; };
+
+			//the machine with no save, write and load
+			{
+				EmuAica* emu = EmuAica::Create(RAM_SIZE);
+
+				key(emu);
+				emu->Sample();
+				emu->Sample();
+				straight = blob_of(*emu->Core());
+				delete emu;
+			}
+
+			EmuAica* emu = EmuAica::Create(RAM_SIZE);
+
+			key(emu);
+
+			const uint32_t before_read = read(emu), before_last = last(emu);
+			const int32_t before_mixs = emu->Core()->MIXS[emu->Core()->mixs_dsp & 1][k];
+			const bool sends = to(before_last, k) && to(before_read, k) && before_mixs != 0;
+			const std::vector<uint8_t> aica = emu->AicaSave(), dsp = emu->DspSave();
+
+			emu->RegWrite(0x20, (15 << 4) | j, 2);
+			emu->Sample();
+
+			const uint32_t moved = last(emu);
+
+			emu->AicaLoad(aica);
+			emu->DspLoad(dsp);
+			emu->Sample();
+			emu->Sample();
+
+			const AicaDsp* core = emu->Core();
+			const bool back = to(last(emu), k) && to(read(emu), k) && !to(last(emu), j) && !to(read(emu), j) && core->MIXS[core->mixs_dsp & 1][k] != 0;
+			const bool same = blob_of(*core) == straight;
+
+			ok = (uint32_t)sends + (to(moved, j) && !to(moved, k)) + back + same;
+
+			if (ok != 4)
+				dsp_note("  channel 0 with ISEL %u: two sweeps sent to the buses %04X, %04X (MIXS[%u] %X); with ISEL %u to %04X; behind the load to %04X, %04X "
+					"(MIXS[%u] %X); the DSP behind the load against a machine without it: %s", k, before_read, before_last, k, before_mixs, j, moved, read(emu),
+					last(emu), k, core->MIXS[core->mixs_dsp & 1][k], blob_difference(blob_of(*core), straight).c_str());
+
+			dsp_count("save-bus", 4, ok);
 			delete emu;
 		}
 

@@ -233,24 +233,44 @@ namespace
 
 		std::vector<uint8_t> DspSave() override
 		{
-			void* data = nullptr;
-			unsigned int size = 0;
-			dsp->serialize(&data, &size);
-
-			std::vector<uint8_t> state(size);
-			data = state.data();
-			size = 0;
-			dsp->serialize(&data, &size);
-
-			return state;
+			return Save(dsp);
 		}
 
 		void DspLoad(const std::vector<uint8_t>& state) override
 		{
+			Load(dsp, state);
+		}
+
+		std::vector<uint8_t> AicaSave() override
+		{
+			return Save(aica);
+		}
+
+		void AicaLoad(const std::vector<uint8_t>& state) override
+		{
+			Load(aica, state);
+		}
+
+		static std::vector<uint8_t> Save(MMIODevice* device)
+		{
+			void* data = nullptr;
+			unsigned int size = 0;
+			device->serialize(&data, &size);
+
+			std::vector<uint8_t> state(size);
+			data = state.data();
+			size = 0;
+			device->serialize(&data, &size);
+
+			return state;
+		}
+
+		static void Load(MMIODevice* device, const std::vector<uint8_t>& state)
+		{
 			std::vector<uint8_t> copy = state;
 			void* data = copy.data();
 			unsigned int size = 0;
-			dsp->unserialize(&data, &size);
+			device->unserialize(&data, &size);
 		}
 
 		uint64_t Pairs() override { return stream.pairs; }

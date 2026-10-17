@@ -48,6 +48,11 @@ struct EmuAica
 	virtual std::vector<uint8_t> DspSave() = 0;
 	virtual void DspLoad(const std::vector<uint8_t>& state) = 0;
 
+	// the AICA device's save state (serialize / unserialize): its timers, the register file and the sound
+	// generator's channels
+	virtual std::vector<uint8_t> AicaSave() = 0;
+	virtual void AicaLoad(const std::vector<uint8_t>& state) = 0;
+
 	// what the audio stream was handed: the pairs, and the last one
 	virtual uint64_t Pairs() = 0;
 	virtual int16_t LastLeft() = 0;

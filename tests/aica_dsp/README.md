@@ -20,7 +20,7 @@ Without it the tests that need it are skipped, or fail with `-DNULLDC_TESTS_REQU
 | `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | `wasm/build.sh` finding its emcc, run by sh on a PATH that has none: with the emsdk in `EMSDK` it builds the module, with no emsdk there it says that it has no emcc | an emcc that is in an emsdk, and node; skipped otherwise |
 | `aica.dsp.case.<case>.emu` | the seven cases anchored directly on the console's files (below) on the emulator's own sound chip, against those files and against the core alone | a caique-rtl checkout |
 | `aica.dsp.emu.lockstep` | generated programs through the emulator's sound chip, with CPU writes of every form and channels that send, against a core of the test's own, behind every sample | none |
-| `aica.dsp.emu.state` | the mix takes EFREG from the core, the DSP device's reset is the core's power on, its save state is the core's blob | none |
+| `aica.dsp.emu.state` | the mix takes EFREG from the core, the DSP device's reset is the core's power on, its save state is the core's blob, the AICA's save state keeps the bus a channel sends to | none |
 
 All but `aica.dsp.capi` and the `aica.dsp.wasm` tests count their cases into checks and are gated on
 `baseline.txt`: a check that passes fewer cases than its baseline, or has another number of cases, fails, and
@@ -228,7 +228,10 @@ neither half 0 (`EmuCddaPair`).
   0x1234; `reset`, the DSP device's `Reset(false)` behind a program that ran leaves the core's blob that of a core
   after `Reset()`; `save-load`, the DSP device's save state, a CPU write and a sample, the save state loaded:
   the core's blob of before, and the save state is the core's blob, `StateSize()` bytes; `refused-blob`, a save
-  state whose DSP part has another header resets the DSP.
+  state whose DSP part has another header resets the DSP; `save-bus`, a channel keyed with IMXL 15 and ISEL 6, the
+  AICA's and the DSP's save states, ISEL written with 11 and a sample (it sends to bus 11), the states loaded: the
+  two samples behind the load send to bus 6 and to no bus 11, and the core is that of a machine that ran the same
+  samples with no save, write and load.
 
 ## Looking at a failure
 
