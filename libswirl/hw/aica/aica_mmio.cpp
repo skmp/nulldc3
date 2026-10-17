@@ -802,11 +802,9 @@ struct AicaDevice final : AICA {
 		sgc.reset();
 	}
 
-	//Mainloop
+	//The tail of a sound burst
 	void Update(u32 Samples)
 	{
-		sgc->AICA_Sample32();
-
 		//the sound regression harness (aica_hash.h)
 		if (unlikely(aica_hash.ticks_wanted != 0))
 			aica_hash.tick(aica_reg, dsp->Core());
@@ -879,14 +877,12 @@ struct AicaDevice final : AICA {
 
 	void SampleSweep()
 	{
-		if (settings.aica.NoBatch)
-			sgc->SampleSweep();
+		sgc->SampleSweep();
 	}
 
 	void SampleMix()
 	{
-		if (settings.aica.NoBatch)
-			sgc->SampleMix();
+		sgc->SampleMix();
 	}
 
 	void SampleIrq()
@@ -899,14 +895,9 @@ struct AicaDevice final : AICA {
 	void TimeStep()
 	{
 		SampleTimers();
-
-		if (settings.aica.NoBatch)
-		{
-			SampleSweep();
-			dsp->RunPhase(false);
-			SampleMix();
-		}
-
+		SampleSweep();
+		dsp->RunPhase(false);
+		SampleMix();
 		SampleIrq();
 	}
 

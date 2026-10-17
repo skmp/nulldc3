@@ -533,16 +533,16 @@ const u32 arm7_loads[] = {
 
 	The sound CPU is given a state that executes the loop above out of the wave memory: one LDRB for every byte,
 	stored in the wave memory behind the loop. Then the bytes of the wave memory, the sound CPU, the AICA and the
-	interrupt line of the AICA to the SH4 are put back as they were.
+	interrupt line of the AICA to the SH4 are put back as they were; the DSP, which nothing here may reach, has to
+	be as it was.
 
-	SoundCPU::Update() is what executes code of the ARM7. It runs the core in 32 slices and steps the AICA by a
-	sample behind each of them: the timers count, the sample interval is raised, the interrupt lines follow. A
-	slice is 64 cycles for every instruction of the loop, of which the core charges 10 at most, so the loop ends
-	within the first slice: every load finds the registers as they were when this was called. The state it runs
-	on masks FIQ, so that a request in front of nFIQ does not take the core out of the loop. What the 32 steps
-	and the loads themselves change (the status of the selected channel and its loop flag, the acknowledge of a
-	request) is in the two save states that are put back; the sound generator is kept from producing samples in
-	the steps, which no save state of the two would undo.
+	The ARM7 executes it in one ARM phase, SoundCPU::RunSample with checks false: the backend runs for 64 ticks for
+	every instruction of the loop, of which the core charges 10 at most, so the loop ends within the phase, and no
+	time step of the AICA follows it. No timer counts, no sample is made, the DSP does not step and nothing goes to
+	the audio stream (none of that is in the two save states that are put back), and every load finds the
+	registers as they were when this was called. The state it runs on masks FIQ, so that a request in front of
+	nFIQ does not take the core out of the loop. What the loads themselves change (the status of the selected
+	channel and its loop flag, the acknowledge of a request) is in the two save states that are put back.
 
 	*loads are the bytes. Returns false when the loop did not come to its end or something is not as it was.
 */
@@ -550,6 +550,7 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 {
 	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
 	AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
+	DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
 	ASIC* asic = sh4_cpu->GetA0H<ASIC>(A0H_ASIC);
 	SystemBus* sb = sh4_cpu->GetA0H<SystemBus>(A0H_SB);
 	u8* ram = sh4_cpu->aica_ram.data;
@@ -560,6 +561,7 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 
 	std::vector<u8> cpu = DeviceState(scpu);
 	std::vector<u8> device = DeviceState(aica);
+	const std::vector<u8> dsp_state = DeviceState(dsp);
 
 	if (count == 0 || count > 0x8000 || cpu.size() != scpu_state_size)
 		return false;
@@ -567,7 +569,6 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 	std::vector<u8> wave(ram + loop_at, ram + store_at + count);
 	const u32 line_bit = 1 << (u8)holly_SPU_IRQ;
 	u32 line = SB_ISTEXT & line_bit;
-	bool no_batch = settings.aica.NoBatch;
 
 	std::vector<u8> made = cpu;
 	auto set = [&](u32 reg, u32 value) { memcpy(&made[scpu_regs_at + reg * 4], &value, 4); };
@@ -586,9 +587,8 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 	RestoreDevice(scpu, made);
 	scpu->InvalidateJitCache();
 
-	settings.aica.NoBatch = false;
-	scpu->Update(count * 4 * 64 * 32 * arm_sh4_bias);
-	settings.aica.NoBatch = no_batch;
+	u32 done = 0;
+	scpu->RunSample(count * 4 * 64, &done, false);
 
 	// where the core stands, and how far it came
 	std::vector<u8> behind = DeviceState(scpu);
@@ -603,7 +603,7 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 	RestoreDevice(scpu, cpu);
 	scpu->InvalidateJitCache();
 
-	// a timer that ran out in the steps has raised the interrupt of the AICA
+	// the interrupt line of the AICA to the SH4 as it was in front of the loop
 	if ((SB_ISTEXT & line_bit) != line)
 	{
 		if (line)
@@ -612,7 +612,7 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 			asic->CancelInterrupt(holly_SPU_IRQ);
 	}
 
-	return r0 == first + count && next == loop_at + 16 && DeviceState(scpu) == cpu && DeviceState(aica) == device;
+	return r0 == first + count && next == loop_at + 16 && DeviceState(scpu) == cpu && DeviceState(aica) == device && DeviceState(dsp) == dsp_state;
 }
 
 }

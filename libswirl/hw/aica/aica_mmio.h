@@ -42,7 +42,7 @@ struct AicaChannelDebug {
 
 struct AICA : MMIODevice {
 	// The tail of a sound burst, once per burst behind its last sample, also when the ARM7 is held: the tick of
-	// the sound regression harness (aica_hash.h) and, while it exists, the batch render. Samples is ignored
+	// the sound regression harness (aica_hash.h). Samples is ignored
 	virtual void Update(u32 Samples) = 0;
 
 	//Aica reads (both sh4&arm)
@@ -53,9 +53,7 @@ struct AICA : MMIODevice {
 	// makes them behind the ARM phase of the sample, in this order, and nothing else of the sound chip runs between
 	// them:
 	//   SampleTimers(); SampleSweep(); DSP::RunPhase(checks); SampleMix(); SampleIrq();
-	// TimeStep() is the five with RunPhase(false), for callers outside the sound burst. While the batch render
-	// exists, SampleSweep() and SampleMix() do nothing unless config:aica.NoBatch is set, and the DSP phase is not
-	// made then either
+	// TimeStep() is the five with RunPhase(false), for callers outside the sound burst
 	virtual void SampleTimers() = 0;   // the three timers count one sample; SAMPLE_DONE is set
 	virtual void SampleSweep() = 0;    // the 64 channels and the CD-DA pair of the sample: the direct mix, kept for
 	                                   // SampleMix(); the sends to the DSP (AicaDsp::SweepBegin, then one MixsSend

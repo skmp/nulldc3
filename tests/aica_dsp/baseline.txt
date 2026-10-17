@@ -178,6 +178,7 @@ aica.dsp.emu.state           reset                                   2          
 aica.dsp.emu.state           save-load                               3            3
 aica.dsp.emu.state           refused-blob                            1            1
 aica.dsp.emu.state           save-bus                                4            4
+aica.dsp.emu.state           nosound                               195          195
 aica.dsp.case.dsp_basic.emu  emu-as-core:lines                     309          309
 aica.dsp.case.dsp_basic.emu  console-hw9:emu:lines                 309          306
 aica.dsp.case.dsp_basic.emu  console-hw:emu:lines                  309          306

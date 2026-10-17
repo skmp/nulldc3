@@ -516,11 +516,8 @@ struct settings_t
 		bool LimitFPS;		// defaults to true
 		u32 GlobalFocus;	//0 -> only hwnd , (1) -> Global
 		u32 BufferCount;	//BufferCount+2 buffers used , max 60 , default 0
-		u32 CDDAMute;
 		u32 GlobalMute;
-		u32 DSPEnabled;		//0 -> no, 1 -> yes
 		bool OldSyncronousDma;		// 1 -> sync dma (old behavior), 0 -> async dma (fixes some games, partial implementation)
-		bool NoBatch;
 		bool NoSound;
 	} aica;
 

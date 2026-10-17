@@ -291,7 +291,6 @@ void InitSettings()
     settings.dreamcast.RTC = 0;
     settings.dynarec.SmcCheckLevel = FullCheck;
     settings.aica.LimitFPS = true;
-    settings.aica.NoBatch = false;	// This also controls the DSP. Disabled by default
     settings.aica.NoSound = false;
     settings.audio.backend = "auto";
     settings.rend.UseMipmaps = true;
@@ -375,7 +374,6 @@ void LoadSettings(bool game_specific)
     // game is set the config store puts a key of the game's own section in front of the one of the section named
     settings.dreamcast.RTC = aica_hash.pinned_rtc != nullptr ? aica_hash.pinned_rtc() : 0;
     settings.aica.LimitFPS = cfgLoadBool(config_section, "aica.LimitFPS", settings.aica.LimitFPS);
-    settings.aica.NoBatch = cfgLoadBool(config_section, "aica.NoBatch", settings.aica.NoBatch);
     settings.aica.NoSound = cfgLoadBool(config_section, "aica.NoSound", settings.aica.NoSound);
     settings.audio.backend = cfgLoadStr(audio_section, "backend", settings.audio.backend.c_str());
     settings.rend.UseMipmaps = cfgLoadBool(config_section, "rend.UseMipmaps", settings.rend.UseMipmaps);
@@ -512,7 +510,6 @@ void SaveSettings()
 
     cfgSaveInt("config", "Dreamcast.Language", settings.dreamcast.language);
     cfgSaveBool("config", "aica.LimitFPS", settings.aica.LimitFPS);
-    cfgSaveBool("config", "aica.NoBatch", settings.aica.NoBatch);
     cfgSaveBool("config", "aica.NoSound", settings.aica.NoSound);
     cfgSaveStr("audio", "backend", settings.audio.backend.c_str());
 
