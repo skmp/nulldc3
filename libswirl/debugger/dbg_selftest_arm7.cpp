@@ -1265,11 +1265,11 @@ BOUNDED_GUEST_TEST(arm7_held_clocked, "arm7.held.clocked")
 		const bool tail = state.size() == kScpuStateSize && held_cl.state.size() == kScpuStateSize
 			&& memcmp(&state[kScpuTailAt], &held_cl.state[kScpuTailAt], kScpuTailSize) == 0;
 
-		Check(differs == kArmRegs, "nothing of the ARM7 executed: every register of it reads as at the hold (the first that differs: %u; the PC %08X, at the hold %08X)",
-			differs, ArmPc(), held_cl.regs.r[15]);
+		Check(differs == kArmRegs, "nothing of the ARM7 executed: every register of it reads as at the hold (the first that differs: %s; the PC %08X, at the hold %08X)",
+			differs == kArmRegs ? "none" : std::to_string(differs).c_str(), ArmPc(), held_cl.regs.r[15]);
 		Check(words == RN_ARM_REG_COUNT - 1 && tail,
-			"every word of its stored context but INTR_PEND is as at the hold (%u of %u; the first that differs: %u), and so are armIrqEnable, armFiqEnable, armMode and "
-			"enabled (%s)", words, RN_ARM_REG_COUNT - 1, first, tail ? "the same" : "not the same");
+			"every word of its stored context but INTR_PEND is as at the hold (%u of %u; the first that differs: %s), and so are armIrqEnable, armFiqEnable, armMode and "
+			"enabled (%s)", words, RN_ARM_REG_COUNT - 1, first == RN_ARM_REG_COUNT ? "none" : std::to_string(first).c_str(), tail ? "the same" : "not the same");
 
 		DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
 		DspDebugState now = { };
