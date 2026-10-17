@@ -15,7 +15,8 @@ has the figures of the machine this was written on, measured while it was quiet.
     --seconds 60             emulated seconds per run
     --runs 5                 runs per engine; the median is the result
     --config <keys>          section:key=value for every run, behind the script's own keys (more than once, or
-                             a list separated by commas): config:aica.NoBatch=yes measures the per-sample path
+                             a list separated by commas), e.g. config:aica.NoBatch=yes for a base of before the
+                             M3 round, which had its per-sample path behind that key
     --json <file>            the result as JSON: per engine the median, the lowest and the highest of both
                              figures, every run (both figures, its CPU seconds and emulated seconds), the load
                              of the machine (1 minute average) in front of every run, the renderer, the date,

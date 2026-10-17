@@ -112,8 +112,10 @@ The line has no field for wave memory, main memory or the scheduler: those are i
 
 Two runs of one binary with the same program and keys print the same line when the run does not depend on the
 host, which takes what every deterministic run takes: `audio:backend=none`, the clock pinned (`Dreamcast.RTC` or
-`Debug.FixedRtc`) and no host input (`Headless`). `config:aica.NoBatch=yes` renders sample by sample instead of in
-batches of 32, which is another `samples` (and no pair at all while the ARM7 is held in reset); the SH4 engine
+`Debug.FixedRtc`) and no host input (`Headless`). The sound is made sample by sample, with the DSP, in every time
+step of the AICA, and there is no pair at all while the ARM7 is held in reset (`config:aica.NoBatch`, which chose a
+render of 32 samples a burst without the DSP in older builds, is read no more); `config:aica.NoSound=yes` hands the
+audio stream a pair of zeroes for every sample, and `samples` is then the hash of those. The SH4 engine
 (`config:Dynarec.Enabled`) is another `sh4`, and for a program whose SH4 reaches the sound at times of its own
 another everything. A line is good for one build on one host (the generator's tables come from `pow()`), so no
 line is stored in the tree: a test compares runs it makes itself.
