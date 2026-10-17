@@ -204,20 +204,21 @@ namespace lockstep
 
 		case 6:
 		{
-			//the upper half of the slot, with a value other than the low half's, then the low half
+			//the low half, then the upper half of the slot with a value other than the low half's: the DSP keeps
+			//the low half's
 			uint16_t other = (uint16_t)(v ^ (1 + rnd.Bits(15)));
 
-			write(off + 2, other, 2);
 			write(off, v, 2);
+			write(off + 2, other, 2);
 			upper_writes++;
 			full_writes++;
 			break;
 		}
 
 		default:
-			//a byte of the upper half, then the low half
-			write(off + 2 + rnd.Below(2), (v ^ 0x5A) & 0xFF, 1);
+			//the low half, then a byte of the upper half
 			write(off, v, 2);
+			write(off + 2 + rnd.Below(2), (v ^ 0x5A) & 0xFF, 1);
 			upper_writes++;
 			full_writes++;
 			break;
