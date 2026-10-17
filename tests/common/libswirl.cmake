@@ -9,7 +9,7 @@ list(APPEND CMAKE_MODULE_PATH "${nulldc_root_path}/reicast/cmake")
 include(config)
 
 # The recompiler selection belongs to each libswirl library (nulldc_add_libswirl_library), not to the project
-remove_definitions(-DFEAT_SHREC=${FEAT_SHREC} -DFEAT_AREC=${FEAT_AREC} -DFEAT_DSPREC=${FEAT_DSPREC})
+remove_definitions(-DFEAT_SHREC=${FEAT_SHREC} -DFEAT_AREC=${FEAT_AREC})
 
 add_library(nulldc_libswirl_headers INTERFACE)
 target_include_directories(nulldc_libswirl_headers INTERFACE
@@ -24,26 +24,22 @@ if(${HOST_OS} EQUAL ${OS_WINDOWS})
 endif()
 
 # nulldc_add_libswirl_library(<target>
-#                             [SHREC <DYNAREC_NONE|DYNAREC_JIT>] [AREC <...>] [DSPREC <...>]
+#                             [SHREC <DYNAREC_NONE|DYNAREC_JIT>] [AREC <...>]
 #                             SOURCES <file relative to libswirl>...)
 #
 # Object library of libswirl translation units. Linking it adds every object to the executable (their static
 # initialisers register opcode tables and recompiler backends) and passes the FEAT_* selection on to the
-# sources of the executable. Without SHREC/AREC/DSPREC the selection is the one of the emulator build.
+# sources of the executable. Without SHREC/AREC the selection is the one of the emulator build.
 function(nulldc_add_libswirl_library target)
-  cmake_parse_arguments(ARG "" "SHREC;AREC;DSPREC" "SOURCES" ${ARGN})
+  cmake_parse_arguments(ARG "" "SHREC;AREC" "SOURCES" ${ARGN})
 
   set(shrec ${FEAT_SHREC})
   set(arec ${FEAT_AREC})
-  set(dsprec ${FEAT_DSPREC})
   if(ARG_SHREC)
     set(shrec ${${ARG_SHREC}})
   endif()
   if(ARG_AREC)
     set(arec ${${ARG_AREC}})
-  endif()
-  if(ARG_DSPREC)
-    set(dsprec ${${ARG_DSPREC}})
   endif()
 
   set(srcs "")
@@ -53,7 +49,7 @@ function(nulldc_add_libswirl_library target)
 
   add_library(${target} OBJECT ${srcs})
   target_link_libraries(${target} PUBLIC nulldc_libswirl_headers)
-  target_compile_definitions(${target} PUBLIC FEAT_SHREC=${shrec} FEAT_AREC=${arec} FEAT_DSPREC=${dsprec})
+  target_compile_definitions(${target} PUBLIC FEAT_SHREC=${shrec} FEAT_AREC=${arec})
 endfunction()
 
 # The SH4 interpreter: opcode handlers, opcode tables, register banks, exceptions and the memory map tables.

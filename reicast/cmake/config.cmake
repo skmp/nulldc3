@@ -44,7 +44,7 @@ set(CPU_X64        0x20000004)  # HOST_CPU
 set(CPU_A64        0x20000008)
 set(CPU_GENERIC    0x20000005)  # used for emscripten, etc
 
-set(DYNAREC_NONE   0x40000001)  # FEAT_SHREC, FEAT_AREC, FEAT_DSPREC
+set(DYNAREC_NONE   0x40000001)  # FEAT_SHREC, FEAT_AREC
 set(DYNAREC_JIT    0x40000002)
 
 set(COMPILER_VC    0x30000001)  # BUILD_COMPILER
@@ -205,27 +205,15 @@ else()
   set(FEAT_AREC ${DYNAREC_NONE})
 endif()
 
-# Sound DSP dynarec
-if(${HOST_CPU} EQUAL ${CPU_A64})
-  message("DSP Dynarec Features Available")
-  set(FEAT_DSPREC  ${DYNAREC_JIT})
-#
-else()
-  message("DSP Dynarec Features Missing")
-  set(FEAT_DSPREC ${DYNAREC_NONE})
-endif()
-
 ## Handle TARGET_* to FEAT_  *FIXME* stupid use one or the other and propogate : part of build cleanup , TARGET_ will only be for platform specifics and FEAT_ as OPTIONS
 #
 if(TARGET_NO_REC)
   set(FEAT_SHREC  ${DYNAREC_NONE})
   set(FEAT_AREC   ${DYNAREC_NONE})
-  set(FEAT_DSPREC ${DYNAREC_NONE})
 endif()
 
 if(TARGET_NO_AREC)
   set(FEAT_AREC   ${DYNAREC_NONE})
-  set(FEAT_DSPREC ${DYNAREC_NONE})
 endif()
 
 ## A generic host has no fault context (oslib/context.h) and no fault trampoline (linux/common.cpp): it is built without
@@ -386,7 +374,6 @@ add_definitions(-DHOST_CPU=${HOST_CPU})
 
 add_definitions(-DFEAT_AREC=${FEAT_AREC})
 add_definitions(-DFEAT_SHREC=${FEAT_SHREC})
-add_definitions(-DFEAT_DSPREC=${FEAT_DSPREC})
 
 add_definitions(-DBUILD_COMPILER=${BUILD_COMPILER})
 
