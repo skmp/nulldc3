@@ -809,7 +809,7 @@ struct AicaDevice final : AICA {
 
 		//the sound regression harness (aica_hash.h)
 		if (unlikely(aica_hash.ticks_wanted != 0))
-			aica_hash.tick(aica_reg);
+			aica_hash.tick(aica_reg, dsp->Core());
 	}
 
 	//Aica reads (both sh4&arm)

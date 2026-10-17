@@ -90,7 +90,7 @@ same `sh4`, `ram`, `vram`, `aram` and `arm7` in both, and a different `sched`.
 one scheduler callback, 32 samples (145124 SH4 cycles); the first one comes at the end of the first slice of the
 SH4, 448 cycles behind the start of the machine. Behind the N-th tick the emulator prints one line on stdout
 
-    AicaHash: samples=<16 hex digits> regs=<16> arm7=<16> sh4=<16> ticks=<N> cycles=<decimal>
+    AicaHash: samples=<16 hex digits> regs=<16> arm7=<16> sh4=<16> dsp=<16> ticks=<N> cycles=<decimal>
 
 and **ends the process there**, on the emulator thread, with exit code 0 and without the shutdown of a run: nothing
 is saved and **no `nulldc-exit:` line is printed**. A run gives the sound line or the state hash of
@@ -104,6 +104,7 @@ in front of `AicaHash:`.
 | `regs` | the same hash over the `0x8000` bytes of the register file of the AICA, at every tick |
 | `arm7` | over what the sound CPU writes into a save state (its registers of every mode, the interrupt latches, the reset state), at every tick |
 | `sh4` | over PC, R0-R15, PR, SR and FPSCR of the SH4, at every tick, on a backend whose context is complete inside a scheduler callback (the interpreter and the x64 recompiler); on any other it stays the offset basis `cbf29ce484222325` |
+| `dsp` | over the state blob of the DSP core (`AicaDsp::SaveState`, `AicaDsp::StateSize()` bytes, `libswirl/hw/aica/dsp_core/aica_dsp_core.h`), at every tick: its registers, its datapath, MDEC_CT, both MIXS banks. The same on every host |
 | `ticks` | N |
 | `cycles` | scheduler time behind the N-th tick, in SH4 cycles |
 

@@ -53,8 +53,8 @@ if session:
     print('SelfTest: stand-in: ok: the session is at work')
 if line:
     ticks = int(keys['config:Debug.AicaHash'])
-    print('AicaHash: samples=%%016x regs=%%016x arm7=%%016x sh4=%%016x ticks=%%d cycles=%%d'
-          %% (0x1111, 0x2222, 0x3333, 0x4444 if engine == 'jit' else 0x5555, ticks, 145124 * ticks))
+    print('AicaHash: samples=%%016x regs=%%016x arm7=%%016x sh4=%%016x dsp=%%016x ticks=%%d cycles=%%d'
+          %% (0x1111, 0x2222, 0x3333, 0x4444 if engine == 'jit' else 0x5555, 0xeeee, ticks, 145124 * ticks))
 else:
     print('nulldc-exit: reason=vblanks vblanks=%%s hash=%%016x sh4=%%016x sched=%%016x ram=%%016x vram=%%016x aram=%%016x arm7=%%016x'
           %% (keys['config:Exit.AfterVblanks'], 0x6666, 0x7777 if engine == 'jit' else 0x8888, 0x9999, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd))

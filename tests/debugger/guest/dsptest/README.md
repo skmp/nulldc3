@@ -172,7 +172,7 @@ environment of its own, and parses the line of the harness:
     python3 tests/debugger/guest/dsptest/soundlines.py --emulator <nulldc3> --work /tmp/w \
             --guest tests/debugger/guest/dsptest/dsptest.elf --ticks 2000 --mode same --mode sounds --engine interp --render persample
 
-    AicaHash: samples=<hex> regs=<hex> arm7=<hex> sh4=<hex> ticks=<N> cycles=<decimal>
+    AicaHash: samples=<hex> regs=<hex> arm7=<hex> sh4=<hex> dsp=<hex> ticks=<N> cycles=<decimal>
 
 `--engine jit|interp` is the SH4 engine, `--render batch|persample` is `config:aica.NoBatch` no or yes. A second
 kind of run gives the exit line of the same program with its state hash (`config:Exit.AfterVblanks=<V> ,

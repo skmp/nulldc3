@@ -5,6 +5,7 @@
 
 
 #include "aica_hash.h"
+#include "dsp_core/aica_dsp_core.h"
 
 #include "cfg/cfg.h"
 #include "hw/sh4/sh4_if.h"
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 /*
 	The part of the sound regression harness that needs the emulator around the AICA (aica_hash.h).
@@ -23,13 +25,18 @@ static void aica_hash_configure()
 {
 	aica_hash.ticks_wanted = (u32)std::max<s32>(0, cfgLoadInt("config", "Debug.AicaHash", 0));
 	aica_hash.ticks = 0;
-	aica_hash.samples = aica_hash.regs = aica_hash.arm7 = aica_hash.sh4 = 0xcbf29ce484222325ull;
+	aica_hash.samples = aica_hash.regs = aica_hash.arm7 = aica_hash.sh4 = aica_hash.dsp = 0xcbf29ce484222325ull;
 }
 
 // The state at the end of an AICA tick, and the end of the run
-static void aica_hash_tick(const u8* aica_reg)
+static void aica_hash_tick(const u8* aica_reg, const AicaDsp* dsp)
 {
 	aica_hash.regs = aica_hash_fold(aica_hash.regs, aica_reg, 0x8000);
+
+	//the DSP, as its state blob has it
+	static std::vector<u8> dsp_state(AicaDsp::StateSize());
+	dsp->SaveState(dsp_state.data());
+	aica_hash.dsp = aica_hash_fold(aica_hash.dsp, dsp_state.data(), dsp_state.size());
 
 	//the sound CPU, as it goes into a save state
 	u8 scpu_state[1024];
@@ -59,9 +66,9 @@ static void aica_hash_tick(const u8* aica_reg)
 
 	if (++aica_hash.ticks == aica_hash.ticks_wanted)
 	{
-		printf("AicaHash: samples=%016llx regs=%016llx arm7=%016llx sh4=%016llx ticks=%u cycles=%llu\n",
+		printf("AicaHash: samples=%016llx regs=%016llx arm7=%016llx sh4=%016llx dsp=%016llx ticks=%u cycles=%llu\n",
 			(unsigned long long)aica_hash.samples, (unsigned long long)aica_hash.regs, (unsigned long long)aica_hash.arm7,
-			(unsigned long long)aica_hash.sh4, aica_hash.ticks, (unsigned long long)sh4_sched_now64());
+			(unsigned long long)aica_hash.sh4, (unsigned long long)aica_hash.dsp, aica_hash.ticks, (unsigned long long)sh4_sched_now64());
 		fflush(stdout);
 
 		//the run ends here, on the emulator thread and without the emulator's shutdown: nothing is saved
