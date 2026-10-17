@@ -1390,19 +1390,24 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 		}
 
 		// A word the SH4 writes to 0x2804, with every field not 0, RBP bit 11 set and bit 12, which is in no field, set
-		// too, and a COEF word with bits 2:0 set, each through AICA::WriteReg. The five rows of 0x2804, of dc.aica.dsp
-		// and of dc.aica.common, read the word as the DSP has it (the core's RBPL, read here); a CPU read and the
-		// accessor give 0 for 0x2804, which the DSP does not answer, and the COEF word with bits 2:0 clear, which it
-		// does not keep. The AICA and the DSP are put back as they were
+		// too, and a COEF word with bits 2:0 set, each through AICA::WriteReg, and the upper halves of both slots with
+		// words not 0, which the file keeps and the DSP does not take. The five rows of 0x2804, of dc.aica.dsp and of
+		// dc.aica.common, read the word as the DSP has it (the core's RBPL, read here); a CPU read and the accessor
+		// give 0 for 0x2804, which the DSP does not answer, the COEF word with bits 2:0 clear, which it does not keep,
+		// and 0 for the upper half of both slots. Then the datapath, written into the core: the accessor gives each of
+		// its fields. The AICA and the DSP are put back as they were
 		{
 			std::vector<u8> aica_kept = DeviceState(aica), dsp_kept = DeviceState(dsp);
 			const u32 made = 0xDDA3;	// TESTB0 1, RBL 2, RBP 0xDA3, bit 12 in no field
 			const u32 coef_at = 0x3000 + 4 * 37, coef = 0x9A5F;
+			const u32 made_upper = 0x5AA5, coef_upper = 0xBEEF;
 			DspDebugState written;
 			u64 d_rbp = 99, d_rbl = 99, c_rbp = 99, c_rbl = 99, c_test = 99;
 
 			aica->WriteReg(0x2804, made, 2);
 			aica->WriteReg(coef_at, coef, 2);
+			aica->WriteReg(0x2806, made_upper, 2);
+			aica->WriteReg(coef_at + 2, coef_upper, 2);
 
 			const bool read = dsp->DebugGetState(&written) && ReadRegister("dc.aica.dsp", "RBP", &d_rbp) && ReadRegister("dc.aica.dsp", "RBL", &d_rbl)
 				&& ReadRegister("dc.aica.common", "RBP", &c_rbp) && ReadRegister("dc.aica.common", "RBL", &c_rbl) && ReadRegister("dc.aica.common", "TESTB0", &c_test);
@@ -1417,14 +1422,50 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 			const bool given = aica->DebugReadRegs(0x2804, 4, common) && aica->DebugReadRegs(coef_at, 4, slot);
 			const u32 cpu_common = aica->ReadReg(0x2804, 2), cpu_coef = aica->ReadReg(coef_at, 2);
 			const u32 cpu_byte = aica->ReadReg(coef_at, 1) | (aica->ReadReg(coef_at + 1, 1) << 8);
+			const u32 cpu_common_upper = aica->ReadReg(0x2806, 2), cpu_coef_upper = aica->ReadReg(coef_at + 2, 2);
 
-			Check(given && cpu_common == 0 && common[0] == 0 && common[1] == 0 && common[2] == 0 && common[3] == 0,
-				"0x2804 written with %04X: a CPU read gives %04X, the accessor %02X%02X (and %02X%02X for the upper half): 0, as the console", made, cpu_common,
-				common[1], common[0], common[3], common[2]);
-			Check(given && cpu_coef == (coef & ~7u) && cpu_byte == (coef & ~7u) && (slot[0] | (slot[1] << 8)) == (coef & ~7u) && slot[2] == 0 && slot[3] == 0
-				&& dsp->Core()->COEF[37] == (coef & ~7u),
-				"COEF37 written with %04X: a CPU read gives %04X (%04X byte by byte), the accessor %02X%02X (and %02X%02X), the core %04X: bits 2:0 read 0", coef, cpu_coef,
-				cpu_byte, slot[1], slot[0], slot[3], slot[2], dsp->Core()->COEF[37]);
+			Check(given && cpu_common == 0 && cpu_common_upper == 0 && common[0] == 0 && common[1] == 0 && common[2] == 0 && common[3] == 0,
+				"0x2804 written with %04X and 0x2806 with %04X: a CPU read gives %04X and %04X, the accessor %02X%02X and %02X%02X: 0, as the console", made,
+				made_upper, cpu_common, cpu_common_upper, common[1], common[0], common[3], common[2]);
+			Check(given && cpu_coef == (coef & ~7u) && cpu_byte == (coef & ~7u) && (slot[0] | (slot[1] << 8)) == (coef & ~7u) && cpu_coef_upper == 0 && slot[2] == 0
+				&& slot[3] == 0 && dsp->Core()->COEF[37] == (coef & ~7u),
+				"COEF37 written with %04X and its upper half with %04X: a CPU read gives %04X (%04X byte by byte) and %04X, the accessor %02X%02X and %02X%02X, the "
+				"core %04X: bits 2:0 and the upper half read 0", coef, coef_upper, cpu_coef, cpu_byte, cpu_coef_upper, slot[1], slot[0], slot[3], slot[2],
+				dsp->Core()->COEF[37]);
+
+			// The datapath as the accessor gives it: the core's fields, written here with values inside their bits, none
+			// 0 and no two alike, ACC with bit 25 set and Y_REG with bit 23 set, both negative
+			{
+				AicaDsp* datapath = dsp->Core();
+				const s32 acc = (s32)0xFE5A5A5A, y_reg = (s32)0xFF9ABCDE;
+				DspDebugState shown;
+				u64 row_step = 99, row_mdec_ct = 99;
+
+				memset(&shown, 0xEE, sizeof(shown));
+				datapath->step = 37;
+				datapath->MDEC_CT = 0x9B3D;
+				datapath->ACC = acc;
+				datapath->Y_REG = y_reg;
+				datapath->FRC_REG = 0x1ABC;
+				datapath->ADRS_REG = 0xA5C;
+				datapath->latch = 0xC0DE;
+				datapath->latch_copy = 0x7A31;
+				datapath->memval = 0x4E95;
+				datapath->nofl_pipe = 2;
+				datapath->mixs_dsp = 1;
+				datapath->mixs_fill = 0;
+
+				const bool got = dsp->DebugGetState(&shown) && ReadRegister("dc.aica.dsp", "STEP", &row_step) && ReadRegister("dc.aica.dsp", "MDEC_CT", &row_mdec_ct);
+
+				Check(got && shown.step == 37 && shown.mdecCt == 0x9B3D && shown.rbpl == made && shown.acc == acc && shown.yReg == y_reg && shown.frcReg == 0x1ABC
+					&& shown.adrsReg == 0xA5C && shown.latch == 0xC0DE && shown.latchCopy == 0x7A31 && shown.memval == 0x4E95 && shown.noflPipe == 2
+					&& shown.mixsBank == 1 && row_step == 37 && row_mdec_ct == 0x9B3D,
+					"DSP written with step 37, MDEC_CT 9B3D, ACC %X, Y_REG %X, FRC_REG 1ABC, ADRS_REG A5C, the latch C0DE and its copy 7A31, MEMVAL 4E95, NOFL 2, the "
+					"MIXS bank 1: the accessor gives step %u, MDEC_CT %X, rbpl %04X (written %04X), ACC %X, Y_REG %X, FRC_REG %X, ADRS_REG %X, the latch %X and "
+					"its copy %X, MEMVAL %X, NOFL %X, the MIXS bank %X; the rows STEP %llu, MDEC_CT %llX", (u32)acc, (u32)y_reg, shown.step, shown.mdecCt,
+					shown.rbpl, made, (u32)shown.acc, (u32)shown.yReg, shown.frcReg, shown.adrsReg, shown.latch, shown.latchCopy, shown.memval, shown.noflPipe,
+					shown.mixsBank, (unsigned long long)row_step, (unsigned long long)row_mdec_ct);
+			}
 
 			RestoreDevice(aica, aica_kept);
 			RestoreDevice(dsp, dsp_kept);
