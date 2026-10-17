@@ -1276,8 +1276,8 @@ BOUNDED_GUEST_TEST(arm7_held_clocked, "arm7.held.clocked")
 		const bool got = dsp->DebugGetState(&now);
 
 		Check(got && ((held_cl.dsp.mdecCt - 32 * kHeldBursts) & 0xFFFF) == (now.mdecCt & 0xFFFF),
-			"the DSP made the samples of the held bursts: MDEC_CT is %04X, %u less than at the hold (%04X) modulo 2^16", now.mdecCt & 0xFFFF, 32 * kHeldBursts,
-			held_cl.dsp.mdecCt & 0xFFFF);
+			"the DSP made the samples of the held bursts: MDEC_CT is %04X; it was %04X at the hold, and %u samples count it down to %04X modulo 2^16",
+			now.mdecCt & 0xFFFF, held_cl.dsp.mdecCt & 0xFFFF, 32 * kHeldBursts, (held_cl.dsp.mdecCt - 32 * kHeldBursts) & 0xFFFF);
 
 		AicaChannelDebug ch[2] = { };
 		const bool gotCh = Aica()->DebugGetChannel(0, &ch[0]) && Aica()->DebugGetChannel(1, &ch[1]);
