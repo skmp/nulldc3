@@ -1314,11 +1314,28 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 	{
 		DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
 		AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
-		DspDebugState state = { 99, 99 };
+		DspDebugState state;
 		u64 step = 99, mdec_ct = 99;
+
+		memset(&state, 0xEE, sizeof(state));
+
 		bool ok = dsp->DebugGetState(&state);
 
 		Check(ok && state.step == 0 && state.mdecCt == dsp->GetDspContext()->regs.MDEC_CT, "DSP: step %u, MDEC_CT %u", state.step, state.mdecCt);
+
+		// The word of 0x2804 as the DSP uses it, which the rows of RBP, RBL and TESTB0 read: the register file's word,
+		// from which this DSP decodes RBP and RBL. Its datapath lives in locals of a sample: every field of it is 0
+		{
+			u8 bytes[2] = { 0xEE, 0xEE };
+			const bool read = aica->DebugReadRegs(0x2804, 2, bytes);
+			const u32 file = bytes[0] | (bytes[1] << 8);
+
+			Check(ok && read && state.rbpl == file && state.acc == 0 && state.yReg == 0 && state.frcReg == 0 && state.adrsReg == 0 && state.latch == 0
+				&& state.latchCopy == 0 && state.memval == 0 && state.noflPipe == 0 && state.mixsBank == 0,
+				"DSP: rbpl %04X, the register file has %04X at 0x2804; the datapath reads 0 (ACC %X, Y_REG %X, FRC_REG %X, ADRS_REG %X, the latch %X and its copy %X, "
+				"MEMVAL %X, NOFL %X, the MIXS bank %X)", state.rbpl, file, state.acc, state.yReg, state.frcReg, state.adrsReg, state.latch, state.latchCopy,
+				state.memval, state.noflPipe, state.mixsBank);
+		}
 
 		// MDEC_CT has the 16 bits of the register; the emulator keeps the counter in 32
 		ok = ReadRegister("dc.aica.dsp", "MDEC_CT", &mdec_ct) && ReadRegister("dc.aica.dsp", "STEP", &step);
@@ -1373,6 +1390,28 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 		ok = ReadRegister("dc.aica.dsp", "RBP", &rbp) && ReadRegister("dc.aica.dsp", "RBL", &rbl);
 		Check(ok && rbp == (common & 0xFFF) && rbl == ((common >> 13) & 3), "dc.aica.dsp.RBP %04llX and RBL %02llX are the fields of %04X",
 			(unsigned long long)rbp, (unsigned long long)rbl, common);
+
+		// A word the SH4 writes to 0x2804, with every field not 0: the five rows of its bits, of dc.aica.dsp and of
+		// dc.aica.common, read it as the DSP has it. The AICA and the DSP are put back as they were
+		{
+			std::vector<u8> aica_kept = DeviceState(aica), dsp_kept = DeviceState(dsp);
+			const u32 made = 0xC5A3;	// TESTB0 1, RBL 2, RBP 0x5A3
+			DspDebugState written;
+			u64 d_rbp = 99, d_rbl = 99, c_rbp = 99, c_rbl = 99, c_test = 99;
+
+			aica->WriteReg(0x2804, made, 2);
+
+			const bool read = dsp->DebugGetState(&written) && ReadRegister("dc.aica.dsp", "RBP", &d_rbp) && ReadRegister("dc.aica.dsp", "RBL", &d_rbl)
+				&& ReadRegister("dc.aica.common", "RBP", &c_rbp) && ReadRegister("dc.aica.common", "RBL", &c_rbl) && ReadRegister("dc.aica.common", "TESTB0", &c_test);
+
+			Check(read && written.rbpl == made && d_rbp == 0x5A3 && d_rbl == 2 && c_rbp == 0x5A3 && c_rbl == 2 && c_test == 1,
+				"0x2804 written with %04X: rbpl %04X; dc.aica.dsp.RBP %llX and RBL %llX, dc.aica.common.RBP %llX, RBL %llX and TESTB0 %llX", made, written.rbpl,
+				(unsigned long long)d_rbp, (unsigned long long)d_rbl, (unsigned long long)c_rbp, (unsigned long long)c_rbl, (unsigned long long)c_test);
+
+			RestoreDevice(aica, aica_kept);
+			RestoreDevice(dsp, dsp_kept);
+			Check(DeviceState(aica) == aica_kept && DeviceState(dsp) == dsp_kept, "the AICA and the DSP are as they were");
+		}
 
 		Tally program;
 

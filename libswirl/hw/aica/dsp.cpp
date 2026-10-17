@@ -91,10 +91,24 @@ struct DSP_impl final : DSP {
 		return &dsp;
 	}
 
-	//Every backend runs the 128 steps of a sample in one call: between two calls the next step is the first
+	//Every backend runs the 128 steps of a sample in one call: between two calls the next step is the first.
+	//RBP and RBL are decoded from the register file's word at 0x2804 (DSPData is the file's block at 0x3000),
+	//and the datapath lives in locals of the backend, reset every sample
 	bool DebugGetState(DspDebugState* out) {
+		const u8* file = (const u8*)DSPData - 0x3000;
+
 		out->step = 0;
 		out->mdecCt = dsp.regs.MDEC_CT;
+		out->rbpl = file[0x2804] | (file[0x2805] << 8);
+		out->acc = 0;
+		out->yReg = 0;
+		out->frcReg = 0;
+		out->adrsReg = 0;
+		out->latch = 0;
+		out->latchCopy = 0;
+		out->memval = 0;
+		out->noflPipe = 0;
+		out->mixsBank = 0;
 		return true;
 	}
 

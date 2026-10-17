@@ -378,6 +378,20 @@ static int WriteArm7(u32 selector, u32 value)
 	return 0;
 }
 
+// The word of 0x2804 as the DSP uses it (DspDebugState::rbpl): RBP, RBL and TESTB0 are its bits, in the rows of
+// dc.aica.dsp and in those of dc.aica.common. What a read of 0x2804 by the CPU gives is not their source
+static bool ReadRbpl(u32* word)
+{
+	DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
+	DspDebugState state;
+
+	if (dsp == nullptr || !dsp->DebugGetState(&state))
+		return false;
+
+	*word = state.rbpl & 0xFFFF;
+	return true;
+}
+
 static bool ReadDsp(u32 selector, u64* value)
 {
 	if (selector == kDspStep || selector == kDspMdecCt)
@@ -392,14 +406,11 @@ static bool ReadDsp(u32 selector, u64* value)
 		return true;
 	}
 
-	// RBP and RBL are bits 0..11 and 13..14 of the common register 0x2804
-	AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
-	u8 bytes[2];
+	// RBP and RBL are bits 0..11 and 13..14 of the word of 0x2804
+	u32 word;
 
-	if (aica == nullptr || !aica->DebugReadRegs(0x2804, 2, bytes))
+	if (!ReadRbpl(&word))
 		return false;
-
-	u32 word = bytes[0] | (bytes[1] << 8);
 
 	*value = selector == kDspRbp ? word & 0xFFF : (word >> 13) & 3;
 	return true;
@@ -418,17 +429,33 @@ static bool ReadPvr(const Register& reg, u64* value)
 
 // Bits of the register file of the AICA (dbg_regs_private.h has the two forms of a row), from the accessor that
 // gives the file as a read by the SH4 delivers it and changes nothing. The guest's own read function is no
-// substitute: it rewrites the status words in the file and clears the loop flag of the selected channel
+// substitute: it rewrites the status words in the file and clears the loop flag of the selected channel.
+// The word of 0x2804 (RBP, RBL, TESTB0) is the DSP's, DspDebugState::rbpl: the word the CPU wrote there last
 static bool ReadAica(const Register& reg, u64* value)
 {
 	AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
 	const u32 selector = KeySelector(reg.key);
 	const bool two = AicaFieldTwoWords(selector);
+	const u32 offset = AicaFieldOffset(selector);
 	u8 bytes[6];
 
 	// a word is the low half of four bytes: two words are six bytes
-	if (aica == nullptr || !aica->DebugReadRegs(AicaFieldOffset(selector), two ? 6 : 2, bytes))
+	if (aica == nullptr || !aica->DebugReadRegs(offset, two ? 6 : 2, bytes))
 		return false;
+
+	for (u32 at = 0; at < (two ? 6u : 2u); at += 4)
+	{
+		u32 rbpl;
+
+		if (offset + at != 0x2804)
+			continue;
+
+		if (!ReadRbpl(&rbpl))
+			return false;
+
+		bytes[at] = (u8)rbpl;
+		bytes[at + 1] = (u8)(rbpl >> 8);
+	}
 
 	const u32 word = bytes[0] | (bytes[1] << 8);
 

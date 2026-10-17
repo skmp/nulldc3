@@ -69,10 +69,11 @@ void SetActiveMask(u32 categories);
 int StepCheck();
 
 // Park loop, for every leave of the park context that can let the ARM7 execute and is not a step of the
-// ARM7: a resume; a step of the SH4, with a sound burst suspended or not (its slice end can start one); the
-// first Park() of a thread that resumes the stop of the thread before it. With a burst suspended it is called
-// in front of running the burst on. Not called for a step-over on a BL or a step-out of the ARM7:
-// PrepareStepOver() and PrepareStepOut() arm the exemption themselves.
+// ARM7: a resume; a step of the SH4, with a sound burst suspended or not (its slice end can start one); a
+// step of the DSP, with a burst suspended or not; the first Park() of a thread that resumes the stop of the
+// thread before it. With a burst suspended it is called in front of running the burst on. Not called for a
+// step-over on a BL or a step-out of the ARM7: PrepareStepOver() and PrepareStepOut() arm the exemption
+// themselves.
 // Arms the exemption for the PC of the ARM7 iff all of this holds, and arms nothing otherwise: the last
 // published stop was decided by the ARM7 check (OnStop() recorded that, with the PC); the PC has the key of
 // that PC now (a PC the debugger wrote away and back counts as that PC: the rule of dbg::sh4); the ARM7 is
@@ -111,12 +112,13 @@ bool PrepareStepOver();
 void PrepareStepOut();
 
 // Entering the park context for a stop, once per published stop and before the listener, beside
-// dbg::sh4::OnStop(); also when temporary state must end without a stop: for a guest reset and when the
-// emulator thread exits. Never for a service excursion, which publishes nothing. Never called without an
-// emulator thread. Removes the temporary breakpoint and a step that is armed, clears the exemption, updates
-// dbg_arm7_armed, and records the PC of the ARM7 together with whether the ARM7 check decided this stop (it
-// called emu::OnSoundStop since the OnStop() before). That is so also when a cause of the SH4 met it in the
-// same stop and won the publication: the hit of the ARM7 counts as taken, and a resume runs through it.
+// dbg::sh4::OnStop() and dbg::dsp::OnStop(); also when temporary state must end without a stop: for a guest
+// reset and when the emulator thread exits. Never for a service excursion, which publishes nothing. Never
+// called without an emulator thread. Removes the temporary breakpoint and a step that is armed, clears the
+// exemption, updates dbg_arm7_armed, and records the PC of the ARM7 together with whether the ARM7 check
+// decided this stop (it called emu::OnSoundStop since the OnStop() before). That is so also when a cause of
+// the SH4 met it in the same stop and won the publication: the hit of the ARM7 counts as taken, and a resume
+// runs through it.
 void OnStop();
 
 // The debugger wrote the PC of the ARM7 (dbg::regs::Write, also in a service excursion of a running machine),

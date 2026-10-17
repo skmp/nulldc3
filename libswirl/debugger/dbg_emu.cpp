@@ -21,6 +21,7 @@
 #include "dbg_emu.h"
 #include "dbg_sh4.h"
 #include "dbg_arm7.h"
+#include "dbg_dsp.h"
 #include "dbg_selftest.h"
 #include "dbg_symbols.h"
 
@@ -207,17 +208,19 @@ const char* JitName()
 #endif
 }
 
-// When several causes meet in one stop: the one that is published
+// When several causes meet in one stop: the one that is published (the priority of StopCause, dbg_emu.h).
+// Capture is the lowest cause: a breakpoint, a step or a pause that falls on the last frame of a capture wins
 int Rank(StopCause cause)
 {
 	switch (cause)
 	{
-	case StopCause::Reset:      return 6;
-	case StopCause::Start:      return 5;
-	case StopCause::Breakpoint: return 4;
-	case StopCause::Event:      return 3;
-	case StopCause::Step:       return 2;
-	case StopCause::Pause:      return 1;
+	case StopCause::Reset:      return 7;
+	case StopCause::Start:      return 6;
+	case StopCause::Breakpoint: return 5;
+	case StopCause::Event:      return 4;
+	case StopCause::Step:       return 3;
+	case StopCause::Pause:      return 2;
+	case StopCause::Capture:    return 1;
 	default:                    return 0;
 	}
 }
@@ -975,8 +978,9 @@ int Step(Target t, StepKind k, const char** why)
 	if (!OnEmuThread() || !e.inPark || !e.stopInForce || e.armed != ACT_NONE)
 		return kErrNotPaused;
 
-	// the DSP has no run control
-	if (!TargetSteps(t))
+	// the DSP has no run control yet (the stubs of header revision 7, dbg_dsp.cpp): its steps are refused, also
+	// where TargetSteps(Target::Dsp) is made true
+	if (!TargetSteps(t) || t == Target::Dsp)
 		return kErrNotSupported;
 
 	if (t == Target::Arm7)
@@ -1045,6 +1049,11 @@ void SetArm7Breakpoints(const u32* ids, const u32* addrs, u32 n)
 	SelectArm7();
 }
 
+void SetDspBreakpoints(const u32* ids, const u32* steps, u32 n)
+{
+	dsp::SetBreakpoints(ids, steps, n);
+}
+
 void SetEventBreakpoints(const u32* ids, const u8* events, u32 n)
 {
 	memset(eventBp, 0, sizeof(eventBp));
@@ -1067,6 +1076,7 @@ void SetActiveMask(u32 categories)
 
 	sh4::SetActiveMask(categories);
 	arm7::SetActiveMask(categories);
+	dsp::SetActiveMask(categories);
 
 	SelectArm7();
 }
