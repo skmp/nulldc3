@@ -25,7 +25,7 @@ with --json, to a file as JSON. Not a test: nothing here passes or fails on a nu
                     is not the speed of the hardware renderer. --allow-software-gl measures it anyway and labels
                     the result gl-software.
 
-  --config          a key of the emulator's configuration (section:key=value, e.g. config:aica.NoBatch=yes) given
+  --config          a key of the emulator's configuration (section:key=value, e.g. config:aica.NoSound=yes) given
                     to every run, behind the keys of the script; the option can be given more than once, and a
                     value may be a list of keys separated by commas. The keys are in the JSON result.
 
