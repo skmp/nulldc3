@@ -979,7 +979,8 @@ bool SuspendAt(const emu::RunState& stop, u32 addr)
 
 /*
 	A pause behind `bursts` more sound bursts, asked for by the hand: the stop of a run that nothing of the ARM7
-	stopped. Works with the ARM7 held, where no timer overflows
+	stopped. It counts bursts, and works whether the ARM7 is clocked or held: with the ARM7 held the timers of the
+	AICA count on, but no handler arms timer A again, and no timer overflows in every burst
 */
 struct {
 	Co co;
@@ -1095,8 +1096,8 @@ BOUNDED_GUEST_TEST(arm7_burst_plain, "arm7.burst.plain")
 		d[i] = c.n[i] - bp_plain.a.n[i];
 
 	Check(stop.cause == StopCause::Pause && !ArmClocked() && d[0] >= 5, "two pauses with %u sound bursts between them, the ARM7 held in reset", d[0]);
-	Check(d[1] == 0 && d[2] == 0 && d[3] == d[0],
-		"a burst with the ARM7 held is no ARM phase, no time step and one tail: %u, %u and %u in %u bursts", d[1], d[2], d[3], d[0]);
+	Check(d[1] == 0 && d[2] == 32 * d[0] && d[3] == d[0],
+		"a burst with the ARM7 held is no ARM phase, 32 time steps of the AICA and one tail: %u, %u and %u in %u bursts", d[1], d[2], d[3], d[0]);
 
 	CO_END(bp_plain.co);
 }
@@ -2466,8 +2467,9 @@ BOUNDED_GUEST_TEST(arm7_step_unclocked, "arm7.step.unclocked")
 		"the burst that finds the ARM7 held completes the step: \"%s\", a new stop counter, published %s", StopCauseName(stop.cause), SeenText(list).c_str());
 	Check(!ArmClocked() && ArmDiffers(regs, st_uncl.regs) == kArmRegs, "nothing executed: the ARM7 is held, and every register of it reads as before (the PC %08X)",
 		ArmPc());
-	Check(Suspended() == SOUND_BURST_NONE && c.n[0] == st_uncl.c.n[0] + 1 && c.n[1] == st_uncl.c.n[1] && c.n[2] == st_uncl.c.n[2] && c.n[3] == st_uncl.c.n[3] + 1,
-		"the burst is not suspended and went on with its rest: one burst, no ARM phase, no time step, one tail");
+	Check(Suspended() == SOUND_BURST_NONE && c.n[0] == st_uncl.c.n[0] + 1 && c.n[1] == st_uncl.c.n[1] && c.n[2] == st_uncl.c.n[2] + 32 && c.n[3] == st_uncl.c.n[3] + 1,
+		"the burst is not suspended and went on with its rest: one burst, no ARM phase, 32 time steps, one tail (%u, %u, %u, %u)", c.n[0] - st_uncl.c.n[0],
+		c.n[1] - st_uncl.c.n[1], c.n[2] - st_uncl.c.n[2], c.n[3] - st_uncl.c.n[3]);
 	Check(dbg_arm7_armed == 0 && !arm7::test::GetState().step, "the step is armed no more");
 
 	CO_END(st_uncl.co);
@@ -3383,7 +3385,7 @@ bool SuspendedEnding(const emu::RunState& stop, bool exit)
 
 	Check(st_susp_end.burstAtStop == SOUND_BURST_NONE && st_susp_end.atStop.n[0] == st_susp_end.c.n[0]
 		&& st_susp_end.atStop.n[1] - st_susp_end.c.n[1] <= 32 && st_susp_end.atStop.n[1] - st_susp_end.c.n[1] >= 1
-		&& st_susp_end.atStop.n[2] == st_susp_end.atStop.n[1] && st_susp_end.atStop.n[3] == st_susp_end.c.n[3] + 1,
+		&& st_susp_end.atStop.n[2] - st_susp_end.c.n[2] == st_susp_end.atStop.n[1] - st_susp_end.c.n[1] && st_susp_end.atStop.n[3] == st_susp_end.c.n[3] + 1,
 		"behind the thread no burst is suspended: the rest of its ARM phases ran (%u), each with its time step, and its tail once",
 		st_susp_end.atStop.n[1] - st_susp_end.c.n[1]);
 	Check(dbg_arm7_armed != 0 && !SeenHas(list, Lifetime::Parked, StopCause::Breakpoint),

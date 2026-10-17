@@ -51,7 +51,8 @@ struct AICA : MMIODevice {
 
 	// One sample of the sound chip, in its phases; emulator thread. The sound burst (Dreamcast_impl, libswirl.cpp)
 	// makes them behind the ARM phase of the sample, in this order, and nothing else of the sound chip runs between
-	// them:
+	// them; it makes them in every sample of every burst, also while the guest holds the ARM7 in reset, which
+	// skips only the ARM phase:
 	//   SampleTimers(); SampleSweep(); DSP::RunPhase(checks); SampleMix(); SampleIrq();
 	// TimeStep() is the five with RunPhase(false), for callers outside the sound burst
 	virtual void SampleTimers() = 0;   // the three timers count one sample; SAMPLE_DONE is set
