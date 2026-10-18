@@ -1695,7 +1695,12 @@ BOUNDED_GUEST_TEST(mem_binary_ids, "mem.binary.ids")
 	front of step 0 in every sample behind it, which is behind the sweep and the frame of that sample and in front
 	of its DSP phase - where the frame was taken. Its first frame is the next sample's: the sweep of this one came
 	before the arm. The last frame completes the capture inside the run-on, and the breakpoint's stop that follows
-	in the same sample wins over the capture's
+	in the same sample wins over the capture's.
+	The sends of a frame, outDsp at 16-bit scale, against what the DSP was sent, which DebugGetChannel does not
+	give: the sweep of a sample sends each bus a channel's ISEL names the sum of those channels' sends at the DSP's
+	20-bit scale (16 times, in 20 bits), into the bank of MIXS that the DSP reads from the next step 0 on. In front
+	of step 0 that bank is the one the CPU reads at 0x4500 too: step 0 hands the DSP the bank of the sweep before
+	(aica_dsp_core.h, SweepBegin and StepOne)
 */
 namespace {
 
@@ -1703,9 +1708,55 @@ const u32 kLayoutFrames = 4;
 
 struct {
 	Co co;
-	u32 n, given, stopId, outputs;
+	u32 n, given, stopId, outputs, sends;
 	std::string frames[kLayoutFrames];
 } lay;
+
+// MIXS of `bus` as the CPU reads it: bits 3:0 at 0x4500 + 8 bus, bits 19:4 at + 4; 20 bit, sign extended
+s32 Mixs(u32 bus)
+{
+	const u32 v = (AicaReg16(0x4504 + 8 * bus) << 4) | (AicaReg16(0x4500 + 8 * bus) & 0xF);
+
+	return (s32)(v << 12) >> 12;
+}
+
+// Each bus that a channel's ISEL (bits 3:0 of its register 0x20) names in `frame` against MIXS as the CPU reads it
+// now: the sum of those channels' outDsp times 16, in 20 bits. "" when every one is; *sending counts the buses
+// whose sum is not 0
+std::string SendsDiffer(const std::string& frame, u32* sending)
+{
+	s32 sum[16] = { };
+	u32 named = 0;
+
+	for (u32 channel = 0; channel < sgc::kChannelsPerFrame; channel++)
+	{
+		const u8* r = RecordOf(frame, 0, channel);
+		const u32 bus = r[0x20] & 15;
+
+		named |= 1u << bus;
+		sum[bus] += (s32)(s16)(r[88] | (r[89] << 8)) * 16;
+	}
+
+	for (u32 bus = 0; bus < 16; bus++)
+	{
+		if (!(named & (1u << bus)))
+			continue;
+
+		const s32 want = (s32)((u32)sum[bus] << 12) >> 12;
+
+		*sending += want != 0;
+
+		if (Mixs(bus) != want)
+		{
+			char text[160];
+
+			snprintf(text, sizeof(text), "bus %u: MIXS %d, 16 times the outDsp of its channels %d", bus, Mixs(bus), want);
+			return text;
+		}
+	}
+
+	return "";
+}
 
 // Has the record an output that is not 0?
 bool HasOutput(const u8* record)
@@ -1735,6 +1786,7 @@ BOUNDED_GUEST_TEST(sgc_layout, "sgc.layout")
 
 	lay.given = sgc::test::Notices().given;
 	lay.outputs = 0;
+	lay.sends = 0;
 
 	if (!ArmAtStop(kLayoutFrames))
 		break;
@@ -1769,6 +1821,10 @@ BOUNDED_GUEST_TEST(sgc_layout, "sgc.layout")
 		Check(diff.empty(), "frame %u: every record is what the accessors of the AICA give at its sample (%s)", lay.n, diff.empty() ? "64 records" : diff.c_str());
 		Check(Plays(RecordOf(got, 0, 0)) && Plays(RecordOf(got, 0, 1)), "the two channels the guest keyed play in it (flags bit 0, a level above 0)");
 
+		diff = SendsDiffer(got, &lay.sends);
+
+		Check(diff.empty(), "frame %u: its sends are what the sweep sent the DSP, MIXS in front of step 0 (%s)", lay.n, diff.empty() ? "every bus named" : diff.c_str());
+
 		lay.outputs += HasOutput(RecordOf(got, 0, 0)) || HasOutput(RecordOf(got, 0, 1));
 		lay.frames[lay.n] = got;
 
@@ -1794,9 +1850,15 @@ BOUNDED_GUEST_TEST(sgc_layout, "sgc.layout")
 
 		Check(same && diff.empty(), "the server's capture is the capture's own buffer: its frames as they were taken, the last one the accessors at its sample but "
 			"the outputs, which read 0 once no capture records (%s)", diff.empty() ? "equal" : diff.c_str());
+
+		diff = server.size() == (size_t)kLayoutFrames * sgc::kBytesPerFrame ? SendsDiffer(server.substr((size_t)(kLayoutFrames - 1) * sgc::kBytesPerFrame), &lay.sends)
+			: "no capture";
+
+		Check(diff.empty(), "the last frame's sends are what the sweep of its sample sent the DSP (%s)", diff.empty() ? "every bus named" : diff.c_str());
 	}
 
 	Check(lay.outputs != 0, "the outputs of the two channels are in the records: in %u of %u frames they are not 0", lay.outputs, kLayoutFrames - 1);
+	Check(lay.sends != 0, "a send to the DSP is not 0 in %u buses of the %u frames: the first channel's, on the bus of its ISEL", lay.sends, kLayoutFrames);
 	Check(sgc::test::Notices().given == lay.given + 1 && sgc::test::Notices().lastAnswer == 0, "one notice, with the answer 0 of a capture that is complete");
 
 	DspBps({ });
