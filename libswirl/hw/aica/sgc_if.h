@@ -90,8 +90,7 @@ struct SGC {
 	//selected channel in 0x2810 without clearing its loop flag, its play position in 0x2814
 	virtual bool DebugReadCommonReg(u32 reg, u32* value) { return false; }
 
-	//The state of channel 0..63; false for any other. Its outputs (outLeft, outRight, outDsp) are those of the
-	//sample of the last sweep while an SGC capture records and that sweep kept them, 0 at any other time
+	//The state of channel 0..63; false for any other
 	virtual bool DebugGetChannel(u32 channel, AicaChannelDebug* out) { return false; }
 
 	virtual ~SGC() { }
