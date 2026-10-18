@@ -2158,7 +2158,7 @@ void MethodGetSgcFrameData(const Request& req, Outcome& out)
 
 struct CaptureJob {
 	u32 frames;
-	int armed = kErrInternal;	// what sgc::Arm returned; it was not called while this is kErrInternal
+	int armed = kErrInternal;	// what sgc::Arm returned; kErrInternal while it was not called, and where it threw
 	bool refused = false;		// emu::Resume() refused behind the arm, which was cancelled again
 	bool parked = false;		// a table closure found a stop in force: the exec call is made
 	bool noThread = false;		// a table closure ran on its caller: no emulator thread exists
@@ -2201,20 +2201,30 @@ void MethodRecordSgcFrames(const Request& req, Outcome& out)
 		if (lifetime == Lifetime::Parked)
 		{
 			rv = RunCall(emu::CC_EXEC, [job] {
-				if (auto hook = before_arm.load())
-					hook();
-
-				// the capture first: a refused arm leaves no resume armed
-				job->armed = sgc::Arm(job->frames, true);
-
-				if (job->armed != 0)
-					return;
-
-				if (emu::Resume() != 0)
+				// Nothing leaves a call (dbg_emu.h, Call()): an allocation of the capture's buffer that fails
+				// throws in sgc::Arm, which has armed nothing then, and the resume is not armed either. -32603,
+				// with no notice owed
+				try
 				{
-					// the notice answers -32003
-					sgc::Cancel(kErrNotPaused);
-					job->refused = true;
+					if (auto hook = before_arm.load())
+						hook();
+
+					// the capture first: a refused arm leaves no resume armed
+					job->armed = sgc::Arm(job->frames, true);
+
+					if (job->armed != 0)
+						return;
+
+					if (emu::Resume() != 0)
+					{
+						// the notice answers -32003
+						sgc::Cancel(kErrNotPaused);
+						job->refused = true;
+					}
+				}
+				catch (...)
+				{
+					job->armed = kErrInternal;
 				}
 			});
 
@@ -2228,21 +2238,31 @@ void MethodRecordSgcFrames(const Request& req, Outcome& out)
 				hook();
 
 			rv = RunCall(emu::CC_TABLE, [job] {
-				// run on its caller under L: no emulator thread exists, and nothing is armed
-				if (!emu::OnEmuThread())
+				// as the exec call: what sgc::Arm throws is -32603, with nothing armed. On the emulator thread this
+				// closure is in a service excursion or in the drain of the thread's exit
+				try
 				{
-					job->noThread = true;
-					return;
-				}
+					// run on its caller under L: no emulator thread exists, and nothing is armed
+					if (!emu::OnEmuThread())
+					{
+						job->noThread = true;
+						return;
+					}
 
-				// a stop is in force (the park loop runs this call): the exec call arms the capture and the resume
-				if (emu::GetRunState().lifetime == Lifetime::Parked)
+					// a stop is in force (the park loop runs this call): the exec call arms the capture and the
+					// resume
+					if (emu::GetRunState().lifetime == Lifetime::Parked)
+					{
+						job->parked = true;
+						return;
+					}
+
+					job->armed = sgc::Arm(job->frames, false);
+				}
+				catch (...)
 				{
-					job->parked = true;
-					return;
+					job->armed = kErrInternal;
 				}
-
-				job->armed = sgc::Arm(job->frames, false);
 			});
 
 			if (rv == 0 && job->parked)
@@ -2269,7 +2289,7 @@ void MethodRecordSgcFrames(const Request& req, Outcome& out)
 		if (job->armed == kErrNotSupported)
 			return Unsupported(out, "state.recordSgcFrames: this build has no SGC capture");
 
-		// a capture records already: it goes on
+		// a capture records already (-32003): it goes on; or sgc::Arm threw (-32603): nothing is armed
 		if (job->armed != 0)
 			return Fail(out, job->armed);
 
