@@ -4,7 +4,7 @@
     soundlines.py --emulator <nulldc3> --work <dir> --guest <program> --ticks <N> --mode <mode> [--mode <mode>]...
                   [--engine jit|interp] [--fields <field,...>] [--file <path>] [--vblanks <V>]
                   [--selftest <filter>] [--expect <text>]... [--ignored <section:key=value>]...
-                  [--config <section:key=value>]...
+                  [--config <section:key=value>]... [--oracle <aica_dsp_guest_oracle>]
     soundlines.py --mode files [--dir <the directory of the guest>]
     soundlines.py --mode names --build <the build directory of the tests>
 
@@ -56,6 +56,9 @@ README.md has the modes:
     held      the guest only: a held ARM7 is an idle one for the rest of the AICA. A copy of the guest whose ARM7
               stays held behind the set-up and a copy whose ARM7 idles on a branch to itself print the same line
               in every field but arm7 (see mode_held)
+    oracle    the guest only: the field dsp of a copy of the guest whose sends to the DSP are all 0 (its first
+              channel at IMXL 0) is what --oracle, aica_dsp_guest_oracle of tests/aica_dsp, computes for that copy
+              on the caique model (see mode_oracle)
     files     the committed files of the guest are those of its manifest, SHA256SUMS; and where the assemblers
               are, gen.sh --check: they are what the sources give
     names     the tests of a build (the CTestTestfile.cmake files of --build): no test of the sound
@@ -492,6 +495,13 @@ def free_end(image, labels):
     return free
 
 
+def table_entries(image, labels):
+    """The entries of the guest's table, (address, value), in the order _start writes them; address 0 is an empty
+    entry, which it skips."""
+    at = file_offset(image, labels['G_TABLE'], 'the table')
+    return [struct.unpack_from('<II', image, at + n) for n in range(0, labels['G_TABLE_END'] - labels['G_TABLE'], 8)]
+
+
 def guest_copy(args, labels, name, table=(), arm=()):
     """A copy of the guest in the work directory: with (address, value) entries in the empty end of the DSP part
     of the table that _start writes while it holds the ARM7 (the last entries in front of the key on: the
@@ -655,6 +665,62 @@ def mode_held(args, lines):
           % (held_fields['arm7'], idle_fields['arm7'], plain_fields['samples']))
 
 
+# The first channel's ISEL (bits 3:0) and IMXL (bits 7:4), at 0x00700020 of the AICA
+SH4_CH0_MIX = 0xA0700020
+
+
+def mode_oracle(args, lines):
+    """The DSP of the guest is the console's DSP, as caique's sample model has it (the guest only).
+
+    caique's model ends at EFREG and the emulator's sound generator is not caique's, so what the two can be held to
+    is the DSP's state where its inputs are known. The run is made on a copy of the guest, built in the work
+    directory, with one entry in the empty end of the DSP part of the table: IMXL 0 for the first channel, its
+    ISEL as the guest's table sets it, which the SH4 writes behind the guest's own entry for it. A channel's send
+    to the DSP is its sample times the level of its IMXL, and that level is 0 for IMXL 0 (the emulator's
+    attenuation of the send is then 255 or more, capped at what the envelope leaves, and the table of levels has
+    0 there: hw/aica/sgc_if.cpp, UpdateAtts and ChannelEx::Step), so every bus the program reads holds 0. The
+    field dsp of that copy's line, the state of the DSP folded at every tick, has to be what --oracle
+    (aica_dsp_guest_oracle of tests/aica_dsp) computes for the copy: the DSP core and caique's model in lockstep
+    on the guest's writes, with the emulator's sweep of sends of 0. And the guest itself, whose first channel
+    sends, prints another dsp: the comparison sees the sends."""
+    check(args.oracle, 'the mode oracle needs --oracle, the path of aica_dsp_guest_oracle')
+    check(os.path.isfile(args.oracle), 'there is no aica_dsp_guest_oracle at ' + args.oracle)
+    labels = guest_labels(args.dir)
+    for label in ('G_TABLE', 'G_TABLE_END', 'G_TABLE_DSP', 'G_TABLE_DSP_END'):
+        check(label in labels, 'dsptest_labels.inc in %s has no DSPTEST_%s' % (args.dir, label))
+    with open(args.guest, 'rb') as f:
+        image = f.read()
+
+    mix = [value for address, value in table_entries(image, labels) if address == SH4_CH0_MIX]
+    check(mix, 'the table of the guest does not set ISEL / IMXL of its first channel (0x00700020): it has no send to take away')
+    check((mix[-1] >> 4) & 15, 'the table of the guest leaves its first channel at IMXL 0: it has no send to take away')
+    value = mix[-1] & ~0xF0
+    path = guest_copy(args, labels, 'oracle', ((SH4_CH0_MIX, value),))
+    copy, text, fields = line_run(args, 'oracle', args.engine, guest=path)
+
+    command = [args.oracle, '--elf', path, '--ticks', str(args.ticks)]
+    try:
+        done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=args.watchdog)
+    except subprocess.TimeoutExpired:
+        raise Failed('aica_dsp_guest_oracle did not end within %d s: %s' % (args.watchdog, ' '.join(command)))
+    said = done.stdout.decode('utf-8', 'replace')
+    check(done.returncode == 0, 'aica_dsp_guest_oracle ended with exit code %d: %s\n%s' % (done.returncode, ' '.join(command), said))
+    found = [line[len('dsp='):] for line in said.splitlines() if re.match(r'^dsp=[0-9a-f]{16}$', line)]
+    check(len(found) == 1, 'aica_dsp_guest_oracle printed no line dsp=<hex>, or more than one:\n' + said)
+
+    check(fields['dsp'] == found[0], 'the DSP of the copy of the guest whose sends are 0 is not the DSP of the caique model: the line has dsp=%s, '
+          'aica_dsp_guest_oracle computes dsp=%s\n%s\n%s' % (fields['dsp'], found[0], text, said), copy.log)
+    (plain, plain_text, plain_fields), = lines.get(1)
+    check(plain_fields['dsp'] != found[0], 'the guest, whose first channel sends to the DSP, prints the dsp of the copy whose sends are 0, %s: '
+          'the comparison does not see the sends\n' % found[0] + plain_text, plain.log)
+
+    for line in said.splitlines():
+        print('aica_dsp_guest_oracle: ' + line)
+    print('the copy with IMXL 0 for the first channel (ISEL %d): dsp=%s, the DSP of the caique model on the guest\'s writes and schedule; %s'
+          % (value & 15, fields['dsp'], text))
+    print('and the guest, whose first channel sends, prints another: dsp=%s' % plain_fields['dsp'])
+
+
 def mode_files(args, lines):
     directory = os.path.abspath(args.dir)
     path = os.path.join(directory, 'SHA256SUMS')
@@ -729,7 +795,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     modes = {'same': mode_same, 'sounds': mode_sounds, 'muted': mode_muted, 'ignored': mode_ignored, 'engines': mode_engines,
              'record': mode_record, 'compare': mode_compare, 'neutral': mode_neutral, 'release': mode_release, 'held': mode_held,
-             'files': mode_files, 'names': mode_names}
+             'oracle': mode_oracle, 'files': mode_files, 'names': mode_names}
     parser.add_argument('--mode', action='append', required=True, choices=sorted(modes), help='one or more; they share their runs')
     parser.add_argument('--emulator', default='')
     parser.add_argument('--work', default='')
@@ -746,7 +812,8 @@ def main():
     parser.add_argument('--ignored', action='append', default=[], help='ignored: section:key=value, a key this build does not read')
     parser.add_argument('--build', default='', help='names: the build directory of the tests')
     parser.add_argument('--config', action='append', default=[], help='section:key=value, for every run')
-    parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release, held: the directory of the guest, with its manifest and its labels')
+    parser.add_argument('--oracle', default='', help='oracle: aica_dsp_guest_oracle, the tool of tests/aica_dsp')
+    parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release, held, oracle: the directory of the guest, with its manifest and its labels')
     parser.add_argument('--watchdog', type=int, default=300, help='seconds a run may take')
     parser.add_argument('--keep', action='store_true', help='keep the work directory of a test that passed')
     args = parser.parse_args()
@@ -762,6 +829,8 @@ def main():
         args.emulator = os.path.abspath(args.emulator)
         args.work = os.path.abspath(args.work)
         args.guest = os.path.abspath(args.guest)
+        if args.oracle:
+            args.oracle = os.path.abspath(args.oracle)
 
         if not os.path.isfile(args.emulator):
             print('FAIL: no emulator at ' + args.emulator)

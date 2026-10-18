@@ -43,6 +43,9 @@
 #	                                                        whose line depends on the guest, and for a build: no
 #	                                                        emulator is run)
 #
+#	debugger.sound.oracle.dsptest.<jit|interp>, the mode oracle (the DSP of a copy of the guest whose sends are 0
+#	against the caique model), is registered in tests/aica_dsp, where the tool it needs is built.
+#
 #	Every run of these tests has to say that it was made on the engine it was asked for. An emulator without a
 #	recompiler (-DNULLDC_EMULATOR= with a TARGET_NO_REC build, or a generic host) runs config:Dynarec.Enabled=yes
 #	on its interpreter: its .jit. and engines tests fail, as system.guest_exit.jit and system.boot.*.jit do.
