@@ -26,6 +26,11 @@
 #	    debugger.contract.m2.guest .interp              the second run of that gate, against the sounding guest
 #	                                                    of the tree (--milestone M2 --only S00,S16), with the two
 #	                                                    notes
+#	    debugger.contract.m3dsp21.guest .interp         the run of the gate of milestone M3 that holds the run
+#	                                                    control of the DSP (--milestone M3 --dsp-program --only
+#	                                                    S00,S21), against the sounding guest of the tree, where
+#	                                                    S21 has to have stepped the DSP at the anchor with the
+#	                                                    ARM7 held (--require-note)
 #	    debugger.contract.grace                         the grace period after the last client left, and the
 #	                                                    client that connects behind it
 #	    debugger.contract.config                        the configuration errors of the server's keys, and a
@@ -44,7 +49,7 @@
 #	test and sh4-debug-native for every other (README.md, "The engine of a run").
 #
 #	The runner needs the dreamcast-devtools checkout with its node_modules (NULLDC_DEVTOOLS_DIR) and npm:
-#	without them m1*, m2*, m2arm7*, m2writes* and hash.idlebp* are tests whose data is missing. Everything
+#	without them m1*, m2*, m2arm7*, m2writes*, m3dsp21* and hash.idlebp* are tests whose data is missing. Everything
 #	needs 2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree and hash.listening.rule, which
 #	needs python3 and nothing else.
 #
@@ -92,7 +97,7 @@ endif()
 # RUNNER: the test runs the contract runner of the devtools UI.
 # GUEST: the emulator boots this program, not 2ndmix.elf: the test does not ask for NULLDC_ELF_DIR.
 # PARTS: for the mode parts, handed to the runner as its --parts. ONLY: for the mode m2, as its --only.
-# REQUIRE_NOTE: for the modes parts and m2, as its --require-note.
+# REQUIRE_NOTE: for the modes parts, m2 and dsp, as its --require-note.
 function(nulldc_debugger_contract name)
   cmake_parse_arguments(ARG "RUNNER;FALLBACK" "MODE;IDLE_SYMBOL;TIMEOUT;GUEST;PARTS;ONLY" "ENGINES;REQUIRE_NOTE" ${ARGN})
 
@@ -197,6 +202,16 @@ nulldc_debugger_contract(m2.fallback MODE m2 RUNNER FALLBACK)
 nulldc_debugger_contract(m2.guest    MODE m2 ONLY S00,S16 RUNNER ENGINES jit interp
                          GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
                          REQUIRE_NOTE "arm7: held at the start" "arm7: bl stepped over and out")
+
+# The run control of the DSP against the runner's S21, on the JIT and the interpreter against the sounding guest of
+# the tree (--milestone M3 --dsp-program --only S00,S21): S21 makes its first act at the anchor, where the guest
+# holds its ARM7, and a step of the DSP has to be taken there (the AICA is clocked whatever ARMRST says), which the
+# note says; then it waits for the guest's DSP program, steps it, and stops at its breakpoints. In the gate of M3
+# the second run is S00, S17 and S21 (debugger.contract.m3dsp*, from the SGC capture on): there S17's capture lets
+# the guest release its ARM7 before S21, so this run is the one in which S21 meets the held ARM7
+nulldc_debugger_contract(m3dsp21.guest MODE dsp RUNNER ENGINES jit interp
+                         GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
+                         REQUIRE_NOTE "dsp: stepped with the arm7 held")
 
 # A client leaves watches and a target behind that is stopped at a breakpoint on a function 2ndmix calls once
 # in every frame (the one of hash.idlebp, below): the grace period releases the stop, keeps the tables and

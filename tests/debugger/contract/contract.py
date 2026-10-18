@@ -21,6 +21,11 @@ of 1 byte, and a watchdog. A process this script starts is ended by its pid. REA
                    --require-note handed on to it. The packages of milestone M2 showed their parts of S16 this
                    way before the emulator had the scenario whole, which the mode m2 holds now. The program is
                    2ndmix.elf, or the sounding guest of the tree
+    dsp            the run of the gate of milestone M3 that holds the run control of the DSP by itself: the same
+                   emulator with the sounding guest of the tree, which loads the DSP test program, and the runner
+                   with --milestone M3 --dsp-program --only S00,S21 and every --require-note handed on to it. S21
+                   makes its first step of the DSP at the anchor, where the guest holds its ARM7, and then waits
+                   for the program
     grace          a client leaves the target stopped at a breakpoint that is reached in every frame; 11 s later
                    the target has run on without stopping there, and the breakpoint stops it again, unasked,
                    in front of the next client; the tables as they were, the note of the grace period in the
@@ -50,7 +55,7 @@ server also requires the SH4 debug engine, by the name debugger.describe gives i
 sh4-debug-fallback with --fallback (Debugger:ForceFallback=yes), sh4-debug-native on the recompiler without it (on
 an x86-64 host, whose recompiler has native breakpoints and steps; on another the recompiler has none and the
 fallback is what it reports), and sh4-debug-native on the interpreter, which executes its breakpoints and steps
-itself and which the key does not change (--fallback is refused with --engine interp). The modes m1, m2 and parts
+itself and which the key does not change (--fallback is refused with --engine interp). The modes m1, m2, parts and dsp
 ask for describe on a connection of their own behind the runner, grace and hash-listening on their clients at the
 StartPaused stop, slow on its client once the machine runs, hash-idlebp takes the runner's describe from its last
 "server:" line; hash-off, hash-noclient and config have no client
@@ -418,6 +423,16 @@ def mode_m2(args):
     for note in args.require_note:
         selection += ['--require-note', note]
     run_runner(args, selection, what)
+
+
+def mode_dsp(args):
+    """S00 and S21 of the gate of milestone M3, with the DSP test program: the sounding guest of the tree, whose ARM7
+    is held at the anchor, where S21 makes its first step of the DSP; the runner fails a run that lacks a note
+    --require-note asks for."""
+    selection = ['--milestone', 'M3', '--dsp-program', '--only', 'S00,S21']
+    for note in args.require_note:
+        selection += ['--require-note', note]
+    run_runner(args, selection, 'the gate of M3, S00,S21 with the DSP test program')
 
 
 def mode_parts(args):
@@ -960,17 +975,17 @@ def main():
     parser.add_argument('--emulator', default='', help='every mode but hash-listening-rule')
     parser.add_argument('--work', default='', help='every mode but hash-listening-rule')
     parser.add_argument('--guest', default='', help='every mode but hash-listening-rule: 2ndmix.elf; m1, m2, parts, hash-listening: or another '
-                                                    'program, the guest of the tree')
-    parser.add_argument('--mode', required=True, choices=('m1', 'm2', 'parts', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp',
+                                                    'program, the guest of the tree; dsp: the guest of the tree')
+    parser.add_argument('--mode', required=True, choices=('m1', 'm2', 'parts', 'dsp', 'grace', 'config', 'slow', 'hash-off', 'hash-noclient', 'hash-idlebp',
                                                           'hash-listening', 'hash-listening-rule'))
     parser.add_argument('--engine', default='jit', choices=('jit', 'interp'))
     parser.add_argument('--fallback', action='store_true', help='Debugger:ForceFallback=yes')
-    parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, m2, parts, hash-idlebp)')
+    parser.add_argument('--devtools', default='', help='the dreamcast-devtools checkout, with its node_modules (m1, m2, parts, dsp, hash-idlebp)')
     parser.add_argument('--npm', default='npm')
     parser.add_argument('--idle-symbol', default='', help='hash-idlebp, grace: a symbol of the guest that is reached in every frame')
     parser.add_argument('--parts', default='', help='parts: <scenario>:<part>[+<part>...], as the runner takes it, e.g. S16:arm7')
     parser.add_argument('--only', default='', help='m2: the scenarios of its second run, as the runner takes them, e.g. S00,S16')
-    parser.add_argument('--require-note', action='append', default=[], help='m2, parts: a note the run has to have, handed on to the runner')
+    parser.add_argument('--require-note', action='append', default=[], help='m2, parts, dsp: a note the run has to have, handed on to the runner')
     parser.add_argument('--vblanks', type=int, default=600, help='Exit.AfterVblanks of the hash runs')
     parser.add_argument('--watchdog', type=int, default=600, help='seconds a run, or the runner, may take')
     parser.add_argument('--config-watchdog', type=int, default=60, help='config: seconds a run may take to end by itself')
@@ -1000,7 +1015,7 @@ def main():
             print('FAIL: no %s at %s' % (what, path))
             return 1
 
-    if args.mode in ('m1', 'm2', 'parts', 'hash-idlebp'):
+    if args.mode in ('m1', 'm2', 'parts', 'dsp', 'hash-idlebp'):
         args.devtools = os.path.abspath(args.devtools)
         if not os.path.isdir(os.path.join(args.devtools, 'node_modules')):
             print('FAIL: no node_modules in the devtools checkout ' + args.devtools)
@@ -1019,15 +1034,15 @@ def main():
     if args.only and (args.mode != 'm2' or not re.match(r'^S\d+(,S\d+)*$', args.only)):
         print('FAIL: --only is for the mode m2, and is <scenario>[,<scenario>...]')
         return 1
-    if args.require_note and args.mode not in ('m2', 'parts'):
-        print('FAIL: --require-note is for the modes m2 and parts')
+    if args.require_note and args.mode not in ('m2', 'parts', 'dsp'):
+        print('FAIL: --require-note is for the modes m2, parts and dsp')
         return 1
     if args.fallback and args.engine != 'jit':
         print('FAIL: --fallback is for --engine jit: the interpreter executes its breakpoints and steps itself, and '
               'Debugger:ForceFallback does not change that (it reports sh4-debug-native)')
         return 1
 
-    modes = {'m1': mode_m1, 'm2': mode_m2, 'parts': mode_parts, 'grace': mode_grace, 'config': mode_config, 'slow': mode_slow,
+    modes = {'m1': mode_m1, 'm2': mode_m2, 'parts': mode_parts, 'dsp': mode_dsp, 'grace': mode_grace, 'config': mode_config, 'slow': mode_slow,
              'hash-off': mode_hash_off, 'hash-noclient': mode_hash_noclient, 'hash-idlebp': mode_hash_idlebp, 'hash-listening': mode_hash_listening}
 
     shutil.rmtree(args.work, ignore_errors=True)
