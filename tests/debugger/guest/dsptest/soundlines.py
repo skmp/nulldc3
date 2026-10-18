@@ -36,6 +36,8 @@ README.md has the modes:
     sounds    samples is none of the hashes of silence. The hash of k * 32 pairs of zeroes is one value for each
               k. Every tick makes its 32 pairs, whether the ARM7 is held in reset or not, so a silent run of N
               ticks prints the one for N; the mode checks against the whole family, k from 0 to N, a superset
+    silent    a program that plays nothing (2ndmix): samples is the hash of exactly N * 32 pairs of zeroes, the
+              32 pairs of every one of the N ticks (see mode_silent)
     muted     "Disable Sound" mutes: a run with config:aica.NoSound=yes prints the line of the run without it in
               every field but samples, and samples is the hash of N * 32 pairs of zeroes (see mode_muted; the
               audio stream itself, which no run here shows, is held by aica.dsp.emu.state)
@@ -56,6 +58,9 @@ README.md has the modes:
     held      the guest only: a held ARM7 is an idle one for the rest of the AICA. A copy of the guest whose ARM7
               stays held behind the set-up and a copy whose ARM7 idles on a branch to itself print the same line
               in every field but arm7 (see mode_held)
+    heard     the guest only: its DSP is heard. A copy of the guest whose table gives the outputs of the DSP
+              program EFSDL 0 prints the line of the guest in arm7, sh4, dsp, ticks and cycles, and another samples
+              (see mode_heard)
     oracle    the guest only: the field dsp of a copy of the guest whose sends to the DSP are all 0 (its first
               channel at IMXL 0) is what --oracle, aica_dsp_guest_oracle of tests/aica_dsp, computes for that copy
               on the caique model (see mode_oracle)
@@ -262,6 +267,19 @@ def mode_sounds(args, lines):
     k = silence(args.ticks).get(fields['samples'])
     check(k is None, 'the run is silent: samples=%s is the hash of %d * 32 pairs of zeroes' % (fields['samples'], k if k is not None else 0), run.log)
     print('it sounds: samples=%s is none of the %d hashes of silence' % (fields['samples'], args.ticks + 1))
+
+
+def mode_silent(args, lines):
+    """A program that plays nothing (2ndmix under reios): every tick makes its 32 samples, whether it finds the ARM7
+    clocked or held in reset, and each hands the audio stream a pair of zeroes. So samples is the hash of exactly
+    N * 32 pairs of zeroes. A tick that makes fewer or more samples than 32 (a time step left under the ARM7's clock,
+    a burst of 31 or 33 steps) gives the hash of another k, and a sample that hands no pair, too."""
+    (run, text, fields), = lines.get(1)
+    k = silence(args.ticks).get(fields['samples'])
+    check(k is not None, 'the run is not silent: samples=%s is none of the hashes of 0 to %d * 32 pairs of zeroes\n%s' % (fields['samples'], args.ticks, text), run.log)
+    check(k == args.ticks, 'the run handed the audio stream %d * 32 pairs of zeroes in %d ticks, not %d * 32: its ticks did not make 32 samples each\n%s'
+          % (k, args.ticks, args.ticks, text), run.log)
+    print('silent: samples=%s is the hash of %d * 32 pairs of zeroes, 32 for each of the %d ticks' % (fields['samples'], k, args.ticks))
 
 
 def mode_muted(args, lines):
@@ -665,6 +683,52 @@ def mode_held(args, lines):
           % (held_fields['arm7'], idle_fields['arm7'], plain_fields['samples']))
 
 
+# The levels of the outputs of the DSP, EFSDL (bits 11:8) and EFPAN, at 0x00702000 + 4 k of the AICA, k < 16
+SH4_EFSDL, DSP_OUTPUTS = 0xA0702000, 16
+
+
+def mode_heard(args, lines):
+    """The guest's DSP is heard (the guest only): the mix takes EFREG from the DSP.
+
+    The guest's table gives the outputs of its DSP program a level (EFSDL and EFPAN at 0x00702000 + 4 k). The run
+    is made on a copy of the guest, built in the work directory, in which each of those entries has EFSDL 0, the
+    level at which the mix takes nothing of that output; EFPAN, and every other byte, are the guest's. So the copy
+    makes the same writes with other values: its line is the guest's in arm7, sh4, dsp, ticks and cycles (the
+    ARM7, the SH4 and the DSP run as they run in the guest), and samples has to differ: what the guest's DSP
+    outputs is in what the guest makes heard. regs differs as well, the register file has the levels the SH4
+    wrote, and is not compared. The copy's line is printed: its samples is the guest's samples without the DSP,
+    which a before / after holds against the samples of the guest without a DSP program."""
+    labels = guest_labels(args.dir)
+    for label in ('G_TABLE', 'G_TABLE_END'):
+        check(label in labels, 'dsptest_labels.inc in %s has no DSPTEST_%s' % (args.dir, label))
+    with open(args.guest, 'rb') as f:
+        image = bytearray(f.read())
+
+    at = file_offset(image, labels['G_TABLE'], 'the table')
+    levels = []
+    for n, (address, value) in enumerate(table_entries(image, labels)):
+        if SH4_EFSDL <= address < SH4_EFSDL + 4 * DSP_OUTPUTS and address % 4 == 0 and (value >> 8) & 15:
+            levels.append('EFREG[%d] (EFSDL %d)' % ((address - SH4_EFSDL) // 4, (value >> 8) & 15))
+            struct.pack_into('<I', image, at + 8 * n + 4, value & ~0xF00)
+    check(levels, 'the table of the guest gives no output of the DSP a level (EFSDL, at 0x00702000 + 4 k): nothing the DSP computes is heard')
+
+    os.makedirs(args.work, exist_ok=True)
+    path = os.path.join(args.work, 'deaf.elf')
+    with open(path, 'wb') as f:
+        f.write(image)
+
+    (plain, plain_text, plain_fields), = lines.get(1)
+    deaf, text, fields = line_run(args, 'deaf', args.engine, guest=path)
+    same = ('arm7', 'sh4', 'dsp', 'ticks', 'cycles')
+    check(not different(plain_fields, fields, same), 'the copy whose outputs of the DSP have EFSDL 0 and the guest differ in '
+          + different(plain_fields, fields, same) + ': the levels changed more than what is heard\n' + plain_text + '\n' + text, deaf.log)
+    check(fields['samples'] != plain_fields['samples'], 'the copy whose outputs of the DSP have EFSDL 0 prints the samples of the guest, %s: '
+          'the mix does not take what the DSP outputs\n' % plain_fields['samples'] + plain_text + '\n' + text, deaf.log)
+    print('the DSP is heard: with EFSDL 0 for %s the copy prints the guest\'s %s and another samples' % (', '.join(levels), ' '.join('%s=%s' % (f, fields[f]) for f in same)))
+    print('the guest: ' + plain_text)
+    print('the copy:  ' + text)
+
+
 # The first channel's ISEL (bits 3:0) and IMXL (bits 7:4), at 0x00700020 of the AICA
 SH4_CH0_MIX = 0xA0700020
 
@@ -795,7 +859,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     modes = {'same': mode_same, 'sounds': mode_sounds, 'muted': mode_muted, 'ignored': mode_ignored, 'engines': mode_engines,
              'record': mode_record, 'compare': mode_compare, 'neutral': mode_neutral, 'release': mode_release, 'held': mode_held,
-             'oracle': mode_oracle, 'files': mode_files, 'names': mode_names}
+             'heard': mode_heard, 'oracle': mode_oracle, 'silent': mode_silent, 'files': mode_files, 'names': mode_names}
     parser.add_argument('--mode', action='append', required=True, choices=sorted(modes), help='one or more; they share their runs')
     parser.add_argument('--emulator', default='')
     parser.add_argument('--work', default='')
@@ -813,7 +877,7 @@ def main():
     parser.add_argument('--build', default='', help='names: the build directory of the tests')
     parser.add_argument('--config', action='append', default=[], help='section:key=value, for every run')
     parser.add_argument('--oracle', default='', help='oracle: aica_dsp_guest_oracle, the tool of tests/aica_dsp')
-    parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release, held, oracle: the directory of the guest, with its manifest and its labels')
+    parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release, held, heard, oracle: the directory of the guest, with its manifest and its labels')
     parser.add_argument('--watchdog', type=int, default=300, help='seconds a run may take')
     parser.add_argument('--keep', action='store_true', help='keep the work directory of a test that passed')
     args = parser.parse_args()

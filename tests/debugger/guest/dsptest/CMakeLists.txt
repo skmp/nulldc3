@@ -21,8 +21,13 @@
 #	                                                        copy of the guest whose ARM7 stays held and one whose
 #	                                                        ARM7 idles on a branch to itself print one line in
 #	                                                        every field but arm7
-#	    debugger.sound.lines.2ndmix.<jit|interp>            two runs of 40000 ticks of 2ndmix.elf print one line
-#	                                                        (needs NULLDC_ELF_DIR; that program is silent here)
+#	    debugger.sound.heard.dsptest.<jit|interp>           the guest's DSP is heard: a copy of the guest whose
+#	                                                        outputs of the DSP have EFSDL 0 prints its line in
+#	                                                        arm7, sh4, dsp, ticks and cycles, and other samples
+#	    debugger.sound.lines.2ndmix.<jit|interp>            two runs of 40000 ticks of 2ndmix.elf print one line,
+#	                                                        and it is the silence of 40000 ticks, 32 pairs of
+#	                                                        zeroes for each (needs NULLDC_ELF_DIR; that program is
+#	                                                        silent here)
 #	    debugger.sound.muted.dsptest.<jit|interp>           "Disable Sound" (config:aica.NoSound=yes) mutes: the
 #	                                                        line of the run without the key in every field but
 #	                                                        samples, which is the hash of 2000 * 32 pairs of
@@ -160,13 +165,19 @@ foreach(engine jit interp)
   nulldc_sound_test(debugger.sound.held.dsptest.${engine} "${CMAKE_CURRENT_SOURCE_DIR}/dsptest.elf" ${nulldc_sound_ticks}
                     --mode held --engine ${engine})
 
+  # The guest's DSP is heard: a copy of the guest whose outputs of the DSP have EFSDL 0 prints the guest's line but
+  # for samples (and regs, the register file has the levels): the mix takes EFREG from the DSP
+  nulldc_sound_test(debugger.sound.heard.dsptest.${engine} "${CMAKE_CURRENT_SOURCE_DIR}/dsptest.elf" ${nulldc_sound_ticks}
+                    --mode heard --engine ${engine})
+
   # 2ndmix stays in the matrix: a program of another kind (KallistiOS, a player that waits for a timer). Its
-  # ARM7 gets no interrupt under reios, so it plays nothing and has no "sounds"
+  # ARM7 gets no interrupt under reios, so it plays nothing and has no "sounds"; its samples are the silence of
+  # N ticks, every tick 32 pairs of zeroes, also while it holds its ARM7
   if(nulldc_sound_no_2ndmix AND NOT nulldc_guest_skip)
     nulldc_add_missing_data_test(debugger.sound.lines.2ndmix.${engine} "${nulldc_sound_no_2ndmix}")
   else()
     nulldc_sound_test(debugger.sound.lines.2ndmix.${engine} "${NULLDC_ELF_DIR}/2ndmix.elf" ${nulldc_sound_ticks_2ndmix}
-                      --mode same --engine ${engine})
+                      --mode same --mode silent --engine ${engine})
   endif()
 
   # "Disable Sound" mutes: the samples are made, and the harness folds a pair of zeroes for each, the pair the
