@@ -2,10 +2,10 @@
 
 `dsptest.elf` is a guest program of the tree: a bare-metal SH4 program with a small ARM7 program inside it, written
 for the tests of the debugger's sound side and for the sound regression harness (`--config config:Debug.AicaHash=<N>`,
-`docs/nulldc3/automated-runs.md`). It plays two channels of the sound generator, its ARM7 runs all the time, and a
-timer interrupt of the AICA changes what is heard. `2ndmix.elf`, the program the harness was accepted with, plays
-nothing under reios (its ARM7 player waits for a timer interrupt that it never enables), so its lines say nothing
-about samples; this one's do.
+`docs/nulldc3/automated-runs.md`). It plays two channels of the sound generator, its ARM7 runs all the time, a
+timer interrupt of the AICA changes what is heard, and its DSP runs a program of 16 steps whose two outputs are
+heard ("The DSP"). `2ndmix.elf`, the program the harness was accepted with, plays nothing under reios (its ARM7
+player waits for a timer interrupt that it never enables), so its lines say nothing about samples; this one's do.
 
 It is for the emulator only: it waits for no G2 FIFO, has no loader and no console in mind. It is kept small. The
 correctness of the sound generator is not its subject, and it does not grow a feature for every later fix: packages
@@ -14,7 +14,9 @@ count of its FIQ entries and new lines wherever lines of it are compared between
 
 With the sound on (no `audio:backend=none`) a person hears two tones at once: a rough one near 1.7 kHz, which is
 the first channel switched between two pitches 3392 times a second, and under it a lower one that steps through
-four pitches, a step every 0.15 s, while it starts over and changes sides 53 times a second.
+four pitches, a step every 0.15 s, while it starts over and changes sides 53 times a second. The DSP adds its two
+outputs at a lower level: one made of its counter and its delay line, in the middle, and one made of the first
+channel's send, which the counter modulates, on the left.
 
 ## The files
 
@@ -22,19 +24,21 @@ four pitches, a step every 0.15 s, while it starts over and changes sides 53 tim
 |---|---|---|
 | `dsptest.s` | the SH4 program, linked at `0x8C010000` | hand |
 | `arm7.s` | the ARM7 program, linked at 0 | hand |
-| `gen.sh` | makes the four files below; `gen.sh --check` builds them again and compares, byte for byte | hand |
+| `dsptest_dsp.txt` | the DSP program, in the syntax of the DSP playground of the devtools UI ("The DSP") | hand |
+| `gen.sh` | makes the five files below; `gen.sh --check` builds them again and compares, byte for byte | hand |
 | `dsptest.elf` | what a run boots: one loadable segment, the labels as symbols with a type and a size | `gen.sh` |
 | `arm7.bin` | the assembled ARM7 program; `dsptest.s` takes it in with `.incbin` | `gen.sh` |
 | `dsptest_labels.inc` | every label of the two programs as a `#define` (`DSPTEST_G_MAIN_LOOP`, `DSPTEST_A_FIQ`, ...), for the selftests of the emulator | `gen.sh` |
-| `SHA256SUMS` | the manifest of the six files above, and of nothing else | `gen.sh` |
+| `dsptest_dsp.inc` | the assembled DSP program: the macro `dsp_table` (the table's entries of its `MEMS_H` lines) and the macro `dsp_block` (the block `g_dsp`); `dsptest.s` takes it in with `.include` | `gen.sh` |
+| `SHA256SUMS` | the manifest of the eight files above, and of nothing else | `gen.sh` |
 | `soundlines.py` | the runner of the sound lines (below) | hand |
 | `soundlines_test.py` | the runner on stand-ins for the emulator: it fails a run that was not made on the engine it asked for | hand |
 | `CMakeLists.txt` | the tests of this directory, and `nulldc_sound_neutral` for the directories behind it | hand |
 
 The emulator and every test build and run without an assembler. `gen.sh` needs the sh-elf binutils (`SH_ELF_BIN`,
-default `/opt/toolchains/dc/sh-elf/bin`) for the SH4 part, and for the ARM7 part an arm-eabi binutils (`DC_ARM_BIN`,
-default `/opt/toolchains/dc/arm-eabi/bin`). **GNU `as` is the reference for `arm7.bin`** (the files here were made
-with binutils 2.43 for both processors). Where there is no arm-eabi binutils, clang with
+default `/opt/toolchains/dc/sh-elf/bin`) for the SH4 part, awk for the DSP part, and for the ARM7 part an arm-eabi
+binutils (`DC_ARM_BIN`, default `/opt/toolchains/dc/arm-eabi/bin`). **GNU `as` is the reference for `arm7.bin`**
+(the files here were made with binutils 2.43 for both processors). Where there is no arm-eabi binutils, clang with
 `--target=armv4t-none-eabi`, `ld.lld` and `llvm-objcopy` stand in: `arm7.s` has no literal pool and no constant
 that an assembler could encode in two ways, and clang 18 gives the same 352 bytes. Where there is neither, `gen.sh`
 keeps `arm7.bin` and the ARM7 labels as they are, so that a change of `dsptest.s` needs no ARM assembler. Nothing in
@@ -43,14 +47,25 @@ the outputs depends on the machine, the user, the date or a path.
 `SHA256SUMS` does not list `soundlines.py`, `soundlines_test.py`, `CMakeLists.txt` and this file on purpose: they
 change without the guest changing.
 
+The DSP part of `gen.sh` is an awk script and no tool of its own. It reads the lines of `dsptest_dsp.txt` that
+the playground's assembler reads (`assembleSource` of `src/app/dsp/dspUtils.ts` in the devtools UI): `COEF[i] =
+<v>` (the 16 bits of the register, of which the DSP keeps 15:3), `MADRS[i] = <v>`, `MEMS_H[i] = <v>` (bits 23:8 of
+`MEMS[i]`: its low byte is not the CPU's to write) and `MPRO[n] = <fields>`, a value in decimal or `0x` hex, and
+lines that start with `#` or `//`. It encodes the fields of a step into its four words by the layout of
+`libswirl/hw/aica/dsp_core/aica_dsp_core.h`, which the playground, the emulator's disassembler and caique share,
+and refuses an `MPRO` line that is not exactly the line the emulator's disassembler (`DisasmDsp`) prints for those
+words: the fields in its order, the zero ones left out, a field of one bit by its name. So the one text is the
+source, what the debugger's disassembly of the DSP shows, and what the playground assembles. The steps are given
+in their order from step 0, none of them empty and step 127 not among them.
+
 ## What it does
 
 **The SH4** (`dsptest.s`). reios enters every program at `0x8C010000`, where `_start` is.
 
 | label | what |
 |---|---|
-| `_start` | sets `SR` (privileged, interrupts blocked for the set-up, `FD` clear), `VBR` and the stack (`0x8D000000`, the top of main memory); **lets the first tick of the AICA pass** (below); holds the ARM7; copies the ARM7 program to wave memory 0 and one period of a 16-bit sine (32 samples) to wave memory `0x10000`; writes the table; releases the ARM7; falls into `g_main` |
-| `g_table` | what `_start` writes, as (address, value) pairs, a long write each: `MCIRE` and `MCIEB` (the interrupt the ARM7 raises is let through to the SH4), `SB_IML4EXT` (it reaches the SH4 as IRL 11), `MVOL`, two channels (16-bit PCM, the loop of 32 samples, `AR` 31, `DISDL` 15; the second an octave below and on one side), and last the key on of both. Between `g_table_dsp` and `g_table_dsp_end` 40 entries are empty (an address of 0 is skipped): **reserved for the DSP part of package E8** (`MPRO`, `COEF`, `MADRS`, the ring buffer, `EFSDL` / `EFPAN`, `IMXL` / `ISEL` of the first channel), in front of the key on |
+| `_start` | sets `SR` (privileged, interrupts blocked for the set-up, `FD` clear), `VBR` and the stack (`0x8D000000`, the top of main memory); **lets the first tick of the AICA pass** (below); holds the ARM7; copies the ARM7 program to wave memory 0 and one period of a 16-bit sine (32 samples) to wave memory `0x10000`; writes the table; copies the DSP program (`g_dsp`) to the registers of the DSP; releases the ARM7 with its last three instructions (`mov.l .L_armrst, r1`, `mov #0, r0`, `mov.b r0, @r1`, in front of `g_main`); falls into `g_main` |
+| `g_table` | what `_start` writes, as (address, value) pairs, a long write each: `MCIRE` and `MCIEB` (the interrupt the ARM7 raises is let through to the SH4), `SB_IML4EXT` (it reaches the SH4 as IRL 11), `MVOL`, two channels (16-bit PCM, the loop of 32 samples, `AR` 31, `DISDL` 15; the second an octave below and on one side), the DSP part, and last the key on of both. **The DSP part**, `g_table_dsp` to `g_table_dsp_end`, 40 entries in front of the key on: the entries of the `MEMS_H` lines of the DSP program (the macro `dsp_table`), `RBP` / `RBL` (`0x00702804`), `EFSDL` / `EFPAN` of the two outputs of the program (`0x00702000`, `0x00702004`) and `ISEL` / `IMXL` of the first channel (`0x00700020`); the rest of the part is empty (an address of 0 is skipped), at least three entries at its end, which `dsptest.s` holds when it is assembled: the copies of `soundlines.py` write there |
 | `g_main` | opens the interrupts (`SR = 0x40000000`) and falls into the loop |
 | `g_main_loop` | counts in `r8` to `r11`: eight instructions that are neither control flow nor a delay slot, then `bra g_main_loop` and a `nop` in its slot |
 | `g_irq` | at `VBR + 0x600`, the interrupt of the AICA: acknowledges it (`MCIRE` bit 5), counts in `r2` of its bank, and writes the pan of the second channel, from one side to the other (heard); `rte` |
@@ -58,6 +73,7 @@ change without the guest changing.
 | `g_hold_arm7` | holds the ARM7 (`ARMRST` 1) and spins at `g_hold_arm7_spin`. Not reached by itself |
 | `g_release_arm7` | releases the ARM7 and goes to `g_main`. Not reached by itself |
 | `g_wave`, `g_arm7_image` | the sine and the ARM7 program, data |
+| `g_dsp` | the DSP program as `gen.sh` assembled it from `dsptest_dsp.txt` (the macro `dsp_block`), data, behind `g_arm7_image_end`: `g_dsp_coef` to `g_dsp_coef_end` the `COEF` registers from `COEF[0]`, `g_dsp_madrs` to `g_dsp_madrs_end` the `MADRS` registers from `MADRS[0]`, `g_dsp_mpro` to `g_dsp_mpro_end` the program, four words a step from step 0 (the steps behind it stay empty), then `g_dsp_end`. One `.long` for each 16-bit register, the register in its low half: `_start` copies the three parts with long writes to `0x00703000`, `0x00703200` and `0x00703400` |
 
 **The first tick.** The cut of the M2 round (`docs/nulldc3/devtools-integration-m2-round.md`, 5.2) had everything
 the SH4 does to the sound "before the first AICA tick on both engines". There is no such place. The scheduler
@@ -69,13 +85,16 @@ instruction that branches to itself to wave memory 0 and releases the ARM7 onto 
 the ARM7 clocked on both engines, and reads `SCIPD` until `SAMPLE_DONE` is set. (The AICA is clocked whatever
 `ARMRST` says: its timers step, its samples are made and its DSP runs in every tick, also while the ARM7 is
 held; the release decides only whether the ARM7 runs in that tick.) Then it holds the ARM7 again and does the
-set-up, which is over 6600 cycles later on the interpreter and far sooner on the recompiler: between the first tick
-and the second on both. A reset of the machine goes the same way, whenever it comes. So:
+set-up, the DSP program among it, whose last write is 20 slices (8960 cycles) behind the first tick on the
+interpreter and in the slice of the first tick on the recompiler: between the first tick and the second (145124
+cycles behind it) on both. A reset of the machine goes the same way, whenever it comes. So:
 
 - the ARM7 is held at the entry of the program (`ENABLED` 0), clocked for one tick on a one-word program, held
   again and released onto `a_reset`: a debugger that looks during the first two ticks sees that;
-- the first tick has 32 pairs of silence in it; a guest whose second release is taken out sounds all the same,
-  with the two channels the SH4 keyed, at the pitches the table gives them (the ARM7 that moves them is held).
+- the first tick has 32 pairs of silence in it, and the DSP runs those 32 samples on the empty program, from
+  the state after the reset; from the second tick on it runs the guest's program;
+- a guest whose second release is taken out sounds all the same, with the two channels the SH4 keyed, at the
+  pitches the table gives them (the ARM7 that moves them is held), and its DSP runs the program.
   `debugger.sound.held.dsptest.*` run that copy.
 
 **The ARM7** (`arm7.s`, 88 instructions). `a_main_loop` runs in **SVC mode** (the mode the reset leaves, a mode with
@@ -92,6 +111,43 @@ an SPSR), the handler in FIQ mode; IRQ stays masked.
 
 Every access of a register of the AICA is a word access, on both processors; a byte write to `SCIPD`, `SCIRE`,
 `MCIPD` or `MCIRE` ends this emulator, and so does a read of `0x2810` with `AFSET` set.
+
+## The DSP
+
+The program is `dsptest_dsp.txt`, 16 steps from step 0 (`MPRO[0]` to `MPRO[15]`, none of them empty; step 127 and
+every step behind the program are empty), with its comments; `_start` loads it while it holds the ARM7, between
+the first tick and the second, on every engine. Its table sets the ring at `RBP` 0x40 with `RBL` 0, 8192 words
+from `0x20000` of the wave memory, where no channel plays and the ARM7 writes nothing; `EFSDL` 10 for `EFREG[0]`
+(`EFPAN` 0, both sides) and `EFREG[1]` (`EFPAN` 0x1F, the left), a level at which the two channels and both
+outputs at full scale stay below what `clip16` cuts (16384 + 2 * 5791 of 32767 a side); and `ISEL` 3, `IMXL` 15
+for the first channel, whose send the program reads as `MIXS[3]`. The program keeps a counter in TEMP (0x100 less
+every sample) and its word in the ring, reads the word back one sample later (`MRD` with `NOFL`, its `IWT` two
+steps on stores it as it is), keeps a delay line in the float format of the wave memory (`MWT` without `NOFL`, read
+back one sample later by an `MRD` whose `IWT` two steps on unpacks it), and makes two outputs: `EFREG[0]` of the
+counter, the delay line and what the shifter makes of them, which nothing of `MIXS` reaches, and `EFREG[1]` of
+the first channel's send, a filter of one pole on it in TEMP and its product with the counter. What it has in it,
+each in the step the comment names:
+
+- `XSEL` both ways; `YSEL` 0 to 3 (`FRC_REG`, `COEF`, `Y_REG[23:11]`, `Y_REG[15:4]`); `BSEL` both ways, `ZERO`,
+  `NEGB`; `SHIFT` 0 to 3, where `SHIFT` 0 saturates twice the counter in about half of the samples (step 2) and
+  `SHIFT` 2 cuts in about two in three (step 3); `TWT` and `TRA` relative to `MDEC_CT` (the counter, the filter);
+- `IRA` from `MEMS`, from `MIXS` (`0x23`) and from `EXTS` (`0x30`, step 9, times a `COEF` of 0: nothing of what
+  EXTS holds is used, the decode only);
+- `YRL` (steps 5 and 6), `FRCL` with `SHIFT` 3 (step 1) and without (step 4), `ADRL` from `SHIFTED` with `SHIFT` 3
+  (step 1) and from `INPUTS` (step 3);
+- `MWT` with `NOFL` (steps 1 and 15) and without (steps 5 and 9), `TABLE` 0 in the ring and one `TABLE` 1 access
+  (step 9, at `MADRS[2]` + `ADRS_REG`: `ADREB`); `MRD` with `NOFL` (step 3) and without (step 7), with `NXADR`,
+  each followed by its `IWT` two steps behind it in an odd step (5 and 9);
+- two `EWT` (steps 11 and 14);
+- the nine datapath registers of the debugger (`ACC`, `Y_REG`, `FRC_REG`, `ADRS_REG`, the latch, its copy,
+  `MEMVAL`, `NOFL_PIPE`, `MIXS_BANK`) each take two values or more over the steps of every sample, and all but
+  `NOFL_PIPE`, which the program's `NOFL` bits make the same in every sample, differ from sample to sample.
+
+Its rules: every memory step (`MRD`, `MWT`) is odd and below 100, so none is in the slot of a channel (channel K
+has the slot of step `2K + 114 mod 128`, an even step); every `IWT` is two steps behind an odd `MRD`, so no read of
+a CPU or of a channel between them can change what it stores (the emulator puts none in the latch anyway); no test
+mode (bit 15 of `0x2804`), no 8 MB, no value of `EXTS` relied on, no CPU write of `MIXS` or `TEMP` while the DSP
+runs.
 
 ## What tests may lean on
 
@@ -132,8 +188,17 @@ Every access of a register of the AICA is a word access, on both processors; a b
   channels, the timers B and C, whose pending bits the loop folds, and the wave memory.
 - **Everything the SH4 does to the sound is done between the first tick and the second**, but for one write: the
   pan write of `g_irq`, which is made in front of the tick behind the one whose interrupt it answers, on every
-  engine. That is why the recompiler and the interpreter agree in `samples`, `regs`, `arm7`, `ticks` and `cycles`
-  (`debugger.sound.engines.dsptest.*`); `sh4` differs, the SH4 being elsewhere in its loop on each.
+  engine. That is why the recompiler and the interpreter agree in `samples`, `regs`, `arm7`, `dsp`, `ticks` and
+  `cycles` (`debugger.sound.engines.dsptest`); `sh4` differs, the SH4 being elsewhere in its loop on each.
+- **The DSP program**: the labels `g_dsp`, `g_dsp_coef` / `g_dsp_coef_end`, `g_dsp_madrs` / `g_dsp_madrs_end`,
+  `g_dsp_mpro` / `g_dsp_mpro_end` and `g_dsp_end`, in the ELF's symbols and as `DSPTEST_G_DSP_*` in
+  `dsptest_labels.inc`; between `g_dsp_mpro` and `g_dsp_mpro_end` the program as the register area holds it, one
+  `.long` for each 16-bit word (the word in the low half), four for each step from step 0, the steps behind it
+  empty. It is loaded in front of the second tick on every engine and runs from the second tick on. Its loaded
+  steps are 0 to 15, so for every `STEP` there is a loaded step above it, or, from 15 on, the first loaded step,
+  0, which is what the contract's S21 takes; step 127 is empty. At
+  least one loaded step has each of `MRD`, `IWT`, `MWT`, `EWT`, `YRL`, `FRCL` and `ADRL`. The nine datapath
+  registers move ("The DSP"). The DSP part of the table keeps at least three empty entries at its end.
 
 ## The FIQ entries
 
@@ -154,6 +219,10 @@ sample); **2046 by the third or a later one** (the third to the eighth: each of 
 starts such a sample), all with the return address `a_fwin_end + 8`. 1710 of the 2000 ticks have an entry of the
 last class, and there are no two ticks in a row without one. The entries meet each of the 32 samples of a tick 153
 or 154 times.
+
+The DSP program changed no byte of the ARM7 program and nothing of when the ARM7 is released: the `arm7` field,
+which folds the return address and the status of every entry, is the one of the guest without it in every
+configuration, and so is the count.
 
 The count belongs to these bytes on this ARM7 interpreter. One instruction more or less in the loop or in the
 handler gives another orbit: handlers a few instructions longer or shorter left the first class at one or two
@@ -204,7 +273,7 @@ check on stand-ins for the emulator, scripts that print the line of one engine w
 | `neutral` | `--selftest <filter> [--expect <text>]...`: four runs with the same N, V and keys, the line and the exit line with `Debugger:SelfTest=<filter>` and without. The two lines are equal in every field and the two exit lines in every part of the state hash; and each of the two runs with the session has no `SelfTest:` line with `: FAILED: ` or `: FAIL, `, at least one with `: ok: `, every `--expect` text in a `SelfTest:` line, and **no** summary line `SelfTest: <p> passed, <f> failed`. The session of such a run is one whose test never returns true: the run ends by the harness or by the exit key, and a summary means that the session ended the process before the run was over |
 | `release` | the guest only: a release of the ARM7 that finds a request of the AICA latched starts the program of the run without one. Five runs on copies of the guest, made in the work directory, that differ from it in data. *A request latched*: three entries in the reserved part of the table, which `_start` writes while it holds the ARM7 (`SCILV1` and `SCIEB` bit 5, then `SCIPD` bit 5, the one request a program can raise: it is latched with the level of the timer's, and again by the release). *Without the end of the service*: the read of L or the write of M of `a_reset` goes to a word of the wave memory that nothing uses, at the same cost. The copy without a change gives the line; the copy with a request latched has to print it, in the fields of `--fields` (`sh4` is not among them: that SH4 has made three more writes when it enters its loop); so has the copy with no request and without the read and the write; and each of the two copies with a request latched and without one of the two has to print another `arm7` field, which says that the request was there |
 | `held` | the guest only: a held ARM7 is an idle one for the rest of the AICA. Two runs on copies of the guest, made in the work directory, each with one instruction changed. *Held*: the last release of `_start`, the `mov #0, r0` at `g_main - 4`, made `mov #1, r0` (the halfword has to be `0xE000`, else the mode fails): the ARM7 stays held behind the set-up, and every burst from the second on finds it held. *Idle*: the ARM7 program's instruction at `a_reset` made `b .` (`0xEAFFFFFE`): the released ARM7 stays on it with FIQ and IRQ masked by its reset and touches nothing of the AICA. The two lines agree in `samples`, `regs`, `sh4`, `dsp`, `ticks` and `cycles`; and the controls: their `arm7` fields differ (both patches took), the held copy's `samples` is none of the hashes of silence (the channels the SH4 keyed play while the ARM7 is held), and the idle copy's `samples` is not the guest's (the guest's FIQ handler is heard) |
-| `files` | `SHA256SUMS` lists the six files and each has its sum; and, where bash and the sh-elf binutils are, `gen.sh --check` |
+| `files` | `SHA256SUMS` lists the eight files and each has its sum; and, where bash and the sh-elf binutils are, `gen.sh --check` |
 | `names` | `--build <the build directory of the tests>`, no emulator: the tests its `CTestTestfile.cmake` files register (read, not asked of a ctest, which would write its log over that of the ctest that runs the test), some `debugger.sound.*` among them, and no name of the sound (`debugger.sound.*`) or of the session `arm7` of the selftests (`debugger.selftest.arm7*`) with a part `batch` or `persample`, where the tests of the two renders were. Other tests may have those words: they name something else there (a batch of requests of the debugger's protocol) |
 
 **No line is stored in the tree.** The generator's tables come from `pow()`: a line is good for one build on one

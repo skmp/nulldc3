@@ -94,7 +94,7 @@ ENGINE_SAYS = {'jit': 'Using MCPU Recompiler', 'interp': 'Using MCPU Interpreter
 ENGINE_NAMES = {'jit': 'the recompiler', 'interp': 'the interpreter'}
 
 # what SHA256SUMS lists, in this order, and nothing else
-MANIFEST = ('dsptest.s', 'arm7.s', 'gen.sh', 'dsptest.elf', 'arm7.bin', 'dsptest_labels.inc')
+MANIFEST = ('dsptest.s', 'arm7.s', 'dsptest_dsp.txt', 'gen.sh', 'dsptest.elf', 'arm7.bin', 'dsptest_labels.inc', 'dsptest_dsp.inc')
 
 FNV_BASIS = 0xcbf29ce484222325
 FNV_PRIME = 0x100000001b3
@@ -480,17 +480,30 @@ ARM_READ_L = (0xE5952500, 0xE596200C)     # ldr r2, [r5, #0x500]  ->  ldr r2, [r
 ARM_WRITE_M = (0xE5852504, 0xE586200C)    # str r2, [r5, #0x504]  ->  str r2, [r6, #12]
 
 
+def free_end(image, labels):
+    """The empty entries (address 0) at the end of the DSP part of the guest's table, g_table_dsp to
+    g_table_dsp_end, in their order: the DSP part fills it from its front, and the copies of this script write
+    into its end."""
+    free = []
+    for entry in range(labels['G_TABLE_DSP_END'] - 8, labels['G_TABLE_DSP'] - 8, -8):
+        if image[file_offset(image, entry, 'an entry of the table'):][:8] != bytes(8):
+            break
+        free.insert(0, entry)
+    return free
+
+
 def guest_copy(args, labels, name, table=(), arm=()):
-    """A copy of the guest in the work directory: with (address, value) entries in the reserved, empty part of the
-    table that _start writes while it holds the ARM7, and with instructions of a_reset replaced (old word, new
-    word). Returns its path."""
+    """A copy of the guest in the work directory: with (address, value) entries in the empty end of the DSP part
+    of the table that _start writes while it holds the ARM7 (the last entries in front of the key on: the
+    entries of the part are written behind every other register of the table), and with instructions of a_reset
+    replaced (old word, new word). Returns its path."""
     with open(args.guest, 'rb') as f:
         image = bytearray(f.read())
 
-    # the last empty entries of the reserved part, in their order: whoever fills the part starts at its front
-    free = [entry for entry in range(labels['G_TABLE_DSP'], labels['G_TABLE_DSP_END'], 8)
-            if image[file_offset(image, entry, 'an entry of the table'):][:8] == bytes(8)]
-    check(len(free) >= len(table), 'the reserved part of the table of the guest has %d empty entries, the copy %s needs %d' % (len(free), name, len(table)))
+    # the last empty entries of the part, in their order: whoever fills the part starts at its front. At least
+    # three are left there (the guest's dsptest.s holds that), which the copies of the mode release need
+    free = free_end(image, labels)
+    check(len(free) >= len(table), 'the DSP part of the table of the guest has %d empty entries at its end, the copy %s needs %d' % (len(free), name, len(table)))
     for entry, (address, value) in zip(free[len(free) - len(table):], table):
         struct.pack_into('<II', image, file_offset(image, entry, 'an entry of the table'), address, value)
 
@@ -517,10 +530,11 @@ def mode_release(args, lines):
     g_release_arm7 holds the ARM7 at a tick of its own choice, with the timer's request pending or not.
 
     The runs are made on copies of the guest that differ from it in data only. "A request latched": three entries
-    in the reserved part of the table, which _start writes while it holds the ARM7 - SCILV1 and SCIEB bit 5, and
-    SCIPD bit 5, the one request a program can raise: it is latched at once, with the level of the timer's
-    request, and again by the release. "Without the end of the service": the read of L or the write of M of
-    a_reset goes to a word of the wave memory instead, at the same cost.
+    in the empty end of the DSP part of the table, which _start writes while it holds the ARM7 (the guest leaves
+    at least three there) - SCILV1 and SCIEB bit 5, and SCIPD bit 5, the one request a program can raise: it is
+    latched at once, with the level of the timer's request, and again by the release. "Without the end of the
+    service": the read of L or the write of M of a_reset goes to a word of the wave memory instead, at the same
+    cost.
 
         the copy without a change                             the line every other run is compared with
         a request latched                                     the same line, in the fields of --fields
@@ -537,6 +551,12 @@ def mode_release(args, lines):
     for label in ('G_TABLE_DSP', 'G_TABLE_DSP_END', 'G_ARM7_IMAGE', 'A_RESET', 'A_MAIN_LOOP'):
         check(label in labels, 'dsptest_labels.inc in %s has no DSPTEST_%s' % (args.dir, label))
     request = ((SH4_SCILV1, 0x20), (SH4_SCIEB, 0x20), (SH4_SCIPD, 0x20))
+
+    # the three entries go into the empty end of the DSP part, which the guest keeps for them
+    with open(args.guest, 'rb') as f:
+        free = free_end(f.read(), labels)
+    check(len(free) >= len(request), 'the DSP part of the table of the guest (g_table_dsp to g_table_dsp_end) has %d empty entries at its end, '
+          'not the %d the copies of this mode write there' % (len(free), len(request)))
 
     def made(name, table=(), arm=()):
         return line_run(args, name, args.engine, guest=guest_copy(args, labels, name, table, arm))
