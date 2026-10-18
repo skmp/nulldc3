@@ -3,7 +3,7 @@
 `dsptest.elf` is a guest program of the tree: a bare-metal SH4 program with a small ARM7 program inside it, written
 for the tests of the debugger's sound side and for the sound regression harness (`--config config:Debug.AicaHash=<N>`,
 `docs/nulldc3/automated-runs.md`). It plays two channels of the sound generator, its ARM7 runs all the time, a
-timer interrupt of the AICA changes what is heard, and its DSP runs a program of 16 steps whose two outputs are
+timer interrupt of the AICA changes what is heard, and its DSP runs a program of 18 steps whose two outputs are
 heard ("The DSP"). `2ndmix.elf`, the program the harness was accepted with, plays nothing under reios (its ARM7
 player waits for a timer interrupt that it never enables), so its lines say nothing about samples; this one's do.
 
@@ -15,8 +15,8 @@ count of its FIQ entries and new lines wherever lines of it are compared between
 With the sound on (no `audio:backend=none`) a person hears two tones at once: a rough one near 1.7 kHz, which is
 the first channel switched between two pitches 3392 times a second, and under it a lower one that steps through
 four pitches, a step every 0.15 s, while it starts over and changes sides 53 times a second. The DSP adds its two
-outputs at a lower level: one made of its counter and its delay line, in the middle, and one made of the first
-channel's send, which the counter modulates, on the left.
+outputs at a lower level: one made of its counter, its delay line and their products, in the middle, and one made
+of the first channel's send, which the counter modulates, on the left.
 
 ## The files
 
@@ -86,7 +86,7 @@ instruction that branches to itself to wave memory 0 and releases the ARM7 onto 
 the ARM7 clocked on both engines, and reads `SCIPD` until `SAMPLE_DONE` is set. (The AICA is clocked whatever
 `ARMRST` says: its timers step, its samples are made and its DSP runs in every tick, also while the ARM7 is
 held; the release decides only whether the ARM7 runs in that tick.) Then it holds the ARM7 again and does the
-set-up, the DSP program among it, whose last write is 20 slices (8960 cycles) behind the first tick on the
+set-up, the DSP program among it, whose last write is 21 slices (9408 cycles) behind the first tick on the
 interpreter and in the slice of the first tick on the recompiler: between the first tick and the second (145124
 cycles behind it) on both. A reset of the machine goes the same way, whenever it comes. So:
 
@@ -115,46 +115,75 @@ Every access of a register of the AICA is a word access, on both processors; a b
 
 ## The DSP
 
-The program is `dsptest_dsp.txt`, 16 steps from step 0 (`MPRO[0]` to `MPRO[15]`, none of them empty; step 127 and
-every step behind the program are empty), with its comments; `_start` loads it while it holds the ARM7, between
-the first tick and the second, on every engine. Its table sets the ring at `RBP` 0x40 with `RBL` 0, 8192 words
-from `0x20000` of the wave memory, where no channel plays and the ARM7 writes nothing; `EFSDL` 10 for `EFREG[0]`
-(`EFPAN` 0, both sides) and `EFREG[1]` (`EFPAN` 0x1F, the left), a level at which the two channels and both
-outputs at full scale stay below what `clip16` cuts (16384 + 2 * 5791 of 32767 a side); and `ISEL` 3, `IMXL` 15
-for the first channel, whose send the program reads as `MIXS[3]`. The program keeps a counter in TEMP (0x100 less
-every sample) and its word in the ring, reads the word back one sample later (`MRD` with `NOFL`, its `IWT` two
-steps on stores it as it is), keeps a delay line in the float format of the wave memory (`MWT` without `NOFL`, read
-back one sample later by an `MRD` whose `IWT` two steps on unpacks it), and makes two outputs: `EFREG[0]` of the
-counter, the delay line and what the shifter makes of them, which nothing of `MIXS` reaches, and `EFREG[1]` of
-the first channel's send, a filter of one pole on it in TEMP and its product with the counter. What it has in it,
-each in the step the comment names:
+The program is `dsptest_dsp.txt`, 18 steps from step 0 (`MPRO[0]` to `MPRO[17]`, none of them empty; step 127 and
+every step behind the program are empty), with its comments; `_start` loads it while it holds the ARM7, between the
+first tick and the second, on every engine. Its table sets the ring at `RBP` 0x40 with `RBL` 0, 8192 words from
+`0x20000` of the wave memory, where no channel plays and the ARM7 writes nothing (the program's `TABLE` 1 word is in
+the 64K words from there too, in the 512 bytes about `0x28000`); `EFSDL` 10 for `EFREG[0]` (`EFPAN` 0, both sides) and
+`EFREG[1]` (`EFPAN` 0x1F, the left), a level at which the two channels and both outputs at full scale stay below what
+`clip16` cuts (16384 + 2 * 5791 of 32767 a side); and `ISEL` 3, `IMXL` 15 for the first channel, whose send the
+program reads as `MIXS[3]`. The program keeps a counter in TEMP (0x100 less every sample) and its word in the ring,
+reads the word back one sample later (`MRD` with `NOFL`, its `IWT` two steps on stores it as it is), keeps a delay
+line in the float format of the wave memory (`MWT` without `NOFL`, read back one sample later by an `MRD` whose `IWT`
+two steps on unpacks it), writes a word of a table beyond the ring (`TABLE` 1) at an address the delay line moves and
+reads it back in the same sample, reads a tap of the ring at an address the delay line moves, writes the sum of its
+two outputs into the ring and reads it back one sample later. Every word it writes to the wave memory is read back
+into `MEMS`. It makes two outputs: `EFREG[0]` of the counter, the delay line, the table's word and what the shifter
+and the multiplier make of them, the counter's word in `Y_REG` among them, which nothing of `MIXS` reaches; and
+`EFREG[1]` of the first channel's send, a filter of one pole on it in TEMP and its product with the counter. What it
+has in it, each in the step the comment names:
 
-- `XSEL` both ways; `YSEL` 0 to 3 (`FRC_REG`, `COEF`, `Y_REG[23:11]`, `Y_REG[15:4]`); `BSEL` both ways, `ZERO`,
-  `NEGB`; `SHIFT` 0 to 3, where `SHIFT` 0 saturates twice the counter in about half of the samples (step 2) and
-  `SHIFT` 2 cuts in about two in three (step 3); `TWT` and `TRA` relative to `MDEC_CT` (the counter, the filter);
-- `IRA` from `MEMS`, from `MIXS` (`0x23`) and from `EXTS` (`0x30`, step 9, times a `COEF` of 0: nothing of what
-  EXTS holds is used, the decode only);
-- `YRL` (steps 5 and 6), `FRCL` with `SHIFT` 3 (step 1) and without (step 4), `ADRL` from `SHIFTED` with `SHIFT` 3
-  (step 1) and from `INPUTS` (step 3);
-- `MWT` with `NOFL` (steps 1 and 15) and without (steps 5 and 9), `TABLE` 0 in the ring and one `TABLE` 1 access
-  (step 9, at `MADRS[2]` + `ADRS_REG`: `ADREB`); `MRD` with `NOFL` (step 3) and without (step 7), with `NXADR`,
-  each followed by its `IWT` two steps behind it in an odd step (5 and 9);
-- two `EWT` (steps 11 and 14);
+- `XSEL` both ways; `YSEL` 0 to 3 (`FRC_REG`, `COEF`, `Y_REG[23:11]`, `Y_REG[15:4]`: the last two on the send in
+  steps 8 and 10 and on the counter's word in steps 14 and 15); `BSEL` both ways, `ZERO`, `NEGB`; `SHIFT` 0 to 3,
+  where `SHIFT` 0 saturates twice the counter in about half of the samples (step 2) and `SHIFT` 2 cuts in about two
+  in three (step 3); `TWT` and `TRA` relative to `MDEC_CT` (the counter, the filter);
+- `IRA` from `MEMS`, from `MIXS` (`0x23`, step 6) and from `EXTS` (`0x30`, step 9, times a `COEF` of 0: nothing of
+  what EXTS holds is used, the decode only);
+- `YRL` (steps 5, 6 and 12), `FRCL` with `SHIFT` 3 (step 1) and without (step 4), `ADRL` from `SHIFTED` with `SHIFT`
+  3 (step 1) and from `INPUTS` (step 3);
+- `MWT` with `NOFL` (steps 1 and 17) and without (steps 5 and 13), `TABLE` 0 in the ring and `TABLE` 1 (step 13
+  writes the word at `MADRS[2]` + `ADRS_REG`, step 15 reads it back); `MRD` with `NOFL` (steps 3, 9 and 11) and
+  without (steps 7 and 15), each followed by its `IWT` two steps behind it in an odd step (5, 9, 11, 13 and 17);
+  addresses with `NXADR` (steps 3, 7 and 9) and with `ADREB` (steps 11, 13 and 15; `ADRS_REG` is then the delay
+  line's bits 23:16, below 0 in about half of the samples);
+- two `EWT` (steps 11 and 16);
 - the nine datapath registers of the debugger (`ACC`, `Y_REG`, `FRC_REG`, `ADRS_REG`, the latch, its copy,
-  `MEMVAL`, `NOFL_PIPE`, `MIXS_BANK`) each take two values or more over the steps of every sample, and all but
-  `NOFL_PIPE`, which the program's `NOFL` bits make the same in every sample, differ from sample to sample.
+  `MEMVAL`, `NOFL_PIPE`, `MIXS_BANK`) each take two values or more at the stops in front of the 128 steps
+  (`STEP` 0 to 127) of every sample from the program's second on, and all but `NOFL_PIPE`, which the program's
+  `NOFL` bits make the same in every sample, differ from sample to sample. In the program's first sample (the first
+  of tick 2) `Y_REG` takes only 0: the ring and `MEMS[3]` are still 0, and so is the send that sample reads; from
+  the second on the counter's word that step 5 loads and the one that step 12 loads differ, whatever the send.
+  `MIXS_BANK` changes at step 0, so stops that leave out `STEP` 0 see one value of it. (The core alone on the
+  guest's writes and schedule, with sends of 0 and with a stand-in for the send, over 64000 samples.)
 
 Its rules: every memory step (`MRD`, `MWT`) is odd and below 100, so none is in the slot of a channel (channel K
 has the slot of step `2K + 114 mod 128`, an even step); every `IWT` is two steps behind an odd `MRD`, so no read of
-a CPU or of a channel between them can change what it stores (the emulator puts none in the latch anyway); no test
-mode (bit 15 of `0x2804`), no 8 MB, no value of `EXTS` relied on, no CPU write of `MIXS` or `TEMP` while the DSP
-runs.
+a CPU or of a channel between them can change what it stores (the emulator puts none in the latch anyway); no step
+has both `MRD` and `MWT`; no test mode (bit 15 of `0x2804`), no 8 MB, no value of `EXTS` relied on, no CPU write of
+`MIXS` or `TEMP` while the DSP runs.
 
 The emulator's DSP is held to caique's model on this program by `debugger.sound.oracle.dsptest.*` (the mode
 `oracle`, the tool `aica_dsp_guest_oracle` of `tests/aica_dsp`): on a copy of the guest whose first channel has
 `IMXL` 0, so that every send is 0 (the emulator's attenuation of a send at `IMXL` 0 is 255 or more, capped by what
 the envelope leaves, and its table of levels has 0 there), the field `dsp` of the line, the DSP's whole state
-folded at every tick, is what the core and the model compute in lockstep on the guest's writes and schedule.
+folded at every tick, is what the core and the model compute in lockstep on the guest's writes and schedule. What
+that holds, and what it does not:
+
+- **The half of the program that is the send's is held at 0 only.** On the copy `MIXS[3]` is 0, so are `Y_REG`
+  from step 6 to step 12 (the send), the products of steps 8 and 10, `TEMP[5]` and `TEMP[6]` (the filter),
+  `EFREG[1]`, and the filter's part of the sum that step 17 writes (in `MEMS[5]` and the tap behind it). A defect
+  of the emulator that shows only on a send other than 0 (the scale of the read of `MIXS`, the slices of a
+  `Y_REG` that holds a send) leaves the copy's `dsp` as it is. On this guest nothing else compares those paths with
+  the model; the core on sends is held by `aica.dsp.diff.*` (generated programs, against the model behind every
+  step), the emulator's sends by `aica.dsp.emu.lockstep` (`tests/aica_dsp/README.md`). The rest of the program, the
+  counter, the delay line, the table, the tap, the sum and `EFREG[0]`, is held on values other than 0, and so are
+  `YSEL` 2 and 3 (steps 14 and 15, on the counter's word).
+- **The wave memory is not in the field.** What the program writes there is held where it is read back into `MEMS`,
+  and every word it writes is (the counter's by step 3, the delay line's by step 7, the sum by step 9, the table's by
+  step 15); where in the wave memory a word lies is held only where two ways of addressing meet: the tap of step 11
+  (`MADRS[0]` + `ADRS_REG`, `ADREB`) reads words that steps 1 and 17 wrote at `MADRS[0]` and `MADRS[3]`, so `ADREB`'s
+  sign extension decides which word `MEMS[6]` gets. The table's word is read back from the address it was written to:
+  its value is held, not its place in the wave memory, which only the exit state hash (`aram`) has.
 
 The DSP is heard: `debugger.sound.heard.dsptest.*` (the mode `heard`).
 
@@ -206,10 +235,12 @@ The program's text, the ELF's words and the emulator's disassembly agree: `debug
   `dsptest_labels.inc`; between `g_dsp_mpro` and `g_dsp_mpro_end` the program as the register area holds it, one
   `.long` for each 16-bit word (the word in the low half), four for each step from step 0, the steps behind it
   empty. It is loaded in front of the second tick on every engine and runs from the second tick on. Its loaded
-  steps are 0 to 15, so for every `STEP` there is a loaded step above it, or, from 15 on, the first loaded step,
-  0, which is what the contract's S21 takes; step 127 is empty. At
-  least one loaded step has each of `MRD`, `IWT`, `MWT`, `EWT`, `YRL`, `FRCL` and `ADRL`. The nine datapath
-  registers move ("The DSP"). The DSP part of the table keeps at least three empty entries at its end.
+  steps are 0 to 17, so for every `STEP` there is a loaded step above it, or, from 17 on, the first loaded step,
+  0, which is what the contract's S21 takes; step 127 is empty. At least one loaded step has each of `MRD`, `IWT`,
+  `MWT`, `EWT`, `YRL`, `FRCL` and `ADRL`. The nine datapath registers move over the stops at `STEP` 0 to 127 of
+  every sample from the program's second on ("The DSP"): a test that needs them to move takes a sample from the
+  second of tick 2 on, or one of a later tick, and stops at `STEP` 0 too. The DSP part of the table keeps at least
+  three empty entries at its end.
 
 ## The FIQ entries
 

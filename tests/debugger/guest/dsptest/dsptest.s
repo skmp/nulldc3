@@ -12,7 +12,7 @@
 ! the release decides only whether the ARM7 runs in a tick), and waits until SAMPLE_DONE says that a tick has run.
 ! Then it holds the ARM7, copies the ARM7 program (arm7.s) and one period of a wave into the wave memory, sets two
 ! channels and the DSP up, keys the channels on, loads the DSP's program (dsptest_dsp.txt) and releases the ARM7
-! again: within 20 slices (8960 cycles) of the first tick on the interpreter, the slowest engine, of the 145124
+! again: within 21 slices (9408 cycles) of the first tick on the interpreter, the slowest engine, of the 145124
 ! between two ticks. From then on the ARM7 and the timer of the AICA drive the sound, the DSP runs its program in
 ! every sample, and the SH4 counts in g_main_loop; every 64th timer interrupt the ARM7 raises the AICA's interrupt
 ! to the SH4, and g_irq answers it with one register write that is heard, in front of the next tick.
