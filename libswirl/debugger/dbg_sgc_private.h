@@ -11,7 +11,8 @@
 /*
 	What dbg_sgc.cpp shows its selftest (dbg_selftest_sgc.cpp) beyond dbg_sgc.h. Not one of the frozen headers;
 	nothing but the selftest includes it. Same contexts as dbg_sgc.h: (E), or under L while no emulator thread
-	exists. Nothing here changes what a capture does.
+	exists. Nothing here changes what a capture does, but for FailAllocations, which makes an arm fail as a heap that
+	is out of memory makes it fail.
 */
 
 namespace dbg { namespace sgc { namespace test {
@@ -49,5 +50,10 @@ Recording GetRecording();
 // Appends frame `index` (0 .. taken - 1) of the capture that records to *out, kBytesPerFrame bytes. Returns false,
 // appending nothing, when no capture records or it has not taken that frame.
 bool CopyRecordingFrame(u32 index, std::string* out);
+
+// The next `count` allocations of a capture's buffer fail: Arm() throws std::bad_alloc where it allocates the
+// buffer, as new does when the heap cannot give it, with nothing armed (Arms() counts the call, with lastRv 0, and
+// no arm). 0 ends it. Any thread.
+void FailAllocations(u32 count);
 
 } } }

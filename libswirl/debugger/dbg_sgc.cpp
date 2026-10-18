@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <new>
 
 /*
 	The SGC frame capture (dbg_sgc.h, and the SGC block of debugger.h).
@@ -57,6 +58,7 @@ u32 server_frames;
 test::ArmRecord arms;
 std::atomic<u32> notices_given { 0 };
 std::atomic<int> notices_last { 0 };
+std::atomic<u32> failing_allocations { 0 };
 
 void Notice(int answer)
 {
@@ -65,6 +67,19 @@ void Notice(int answer)
 
 	if (auto notice = completion_notice.load())
 		notice(answer);
+}
+
+// The buffer of a capture, zeroed. An allocation that fails throws std::bad_alloc, in new or here where the
+// selftest has it fail (dbg_sgc_private.h)
+std::string* NewBuffer(size_t bytes)
+{
+	if (failing_allocations.load() != 0)
+	{
+		failing_allocations--;
+		throw std::bad_alloc();
+	}
+
+	return new std::string(bytes, '\0');
 }
 
 void Put16(u8* at, u32 value)
@@ -161,8 +176,9 @@ int Arm(u32 frames, bool stopWhenDone)
 	if (rv != 0)
 		return rv;
 
-	// a buffer of its own, zeroed: the bytes a record does not name are 0
-	recording = new std::string((size_t)frames * kBytesPerFrame, '\0');
+	// a buffer of its own, zeroed: the bytes a record does not name are 0. Nothing has changed when its
+	// allocation throws: nothing is armed, and the caller's closure answers (dbg_core.cpp)
+	recording = NewBuffer((size_t)frames * kBytesPerFrame);
 	wanted = frames;
 	taken = 0;
 	stop_when_done = stopWhenDone;
@@ -245,6 +261,11 @@ bool CopyRecordingFrame(u32 index, std::string* out)
 
 	out->append(*recording, (size_t)index * kBytesPerFrame, kBytesPerFrame);
 	return true;
+}
+
+void FailAllocations(u32 count)
+{
+	failing_allocations.store(count);
 }
 
 }

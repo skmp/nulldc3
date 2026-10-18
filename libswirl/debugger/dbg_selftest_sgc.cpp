@@ -3088,6 +3088,174 @@ BOUNDED_GUEST_TEST(sgc_refused, "sgc.refused")
 }
 
 /*
+	sgc.nomemory: the buffer of a capture cannot be allocated (a test hook has sgc::Arm throw std::bad_alloc where it
+	allocates it, as new does when the heap cannot give it): the closure of the core's call catches it, nothing
+	leaves the call, and the request is answered -32603 at once, with nothing armed and no notice owed. At a stop,
+	in the exec call, whose resume is not armed then: the stop stays until another thread resumes the run. While
+	running, in the table call of a service excursion: the run goes on. A request behind each has its own capture
+*/
+namespace {
+
+struct {
+	Co co;
+	u32 stopId;
+	sgc::test::ArmRecord arms;
+	sgc::test::NoticeRecord notices;
+	std::atomic<bool> failed { false }, stayed { false }, recording { true };
+	std::atomic<int> code { 1 }, second { 1 };
+	std::atomic<double> ms { 0 };
+	std::atomic<u32> owed { 9 }, active { 9 };
+} st_nomem;
+
+void NoMemoryReset()
+{
+	st_nomem.failed = false;
+	st_nomem.stayed = false;
+	st_nomem.recording = true;
+	st_nomem.code = 1;
+	st_nomem.second = 1;
+	st_nomem.owed = 9;
+	st_nomem.active = 9;
+	st_nomem.arms = sgc::test::Arms();
+	st_nomem.notices = sgc::test::Notices();
+}
+
+}
+
+BOUNDED_GUEST_TEST(sgc_nomemory, "sgc.nomemory")
+{
+	std::vector<Seen> list;
+
+	CO_BEGIN(st_nomem.co);
+
+	while (!Settle(stop))
+		CO_YIELD(st_nomem.co);
+
+	if (!CoreOn())
+		break;
+
+	/*
+		at a stop: the exec call
+	*/
+	NoMemoryReset();
+	st_nomem.stopId = stop.stopId;
+	TakeSeen();
+	HandPauseAfter(3);
+	sgc::test::FailAllocations(1);
+
+	OtherStart([] {
+		const Clock::time_point t0 = Clock::now();
+
+		Ask(kClient, 1, "state.recordSgcFrames", { { "frames", kMaxSgcFrames } });
+		st_nomem.code = InBandCode(WaitResponse(kClient, 1, 8000));
+		st_nomem.ms = MsSince(t0);
+
+		// no resume was armed behind the arm that failed: the stop stays
+		Nap(100);
+
+		const emu::RunState now = emu::GetRunState();
+
+		st_nomem.stayed = now.lifetime == Lifetime::Parked && now.stopId == st_nomem.stopId;
+		st_nomem.owed = core::CaptureCountsForTest().owed;
+
+		emu::Call(emu::CC_READ, [] {
+			st_nomem.active = dbg_sgc_active;
+			st_nomem.recording = Recording();
+		});
+
+		// the next stop of the test: the run resumed, and the pause of the hand
+		if (emu::Call(emu::CC_EXEC, [] { emu::Resume(); }) != 0)
+			st_nomem.failed = true;
+	});
+
+	// nothing armed: the park loop takes the calls, the core's and the other thread's
+	CO_YIELD(st_nomem.co);
+
+	OtherJoin();
+	HandOff();
+	sgc::test::FailAllocations(0);
+	list = TakeSeen();
+
+	{
+		const sgc::test::ArmRecord arms = sgc::test::Arms();
+
+		Check(!st_nomem.failed && st_nomem.code == kErrInternal && st_nomem.ms < 2000,
+			"at a stop: the buffer of %u frames cannot be allocated in the exec call, and the request is answered -32603 at once (%d, %.0f ms)", kMaxSgcFrames,
+			st_nomem.code.load(), st_nomem.ms.load());
+		Check(arms.calls == st_nomem.arms.calls + 1 && arms.armed == st_nomem.arms.armed && sgc::test::Notices().given == st_nomem.notices.given && st_nomem.active == 0
+			&& !st_nomem.recording && st_nomem.owed == 0, "sgc::Arm was called and armed nothing: no capture records, no notice given or owed");
+		Check(st_nomem.stayed && stop.cause == StopCause::Pause && SeenIs(list, { { Lifetime::Running, StopCause::NoCause }, { Lifetime::Parked, StopCause::Pause } }),
+			"the stop stayed with no resume armed until the other thread resumed the run, and the hand paused it (published %s)", SeenText(list).c_str());
+	}
+
+	// a request behind it has its own capture
+	Ask(kClient, 2, "state.recordSgcFrames", { { "frames", 3 } });
+	CO_YIELD(st_nomem.co);
+
+	Check(stop.cause == StopCause::Capture && InBandCode(WaitResponse(kClient, 2, 2000)) == 0 && ServerFrames() == 3,
+		"a request behind it is answered by its own capture, of 3 frames (\"%s\")", StopCauseName(stop.cause));
+
+	/*
+		while running: the table call
+	*/
+	NoMemoryReset();
+	TakeSeen();
+
+	OtherStart([] {
+		if (!WaitLifetime(Lifetime::Running))
+		{
+			st_nomem.failed = true;
+			return;
+		}
+
+		sgc::test::FailAllocations(1);
+
+		const Clock::time_point t0 = Clock::now();
+
+		Ask(kClient, 3, "state.recordSgcFrames", { { "frames", kMaxSgcFrames } });
+		st_nomem.code = InBandCode(WaitResponse(kClient, 3, 8000));
+		st_nomem.ms = MsSince(t0);
+		st_nomem.stayed = emu::GetRunState().lifetime == Lifetime::Running;
+		st_nomem.owed = core::CaptureCountsForTest().owed;
+
+		emu::Call(emu::CC_READ, [] {
+			st_nomem.active = dbg_sgc_active;
+			st_nomem.recording = Recording();
+		});
+
+		Ask(kClient, 4, "state.recordSgcFrames", { { "frames", 10 } });
+		st_nomem.second = InBandCode(WaitResponse(kClient, 4, 8000));
+
+		emu::RequestPause();
+	});
+
+	if (!Resume())
+		break;
+	CO_YIELD(st_nomem.co);
+
+	OtherJoin();
+	sgc::test::FailAllocations(0);
+	list = TakeSeen();
+
+	{
+		const sgc::test::ArmRecord arms = sgc::test::Arms();
+
+		Check(!st_nomem.failed && st_nomem.code == kErrInternal && st_nomem.ms < 2000 && st_nomem.stayed,
+			"while running: the buffer cannot be allocated in the table call, and the request is answered -32603 at once, the run going on (%d, %.0f ms)",
+			st_nomem.code.load(), st_nomem.ms.load());
+		Check(st_nomem.active == 0 && !st_nomem.recording && st_nomem.owed == 0 && arms.calls == st_nomem.arms.calls + 2 && arms.armed == st_nomem.arms.armed + 1
+			&& sgc::test::Notices().given == st_nomem.notices.given + 1, "it armed nothing and owes no notice: the request behind it armed the one capture");
+		Check(st_nomem.second == 0 && ServerFrames() == 10 && stop.cause == StopCause::Pause && SeenIs(list, { { Lifetime::Running, StopCause::NoCause },
+			{ Lifetime::Parked, StopCause::Pause } }), "the request behind it is answered by its own capture, of 10 frames, with no stop (%d, published %s)",
+			st_nomem.second.load(), SeenText(list).c_str());
+	}
+
+	CoreOff();
+
+	CO_END(st_nomem.co);
+}
+
+/*
 	sgc.nothread: the table call of a request finds no emulator thread - the thread ended between the method's look at
 	the lifetime (Running) and the call (a test hook stops the machine there) - and runs on the core thread under L.
 	Its closure arms nothing, and the method answers by the lifetime: -32001. The thread the host starts next records
