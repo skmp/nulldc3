@@ -802,6 +802,8 @@ enum HandMode {
 	HAND_STOP_SUSPENDED,		// has the host stop the machine in the tick in which a burst was suspended
 	HAND_EXIT_SUSPENDED,		// has the guest end the run there
 	HAND_RESET_SUSPENDED,		// has the guest reset the machine there
+	HAND_STOP_FIRST,			// has the host stop the machine in the first slice
+	HAND_EXIT_FIRST,			// has the guest end the run there
 };
 
 struct {
@@ -867,13 +869,15 @@ int HandTick(void*, int, int, int)
 	case HAND_STOP_SUSPENDED:
 	case HAND_EXIT_SUSPENDED:
 	case HAND_RESET_SUSPENDED:
-		if (!hand.asked && burst != SOUND_BURST_NONE)
+	case HAND_STOP_FIRST:
+	case HAND_EXIT_FIRST:
+		if (!hand.asked && (hand.mode == HAND_STOP_FIRST || hand.mode == HAND_EXIT_FIRST || burst != SOUND_BURST_NONE))
 		{
 			hand.asked = true;
 
-			if (hand.mode == HAND_STOP_SUSPENDED)
+			if (hand.mode == HAND_STOP_SUSPENDED || hand.mode == HAND_STOP_FIRST)
 				virtualDreamcast->Stop(HandStopped);
-			else if (hand.mode == HAND_EXIT_SUSPENDED)
+			else if (hand.mode == HAND_EXIT_SUSPENDED || hand.mode == HAND_EXIT_FIRST)
 				virtualDreamcast->RequestExit();
 			else
 				virtualDreamcast->RequestReset();
@@ -3207,6 +3211,260 @@ BOUNDED_GUEST_TEST(dsp_sameslice_reset, "dsp.sameslice.reset")
 	DspBps({ });
 
 	CO_END(st_same_reset.co);
+}
+
+/*
+	dsp.step.wait.hoststop, dsp.step.wait.exit: the wait of a step of the DSP asked for with no burst suspended, in
+	which the SH4 runs to the next burst with the stop in force, ended in its first slice by the host or by the
+	guest, as arm7.step.wait.* end the wait of a step of the ARM7. No stop of the step is published. The exit of the
+	thread ends the step (dsp::OnStop of emu::OnThreadExiting): behind the thread no step of the DSP is armed and
+	dbg_dsp_armed is 0. The wait counts as a step that has executed, so the next thread, which starts as one
+	without a session does (no start park), resumes nothing; and it does not stop for the step of the thread before:
+	the event breakpoint on the timers of the AICA, listed behind the thread, stops it behind its first burst, no
+	check of the DSP made. A step left armed would execute step 0 of that burst and stop in front of step 1
+*/
+namespace {
+
+struct {
+	Co co;
+	u32 stopId;
+	u32 checks;
+	Counts c;
+	DspCounts dc;
+	std::atomic<bool> failed { false };
+	std::atomic<u32> armedAtStop { 0 };
+	std::atomic<bool> stepAtStop { false };
+	std::atomic<bool> exemptAtStop { false };
+	std::atomic<u32> burstAtStop { 0 };
+	emu::RunState stopped;
+	Counts atStop;
+	DspCounts dspAtStop;
+	u32 checksAtStop;
+} st_wait;
+
+// The other thread: the emulator thread has ended in the wait of the step. What it left, then the event
+// breakpoint, and a thread with no start park
+void WaitEnded()
+{
+	if (!WaitLifetime(Lifetime::Stopped))
+	{
+		st_wait.failed = true;
+		return;
+	}
+
+	st_wait.stopped = emu::GetRunState();
+
+	// with no emulator thread the caller runs it itself
+	int rv = emu::Call(emu::CC_TABLE, [] {
+		const dsp::test::State s = dsp::test::GetState();
+
+		st_wait.armedAtStop = dbg_dsp_armed;
+		st_wait.stepAtStop = s.step;
+		st_wait.exemptAtStop = s.exempt;
+		st_wait.burstAtStop = Suspended();
+		st_wait.atStop = ReadCounts();
+		st_wait.dspAtStop = ReadDspCounts();
+		st_wait.checksAtStop = dsp::test::checks;
+
+		EventBp(kBehindId);
+	});
+
+	if (rv != 0)
+		st_wait.failed = true;
+
+	Restart(true);
+}
+
+bool WaitEnding(const emu::RunState& stop, HandMode mode, const char* what, StopCause ended)
+{
+	std::vector<Seen> list;
+	Counts c;
+	DspCounts dc;
+
+	CO_BEGIN(st_wait.co);
+
+	while (!Settle(stop))
+		CO_YIELD(st_wait.co);
+
+	Check(stop.cause == StopCause::Event && Suspended() == SOUND_BURST_NONE && ArmClocked(), "a stop behind a burst, none suspended, the ARM7 clocked (\"%s\", burst %u)",
+		StopCauseName(stop.cause), Suspended());
+
+	st_wait.stopId = stop.stopId;
+	st_wait.failed = false;
+	st_wait.c = ReadCounts();
+	hand.stopCallbacks = 0;
+	TakeSeen();
+
+	// in the first slice of the wait
+	HandOn(mode);
+
+	if (!StepDsp())
+	{
+		HandOff();
+		break;
+	}
+
+	OtherStart(WaitEnded);
+	CO_YIELD(st_wait.co);
+
+	OtherJoin();
+	HandOff();
+	emu::test::plainStart = false;
+	NoEventBp();
+	list = TakeSeen();
+	c = ReadCounts();
+	dc = ReadDspCounts();
+
+	Check(!st_wait.failed && hand.asked && hand.slices >= 1 && st_wait.atStop.n[0] == st_wait.c.n[0],
+		"%s in the first slice of the wait of a step of the DSP, in front of the burst it waited for, and the thread ended (%u bursts)", what,
+		st_wait.atStop.n[0] - st_wait.c.n[0]);
+	Check(st_wait.stopped.lifetime == Lifetime::Stopped && st_wait.stopped.cause == ended && !SeenHas(list, Lifetime::Parked, StopCause::Step),
+		"no stop of the step is published: %s", SeenText(list).c_str());
+	Check(st_wait.armedAtStop == 0 && !st_wait.stepAtStop && !st_wait.exemptAtStop && st_wait.burstAtStop == SOUND_BURST_NONE,
+		"behind the thread no step of the DSP is armed: dbg_dsp_armed %u, a step %s, an exemption %s, burst %u", st_wait.armedAtStop.load(),
+		st_wait.stepAtStop ? "armed" : "not armed", st_wait.exemptAtStop ? "armed" : "not armed", st_wait.burstAtStop.load());
+	Check(stop.cause == StopCause::Event && stop.breakpointId == kBehindId && Suspended() == SOUND_BURST_NONE && DspStep() == 0 && c.n[0] > st_wait.atStop.n[0]
+		&& c.n[3] - st_wait.atStop.n[3] == c.n[0] - st_wait.atStop.n[0] && dc.n[1] == st_wait.dspAtStop.n[1] && dsp::test::checks == st_wait.checksAtStop,
+		"the next thread, with no start park, does not stop for the step of the thread before: the event breakpoint stops it behind its first burst, no check "
+		"of the DSP made (\"%s\" id %u, burst %u, the DSP at step %u, %u bursts and %u tails, %u checks of the DSP, %u DSP phases through the debug loop)",
+		StopCauseName(stop.cause), stop.breakpointId, Suspended(), DspStep(), c.n[0] - st_wait.atStop.n[0], c.n[3] - st_wait.atStop.n[3],
+		dsp::test::checks - st_wait.checksAtStop, dc.n[1] - st_wait.dspAtStop.n[1]);
+
+	CO_END(st_wait.co);
+}
+
+}
+
+BOUNDED_GUEST_TEST(dsp_step_wait_hoststop, "dsp.step.wait.hoststop")
+{
+	if (!WaitEnding(stop, HAND_STOP_FIRST, "the host stopped the machine", StopCause::HostStopped))
+		return false;
+
+	Check(hand.stopCallbacks.load() == 1, "the stop callback ran once (%d)", hand.stopCallbacks.load());
+	return true;
+}
+
+BOUNDED_GUEST_TEST(dsp_step_wait_exit, "dsp.step.wait.exit")
+{
+	return WaitEnding(stop, HAND_EXIT_FIRST, "the guest ended the run", StopCause::GuestExit);
+}
+
+/*
+	dsp.hoststop.owed: the stop of a breakpoint of the DSP on step 0, in the first sample of a burst, which stays
+	listed; the host stops the machine there. The burst runs to its end in front of the stop callback, and the DSP
+	stands in front of step 0 again, that of the next burst. The thread ends in the stop with the SH4 where the stop
+	was published, so the next thread owes it its resume; the exit of the thread ends what the stop of the DSP left
+	for that resume (dsp::OnStop of emu::OnThreadExiting): the DSP decided no stop since. The next thread starts
+	with no start park, and its first Park() resumes the stop that was owed, which arms nothing for the DSP: the
+	breakpoint stops in front of step 0 of the first sample of the next burst, with nothing of it executed. An
+	exemption armed by that resume would run through step 0 and stop in front of it one sample later, MDEC_CT one
+	less
+*/
+namespace {
+
+struct {
+	Co co;
+	u32 stopId, pc;
+	Counts c;
+	std::atomic<bool> failed { false };
+	emu::RunState stopped;
+	std::atomic<bool> stopByCheckAtStop { true };
+	std::atomic<bool> exemptAtStop { true };
+	std::atomic<u32> burstAtStop { 0 };
+	std::atomic<u32> stepAtStop { 0 };
+	std::atomic<u32> armedAtStop { 0 };
+	std::atomic<u32> pcAtStop { 0 };
+	std::atomic<u32> mdecAtStop { 0 };
+	Counts atStop;
+} st_owed;
+
+}
+
+BOUNDED_GUEST_TEST(dsp_hoststop_owed, "dsp.hoststop.owed")
+{
+	std::vector<Seen> list;
+	Counts c;
+
+	CO_BEGIN(st_owed.co);
+
+	while (!Settle(stop))
+		CO_YIELD(st_owed.co);
+
+	while (!SuspendAtStep(stop, 0))
+		CO_YIELD(st_owed.co);
+
+	if (!Check(Sample() == 0 && dsp::test::GetState().stopByCheck && dsp::test::GetState().stopStep == 0,
+		"the stop of the breakpoint on step 0 is in the first sample of its burst, and the DSP decided it (sample %u)", Sample()))
+		break;
+
+	st_owed.stopId = stop.stopId;
+	st_owed.pc = Ctx().pc;
+	st_owed.c = ReadCounts();
+	st_owed.failed = false;
+	hand.stopCallbacks = 0;
+	hand.stopSuspended = ~0u;
+	TakeSeen();
+
+	OtherStart([] {
+		if (!WaitLifetime(Lifetime::Stopped))
+		{
+			st_owed.failed = true;
+			return;
+		}
+
+		st_owed.stopped = emu::GetRunState();
+
+		// with no emulator thread the caller runs it itself
+		int rv = emu::Call(emu::CC_TABLE, [] {
+			const dsp::test::State s = dsp::test::GetState();
+
+			st_owed.stopByCheckAtStop = s.stopByCheck;
+			st_owed.exemptAtStop = s.exempt;
+			st_owed.burstAtStop = Suspended();
+			st_owed.stepAtStop = DspStep();
+			st_owed.armedAtStop = dbg_dsp_armed;
+			st_owed.pcAtStop = Ctx().pc;
+			st_owed.mdecAtStop = Mdec();
+			st_owed.atStop = ReadCounts();
+		});
+
+		if (rv != 0)
+			st_owed.failed = true;
+
+		// as a thread without a session starts: with no start park
+		Restart(true);
+	});
+
+	virtualDreamcast->Stop(HandStopped);
+	CO_YIELD(st_owed.co);
+
+	OtherJoin();
+	emu::test::plainStart = false;
+	list = TakeSeen();
+	c = ReadCounts();
+
+	Check(!st_owed.failed && st_owed.stopped.lifetime == Lifetime::Stopped && st_owed.stopped.cause == StopCause::HostStopped && hand.stopCallbacks == 1
+		&& hand.stopSuspended == SOUND_BURST_NONE,
+		"the host stopped the machine at the stop of the breakpoint, and the burst was complete in front of the stop callback");
+	Check(st_owed.burstAtStop == SOUND_BURST_NONE && st_owed.stepAtStop == 0 && st_owed.armedAtStop != 0 && st_owed.atStop.n[0] == st_owed.c.n[0]
+		&& st_owed.atStop.n[3] == st_owed.c.n[3] + 1 && st_owed.pcAtStop == st_owed.pc,
+		"behind the thread the burst is whole, the DSP stands in front of step 0 of the next one with the breakpoint listed and active (dbg_dsp_armed %u), "
+		"and the SH4 is where the stop was published (%08X, it was %08X): the next thread owes the stop its resume", st_owed.armedAtStop.load(),
+		st_owed.pcAtStop.load(), st_owed.pc);
+	Check(!st_owed.stopByCheckAtStop && !st_owed.exemptAtStop,
+		"the exit of the thread ended what the stop of the DSP left for a resume: no stop of the DSP is recorded, no exemption is armed (a stop of the DSP %s)",
+		st_owed.stopByCheckAtStop ? "still recorded" : "not recorded");
+	Check(stop.cause == StopCause::Breakpoint && stop.breakpointId == kAtId && DspStep() == 0 && Suspended() == SOUND_BURST_DSP && Sample() == 0
+		&& c.n[0] == st_owed.atStop.n[0] + 1 && c.n[2] == st_owed.atStop.n[2] && Mdec() == st_owed.mdecAtStop && stop.stopId == st_owed.stopped.stopId + 1
+		&& SeenIs(list, { { Lifetime::Stopped, StopCause::HostStopped }, { Lifetime::Running, StopCause::NoCause }, { Lifetime::Parked, StopCause::Breakpoint } }),
+		"the owed resume of the next thread arms nothing for the DSP: the breakpoint on step 0 stops in front of it in the first sample of the next burst, "
+		"which has not executed it (\"%s\" id %u, step %u, burst %u, %u bursts, %u time steps, MDEC_CT %04X, it was %04X; published %s)",
+		StopCauseName(stop.cause), stop.breakpointId, DspStep(), Suspended(), c.n[0] - st_owed.atStop.n[0], c.n[2] - st_owed.atStop.n[2], Mdec(),
+		st_owed.mdecAtStop.load(), SeenText(list).c_str());
+
+	DspBps({ });
+
+	CO_END(st_owed.co);
 }
 
 /*
