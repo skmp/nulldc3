@@ -796,12 +796,13 @@ static void TestSlowClient(Server& server, Recorder& rec, int port) {
 	uint32_t goodId = Open(good, rec, port);
 	size_t closed = rec.Closed();
 
-	// The slow client never reads. Its queue grows to the bound, then the server lets it go.
+	// The slow client never reads. Its queue of text grows to the bound, then the server lets it go (the bound of
+	// binary messages, which is another, is test_bounds.cpp's)
 	std::string chunk = Pattern(1 << 20);
 	size_t mostQueued = 0;
 	int sent = 0;
 	while (sent < 200 && !rec.WasClosed(slowId)) {
-		server.SendBinary(slowId, chunk);
+		server.SendText(slowId, chunk);
 		sent++;
 		mostQueued = std::max(mostQueued, server.QueuedBytes(slowId));
 		// the caller is never held up by the socket

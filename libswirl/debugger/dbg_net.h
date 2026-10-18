@@ -70,13 +70,16 @@ public:
 	bool HasClients() const;	// lock-free: at least one WebSocket client is open
 
 	// Queue a message and return; nothing here waits for the socket. Unknown or closed clients are ignored.
-	// A client that lets more than 16 MiB pile up is disconnected: a message that finds more than that
-	// waiting is not queued and the client is dropped. The bound is not on the message, one of any size is
-	// taken; a message of 16 MiB or more leaves no room for the next until the client has read some of it.
+	// Text and binary messages are counted apart and go out in the order they were queued. A client that lets
+	// more than 16 MiB of text, or more than 64 MiB of binary messages, pile up is disconnected: a text message
+	// that finds more than 16 MiB of text waiting for the client, or a binary message that finds more than
+	// 64 MiB of binary messages waiting, is not queued and the client is dropped. The bounds are not on the
+	// message, one of any size is taken: a binary message of the largest size the protocol gives (32 MiB and its
+	// header) leaves room for every text message behind it.
 	void SendText(uint32_t client, std::string text);
 	void SendBinary(uint32_t client, std::string bytes);
 	void BroadcastText(const std::string& text);
-	size_t QueuedBytes(uint32_t client) const;	// bytes not yet handed to the socket
+	size_t QueuedBytes(uint32_t client) const;	// bytes not yet handed to the socket, text and binary together
 
 private:
 	Server(const Server&);

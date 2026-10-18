@@ -98,7 +98,8 @@ namespace {
 const size_t kMaxRequestLine = 2048;
 const size_t kMaxRequestHead = 8192;		// request line + headers + the empty line
 const size_t kMaxHeaders = 64;
-const size_t kMaxQueuedBytes = 16u << 20;	// per WebSocket client
+const size_t kMaxQueuedBytes = 16u << 20;	// of text, per WebSocket client
+const size_t kMaxQueuedBinaryBytes = 64u << 20;	// of binary messages, per WebSocket client
 const size_t kMergeBytes = 16u << 10;		// queued output is merged into chunks of up to this size
 const size_t kFlushBytes = 1u << 20;		// most that is written to one connection per pass of the loop
 const size_t kMaxStaticFile = 64u << 20;	// files from Options::webRoot are read whole
@@ -880,6 +881,12 @@ private:
 
 typedef std::chrono::steady_clock Clock;
 
+// Output of a connection: whole messages of one kind
+struct Chunk {
+	std::string bytes;
+	bool binary = false;		// binary messages (Server::SendBinary); otherwise text
+};
+
 struct Conn {
 	enum State { kHttp, kWs, kClosing };
 
@@ -891,8 +898,8 @@ struct Conn {
 	uint32_t id = 0;			// WebSocket client id, 0 before the upgrade
 	std::string in;
 	WsDecoder decoder;
-	std::deque<std::string> out;	// chunks taken from queue, in order
-	std::string sending;		// chunk being written, empty between chunks
+	std::deque<Chunk> out;		// chunks taken from queue, in order
+	Chunk sending;				// chunk being written, empty between chunks
 	size_t sent = 0;
 	bool finSent = false;
 	bool eof = false;			// kClosing: the peer has closed its side
@@ -904,34 +911,43 @@ struct Conn {
 	Clock::time_point deadline;	// kHttp and kClosing
 
 	// guarded by Server::Impl::mutex
-	std::deque<std::string> queue;
+	std::deque<Chunk> queue;
 
-	// Changed with the mutex held, except that the network thread lowers queued as it writes; read anywhere.
-	std::atomic<size_t> queued{0};		// bytes in queue and out plus the unsent rest of sending
+	// Changed with the mutex held, except that the network thread lowers them as it writes; read anywhere. The
+	// bytes in queue and out plus the unsent rest of sending, of text (text messages, control frames, HTTP
+	// replies) and of binary messages, each counted where its chunk is written
+	std::atomic<size_t> queuedText{0};
+	std::atomic<size_t> queuedBinary{0};
 	std::atomic<bool> overflow{false};
+
+	size_t Queued() const { return queuedText.load() + queuedBinary.load(); }
 };
 
-// Server::Impl::mutex held. Queues a chunk of whole messages for a connection.
+// Server::Impl::mutex held. Queues a chunk of whole messages for a connection, behind everything queued before
+// it: text and binary messages go out in the order they were queued.
 //
-// A small chunk is appended to the last one instead of getting an entry of its own: an entry costs far more
-// memory than a 2 byte pong counts for, and merged chunks go out in one write. Chunks still end where a
-// message ends.
+// A small chunk is appended to the last one instead of getting an entry of its own, when that one is of the
+// same kind: an entry costs far more memory than a 2 byte pong counts for, and merged chunks go out in one
+// write. Chunks still end where a message ends.
 //
-// bounded: a WebSocket client that has more than kMaxQueuedBytes waiting is cut off; the network thread sees
-// the flag and drops it. The bound is on what waits ahead of the chunk, not on the chunk: a message larger
-// than the bound still reaches a client that keeps up.
-void Push(Conn& c, std::string chunk, bool bounded) {
+// bounded: a WebSocket client that has more than kMaxQueuedBytes of text waiting, for a chunk of text, or more
+// than kMaxQueuedBinaryBytes of binary messages, for a binary one, is cut off; the network thread sees the flag
+// and drops it. Each bound is on what of its kind waits ahead of the chunk, not on the chunk: a message larger
+// than the bound still reaches a client that keeps up, and a binary message of 32 MiB that waits leaves room
+// for every text message behind it.
+void Push(Conn& c, std::string chunk, bool bounded, bool binary) {
 	if (c.overflow || chunk.empty())
 		return;
-	if (bounded && c.queued > kMaxQueuedBytes) {
+	std::atomic<size_t>& queued = binary ? c.queuedBinary : c.queuedText;
+	if (bounded && queued > (binary ? kMaxQueuedBinaryBytes : kMaxQueuedBytes)) {
 		c.overflow = true;
 		return;
 	}
-	c.queued += chunk.size();
-	if (!c.queue.empty() && c.queue.back().size() + chunk.size() <= kMergeBytes)
-		c.queue.back() += chunk;
+	queued += chunk.size();
+	if (!c.queue.empty() && c.queue.back().binary == binary && c.queue.back().bytes.size() + chunk.size() <= kMergeBytes)
+		c.queue.back().bytes += chunk;
 	else
-		c.queue.push_back(std::move(chunk));
+		c.queue.push_back(Chunk{ std::move(chunk), binary });
 }
 
 void SetOption(sock_t s, int level, int name, int value) {
@@ -1056,7 +1072,7 @@ struct Server::Impl {
 		auto it = clients.find(client);
 		if (it == clients.end())
 			return;
-		Push(*it->second, std::move(payload), true);
+		Push(*it->second, std::move(payload), true, opcode == kOpBinary);
 		Wake();
 	}
 
@@ -1064,9 +1080,10 @@ struct Server::Impl {
 	// Everything below runs on the network thread.
 	//
 
+	// Text: control frames and HTTP replies
 	void Enqueue(Conn& c, std::string chunk, bool bounded) {
 		std::lock_guard<std::mutex> lock(mutex);
-		Push(c, std::move(chunk), bounded);
+		Push(c, std::move(chunk), bounded, false);
 	}
 
 	void Unregister(Conn& c) {
@@ -1205,7 +1222,7 @@ struct Server::Impl {
 	size_t Flush(Conn& c) {
 		size_t budget = kFlushBytes;
 		while (budget != 0) {
-			if (c.sending.empty()) {
+			if (c.sending.bytes.empty()) {
 				if (c.out.empty()) {
 					std::lock_guard<std::mutex> lock(mutex);
 					c.out.swap(c.queue);
@@ -1215,8 +1232,8 @@ struct Server::Impl {
 				c.sending = std::move(c.out.front());
 				c.out.pop_front();
 			}
-			size_t want = std::min(c.sending.size() - c.sent, budget);
-			int n = (int)send(c.fd, c.sending.data() + c.sent, (int)want, kSendFlags);
+			size_t want = std::min(c.sending.bytes.size() - c.sent, budget);
+			int n = (int)send(c.fd, c.sending.bytes.data() + c.sent, (int)want, kSendFlags);
 			if (n <= 0) {
 				if (n == 0 || !SockWouldBlock(SockError()))
 					Drop(c);
@@ -1224,10 +1241,10 @@ struct Server::Impl {
 			}
 			c.sent += (size_t)n;
 			budget -= (size_t)n;
-			c.queued -= (size_t)n;
-			if (c.sent == c.sending.size()) {
+			(c.sending.binary ? c.queuedBinary : c.queuedText) -= (size_t)n;
+			if (c.sent == c.sending.bytes.size()) {
 				c.sent = 0;
-				std::string().swap(c.sending);
+				std::string().swap(c.sending.bytes);
 			}
 			if (c.state == Conn::kClosing)
 				c.deadline = Clock::now() + std::chrono::milliseconds(kStallMs);
@@ -1243,12 +1260,12 @@ struct Server::Impl {
 			Drop(c);
 			return;
 		}
-		size_t written = c.queued != 0 ? Flush(c) : 0;
+		size_t written = c.Queued() != 0 ? Flush(c) : 0;
 		if (c.dead || c.state == Conn::kWs)
 			return;
 
 		Clock::time_point now = Clock::now();
-		if (c.state == Conn::kClosing && c.queued == 0) {
+		if (c.state == Conn::kClosing && c.Queued() == 0) {
 			if (c.eof) {
 				c.dead = true;
 				return;
@@ -1323,7 +1340,7 @@ struct Server::Impl {
 				}
 				entry.fd = c->fd;
 				entry.events = c->eof ? 0 : POLLIN;
-				if (c->queued != 0)
+				if (c->Queued() != 0)
 					entry.events |= POLLOUT;
 				slots.push_back(fds.size());
 				fds.push_back(entry);
@@ -1379,7 +1396,7 @@ struct Server::Impl {
 			if (c->state == Conn::kWs) {
 				// Best effort, and only on a frame boundary: a close frame in the middle of another frame
 				// would corrupt the stream.
-				if (c->sent == c->sending.size()) {
+				if (c->sent == c->sending.bytes.size()) {
 					std::string frame = CloseFrame(kCloseGoingAway);
 					send(c->fd, frame.data(), (int)frame.size(), kSendFlags);
 				}
@@ -1482,7 +1499,7 @@ void Server::BroadcastText(const std::string& text) {
 	std::string frame = FrameHeader(kOpText, text.size()) + text;
 	std::lock_guard<std::mutex> lock(s.mutex);
 	for (const auto& client : s.clients)
-		Push(*client.second, frame, true);
+		Push(*client.second, frame, true, false);
 	if (!s.clients.empty())
 		s.Wake();
 }
@@ -1491,7 +1508,7 @@ size_t Server::QueuedBytes(uint32_t client) const {
 	const Impl& s = *impl;
 	std::lock_guard<std::mutex> lock(s.mutex);
 	auto it = s.clients.find(client);
-	return it == s.clients.end() ? 0 : it->second->queued.load();
+	return it == s.clients.end() ? 0 : it->second->Queued();
 }
 
 } }
