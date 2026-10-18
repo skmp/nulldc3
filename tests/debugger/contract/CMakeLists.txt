@@ -26,6 +26,13 @@
 #	    debugger.contract.m2.guest .interp              the second run of that gate, against the sounding guest
 #	                                                    of the tree (--milestone M2 --only S00,S16), with the two
 #	                                                    notes
+#	    debugger.contract.m3 .m3.interp .m3.fallback    the gate of milestone M3, its first run (--milestone M3): the
+#	                                                    scenarios of M1, of M2 and S17, the SGC capture and the
+#	                                                    memory binary, on the same three
+#	    debugger.contract.m3dsp.guest .interp           its second run, against the sounding guest of the tree
+#	                                                    (--milestone M3 --dsp-program: S00, S17, S21), where S17 has
+#	                                                    to have made its first capture at the anchor with the ARM7
+#	                                                    held (--require-note)
 #	    debugger.contract.m3dsp21.guest .interp         the run of the gate of milestone M3 that holds the run
 #	                                                    control of the DSP (--milestone M3 --dsp-program --only
 #	                                                    S00,S21), against the sounding guest of the tree, where
@@ -49,7 +56,7 @@
 #	test and sh4-debug-native for every other (README.md, "The engine of a run").
 #
 #	The runner needs the dreamcast-devtools checkout with its node_modules (NULLDC_DEVTOOLS_DIR) and npm:
-#	without them m1*, m2*, m2arm7*, m2writes*, m3dsp21* and hash.idlebp* are tests whose data is missing. Everything
+#	without them m1*, m2*, m2arm7*, m2writes*, m3*, m3dsp*, m3dsp21* and hash.idlebp* are tests whose data is missing. Everything
 #	needs 2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree and hash.listening.rule, which
 #	needs python3 and nothing else.
 #
@@ -97,7 +104,7 @@ endif()
 # RUNNER: the test runs the contract runner of the devtools UI.
 # GUEST: the emulator boots this program, not 2ndmix.elf: the test does not ask for NULLDC_ELF_DIR.
 # PARTS: for the mode parts, handed to the runner as its --parts. ONLY: for the mode m2, as its --only.
-# REQUIRE_NOTE: for the modes parts, m2 and dsp, as its --require-note.
+# REQUIRE_NOTE: for the modes parts, m2, m3dsp and dsp, as its --require-note.
 function(nulldc_debugger_contract name)
   cmake_parse_arguments(ARG "RUNNER;FALLBACK" "MODE;IDLE_SYMBOL;TIMEOUT;GUEST;PARTS;ONLY" "ENGINES;REQUIRE_NOTE" ${ARGN})
 
@@ -202,6 +209,18 @@ nulldc_debugger_contract(m2.fallback MODE m2 RUNNER FALLBACK)
 nulldc_debugger_contract(m2.guest    MODE m2 ONLY S00,S16 RUNNER ENGINES jit interp
                          GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
                          REQUIRE_NOTE "arm7: held at the start" "arm7: bl stepped over and out")
+
+# The gate of milestone M3 (M3-ROUND 3.9 item 8, 3.11): --milestone M3 selects the scenarios of M1 and M2 and S17,
+# the SGC capture and the memory binary, and each has to pass whole; on the three engines against 2ndmix. Its
+# second run, on the JIT and the interpreter against the sounding guest of the tree, is S00, S17 and S21
+# (--dsp-program): S17 makes its first capture at the anchor, where the guest holds its ARM7, and the capture has
+# to record and complete there (the AICA is clocked whatever ARMRST says), which the note says; its capture lets
+# the guest release its ARM7 before S21, whose held step is the run below
+nulldc_debugger_contract(m3          MODE m3 RUNNER ENGINES jit interp)
+nulldc_debugger_contract(m3.fallback MODE m3 RUNNER FALLBACK)
+nulldc_debugger_contract(m3dsp.guest MODE m3dsp RUNNER ENGINES jit interp
+                         GUEST "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
+                         REQUIRE_NOTE "sgc: captured with the arm7 held")
 
 # The run control of the DSP against the runner's S21, on the JIT and the interpreter against the sounding guest of
 # the tree (--milestone M3 --dsp-program --only S00,S21): S21 makes its first act at the anchor, where the guest
