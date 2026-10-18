@@ -2450,6 +2450,154 @@ BOUNDED_GUEST_TEST(sgc_hoststop, "sgc.hoststop")
 }
 
 /*
+	sgc.runtoend: a capture armed at a stop whose last frame comes in the rest of a burst that the thread runs to its
+	end at a host stop or a guest exit (dc_run: dbg_sgc_Frame with no checks). Through the core, at a stop in front
+	of a DSP step with its breakpoint left listed: the arm and the resume of the core's call run the burst on into
+	the next sample, whose sweep gives the first of the capture's frames, to the breakpoint's stop. There the
+	breakpoint goes, and the host stops the machine (the guest ends the run) with no resume: the thread completes
+	the capture in the rest of the burst with no stop of it, so the burst is whole in front of the stop callback and
+	behind the thread; the server has the frames, one notice answered the request {}, once, and the next thread runs
+	on. A capture whose last frame recorded its stop there would leave the burst suspended at the end of a sample
+*/
+namespace {
+
+const u32 kRunToEndFrames = 5;
+
+struct {
+	Co co;
+	u32 round, stopId, given, sample;
+	Counts c;
+	std::atomic<bool> failed { false };
+	std::atomic<int> code { 1 };
+	std::atomic<u32> burstAtStop { 9 }, active { 9 };
+	std::atomic<bool> recording { true };
+	Counts atStop;
+	emu::RunState stopped;
+} st_end;
+
+}
+
+BOUNDED_GUEST_TEST(sgc_runtoend, "sgc.runtoend")
+{
+	std::vector<Seen> list;
+	Counts c;
+
+	CO_BEGIN(st_end.co);
+
+	for (st_end.round = 0; st_end.round < 2; st_end.round++)
+	{
+		while (!Settle(stop))
+			CO_YIELD(st_end.co);
+
+		if (!CoreOn())
+			break;
+
+		while (!SuspendAtStep(stop, kSite))
+			CO_YIELD(st_end.co);
+
+		st_end.given = sgc::test::Notices().given;
+
+		// the core's call arms the capture and the resume; the breakpoint, still listed, stops the run-on in the
+		// next sample
+		Ask(kClient, 1, "state.recordSgcFrames", { { "frames", kRunToEndFrames } });
+		CO_YIELD(st_end.co);
+
+		st_end.sample = Sample();
+
+		{
+			const sgc::test::Recording rec = sgc::test::GetRecording();
+
+			if (!Check(stop.cause == StopCause::Breakpoint && stop.breakpointId == kAtId && DspStep() == kSite && Suspended() == SOUND_BURST_DSP && rec.wanted == kRunToEndFrames
+				&& rec.taken == 1 && rec.stopWhenDone && st_end.sample + kRunToEndFrames - 1 < 32 && ResponsesTo(kClient, 1).empty(),
+				"the capture of %u frames, armed at a stop, records at the breakpoint's stop in sample %u, with %u frame taken and fewer frames left than the "
+				"burst has samples (\"%s\", burst %u)", kRunToEndFrames, st_end.sample, rec.taken, StopCauseName(stop.cause), Suspended()))
+			{
+				CoreOff();
+				break;
+			}
+		}
+
+		DspBps({ });
+		st_end.stopId = stop.stopId;
+		st_end.c = ReadCounts();
+		st_end.failed = false;
+		st_end.code = 1;
+		st_end.burstAtStop = 9;
+		st_end.active = 9;
+		st_end.recording = true;
+		hand.stopCallbacks = 0;
+		hand.stopSuspended = ~0u;
+		TakeSeen();
+
+		OtherStart([] {
+			if (!WaitLifetime(Lifetime::Stopped))
+			{
+				st_end.failed = true;
+				return;
+			}
+
+			st_end.stopped = emu::GetRunState();
+			st_end.code = InBandCode(WaitResponse(kClient, 1, 3000));
+
+			// with no emulator thread the caller runs it itself
+			emu::Call(emu::CC_TABLE, [] {
+				st_end.burstAtStop = Suspended();
+				st_end.atStop = ReadCounts();
+				st_end.active = dbg_sgc_active;
+				st_end.recording = Recording();
+			});
+
+			Restart(false);
+		});
+
+		// no resume
+		if (st_end.round == 0)
+			virtualDreamcast->Stop(HandStopped);
+		else
+			virtualDreamcast->RequestExit();
+		CO_YIELD(st_end.co);
+
+		OtherJoin();
+		list = TakeSeen();
+
+		Check(!st_end.failed && st_end.stopped.cause == (st_end.round == 0 ? StopCause::HostStopped : StopCause::GuestExit) && st_end.stopped.stopId == st_end.stopId + 1
+			&& !SeenHas(list, Lifetime::Parked, StopCause::Capture),
+			"%s at the breakpoint's stop, with no resume: the capture's stop is not published (%s)", st_end.round == 0 ? "the host stops the machine" : "the guest ends the run",
+			SeenText(list).c_str());
+
+		if (st_end.round == 0)
+			Check(hand.stopCallbacks == 1 && hand.stopSuspended == SOUND_BURST_NONE && hand.stopCounts.n[3] == st_end.c.n[3] + 1,
+				"the burst ran to its end in front of the stop callback: the callback found none suspended (burst %u), and the tail run", (u32)hand.stopSuspended);
+
+		Check(st_end.burstAtStop == SOUND_BURST_NONE && st_end.atStop.n[3] == st_end.c.n[3] + 1 && st_end.atStop.n[2] - st_end.c.n[2] == 32 - st_end.sample,
+			"behind the thread the burst is whole: none suspended (burst %u), its tail run once, and the rest of its samples made (%u time steps)",
+			st_end.burstAtStop.load(), st_end.atStop.n[2] - st_end.c.n[2]);
+		Check(ServerFrames() == kRunToEndFrames && st_end.active == 0 && !st_end.recording && sgc::test::Notices().given == st_end.given + 1
+			&& sgc::test::Notices().lastAnswer == 0, "the capture completed in the rest of the burst: the server has its %u frames, and one notice was given, with the "
+			"answer 0 (%u frames)", kRunToEndFrames, ServerFrames());
+		Check(st_end.code == 0 && ResponsesTo(kClient, 1).size() == 1 && core::CaptureCountsForTest().owed == 0, "its request is answered {}, once (%d)", st_end.code.load());
+		Check(stop.cause == StopCause::Start, "the host starts the next thread (\"%s\")", StopCauseName(stop.cause));
+
+		st_end.c = ReadCounts();
+		TakeSeen();
+
+		while (!PauseAfter(stop, 3))
+			CO_YIELD(st_end.co);
+
+		c = ReadCounts();
+		list = TakeSeen();
+
+		Check(stop.cause == StopCause::Pause && !SeenHas(list, Lifetime::Parked, StopCause::Capture) && c.n[0] - st_end.c.n[0] >= 3
+			&& c.n[3] - st_end.c.n[3] == c.n[0] - st_end.c.n[0] && ResponsesTo(kClient, 1).size() == 1,
+			"the next thread runs on: %u bursts, each whole, and nothing of the capture (%s)", c.n[0] - st_end.c.n[0], SeenText(list).c_str());
+
+		CoreOff();
+	}
+
+	CO_END(st_end.co);
+}
+
+/*
 	sgc.held: a capture armed while the guest holds its ARM7, for every burst of the capture: the AICA is clocked
 	whatever ARMRST says, so it records its frames in as many time steps, with no ARM phase, and completes; the two
 	channels the guest keyed play in every frame of it
