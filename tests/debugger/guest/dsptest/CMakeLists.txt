@@ -42,11 +42,13 @@
 #	                                                        sound
 #	    debugger.sound.runner                               soundlines.py fails a run that was not made on the SH4
 #	                                                        engine it was asked for, its mode names fails those
-#	                                                        names and no other test's, and its mode held checks
-#	                                                        its patches and its fields on a copy of dsptest.elf
-#	                                                        (soundlines_test.py, on stand-ins for the emulator,
-#	                                                        whose line depends on the guest, and for a build: no
-#	                                                        emulator is run)
+#	                                                        names and no other test's, its modes held, heard and
+#	                                                        oracle check their copies and their fields on copies of
+#	                                                        dsptest.elf, its mode silent the k of the silence, and
+#	                                                        its mode release the empty end of the DSP part of the
+#	                                                        table (soundlines_test.py, on stand-ins for the
+#	                                                        emulator, whose line depends on the guest, for the
+#	                                                        oracle and for a build: no emulator is run)
 #
 #	debugger.sound.oracle.dsptest.<jit|interp>, the mode oracle (the DSP of a copy of the guest whose sends are 0
 #	against the caique model), is registered in tests/aica_dsp, where the tool it needs is built.
