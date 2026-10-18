@@ -30,7 +30,8 @@
 	The notice of the core is given once for every capture that Arm() armed: in dbg_sgc_Frame() when the capture
 	is complete, or in Cancel(). Everything here runs on (E), or under L while no emulator thread exists, and never
 	while a burst executes but for dbg_sgc_Frame() itself; the notice is the one pointer another thread sets
-	(SetCompletionNotice, at dbg::Init and dbg::Term), so it is atomic.
+	(SetCompletionNotice, when the core's thread starts and stops: core::Start or StartForTest, and core::Stop,
+	which dbg::Init and dbg::Term call), so it is atomic.
 
 	The buffers are on the heap and the rest is plain data with static storage: nothing here has a destructor.
 */

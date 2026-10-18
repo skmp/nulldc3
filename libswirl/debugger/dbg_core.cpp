@@ -53,12 +53,12 @@
 	The one rule: the tables below (breakpoints, watches, categories) are touched inside calls and in the
 	listener only. What (C) keeps for itself (the open clients, the timers) has a lock of its own, a leaf.
 
-	Order. A tick is handed to the server in the place that built it, a call or the listener, and those run
-	one at a time, so ticks reach a client in the order they were built. The response of debugger.describe is
-	handed over inside the same call as its tick, directly in front of it. Every other response is sent by
-	(C) when its call has returned, and a binary frame directly behind the response it belongs to, to that client
-	only. The response of state.recordSgcFrames is deferred: (C) sends it when the capture's notice comes (below,
-	"The capture's deferred response").
+	Order. A tick is handed to the server in the place that built it, a call or the listener, and those run one at a
+	time, so ticks reach a client in the order they were built. The response of debugger.describe is handed over inside
+	the same call as its tick, directly in front of it. Every other response is sent by (C) when its call has returned,
+	and a binary frame behind the response it belongs to, to that client only (a tick may come between the two: a
+	client pairs a frame with its response by its binaryId). The response of state.recordSgcFrames is deferred: (C)
+	sends it when the capture's notice comes (below, "The capture's deferred response").
 
 	No client is a debugging session: connecting stops nothing. What depends on a client being connected is
 	the event gates, the activity of breakpoints with the grace period, and the periodic tick; all of them
