@@ -146,7 +146,7 @@ namespace
 		{ "dc.sh4.sci", 8 }, { "dc.sh4.scif", 10 }, { "dc.sh4.tmu", 12 }, { "dc.sh4.ubc", 9 },
 		{ "dc.holly.intc", 12 }, { "dc.holly.dmac", 60 }, { "dc.holly.sb.g1", 11 }, { "dc.holly.sb.g2", 6 }, { "dc.holly.sb.pvr", 11 },
 		{ "dc.holly.sb.misc", 15 }, { "dc.holly.ta", 14 }, { "dc.holly.core", 45 }, { "dc.holly.spg", 9 },
-		{ "dc.aica.arm7", 41 }, { "dc.aica.dsp", 4 }, { "dc.aica.common", 49 }, { "dc.aica.rtc", 2 },
+		{ "dc.aica.arm7", 41 }, { "dc.aica.dsp", 13 }, { "dc.aica.common", 49 }, { "dc.aica.rtc", 2 },
 		{ "dc.gdrom", 27 }, { "dc.maple", 12 }, { "dc.timing", 5 },
 	};
 
@@ -553,6 +553,12 @@ namespace
 
 		case kSrcDsp:
 			Check(selector < kDspRegCount, "%s.%s: DSP selector %u", path, name, selector);
+			Check(!(reg.flags & kRegWritable), "%s.%s: a row of the DSP is read-only", path, name);
+
+			// the datapath of the DSP core, behind RBL: fields of the DSP's state, with no address in the register file
+			if (selector > kDspRbl)
+				Check((reg.flags & (kRegComputed | kRegNoReader)) == kRegComputed && reg.addr == kNoAddr, "%s.%s: flags %02X, address %08X, expected computed "
+					"and no address", path, name, reg.flags, reg.addr);
 			break;
 
 		case kSrcTiming:
@@ -767,7 +773,7 @@ namespace
 				total += nodes[i].registerCount;
 			}
 
-			Check(total == 2940, "the tree has %u registers, expected 2940", total);
+			Check(total == 2949, "the tree has %u registers, expected 2949", total);
 		}
 
 		// a register panel is the action of one node
@@ -819,6 +825,10 @@ namespace
 			{ "dc.aica.rtc", "SECONDS", 32 }, { "dc.aica.rtc", "WRITE_ENABLE", 1 },
 			{ "dc.aica.sgc.0", "SA", 23 }, { "dc.aica.sgc.0", "KYONB", 1 }, { "dc.aica.sgc.63", "AR", 5 }, { "dc.aica.sgc.63", "FD2R", 5 },
 			{ "dc.gdrom", "STATUS", 8 }, { "dc.gdrom", "PACKET_8_11", 32 },
+			// milestone M3: the datapath of the DSP, behind the four rows of M1 (normative widths)
+			{ "dc.aica.dsp", "ACC", 26 }, { "dc.aica.dsp", "Y_REG", 24 }, { "dc.aica.dsp", "FRC_REG", 13 }, { "dc.aica.dsp", "ADRS_REG", 12 },
+			{ "dc.aica.dsp", "LATCH", 16 }, { "dc.aica.dsp", "LATCH_COPY", 16 }, { "dc.aica.dsp", "MEMVAL", 16 }, { "dc.aica.dsp", "NOFL_PIPE", 2 },
+			{ "dc.aica.dsp", "MIXS_BANK", 1 },
 		};
 
 		for (const auto& want : named)
