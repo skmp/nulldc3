@@ -1498,12 +1498,66 @@ BOUNDED_GUEST_TEST(mem_binary_errors, "mem.binary.errors")
 	CO_END(mb_err.co);
 }
 
+/*
+	mem.binary.ids: one counter of binaryIds for the frames of both kinds, from 1, per connection (design 3.4,
+	M3-D36). The selftest's own requests, which have no connection, have a counter of their own; two clients of the
+	core (core::TextForTest) each count from 1, with the frames of the other and those of client 0 in between; and
+	a client of a new connection (the core thread stopped and started again, which forgets its clients) counts from
+	1 again
+*/
 namespace {
+
+const u32 kOtherClient = 8;		// the second client of the core
+const u32 kIdFrames = 5;
 
 struct {
 	Co co;
-	u32 stopId;
+	u32 stopId, zero;
+	std::atomic<bool> failed { false };
+	std::atomic<u32> got[kIdFrames], again { 0 };
 } mb_ids;
+
+// A request of a client of the core that a binary frame answers, from a thread the test started: the binaryId of its
+// result where the frame behind the response to that client has the same one in its header, else 0
+u32 BinaryIdOf(u32 client, u32 id, const char* method, const json& params = json::object())
+{
+	Ask(client, id, method, params);
+
+	const std::string response = WaitResponse(client, id, 10000);
+	json j = json::parse(response, nullptr, false);
+
+	if (!j.is_object() || !j.contains("result") || !j["result"].is_object() || !j["result"].contains("binaryId") || !j["result"]["binaryId"].is_number())
+		return 0;
+
+	const u32 want = j["result"]["binaryId"].get<u32>();
+
+	for (Clock::time_point t0 = Clock::now(); MsSince(t0) < 10000; Nap(1))
+	{
+		std::lock_guard<std::mutex> lock(sent_lock);
+		bool behind = false;
+
+		for (const Sent& m : sent)
+		{
+			if (m.client != client)
+				continue;
+
+			if (!m.binary && m.text == response)
+			{
+				behind = true;
+			}
+			else if (behind && m.binary)
+			{
+				u32 kind = 0, frameId = 0, bytes = 0;
+
+				return Header(m.text, &kind, &frameId, &bytes) && frameId == want ? want : 0;
+			}
+		}
+	}
+
+	return 0;
+}
+
+const json kIdRead = { { "target", "sh4" }, { "address", DSPTEST_START }, { "length", 16 } };
 
 }
 
@@ -1547,7 +1601,87 @@ BOUNDED_GUEST_TEST(mem_binary_ids, "mem.binary.ids")
 		Check(ordered && frame[1].payload == ServerCapture(), "its payload is the server's capture");
 		Check(first.ordered && last.ordered && first.id >= 1 && id == first.id + 1 && last.id == id + 1 && error.sent.size() == 1,
 			"one counter of binaryIds for the frames of both kinds, from 1: %u, %u, %u, and an error takes none", first.id, id, last.id);
+
+		mb_ids.zero = last.id;
 	}
+
+	/*
+		two clients of the core, while the machine runs
+	*/
+	if (!CoreOn())
+		break;
+
+	mb_ids.failed = false;
+
+	for (u32 i = 0; i < kIdFrames; i++)
+		mb_ids.got[i] = 0;
+
+	OtherStart([] {
+		if (!WaitLifetime(Lifetime::Running))
+		{
+			mb_ids.failed = true;
+			return;
+		}
+
+		mb_ids.got[0] = BinaryIdOf(kClient, 1, "state.getMemoryBinary", kIdRead);
+		mb_ids.got[1] = BinaryIdOf(kOtherClient, 1, "state.getSgcFrameData");
+		mb_ids.got[2] = BinaryIdOf(kClient, 2, "state.getSgcFrameData");
+		mb_ids.got[3] = BinaryIdOf(kClient, 3, "state.getMemoryBinary", kIdRead);
+		mb_ids.got[4] = BinaryIdOf(kOtherClient, 2, "state.getMemoryBinary", kIdRead);
+
+		emu::RequestPause();
+	});
+
+	if (!Resume())
+		break;
+	CO_YIELD(mb_ids.co);
+
+	OtherJoin();
+	CoreOff();
+
+	Check(!mb_ids.failed && stop.cause == StopCause::Pause && mb_ids.got[0] == 1 && mb_ids.got[1] == 1 && mb_ids.got[2] == 2 && mb_ids.got[3] == 3 && mb_ids.got[4] == 2,
+		"two clients of the core: each one's first frame has binaryId 1, and the other's frames and those of client 0 do not move its counter "
+		"(client %u: %u %u %u, client %u: %u %u, frames of both kinds)", kClient, mb_ids.got[0].load(), mb_ids.got[2].load(), mb_ids.got[3].load(), kOtherClient,
+		mb_ids.got[1].load(), mb_ids.got[4].load());
+
+	// nor did the clients' frames move the counter of client 0
+	core::SetSendSinkForTest(Sink);
+
+	{
+		BinaryRead zero = ReadBinary("sh4", DSPTEST_START, 16);
+
+		Check(zero.ordered && zero.id == mb_ids.zero + 1, "the selftest's own requests count on from their last id, %u: %u", mb_ids.zero, zero.id);
+	}
+
+	/*
+		a new connection
+	*/
+	if (!CoreOn())
+		break;
+
+	mb_ids.failed = false;
+	mb_ids.again = 0;
+
+	OtherStart([] {
+		if (!WaitLifetime(Lifetime::Running))
+		{
+			mb_ids.failed = true;
+			return;
+		}
+
+		mb_ids.again = BinaryIdOf(kClient, 1, "state.getMemoryBinary", kIdRead);
+
+		emu::RequestPause();
+	});
+
+	if (!Resume())
+		break;
+	CO_YIELD(mb_ids.co);
+
+	OtherJoin();
+	CoreOff();
+
+	Check(!mb_ids.failed && stop.cause == StopCause::Pause && mb_ids.again == 1, "client %u of a new connection counts from 1 again: %u", kClient, mb_ids.again.load());
 
 	core::SetSendSinkForTest(nullptr);
 	TakeSent();
