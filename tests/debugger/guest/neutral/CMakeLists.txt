@@ -1,10 +1,11 @@
-## The debugger at work on the ARM7 and the DSP of the sounding guest: the run is the run nobody touched ##
+## The debugger at work on the ARM7, the DSP and the SGC of the sounding guest: the run is the run nobody touched ##
 #
-#	Sixteen tests, debugger.sound.neutral.<idlebp|hitresume|steps|hoststop>.<jit|interp> on the ARM7 and
-#	debugger.sound.neutral.dsp.<loop|hitresume|steps|hoststop>.<jit|interp> on the DSP, made by
-#	nulldc_sound_neutral of ../dsptest/CMakeLists.txt: the mode neutral of ../dsptest/soundlines.py on a
-#	selftest session whose one test never returns (libswirl/debugger/dbg_selftest_arm7.cpp, arm7n.*;
-#	libswirl/debugger/dbg_selftest_dsp.cpp, dspn.*). Each makes four runs of dsptest.elf and holds two things
+#	Twenty tests, debugger.sound.neutral.<idlebp|hitresume|steps|hoststop>.<jit|interp> on the ARM7,
+#	debugger.sound.neutral.dsp.<loop|hitresume|steps|hoststop>.<jit|interp> on the DSP and
+#	debugger.sound.neutral.sgc.<running|paused>.<jit|interp> on the SGC capture, made by nulldc_sound_neutral of
+#	../dsptest/CMakeLists.txt: the mode neutral of ../dsptest/soundlines.py on a selftest session whose one test
+#	never returns (libswirl/debugger/dbg_selftest_arm7.cpp, arm7n.*; libswirl/debugger/dbg_selftest_dsp.cpp,
+#	dspn.*; libswirl/debugger/dbg_selftest_sgc.cpp, sgcn.*). Each makes four runs of dsptest.elf and holds two things
 #	against the run without the session: the sound line at 2000 ticks, whole, and the state hash at 90 vblanks,
 #	part for part. The line has no field for wave memory, main memory or the scheduler; the hash has. The line's
 #	dsp field is the state of the DSP core, folded at every tick.
@@ -54,6 +55,15 @@
 #	                   front of a DSP step (at least 20) or at the end of a sample (at least 5), and starts it
 #	                   again: the thread that ends runs the rest of the burst in front of its stop callback (dc_run)
 #
+#	The SGC capture only reads the guest, while the machine runs and from a stop; its stop at the end of a sample
+#	is a stop like every other:
+#
+#	    sgc.running    captures of 1 to 4096 frames while the machine runs, one behind the other, each armed in a
+#	                   table call (a service excursion) and complete with its frames, none stopping the run
+#	    sgc.paused     captures armed at stops, each resumed, until each kind was taken ten times: behind a burst,
+#	                   in front of an ARM7 instruction, in front of a DSP step, and at the end of a sample (the
+#	                   stop of the capture before); each stops behind its last frame with its frames
+#
 #	README.md of ../dsptest has the guest; tests/debugger/selftest/README.md has the tests of the session.
 #
 
@@ -90,3 +100,10 @@ nulldc_sound_neutral(dsp.steps     SELFTEST dspn.steps
 nulldc_sound_neutral(dsp.hoststop  SELFTEST dspn.hoststop
                      EXPECT "the host stopped the machine 60 times while the thread was parked on a suspended burst"
                             "each of the 60 stop callbacks found the burst whole")
+
+nulldc_sound_neutral(sgc.running   SELFTEST sgcn.running
+                     EXPECT "captures while running, of 1 to 4096 frames, each complete with its frames, and none stopped the run")
+
+nulldc_sound_neutral(sgc.paused    SELFTEST sgcn.paused
+                     EXPECT "captures armed at stops, each resumed"
+                            "each stopped behind its last frame with its frames and its time steps")

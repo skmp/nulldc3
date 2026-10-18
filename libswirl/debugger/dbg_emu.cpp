@@ -22,6 +22,7 @@
 #include "dbg_sh4.h"
 #include "dbg_arm7.h"
 #include "dbg_dsp.h"
+#include "dbg_sgc.h"
 #include "dbg_selftest.h"
 #include "dbg_symbols.h"
 
@@ -1508,6 +1509,12 @@ void OnThreadExiting(bool guestExit)
 		RunCall(call);
 	}
 
+	// Behind the drain, with the queue empty and L still held, so that no queued call runs behind it: an SGC
+	// capture that records goes, also one that a CC_TABLE call of the drain armed (that call ran on this thread,
+	// which is the emulator thread until the end of this function). Its request is answered -32001. A call made
+	// from here on finds Stopped and runs on its caller, under L, behind this thread
+	sgc::Cancel(kErrHostStopped);
+
 	Announce(stopped);
 
 	// No call of the window from here: this is behind the stop callback, and the thread of the user interface
@@ -1536,6 +1543,10 @@ void OnGuestStateReplaced()
 		arm7::OnStop();
 		dsp::OnStop();
 		SelectArm7();
+
+		// An SGC capture would span two states of the machine: it goes, and its request is answered -32014 at
+		// once. Without an emulator thread there is none: the thread cancelled it on its way out
+		sgc::Cancel(kErrCaptureTimeout);
 
 		// the park loop publishes the stop, if one is in force
 		e.resetSeen = true;
