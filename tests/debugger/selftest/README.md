@@ -174,15 +174,16 @@ SH4 in its loop, the ARM7 clocked and in its own, no breakpoint listed, no burst
 A sound burst is the work of one scheduler callback of the AICA: 32 times an ARM phase (the ARM7 for the 256
 ticks of a sample, none while the guest holds it in reset: whether it is held is latched at the start of the
 burst) and a time step of the AICA, which makes the sample, then the tail (the tick of the sound regression
-harness). The AICA is clocked whatever `ARMRST` says: a burst that finds the ARM7 held makes its 32 time steps. The machine counts what its bursts did (`VirtualDreamcast::SoundBurstCounts`:
-bursts started, ARM phases that ran to their end, time steps, tails), and the tests read those counts: they say
-in which burst a stop was made, whether a step stayed inside one ARM phase, and how often a tail ran.
+harness). The AICA is clocked whatever `ARMRST` says: a burst that finds the ARM7 held makes its 32 time steps.
+The machine counts what its bursts did (`VirtualDreamcast::SoundBurstCounts`: bursts started, ARM phases that ran
+to their end, time steps, tails), and the tests read those counts: they say in which burst a stop was made,
+whether a step stayed inside one ARM phase, and how often a tail ran.
 
 What has to happen at a moment of the emulated machine is done by a scheduler callback of the tests that is
 registered behind the AICA's, and so runs behind the sound burst in a tick they share: a pause after a number of
-bursts (it counts bursts: with the ARM7 held the timers of the AICA count on, but no handler arms timer A
-again, so no timer overflows in every burst, and nothing else stops a run), a host stop, a guest
-exit or a guest reset in the first slice of a run, or in the tick in which a burst was suspended.
+bursts (it counts bursts: with the ARM7 held the timers of the AICA count on, but no handler arms timer A again,
+so not every burst has a timer overflow, and nothing else stops a run behind each one), a host stop, a guest exit
+or a guest reset in the first slice of a run, or in the tick in which a burst was suspended.
 
 | test | what has to hold |
 |---|---|

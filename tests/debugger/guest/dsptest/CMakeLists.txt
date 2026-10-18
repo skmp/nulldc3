@@ -35,9 +35,11 @@
 #	                                                        (.batch, .persample): there is one way to make the
 #	                                                        sound
 #	    debugger.sound.runner                               soundlines.py fails a run that was not made on the SH4
-#	                                                        engine it was asked for, and its mode names fails
-#	                                                        those names and no other test's (soundlines_test.py,
-#	                                                        on stand-ins for the emulator and for a build: no
+#	                                                        engine it was asked for, its mode names fails those
+#	                                                        names and no other test's, and its mode held checks
+#	                                                        its patches and its fields on a copy of dsptest.elf
+#	                                                        (soundlines_test.py, on stand-ins for the emulator,
+#	                                                        whose line depends on the guest, and for a build: no
 #	                                                        emulator is run)
 #
 #	Every run of these tests has to say that it was made on the engine it was asked for. An emulator without a

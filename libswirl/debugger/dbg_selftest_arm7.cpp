@@ -980,7 +980,7 @@ bool SuspendAt(const emu::RunState& stop, u32 addr)
 /*
 	A pause behind `bursts` more sound bursts, asked for by the hand: the stop of a run that nothing of the ARM7
 	stopped. It counts bursts, and works whether the ARM7 is clocked or held: with the ARM7 held the timers of the
-	AICA count on, but no handler arms timer A again, and no timer overflows in every burst
+	AICA count on, but no handler arms timer A again, so not every burst has a timer overflow to stop behind
 */
 struct {
 	Co co;

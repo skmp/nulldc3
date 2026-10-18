@@ -126,8 +126,9 @@ up, runs the SH4 on its interpreter, prints `Using MCPU Interpreter` where the o
 and ends like any other run. Whoever compares the lines of the two engines looks for that line first.
 
 A program that plays nothing has a `samples` field too: the hash of `k * 32` pairs of zeroes, one value for each
-`k`, and `k` is N for a line at N ticks. `tests/debugger/guest/dsptest/` has a program that does play (`dsptest.elf`, part of the tree), the script
-that makes these runs and compares their lines (`soundlines.py`), and the tests `debugger.sound.*`.
+`k`, and `k` is N for a line at N ticks. `tests/debugger/guest/dsptest/` has a program that does play
+(`dsptest.elf`, part of the tree), the script that makes these runs and compares their lines (`soundlines.py`),
+and the tests `debugger.sound.*`.
 
 ## Headless mode
 
