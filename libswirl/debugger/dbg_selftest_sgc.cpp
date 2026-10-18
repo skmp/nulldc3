@@ -3421,7 +3421,11 @@ BOUNDED_GUEST_TEST(sgc_outputs, "sgc.outputs")
 	while (!PauseAfter(stop, 2))
 		CO_YIELD(st_out.co);
 
-	Check(NoOutputs(&sounding) && sounding >= 2, "no capture records: every channel's outputs read 0, also those of the %u that sound", sounding);
+	{
+		const bool none = NoOutputs(&sounding);
+
+		Check(none && sounding >= 2, "no capture records: every channel's outputs read 0, also those of the %u that sound", sounding);
+	}
 
 	// one channel alone in the mix
 	st_out.efreg0 = AicaReg16(kEFREG0);
@@ -3462,18 +3466,25 @@ BOUNDED_GUEST_TEST(sgc_outputs, "sgc.outputs")
 			Check(silent.outLeft == 0 && silent.outRight == 0 && silent.outDsp != 0 && other.outLeft == 0 && other.outRight == 0 && other.outDsp == 0,
 				"the first channel, at direct level 0, has no direct outputs and its send to the DSP (%d); a channel that does not play has none", silent.outDsp);
 
-			st_out.moved += st_out.round != 0 && alone.outRight != st_out.last;
-			st_out.nonzero += alone.outRight != 0;
-			st_out.last = alone.outRight;
+			// the guest pans the channel to one side or the other (g_irq)
+			const s32 side = alone.outLeft + alone.outRight;
+
+			st_out.moved += st_out.round != 0 && side != st_out.last;
+			st_out.nonzero += side != 0;
+			st_out.last = side;
 		}
 	}
 
-	Check(st_out.moved != 0 && st_out.nonzero != 0, "the outputs are those of each sample: on the side the channel is panned to they move %u times in %u samples, "
-		"%u of them not 0", st_out.moved, kOutputRounds, st_out.nonzero);
+	Check(st_out.moved != 0 && st_out.nonzero != 0, "the outputs are those of each sample: on the side the channel is panned to (the guest moves it) they move "
+		"%u times in %u samples, %u of them not 0", st_out.moved, kOutputRounds, st_out.nonzero);
 
 	sgc::Cancel(kErrCaptureTimeout);
 
-	Check(NoOutputs(&sounding) && sounding >= 1, "once no capture records the outputs read 0 again, the channel alone's included");
+	{
+		const bool none = NoOutputs(&sounding);
+
+		Check(none && sounding >= 2, "once no capture records the outputs read 0 again, the channel alone's included (%u sound)", sounding);
+	}
 
 	Aica()->WriteReg(kEFREG0, st_out.efreg0, 2);
 	Aica()->WriteReg(kEFREG0 + 4, st_out.efreg1, 2);
