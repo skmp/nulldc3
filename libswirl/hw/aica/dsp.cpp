@@ -10,6 +10,7 @@
 #include "dsp_core/aica_dsp_core.h"
 #include "aica_mem.h"
 #include "oslib/oslib.h"
+#include "debugger/debugger.h"
 #include <vector>
 
 /*
@@ -40,10 +41,25 @@ struct DSP_impl final : DSP {
 		core.Reset();
 	}
 
+	// With nothing of the debugger armed the rest of the sample in one call. The debug loop: in front of each step
+	// the check of the debugger (debugger/debugger.h), which can suspend the phase there; the core's step is 0
+	// behind step 127. Both execute the same steps, from any step: what the DSP computes does not depend on which
+	// of the two ran it
 	bool RunPhase(bool checks) {
-		core.RunSample();
+		if (likely(!(checks && dbg_dsp_armed != 0))) {
+			core.RunSample();
+			return true;
+		}
 
-		return true;
+		for (;;) {
+			if (dbg_dsp_armed != 0 && dbg_dsp_Check(core.step))
+				return false;
+
+			core.StepOne();
+
+			if (core.step == 0)
+				return true;
+		}
 	}
 
 	AicaDsp* Core() {
