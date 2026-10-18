@@ -1515,11 +1515,18 @@ namespace {
 
 struct {
 	Co co;
-	u32 mdec, step;
+	u32 mdec, step, round;
 	Counts c;
 	std::atomic<bool> calling { false };
 	std::atomic<int> rv { 0 };
 	std::atomic<bool> onEmu { false };
+
+	// what the call of the fourth block found: the exemption armed by the leave in front of the change of
+	// dbg_dsp_armed, and the flag between its two changes and behind them, with what was left of the exemption
+	std::atomic<bool> exemptBefore { false };
+	std::atomic<u32> armedBetween { 0 };
+	std::atomic<u32> armedAfter { 0 };
+	std::atomic<bool> exemptAfter { false };
 } bp_res;
 
 }
@@ -1586,8 +1593,10 @@ BOUNDED_GUEST_TEST(dsp_bp_resume, "dsp.bp.resume")
 		in the last sample of a burst: the DSP decided it, nothing is listed, no burst is suspended, and the DSP
 		stands in front of step 0. A thread queues the call that lists a breakpoint on step 0, and the resume is
 		armed while that call waits: the park loop leaves first, the call is served at the first slice end, and the
-		next burst stops in front of step 0 with nothing of it executed. An exemption that had been armed at the
-		leave, and had outlived the change of dbg_dsp_armed, would run through step 0
+		next burst stops in front of step 0 with nothing of it executed. dbg_dsp_armed is 0 at the leave, so the
+		resume arms no exemption (no check would be made): this block holds that rule together with the end of an
+		exemption at the change of the flag from 0, which would end one that had been armed. The next block arms
+		one at the leave, and ends it by a change of the flag alone
 	*/
 	DspBps({ });
 
@@ -1640,6 +1649,103 @@ BOUNDED_GUEST_TEST(dsp_bp_resume, "dsp.bp.resume")
 		"a breakpoint listed behind the leave, by a call that waited and was served while the machine ran, stops in front of step 0 of the next burst, which "
 		"has not executed: \"%s\" id %u, the call returned %d, %u bursts, sample %u, MDEC_CT %04X (it was %04X)", StopCauseName(stop.cause), stop.breakpointId,
 		bp_res.rv.load(), c.n[0] - bp_res.c.n[0], Sample(), Mdec(), bp_res.mdec);
+
+	/*
+		An exemption armed at the leave ends at a change of dbg_dsp_armed to 0 and back, in two rounds. The stop is
+		again that of a step of step 127 in the last sample of a burst, and a breakpoint on step 0 is listed at the
+		stop: dbg_dsp_armed is not 0, and the resume arms the exemption for step 0. A thread queues one call, which
+		is served at the first slice end while the SH4 runs to the next burst: in the first round it removes the
+		breakpoint and lists it again, in the second it mutes the category of the DSP and makes it active again;
+		either takes dbg_dsp_armed to 0 and back, as a client's two requests would. The exemption ends there, and
+		the breakpoint stops in front of step 0 of the next burst with nothing of it executed. An exemption that
+		outlived the change would run through step 0 and stop in front of it one sample later, MDEC_CT one less
+	*/
+	for (bp_res.round = 0; bp_res.round < 2; bp_res.round++)
+	{
+		DspBps({ });
+
+		while (!SuspendAtStep(stop, kLast))
+			CO_YIELD(bp_res.co);
+
+		while (!ToSample(stop, 31))
+			CO_YIELD(bp_res.co);
+
+		DspBps({ });
+
+		if (!StepDsp())
+			break;
+		CO_YIELD(bp_res.co);
+
+		if (stop.cause != StopCause::Step || Suspended() != SOUND_BURST_NONE || DspStep() != 0 || !dsp::test::GetState().stopByCheck)
+		{
+			Check(false, "a step of step 127 in the last sample of a burst, for the change of dbg_dsp_armed: the stop is the DSP's, at step 0, behind the burst "
+				"(\"%s\", burst %u, step %u)", StopCauseName(stop.cause), Suspended(), DspStep());
+			break;
+		}
+
+		NoteBetweenBursts();
+		DspBps({ { 16, 0 } });
+
+		bp_res.mdec = Mdec();
+		bp_res.c = ReadCounts();
+		bp_res.rv = -1;
+		bp_res.onEmu = false;
+		bp_res.exemptBefore = false;
+		bp_res.armedBetween = ~0u;
+		bp_res.armedAfter = 0;
+		bp_res.exemptAfter = true;
+
+		OtherStart([] {
+			bp_res.rv = emu::Call(emu::CC_TABLE, [] {
+				const dsp::test::State s = dsp::test::GetState();
+
+				bp_res.onEmu = emu::OnEmuThread() && emu::GetRunState().lifetime == Lifetime::Running;
+				bp_res.exemptBefore = s.exempt && s.exemptStep == 0;
+
+				if (bp_res.round == 0)
+				{
+					DspBps({ });
+					bp_res.armedBetween = dbg_dsp_armed;
+					DspBps({ { 16, 0 } });
+				}
+				else
+				{
+					emu::SetActiveMask(kMaskAll & ~CategoryBit(Category::Dsp));
+					bp_res.armedBetween = dbg_dsp_armed;
+					emu::SetActiveMask(kMaskAll);
+				}
+
+				bp_res.armedAfter = dbg_dsp_armed;
+				bp_res.exemptAfter = dsp::test::GetState().exempt;
+			});
+		});
+
+		// until the call is in the queue
+		for (Clock::time_point t0 = Clock::now(); !(g_attn.load() & ATTN_CALL) && MsSince(t0) < kHoldMs; )
+			std::this_thread::yield();
+
+		if (!Resume())
+			break;
+		CO_YIELD(bp_res.co);
+
+		OtherJoin();
+		c = ReadCounts();
+
+		Check(bp_res.rv == 0 && bp_res.onEmu && bp_res.exemptBefore && bp_res.armedBetween == 0 && bp_res.armedAfter != 0 && !bp_res.exemptAfter,
+			"%s: the call was served on the emulator thread while the machine ran, with the exemption for step 0 that the leave armed; it took dbg_dsp_armed to "
+			"0 and back, and that ended the exemption (the call returned %d, the exemption %s in front of it and %s behind it, dbg_dsp_armed %u between the "
+			"changes and %u behind them)", bp_res.round ? "the category muted and active again" : "the breakpoint removed and listed again", bp_res.rv.load(),
+			bp_res.exemptBefore ? "armed" : "not armed", bp_res.exemptAfter ? "still armed" : "ended", bp_res.armedBetween.load(), bp_res.armedAfter.load());
+		Check(stop.cause == StopCause::Breakpoint && stop.breakpointId == 16 && DspStep() == 0 && Sample() == 0 && Mdec() == bp_res.mdec
+			&& c.n[0] == bp_res.c.n[0] + 1,
+			"%s: the breakpoint on step 0 stops in front of it in the next burst, which has not executed it: \"%s\" id %u at step %u, %u bursts, sample %u, "
+			"MDEC_CT %04X (it was %04X)", bp_res.round ? "the category muted and active again" : "the breakpoint removed and listed again",
+			StopCauseName(stop.cause), stop.breakpointId, DspStep(), c.n[0] - bp_res.c.n[0], Sample(), Mdec(), bp_res.mdec);
+	}
+
+	// a round that could not go on has failed a check
+	if (bp_res.round < 2)
+		break;
 
 	/*
 		A burst that finds the ARM7 held does not end the exemption: the DSP is clocked whatever ARMRST says. The
