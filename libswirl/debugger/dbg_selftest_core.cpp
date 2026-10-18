@@ -1469,9 +1469,9 @@ DBG_SELFTEST(core_tick, "core.tick")
 		const bool known = emu::GetSh4Engine(&engine);
 
 		Check(caps.count("event-breakpoints") == 1 && caps.count("callstack") == 1 && caps.count("memory-write") == 1 && caps.count("register-write") == 1
-			&& caps.count("reset") == 1 && known && caps.count(engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native") == 1 && caps.size() == 6
-			&& shape["capabilities"].size() == 6, "the capabilities of M1 and of M2, five, and the one of the engine that is selected (%s)",
-			shape["capabilities"].dump().c_str());
+			&& caps.count("reset") == 1 && caps.count("sgc-capture") == 1 && caps.count("memory-binary") == 1 && known
+			&& caps.count(engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native") == 1 && caps.size() == 8 && shape["capabilities"].size() == 8,
+			"the capabilities of M1, M2 and M3, seven, and the one of the engine that is selected (%s)", shape["capabilities"].dump().c_str());
 
 		json& targets = shape["targets"];
 
@@ -1645,10 +1645,20 @@ DBG_SELFTEST(core_tick, "core.tick")
 		"params that are no object: -32600");
 	Check(core::HandleRequestText(R"({"jsonrpc":"2.0","id":5})") == R"({"jsonrpc":"2.0","id":5,"error":{"code":-32600,"message":"invalid request"}})", "no method: -32600");
 	Check(RpcError(Send("no.such.method")) == kErrMethodNotFound && RpcError(Send("event.tick")) == kErrMethodNotFound, "a method the protocol does not have: -32601");
-	Check(RpcError(Send("state.getTable", { { "id", 5 } })) == kErrNotSupported && RpcError(Send("state.getMemoryBinary")) == kErrNotSupported
-		&& RpcError(Send("state.getSgcFrameData")) == kErrNotSupported && RpcError(Send("state.captureHolly", { { "what", 1 } })) == kErrNotSupported
-		&& InBand(Send("state.recordSgcFrames", { { "frames", "x" } })) == kErrNotSupported && InBand(Send("state.recordSgcFrames")) == kErrNotSupported,
-		"a method of a later milestone: -32004 on the channel of the method, whatever its parameters are");
+	Check(RpcError(Send("state.getTable", { { "id", 5 } })) == kErrNotSupported && RpcError(Send("state.captureHolly", { { "what", 1 } })) == kErrNotSupported
+		&& RpcError(Send("state.getTable")) == kErrNotSupported, "a method of a later milestone: -32004 on the channel of the method, whatever its parameters are");
+
+	// The methods of milestone M3, which no longer answer -32004, by what this machine test may ask of them: no
+	// capture is armed here (that is the session sgc's, dbg_selftest_sgc.cpp)
+	Check(RpcError(Send("state.getMemoryBinary")) == kErrInvalidParams && RpcError(Send("state.getMemoryBinary", { { "address", 0x8C010000u }, { "length", 0 } })) == kErrInvalidParams
+		&& RpcError(Send("state.getMemoryBinary", { { "address", 0x8C010000u }, { "length", kMaxMemoryBinaryBytes + 1 } })) == kErrInvalidParams
+		&& RpcError(Send("state.getMemoryBinary", { { "target", "dsp" }, { "address", 0 }, { "length", 16 } })) == kErrNotSupported,
+		"state.getMemoryBinary: -32602 without an address and outside 1..16777216, -32004 for the target dsp, as JSON-RPC errors");
+	Check(Send("state.getMemoryBinary", { { "address", 0x8C010000u }, { "length", 16 } }).contains("result"), "state.getMemoryBinary of 16 bytes has a result");
+	Check(RpcError(Send("state.getSgcFrameData")) == kErrNoCapture, "state.getSgcFrameData without a capture: -32011, a JSON-RPC error");
+	Check(InBand(Send("state.recordSgcFrames", { { "frames", "x" } })) == kErrInvalidParams && InBand(Send("state.recordSgcFrames", { { "frames", 0 } })) == kErrInvalidParams
+		&& InBand(Send("state.recordSgcFrames", { { "frames", kMaxSgcFrames + 1 } })) == kErrInvalidParams,
+		"state.recordSgcFrames: -32602 for frames that are no number or outside 1..4096, in-band");
 	Check(Ok(json::parse(core::HandleRequestText(R"({"jsonrpc":"2.0","id":9,"method":"state.unwatch","more":1,"params":{"watchIds":[],"other":{"a":null}}})"), nullptr, false)),
 		"a member of the request and a key of params that the protocol does not name are not looked at");
 	Check(RpcError(Send("state.getMemorySlice", { { "address", "0" }, { "length", 4 } })) == kErrInvalidParams && InBand(Send("control.step", { { "target", 4 } })) == kErrInvalidParams
@@ -2045,7 +2055,7 @@ struct Found {
 	bool reached = false;
 	emu::RunState state;
 	std::string tick, describe;
-	std::string add, watch, slice, stack, disasm, run, step, pause, later_inband, later_rpc, remove, unwatch;
+	std::string add, watch, slice, stack, disasm, run, step, pause, record, binary, frames, later_rpc, remove, unwatch;
 };
 
 struct {
@@ -2093,7 +2103,9 @@ void Look(Found* found, bool with_tables)
 	found->run = Ask("control.runUntil");
 	found->step = Ask("control.step", { { "target", "sh4" } });
 	found->pause = Ask("control.pause", { { "target", "sh4" } });
-	found->later_inband = Ask("state.recordSgcFrames", { { "frames", "many" } });
+	found->record = Ask("state.recordSgcFrames", { { "frames", 64 } });
+	found->binary = Ask("state.getMemoryBinary", { { "address", 0x8C010000u }, { "length", 16 } });
+	found->frames = Ask("state.getSgcFrameData");
 	found->later_rpc = Ask("state.getTable", { { "id", "sq" } });
 }
 
@@ -2169,14 +2181,17 @@ BOUNDED_GUEST_TEST(core_lifetime, "core.lifetime")
 				tick["callstacks"]["sh4"].size());
 		}
 
-		Check(shape.is_object() && shape["deviceTree"][0]["registers"][0]["value"] == "200MHz" && shape["capabilities"].size() == 6, "describe: the tree with its values, and the engine capability (%s)",
+		Check(shape.is_object() && shape["deviceTree"][0]["registers"][0]["value"] == "200MHz" && shape["capabilities"].size() == 8, "describe: the tree with its values, and the engine capability (%s)",
 			shape.is_object() ? shape["capabilities"].dump().c_str() : "no JSON");
 		Check(Ok(Parsed(f.add)) && Ok(Parsed(f.watch)), "bookkeeping works: breakpoints.add and state.watch are answered {} (%s, %s)", f.add.c_str(), f.watch.c_str());
 		Check(Parsed(f.slice).contains("result") && Parsed(f.stack).contains("result") && Parsed(f.disasm).contains("result")
 			&& Parsed(f.stack)["result"]["frames"] == tick["callstacks"]["sh4"], "reads work: memory, disassembly and the call stack of the stopped machine");
 		Check(InBand(Parsed(f.run)) == kErrHostStopped && InBand(Parsed(f.step)) == kErrHostStopped && InBand(Parsed(f.pause)) == kErrHostStopped,
 			"run control is refused: -32001, in-band (%s)", f.run.c_str());
-		Check(InBand(Parsed(f.later_inband)) == kErrNotSupported && RpcError(Parsed(f.later_rpc)) == kErrNotSupported, "a method of a later milestone is -32004 there as well");
+		Check(RpcError(Parsed(f.later_rpc)) == kErrNotSupported, "a method of a later milestone is -32004 there as well");
+		Check(InBand(Parsed(f.record)) == kErrHostStopped && Parsed(f.binary).contains("result") && RpcError(Parsed(f.frames)) == kErrNoCapture,
+			"state.recordSgcFrames is refused by the lifetime, -32001 in-band; state.getMemoryBinary is a read, under L; state.getSgcFrameData too: -32011, no "
+			"capture (%s, %s)", f.record.c_str(), f.frames.c_str());
 		Check(stop.cause == StopCause::Start && stop.stopId == f.state.stopId + 1, "the thread the host starts parks at its start, as every thread of a session");
 
 		{
@@ -2290,13 +2305,15 @@ BOUNDED_GUEST_TEST(core_lifetime, "core.lifetime")
 
 			Check(shape.is_object() && nodes.size() == count && problems.empty() && values > 200 && not_na == 0,
 				"describe: the static tree, %u nodes, with every one of its %u values \"n/a\" (%u are not)", count, values, not_na);
-			Check(shape.is_object() && shape["capabilities"] == json::array({ "event-breakpoints", "callstack", "memory-write", "register-write", "reset" })
+			Check(shape.is_object() && shape["capabilities"] == json::array({ "event-breakpoints", "callstack", "memory-write", "register-write", "reset", "sgc-capture", "memory-binary" })
 				&& shape["targets"].size() == 3, "no engine capability, and the three targets (%s)", shape.is_object() ? shape["capabilities"].dump().c_str() : "no JSON");
 
 			Check(RpcError(Parsed(f.slice)) == kErrNoGame && RpcError(Parsed(f.stack)) == kErrNoGame && RpcError(Parsed(f.disasm)) == kErrNoGame,
 				"reads of guest state: -32002, as JSON-RPC errors (%s)", f.slice.c_str());
 			Check(InBand(Parsed(f.run)) == kErrNoGame && InBand(Parsed(f.step)) == kErrNoGame && InBand(Parsed(f.pause)) == kErrNoGame, "run control: -32002, in-band (%s)", f.run.c_str());
-			Check(InBand(Parsed(f.later_inband)) == kErrNotSupported && RpcError(Parsed(f.later_rpc)) == kErrNotSupported, "a method of a later milestone: -32004, not -32002");
+			Check(RpcError(Parsed(f.later_rpc)) == kErrNotSupported, "a method of a later milestone: -32004, not -32002");
+			Check(InBand(Parsed(f.record)) == kErrNoGame && RpcError(Parsed(f.binary)) == kErrNoGame && RpcError(Parsed(f.frames)) == kErrNoGame,
+				"the methods of M3: -32002, state.recordSgcFrames in-band and the two reads as JSON-RPC errors (%s)", f.record.c_str());
 			Check(Ok(Parsed(f.add)) && Ok(Parsed(f.watch)) && Ok(Parsed(f.unwatch)) && InBand(Parsed(f.remove)) == kErrInvalidParams,
 				"bookkeeping works without a machine: a breakpoint and a watch are added, an unknown id is -32602 (%s, %s)", f.add.c_str(), f.watch.c_str());
 			Check(tick["breakpoints"].size() == 2 && tick["watches"].size() == 2 && tick["watches"][1]["expression"] == "dc.timing.sh4_cycles" && tick["watches"][1]["value"] == "n/a"
@@ -2656,7 +2673,7 @@ BOUNDED_GUEST_TEST(core_reset, "core.reset")
 /*
 	core.writes: the three write methods as a client meets them. By parameter (-32602, in front of everything
 	else), by lifetime, by the errors of each method in their order, all of them in-band; what describe says:
-	five capabilities besides the engine's, and flags.writable on the registers that have a writer and nowhere
+	seven capabilities besides the engine's, and flags.writable on the registers that have a writer and nowhere
 	else; the tick behind an accepted write, which is of the stop the write was made in; and a write made while
 	the machine runs, which is served, with a running tick behind it, and never answered -32003.
 
@@ -2769,13 +2786,13 @@ BOUNDED_GUEST_TEST(core_writes, "core.writes")
 		{
 			emu::Sh4EngineInfo engine;
 			json caps = shape.is_object() ? shape["capabilities"] : json::array();
-			json want = json::array({ "event-breakpoints", "callstack", "memory-write", "register-write", "reset" });
+			json want = json::array({ "event-breakpoints", "callstack", "memory-write", "register-write", "reset", "sgc-capture", "memory-binary" });
 
 			if (emu::GetSh4Engine(&engine))
 				want.push_back(engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native");
 
-			Check(caps == want && caps.size() == 6, "describe has five capabilities besides the engine's: the two of M1, and memory-write, register-write and reset (%s)",
-				caps.dump().c_str());
+			Check(caps == want && caps.size() == 8, "describe has seven capabilities besides the engine's: the two of M1, memory-write, register-write and reset of "
+				"M2, sgc-capture and memory-binary of M3 (%s)", caps.dump().c_str());
 		}
 
 		{
