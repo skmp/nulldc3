@@ -1260,7 +1260,7 @@ std::atomic<bool> pending_seen { false };
 std::atomic<u32> notices_taken { 0 }, notices_unpaired { 0 }, deadlines_made { 0 }, deadlines_taken { 0 }, deadlines_untaken { 0 },
 	answered_by_core { 0 }, cancels_again { 0 };
 
-// The response of the pending record, which goes
+// Answers the pending record, which goes
 void AnswerCapture(int answer)
 {
 	const std::string text = ResultResponse(capture.id, answer == 0 ? std::string("{}") : InBandError(answer, ""));
