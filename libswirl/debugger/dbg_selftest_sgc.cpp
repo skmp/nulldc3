@@ -3380,7 +3380,7 @@ const u32 kOutputRounds = 5;
 
 struct {
 	Co co;
-	u32 round, efreg0, efreg1, pan0, moved, nonzero;
+	u32 round, efreg0, efreg1, pan0, moved, nonzero, sends;
 	s32 last;
 } st_out;
 
@@ -3440,6 +3440,7 @@ BOUNDED_GUEST_TEST(sgc_outputs, "sgc.outputs")
 
 	st_out.moved = 0;
 	st_out.nonzero = 0;
+	st_out.sends = 0;
 	st_out.last = 0;
 
 	for (st_out.round = 0; st_out.round < kOutputRounds; st_out.round++)
@@ -3463,8 +3464,11 @@ BOUNDED_GUEST_TEST(sgc_outputs, "sgc.outputs")
 			Check(stop.cause == StopCause::Step && DspStep() == 0 && Recording() && alone.outLeft == pl && alone.outRight == pr,
 				"at the end of a sample: the channel alone has the outputs %d and %d, the pair the mix handed to the audio stream (%d, %d)",
 				alone.outLeft, alone.outRight, pl, pr);
-			Check(silent.outLeft == 0 && silent.outRight == 0 && silent.outDsp != 0 && other.outLeft == 0 && other.outRight == 0 && other.outDsp == 0,
-				"the first channel, at direct level 0, has no direct outputs and its send to the DSP (%d); a channel that does not play has none", silent.outDsp);
+			Check(silent.outLeft == 0 && silent.outRight == 0 && other.outLeft == 0 && other.outRight == 0 && other.outDsp == 0,
+				"the first channel, at direct level 0, has no direct outputs, only its send to the DSP (%d); a channel that does not play has none", silent.outDsp);
+
+			// the wave passes through 0 at some samples
+			st_out.sends += silent.outDsp != 0;
 
 			// the guest pans the channel to one side or the other (g_irq)
 			const s32 side = alone.outLeft + alone.outRight;
@@ -3477,6 +3481,7 @@ BOUNDED_GUEST_TEST(sgc_outputs, "sgc.outputs")
 
 	Check(st_out.moved != 0 && st_out.nonzero != 0, "the outputs are those of each sample: on the side the channel is panned to (the guest moves it) they move "
 		"%u times in %u samples, %u of them not 0", st_out.moved, kOutputRounds, st_out.nonzero);
+	Check(st_out.sends != 0, "the first channel's send to the DSP is kept: not 0 in %u of the %u samples", st_out.sends, kOutputRounds);
 
 	sgc::Cancel(kErrCaptureTimeout);
 
