@@ -2131,7 +2131,12 @@ the DSP's inputs are known: zero sends, no CD-DA, the CPU's register writes. Thr
   the two `dsp` values are equal, on the JIT and on the interpreter. The blob carries the buses a sweep sent to
   (`mixs_sent`), and `MixsSend` marks a bus whatever the value: a tool without those sends folds another `dsp` from tick
   1 on. Since the line's `dsp` folds the whole state of the DSP at every tick, this holds every datapath register,
-  TEMP, MEMS, MIXS, EFREG and `MDEC_CT` of the emulator's DSP to the model's, tick by tick.
+  TEMP, MEMS, MIXS, EFREG and `MDEC_CT` of the emulator's DSP to the model's, tick by tick, on the values the copy
+  gives them: the send's half of the program (`MIXS[3]`, the `Y_REG` and the products that hold the send, the filter,
+  `EFREG[1]`) is 0 on the copy, so a defect that shows only on a send other than 0 is for J1 and
+  `aica.dsp.emu.lockstep` to find (the guest's README says what the copy holds). On G's program a sign extension of
+  ADREB left out, a wrong slice of `Y_REG` for YSEL 2 or 3, and an IWT that stores what its own step's MRD read each
+  give another `dsp` on both engines.
 - **J4, the AICA's clock while the ARM7 is held** (W3). The rule is the console's: caique's console cases hold the ARM7
   in reset for every case (`aica_reset`, `model/cases/aica_io.h`) and measure with it held the timers, the pending
   registers and the SH4's interrupt line (`timer_irq.c`, `model/NOTES.md` "Timers and interrupts"), the DSP (the DSP
@@ -2253,8 +2258,9 @@ Each of these is in the program, and the report of G shows each on the emulator'
 - IRA from MEMS, from MIXS (`0x20 + b`, the bus of the first channel's ISEL, which the table sets with an IMXL above 0)
   and from EXTS (0x30: 0 with no disc; the decode only);
 - YRL, FRCL in both forms (SHIFT 3 and not), ADRL in both forms (from INPUTS and from SHIFTED with SHIFT 3);
-- MWT with and without NOFL, TABLE 0 (in the ring, moving with `MDEC_CT`) and one TABLE 1 access; MRD with NOFL and
-  without, each followed by an IWT two steps behind it in an odd step; an address with ADREB and one with NXADR;
+- MWT with and without NOFL, TABLE 0 (in the ring, moving with `MDEC_CT`) and one TABLE 1 word, written and read
+  back; MRD with NOFL and without, each followed by an IWT two steps behind it in an odd step; an address with ADREB
+  and one with NXADR;
 - two EWT: one of a fold that does not depend on MIXS (the counter, the delay line, MEMS), one of the MIXS path; both
   heard through EFSDL at a moderate level, so that `clip16` never hides them;
 - the nine datapath registers each take more than one value over one sample and from sample to sample (`dsp.regs.move`
