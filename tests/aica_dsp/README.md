@@ -248,7 +248,7 @@ neither half 0 (`EmuCddaPair`).
 
 ## The sounding guest's DSP: `aica_dsp_guest_oracle`
 
-The guest of `tests/debugger/guest/dsptest` loads a DSP program of 16 steps between the first tick of the AICA and
+The guest of `tests/debugger/guest/dsptest` loads a DSP program of 18 steps between the first tick of the AICA and
 the second (its README, "The DSP"). Its lines move with the program, and what justifies them is the model, which
 ends at EFREG and has a sound generator that is not the emulator's: so the oracle holds the DSP's state where its
 inputs are known. `soundlines.py --mode oracle` builds a copy of the guest whose first channel has `IMXL` 0, so that
@@ -268,9 +268,19 @@ it), EXTS 0, no channel fetch and no bus read. It folds the core's blob behind e
 line's `dsp` and prints `dsp=<hex>`; exit code 1 when the model and the core differ. The sends of 0 are part of
 it: the blob has the buses a sweep sent to, and a send marks its bus whatever the value. The line's `dsp` folds
 the DSP's whole state at every tick, so the test holds every datapath register, TEMP, MEMS, MIXS, EFREG and
-MDEC_CT of the emulator's DSP to the model's, tick by tick, on both engines; that the set-up's writes all fall
-between the first tick and the second on both engines is what the schedule rests on (the guest's README, "The
-first tick").
+MDEC_CT of the emulator's DSP to the model's, tick by tick, on both engines, **on the values the copy gives them**;
+that the set-up's writes all fall between the first tick and the second on both engines is what the schedule rests
+on (the guest's README, "The first tick").
+
+What it does not hold (the guest's README, "The DSP", has the steps): every send of the copy is 0, so the half of
+the program that is the send's is compared at 0 only: `MIXS[3]`, `Y_REG` while it holds the send, the two products
+with it, the filter in `TEMP[5]` and `TEMP[6]`, `EFREG[1]`, and the filter's part of the sum the program writes
+into the ring. A defect that shows only on a send other than 0 (the scale of the read of MIXS, the slices of a
+`Y_REG` that holds a send) is not seen here; `aica.dsp.diff.*` holds the core on sends and `aica.dsp.emu.lockstep`
+the emulator's sends. Wave memory is not in the blob: the program reads every word it writes back into MEMS, so
+the words are held, and their addresses only where two ways of addressing meet (the tap of step 11, whose
+`ADREB` address reads words written without it: a wrong sign extension of `ADRS_REG` is seen); the word of its
+`TABLE` 1 access is read back from where it was written, so where that lies is not held.
 
 ## Looking at a failure
 
