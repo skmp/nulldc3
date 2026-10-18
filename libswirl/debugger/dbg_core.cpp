@@ -609,7 +609,7 @@ std::string BuildTick(const emu::RunState& state, bool full)
 
 	JsonOut w;
 
-	// the 2940 registers of the tree are 124 KiB of a full tick, the four base paths 6 KiB
+	// the 2949 registers of the tree are 124 KiB of a full tick, the four base paths 6 KiB
 	w.text.reserve(full ? 144 * 1024 : 12 * 1024);
 
 	w.BeginObject();

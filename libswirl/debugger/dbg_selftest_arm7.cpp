@@ -1126,7 +1126,10 @@ BOUNDED_GUEST_TEST(arm7_burst_plain, "arm7.burst.plain")
 	    has no writer of the AICA's registers), and resets that bit of MCIPD through MCIRE, which updates the SH4's
 	    line: it is low then. Behind the held bursts the timer's bit is pending in MCIPD and the interrupt of the
 	    AICA is pending at Holly (SB_ISTEXT bit 1), which only the interrupt update of a held burst can have raised
-	    (UpdateSh4Ints). MCIEB is put back, and an MCIRE write of 0, which resets nothing, has the line follow it;
+	    (UpdateSh4Ints). MCIEB is put back, and an MCIRE write of 0, which resets nothing, has the line follow it.
+	    While the line is high the guest's SH4, which waits with SR open, takes the AICA's interrupt again and
+	    again, since g_irq resets only bit 5: no check reads what it does there, and timer A's bit stays pending
+	    in MCIPD behind the test, masked once MCIEB is put back;
 	  - burst by burst: each of the k bursts is one burst, no ARM phase, 32 time steps and one tail, and counts
 	    MDEC_CT down by 32.
 	The hold is made with no request pending and none in service: the stored aica_interr and e68k_reg_M are 0 at

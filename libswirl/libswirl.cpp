@@ -861,7 +861,8 @@ struct Dreamcast_impl : VirtualDreamcast {
         u32 dsp_counts[2] = { 0, 0 };
     } burst;
 
-    // The step the DSP stands in front of
+    // The step the DSP stands in front of, read from inside the burst between two of its steps (the debug
+    // accessor has no side effect)
     static u32 DspStep(DSP* dsp)
     {
         DspDebugState state = { };

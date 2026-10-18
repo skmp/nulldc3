@@ -194,7 +194,7 @@ nulldc_debugger_contract(m2writes.guest    MODE parts PARTS S16:arm7+writeMemory
 # The gate of milestone M2 (M2-ROUND 3.6, 3.10): --milestone M2 selects the scenarios of M1 and S16, and each has
 # to pass whole. S16 has its fifth part from the tree of this milestone on: the M2 nodes with their parents, the
 # two register panels of the processors, a register on every node whose registers are M2's, and each of the twelve
-# register panels the action of one node. And S08 reaches the bound of 256 watches on a tree of 2940 registers.
+# register panels the action of one node. And S08 reaches the bound of 256 watches on a tree of 2949 registers.
 # On the three engines against 2ndmix; and the second run of the gate on the JIT and the interpreter against the
 # sounding guest of the tree, where the arm7 part has to have met the ARM7 held at its start and a bl
 nulldc_debugger_contract(m2          MODE m2 RUNNER ENGINES jit interp)
