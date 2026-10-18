@@ -22,6 +22,7 @@ Without it the tests that need it are skipped, or fail with `-DNULLDC_TESTS_REQU
 | `aica.dsp.case.<case>.emu` | the seven cases anchored directly on the console's files (below) on the emulator's own sound chip, against those files and against the core alone | a caique-rtl checkout |
 | `aica.dsp.emu.lockstep` | generated programs through the emulator's sound chip, with CPU writes of every form and channels that send, against a core of the test's own, behind every sample | none |
 | `aica.dsp.emu.state` | the mix takes EFREG from the core, the DSP device's reset is the core's power on, its save state is the core's blob, the AICA's save state keeps the bus a channel sends to, "Disable Sound" hands the audio stream a pair of zeroes in every sample, which the harness folds, and changes nothing else | none |
+| `debugger.sound.oracle.dsptest.jit` `.interp` | the DSP program of the sounding guest (`tests/debugger/guest/dsptest`) on the emulator, on the JIT and on the interpreter, against the core and the caique model in lockstep on the same writes and schedule (`aica_dsp_guest_oracle`, below): the field `dsp` of the line of a copy of the guest whose sends are 0 is what the tool computes | a caique-rtl checkout, the emulator, python3 |
 
 All but `aica.dsp.capi` and the `aica.dsp.wasm` tests count their cases into checks and are gated on
 `baseline.txt`: a check that passes fewer cases than its baseline, or has another number of cases, fails, and
@@ -245,6 +246,42 @@ neither half 0 (`EmuCddaPair`).
   it nothing, or folds another pair than it hands, fails, which no run of the emulator with `audio:backend=none`
   shows.
 
+## The sounding guest's DSP: `aica_dsp_guest_oracle`
+
+The guest of `tests/debugger/guest/dsptest` loads a DSP program of 18 steps between the first tick of the AICA and
+the second (its README, "The DSP"). Its lines move with the program, and what justifies them is the model, which
+ends at EFREG and has a sound generator that is not the emulator's: so the oracle holds the DSP's state where its
+inputs are known. `soundlines.py --mode oracle` builds a copy of the guest whose first channel has `IMXL` 0, so that
+every send to the DSP is exactly 0 (the emulator's attenuation of a send is `TL` plus 255 for `IMXL` 0, capped by
+what the envelope leaves, and its table of levels has 0 there: `hw/aica/sgc_if.cpp`, `UpdateAtts`,
+`ChannelEx::Step`), runs the emulator's line on it at N = 2000, and runs
+
+    aica_dsp_guest_oracle --elf <the copy> --ticks 2000
+
+The tool reads from the ELF, by its symbols, the table `_start` writes (`g_table` to `g_table_end`: the writes of
+the DSP's registers and of the channels' `ISEL`) and the block `g_dsp` (`COEF`, `MADRS`, `MPRO`, each 32-bit word
+the low half of a register), and runs the core and the model's DSP in lockstep (`DspLockstep`, `StepDsp`) on the
+guest's schedule: tick 1, 32 samples of the empty program from the state after reset; then every write, in the
+order `_start` makes them, the table first; then 32 samples a tick. Every sample has the emulator's sweep:
+`SweepBegin`, then a send of 0 to every bus a channel's `ISEL` names (bus 0 before the table, bus 0 and 3 behind
+it), EXTS 0, no channel fetch and no bus read. It folds the core's blob behind every tick as the harness folds the
+line's `dsp` and prints `dsp=<hex>`; exit code 1 when the model and the core differ. The sends of 0 are part of
+it: the blob has the buses a sweep sent to, and a send marks its bus whatever the value. The line's `dsp` folds
+the DSP's whole state at every tick, so the test holds every datapath register, TEMP, MEMS, MIXS, EFREG and
+MDEC_CT of the emulator's DSP to the model's, tick by tick, on both engines, **on the values the copy gives them**;
+that the set-up's writes all fall between the first tick and the second on both engines is what the schedule rests
+on (the guest's README, "The first tick").
+
+What it does not hold (the guest's README, "The DSP", has the steps): every send of the copy is 0, so the half of
+the program that is the send's is compared at 0 only: `MIXS[3]`, `Y_REG` while it holds the send, the two products
+with it, the filter in `TEMP[5]` and `TEMP[6]`, `EFREG[1]`, and the filter's part of the sum the program writes
+into the ring. A defect that shows only on a send other than 0 (the scale of the read of MIXS, the slices of a
+`Y_REG` that holds a send) is not seen here; `aica.dsp.diff.*` holds the core on sends and `aica.dsp.emu.lockstep`
+the emulator's sends. Wave memory is not in the blob: the program reads every word it writes back into MEMS, so
+the words are held, and their addresses only where two ways of addressing meet (the tap of step 11, whose
+`ADREB` address reads words written without it: a wrong sign extension of `ADRS_REG` is seen); the word of its
+`TABLE` 1 access is read back from where it was written, so where that lies is not held.
+
 ## Looking at a failure
 
     aica_dsp_diff directed --verbose          # the first difference of each family, with sample, step and register
@@ -279,4 +316,7 @@ machine's. The core's README has the ones of the machine it was written on.
     wasm_test.mjs      aica.dsp.wasm: the replay on the module, in node
     devtools_test.mjs  aica.dsp.wasm.devtools: the UI's module against this tree, its provenance, the replay of
                        wasm_test.mjs on it and its bytes against a fresh build
+    guest_oracle_main.cpp
+                       aica_dsp_guest_oracle: the sounding guest's DSP program on the core and the model in
+                       lockstep, for debugger.sound.oracle.dsptest.*
     bench_main.cpp     aica_dsp_bench

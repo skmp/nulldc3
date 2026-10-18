@@ -1,19 +1,21 @@
 ! The sounding guest of the debugger's tests (README.md): the SH4 program. Bare metal, for the emulator only:
-! reios loads the ELF and enters it at 8C010000, where _start is. gen.sh makes dsptest.elf from this file and
-! arm7.bin.
+! reios loads the ELF and enters it at 8C010000, where _start is. gen.sh makes dsptest.elf from this file, arm7.bin
+! and dsptest_dsp.inc.
 !
 ! Everything the SH4 does to the sound it does in _start, between the first tick of the AICA and the second, on
 ! every engine. The first tick is not a tick's length away: it comes at the end of the first slice of the SH4, 448
 ! cycles behind the start of the machine. That is 56 instructions of the interpreter, while the recompiler, which
 ! charges this code about a thirtieth of that, would be through all of _start: nothing that is seen or heard can
 ! be in front of the first tick on both. _start therefore lets it pass. It releases the ARM7 onto one instruction
-! that branches to itself, which gives the AICA its clock (no timer steps and no sample is made while the ARM7 is
-! held), and waits until SAMPLE_DONE says that a tick has run. Then it holds the ARM7, copies the ARM7 program
-! (arm7.s) and one period of a wave into the wave memory, sets two channels up, keys them on and releases the ARM7
-! again: 6600 cycles on the interpreter, the slowest engine, of the 145124 between two ticks. From then on the ARM7
-! and the timer of the AICA drive the sound, and the SH4 counts in g_main_loop; every 64th timer interrupt the ARM7
-! raises the AICA's interrupt to the SH4, and g_irq answers it with one register write that is heard, in front of
-! the next tick.
+! that branches to itself, so that the first tick finds the ARM7 clocked on every engine (the AICA is clocked
+! whatever ARMRST says: its timers step, its samples are made and its DSP runs also while the ARM7 is held, and
+! the release decides only whether the ARM7 runs in a tick), and waits until SAMPLE_DONE says that a tick has run.
+! Then it holds the ARM7, copies the ARM7 program (arm7.s) and one period of a wave into the wave memory, sets two
+! channels and the DSP up, keys the channels on, loads the DSP's program (dsptest_dsp.txt) and releases the ARM7
+! again: within 21 slices (9408 cycles) of the first tick on the interpreter, the slowest engine, of the 145124
+! between two ticks. From then on the ARM7 and the timer of the AICA drive the sound, the DSP runs its program in
+! every sample, and the SH4 counts in g_main_loop; every 64th timer interrupt the ARM7 raises the AICA's interrupt
+! to the SH4, and g_irq answers it with one register write that is heard, in front of the next tick.
 !
 ! What tests of the debugger use it for is in README.md, label by label. The properties they lean on:
 !   - the program stores into no page that holds its code: its counters are registers, its stores go to the wave
@@ -26,6 +28,10 @@
 !
 ! Registers: r0 to r3 are scratch of _start and of the routines a test enters; g_main_loop has r8 to r11; g_irq
 ! has r0 to r3 of bank 1.
+
+! The DSP program, as gen.sh assembled it from dsptest_dsp.txt: the macros dsp_table (the entries of its MEMS_H
+! lines, for the table) and dsp_block (the block g_dsp)
+	.include	"dsptest_dsp.inc"
 
 	.text
 
@@ -43,7 +49,7 @@ _start:
 	mov.l	r0, @r2
 	mov.l	.L_armrst, r1
 	mov	#0, r0
-	mov.b	r0, @r1			! and is released: the AICA has a clock from here on
+	mov.b	r0, @r1			! and is released: the first tick finds it clocked
 	mov.l	.L_scipd, r1
 	mov.w	.L_sample_done, r3
 .L_wait_tick:
@@ -90,6 +96,36 @@ _start:
 .L_table_skip:
 	cmp/hs	r3, r1
 	bf	.L_table_next
+
+	mov.l	.L_coef, r1		! the DSP's program, behind the table: its COEF to the register area at 0x3000,
+	mov.l	.L_coef_end, r3		! a long write for each 16-bit word
+	mov.l	.L_dsp_coef, r2
+.L_copy_coef:
+	mov.l	@r1+, r0
+	mov.l	r0, @r2
+	cmp/hs	r3, r1
+	bf/s	.L_copy_coef
+	 add	#4, r2
+
+	mov.l	.L_madrs, r1		! MADRS, to 0x3200
+	mov.l	.L_madrs_end, r3
+	mov.l	.L_dsp_madrs, r2
+.L_copy_madrs:
+	mov.l	@r1+, r0
+	mov.l	r0, @r2
+	cmp/hs	r3, r1
+	bf/s	.L_copy_madrs
+	 add	#4, r2
+
+	mov.l	.L_mpro, r1		! and MPRO, from step 0, to 0x3400: the steps behind the program stay empty
+	mov.l	.L_mpro_end, r3
+	mov.l	.L_dsp_mpro, r2
+.L_copy_mpro:
+	mov.l	@r1+, r0
+	mov.l	r0, @r2
+	cmp/hs	r3, r1
+	bf/s	.L_copy_mpro
+	 add	#4, r2
 
 	mov.l	.L_armrst, r1
 	mov	#0, r0
@@ -192,6 +228,15 @@ g_irq:
 .L_table_end:	.long	g_table_end
 .L_mcire:	.long	0xA07028BC
 .L_ch1_pan:	.long	0xA07000A4
+.L_coef:	.long	g_dsp_coef
+.L_coef_end:	.long	g_dsp_coef_end
+.L_dsp_coef:	.long	0xA0703000
+.L_madrs:	.long	g_dsp_madrs
+.L_madrs_end:	.long	g_dsp_madrs_end
+.L_dsp_madrs:	.long	0xA0703200
+.L_mpro:	.long	g_dsp_mpro
+.L_mpro_end:	.long	g_dsp_mpro_end
+.L_dsp_mpro:	.long	0xA0703400
 
 ! What _start writes, in this order. Registers of the AICA are at 0xA0700000 + their offset and take 16 bits
 	.align	2
@@ -217,10 +262,20 @@ g_table:
 	.long	0xA0700094, 0x0000001F
 	.long	0xA0700098, 0x00007800	! OCT -1, FNS 0: the ARM7 moves FNS through 0, 0x100, 0x200 and 0x300
 	.long	0xA07000A4, 0x00000F0F	! DISDL 15, DIPAN 0x0F: g_irq moves it between this and 0x1F
-! Reserved for the DSP part (package E8), empty: MPRO, COEF, MADRS, the ring buffer (RBL, RBP), EFSDL / EFPAN, and
-! IMXL / ISEL of the first channel go here, in front of the key on
+! The DSP part, 40 entries in front of the key on: the MEMS_H lines of dsptest_dsp.txt, the ring buffer, the levels
+! of the two outputs of the program, the send of the first channel; the rest of the part is empty, at least three
+! entries at its end (soundlines.py writes its copies of the guest there). COEF, MADRS and MPRO are not in the
+! table: _start copies them from g_dsp
 g_table_dsp:
-	.fill	80, 4, 0
+	dsp_table			! the constants of the program in MEMS (bits 23:8)
+	.long	0xA0702804, 0x00000040	! RBP 0x40 and RBL 0: a ring of 8192 words at 0x20000 of the wave memory
+	.long	0xA0702000, 0x00000A00	! EFREG[0]: EFSDL 10, EFPAN 0, to both sides
+	.long	0xA0702004, 0x00000A1F	! EFREG[1]: EFSDL 10, EFPAN 0x1F, to the left
+	.long	0xA0700020, 0x000000F3	! the first channel: ISEL 3, IMXL 15, its send to MIXS[3] at full level
+	.if	. - g_table_dsp > (40 - 3) * 8
+	.error	"the DSP part of the table leaves fewer than three of its 40 entries empty"
+	.endif
+	.fill	(g_table_dsp + 40 * 8 - .) / 4, 4, 0
 g_table_dsp_end:
 	! key on: KYONB of both channels, KYONEX with the second (LPCTL, 16-bit PCM, SA high part 1)
 	.long	0xA0700000, 0x00004201
@@ -248,3 +303,7 @@ g_arm7_image:
 	.incbin	"arm7.bin"
 g_arm7_image_end:
 	.size	g_arm7_image, .-g_arm7_image
+
+! The DSP's program, as gen.sh assembled it from dsptest_dsp.txt: COEF, MADRS and MPRO, which _start copies to the
+! register area of the DSP behind the table
+	dsp_block

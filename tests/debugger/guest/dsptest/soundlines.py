@@ -4,7 +4,7 @@
     soundlines.py --emulator <nulldc3> --work <dir> --guest <program> --ticks <N> --mode <mode> [--mode <mode>]...
                   [--engine jit|interp] [--fields <field,...>] [--file <path>] [--vblanks <V>]
                   [--selftest <filter>] [--expect <text>]... [--ignored <section:key=value>]...
-                  [--config <section:key=value>]...
+                  [--config <section:key=value>]... [--oracle <aica_dsp_guest_oracle>]
     soundlines.py --mode files [--dir <the directory of the guest>]
     soundlines.py --mode names --build <the build directory of the tests>
 
@@ -36,6 +36,8 @@ README.md has the modes:
     sounds    samples is none of the hashes of silence. The hash of k * 32 pairs of zeroes is one value for each
               k. Every tick makes its 32 pairs, whether the ARM7 is held in reset or not, so a silent run of N
               ticks prints the one for N; the mode checks against the whole family, k from 0 to N, a superset
+    silent    a program that plays nothing (2ndmix): samples is the hash of exactly N * 32 pairs of zeroes, the
+              32 pairs of every one of the N ticks (see mode_silent)
     muted     "Disable Sound" mutes: a run with config:aica.NoSound=yes prints the line of the run without it in
               every field but samples, and samples is the hash of N * 32 pairs of zeroes (see mode_muted; the
               audio stream itself, which no run here shows, is held by aica.dsp.emu.state)
@@ -56,6 +58,12 @@ README.md has the modes:
     held      the guest only: a held ARM7 is an idle one for the rest of the AICA. A copy of the guest whose ARM7
               stays held behind the set-up and a copy whose ARM7 idles on a branch to itself print the same line
               in every field but arm7 (see mode_held)
+    heard     the guest only: its DSP is heard. A copy of the guest whose table gives the outputs of the DSP
+              program EFSDL 0 prints the line of the guest in arm7, sh4, dsp, ticks and cycles, and another samples
+              (see mode_heard)
+    oracle    the guest only: the field dsp of a copy of the guest whose sends to the DSP are all 0 (its first
+              channel at IMXL 0) is what --oracle, aica_dsp_guest_oracle of tests/aica_dsp, computes for that copy
+              on the caique model (see mode_oracle)
     files     the committed files of the guest are those of its manifest, SHA256SUMS; and where the assemblers
               are, gen.sh --check: they are what the sources give
     names     the tests of a build (the CTestTestfile.cmake files of --build): no test of the sound
@@ -94,7 +102,7 @@ ENGINE_SAYS = {'jit': 'Using MCPU Recompiler', 'interp': 'Using MCPU Interpreter
 ENGINE_NAMES = {'jit': 'the recompiler', 'interp': 'the interpreter'}
 
 # what SHA256SUMS lists, in this order, and nothing else
-MANIFEST = ('dsptest.s', 'arm7.s', 'gen.sh', 'dsptest.elf', 'arm7.bin', 'dsptest_labels.inc')
+MANIFEST = ('dsptest.s', 'arm7.s', 'dsptest_dsp.txt', 'gen.sh', 'dsptest.elf', 'arm7.bin', 'dsptest_labels.inc', 'dsptest_dsp.inc')
 
 FNV_BASIS = 0xcbf29ce484222325
 FNV_PRIME = 0x100000001b3
@@ -259,6 +267,19 @@ def mode_sounds(args, lines):
     k = silence(args.ticks).get(fields['samples'])
     check(k is None, 'the run is silent: samples=%s is the hash of %d * 32 pairs of zeroes' % (fields['samples'], k if k is not None else 0), run.log)
     print('it sounds: samples=%s is none of the %d hashes of silence' % (fields['samples'], args.ticks + 1))
+
+
+def mode_silent(args, lines):
+    """A program that plays nothing (2ndmix under reios): every tick makes its 32 samples, whether it finds the ARM7
+    clocked or held in reset, and each hands the audio stream a pair of zeroes. So samples is the hash of exactly
+    N * 32 pairs of zeroes. A tick that makes fewer or more samples than 32 (a time step left under the ARM7's clock,
+    a burst of 31 or 33 steps) gives the hash of another k, and a sample that hands no pair, too."""
+    (run, text, fields), = lines.get(1)
+    k = silence(args.ticks).get(fields['samples'])
+    check(k is not None, 'the run is not silent: samples=%s is none of the hashes of 0 to %d * 32 pairs of zeroes\n%s' % (fields['samples'], args.ticks, text), run.log)
+    check(k == args.ticks, 'the run handed the audio stream %d * 32 pairs of zeroes in %d ticks, not %d * 32: its ticks did not make 32 samples each\n%s'
+          % (k, args.ticks, args.ticks, text), run.log)
+    print('silent: samples=%s is the hash of %d * 32 pairs of zeroes, 32 for each of the %d ticks' % (fields['samples'], k, args.ticks))
 
 
 def mode_muted(args, lines):
@@ -480,17 +501,37 @@ ARM_READ_L = (0xE5952500, 0xE596200C)     # ldr r2, [r5, #0x500]  ->  ldr r2, [r
 ARM_WRITE_M = (0xE5852504, 0xE586200C)    # str r2, [r5, #0x504]  ->  str r2, [r6, #12]
 
 
+def free_end(image, labels):
+    """The empty entries (address 0) at the end of the DSP part of the guest's table, g_table_dsp to
+    g_table_dsp_end, in their order: the DSP part fills it from its front, and the copies of this script write
+    into its end."""
+    free = []
+    for entry in range(labels['G_TABLE_DSP_END'] - 8, labels['G_TABLE_DSP'] - 8, -8):
+        if image[file_offset(image, entry, 'an entry of the table'):][:8] != bytes(8):
+            break
+        free.insert(0, entry)
+    return free
+
+
+def table_entries(image, labels):
+    """The entries of the guest's table, (address, value), in the order _start writes them; address 0 is an empty
+    entry, which it skips."""
+    at = file_offset(image, labels['G_TABLE'], 'the table')
+    return [struct.unpack_from('<II', image, at + n) for n in range(0, labels['G_TABLE_END'] - labels['G_TABLE'], 8)]
+
+
 def guest_copy(args, labels, name, table=(), arm=()):
-    """A copy of the guest in the work directory: with (address, value) entries in the reserved, empty part of the
-    table that _start writes while it holds the ARM7, and with instructions of a_reset replaced (old word, new
-    word). Returns its path."""
+    """A copy of the guest in the work directory: with (address, value) entries in the empty end of the DSP part
+    of the table that _start writes while it holds the ARM7 (the last entries in front of the key on: the
+    entries of the part are written behind every other register of the table), and with instructions of a_reset
+    replaced (old word, new word). Returns its path."""
     with open(args.guest, 'rb') as f:
         image = bytearray(f.read())
 
-    # the last empty entries of the reserved part, in their order: whoever fills the part starts at its front
-    free = [entry for entry in range(labels['G_TABLE_DSP'], labels['G_TABLE_DSP_END'], 8)
-            if image[file_offset(image, entry, 'an entry of the table'):][:8] == bytes(8)]
-    check(len(free) >= len(table), 'the reserved part of the table of the guest has %d empty entries, the copy %s needs %d' % (len(free), name, len(table)))
+    # the last empty entries of the part, in their order: whoever fills the part starts at its front. At least
+    # three are left there (the guest's dsptest.s holds that), which the copies of the mode release need
+    free = free_end(image, labels)
+    check(len(free) >= len(table), 'the DSP part of the table of the guest has %d empty entries at its end, the copy %s needs %d' % (len(free), name, len(table)))
     for entry, (address, value) in zip(free[len(free) - len(table):], table):
         struct.pack_into('<II', image, file_offset(image, entry, 'an entry of the table'), address, value)
 
@@ -517,10 +558,11 @@ def mode_release(args, lines):
     g_release_arm7 holds the ARM7 at a tick of its own choice, with the timer's request pending or not.
 
     The runs are made on copies of the guest that differ from it in data only. "A request latched": three entries
-    in the reserved part of the table, which _start writes while it holds the ARM7 - SCILV1 and SCIEB bit 5, and
-    SCIPD bit 5, the one request a program can raise: it is latched at once, with the level of the timer's
-    request, and again by the release. "Without the end of the service": the read of L or the write of M of
-    a_reset goes to a word of the wave memory instead, at the same cost.
+    in the empty end of the DSP part of the table, which _start writes while it holds the ARM7 (the guest leaves
+    at least three there) - SCILV1 and SCIEB bit 5, and SCIPD bit 5, the one request a program can raise: it is
+    latched at once, with the level of the timer's request, and again by the release. "Without the end of the
+    service": the read of L or the write of M of a_reset goes to a word of the wave memory instead, at the same
+    cost.
 
         the copy without a change                             the line every other run is compared with
         a request latched                                     the same line, in the fields of --fields
@@ -537,6 +579,12 @@ def mode_release(args, lines):
     for label in ('G_TABLE_DSP', 'G_TABLE_DSP_END', 'G_ARM7_IMAGE', 'A_RESET', 'A_MAIN_LOOP'):
         check(label in labels, 'dsptest_labels.inc in %s has no DSPTEST_%s' % (args.dir, label))
     request = ((SH4_SCILV1, 0x20), (SH4_SCIEB, 0x20), (SH4_SCIPD, 0x20))
+
+    # the three entries go into the empty end of the DSP part, which the guest keeps for them
+    with open(args.guest, 'rb') as f:
+        free = free_end(f.read(), labels)
+    check(len(free) >= len(request), 'the DSP part of the table of the guest (g_table_dsp to g_table_dsp_end) has %d empty entries at its end, '
+          'not the %d the copies of this mode write there' % (len(free), len(request)))
 
     def made(name, table=(), arm=()):
         return line_run(args, name, args.engine, guest=guest_copy(args, labels, name, table, arm))
@@ -635,6 +683,108 @@ def mode_held(args, lines):
           % (held_fields['arm7'], idle_fields['arm7'], plain_fields['samples']))
 
 
+# The levels of the outputs of the DSP, EFSDL (bits 11:8) and EFPAN, at 0x00702000 + 4 k of the AICA, k < 16
+SH4_EFSDL, DSP_OUTPUTS = 0xA0702000, 16
+
+
+def mode_heard(args, lines):
+    """The guest's DSP is heard (the guest only): the mix takes EFREG from the DSP.
+
+    The guest's table gives the outputs of its DSP program a level (EFSDL and EFPAN at 0x00702000 + 4 k). The run
+    is made on a copy of the guest, built in the work directory, in which each of those entries has EFSDL 0, the
+    level at which the mix takes nothing of that output; EFPAN, and every other byte, are the guest's. So the copy
+    makes the same writes with other values: its line is the guest's in arm7, sh4, dsp, ticks and cycles (the
+    ARM7, the SH4 and the DSP run as they run in the guest), and samples has to differ: what the guest's DSP
+    outputs is in what the guest makes heard. regs differs as well, the register file has the levels the SH4
+    wrote, and is not compared. The copy's line is printed: its samples is the guest's samples without the DSP,
+    which a before / after holds against the samples of the guest without a DSP program."""
+    labels = guest_labels(args.dir)
+    for label in ('G_TABLE', 'G_TABLE_END'):
+        check(label in labels, 'dsptest_labels.inc in %s has no DSPTEST_%s' % (args.dir, label))
+    with open(args.guest, 'rb') as f:
+        image = bytearray(f.read())
+
+    at = file_offset(image, labels['G_TABLE'], 'the table')
+    levels = []
+    for n, (address, value) in enumerate(table_entries(image, labels)):
+        if SH4_EFSDL <= address < SH4_EFSDL + 4 * DSP_OUTPUTS and address % 4 == 0 and (value >> 8) & 15:
+            levels.append('EFREG[%d] (EFSDL %d)' % ((address - SH4_EFSDL) // 4, (value >> 8) & 15))
+            struct.pack_into('<I', image, at + 8 * n + 4, value & ~0xF00)
+    check(levels, 'the table of the guest gives no output of the DSP a level (EFSDL, at 0x00702000 + 4 k): nothing the DSP computes is heard')
+
+    os.makedirs(args.work, exist_ok=True)
+    path = os.path.join(args.work, 'deaf.elf')
+    with open(path, 'wb') as f:
+        f.write(image)
+
+    (plain, plain_text, plain_fields), = lines.get(1)
+    deaf, text, fields = line_run(args, 'deaf', args.engine, guest=path)
+    same = ('arm7', 'sh4', 'dsp', 'ticks', 'cycles')
+    check(not different(plain_fields, fields, same), 'the copy whose outputs of the DSP have EFSDL 0 and the guest differ in '
+          + different(plain_fields, fields, same) + ': the levels changed more than what is heard\n' + plain_text + '\n' + text, deaf.log)
+    check(fields['samples'] != plain_fields['samples'], 'the copy whose outputs of the DSP have EFSDL 0 prints the samples of the guest, %s: '
+          'the mix does not take what the DSP outputs\n' % plain_fields['samples'] + plain_text + '\n' + text, deaf.log)
+    print('the DSP is heard: with EFSDL 0 for %s the copy prints the guest\'s %s and another samples' % (', '.join(levels), ' '.join('%s=%s' % (f, fields[f]) for f in same)))
+    print('the guest: ' + plain_text)
+    print('the copy:  ' + text)
+
+
+# The first channel's ISEL (bits 3:0) and IMXL (bits 7:4), at 0x00700020 of the AICA
+SH4_CH0_MIX = 0xA0700020
+
+
+def mode_oracle(args, lines):
+    """The DSP of the guest is the console's DSP, as caique's sample model has it (the guest only).
+
+    caique's model ends at EFREG and the emulator's sound generator is not caique's, so what the two can be held to
+    is the DSP's state where its inputs are known. The run is made on a copy of the guest, built in the work
+    directory, with one entry in the empty end of the DSP part of the table: IMXL 0 for the first channel, its
+    ISEL as the guest's table sets it, which the SH4 writes behind the guest's own entry for it. A channel's send
+    to the DSP is its sample times the level of its IMXL, and that level is 0 for IMXL 0 (the emulator's
+    attenuation of the send is then 255 or more, capped at what the envelope leaves, and the table of levels has
+    0 there: hw/aica/sgc_if.cpp, UpdateAtts and ChannelEx::Step), so every bus the program reads holds 0. The
+    field dsp of that copy's line, the state of the DSP folded at every tick, has to be what --oracle
+    (aica_dsp_guest_oracle of tests/aica_dsp) computes for the copy: the DSP core and caique's model in lockstep
+    on the guest's writes, with the emulator's sweep of sends of 0. And the guest itself, whose first channel
+    sends, prints another dsp: the comparison sees the sends."""
+    check(args.oracle, 'the mode oracle needs --oracle, the path of aica_dsp_guest_oracle')
+    check(os.path.isfile(args.oracle), 'there is no aica_dsp_guest_oracle at ' + args.oracle)
+    labels = guest_labels(args.dir)
+    for label in ('G_TABLE', 'G_TABLE_END', 'G_TABLE_DSP', 'G_TABLE_DSP_END'):
+        check(label in labels, 'dsptest_labels.inc in %s has no DSPTEST_%s' % (args.dir, label))
+    with open(args.guest, 'rb') as f:
+        image = f.read()
+
+    mix = [value for address, value in table_entries(image, labels) if address == SH4_CH0_MIX]
+    check(mix, 'the table of the guest does not set ISEL / IMXL of its first channel (0x00700020): it has no send to take away')
+    check((mix[-1] >> 4) & 15, 'the table of the guest leaves its first channel at IMXL 0: it has no send to take away')
+    value = mix[-1] & ~0xF0
+    path = guest_copy(args, labels, 'oracle', ((SH4_CH0_MIX, value),))
+    copy, text, fields = line_run(args, 'oracle', args.engine, guest=path)
+
+    command = [args.oracle, '--elf', path, '--ticks', str(args.ticks)]
+    try:
+        done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=args.watchdog)
+    except subprocess.TimeoutExpired:
+        raise Failed('aica_dsp_guest_oracle did not end within %d s: %s' % (args.watchdog, ' '.join(command)))
+    said = done.stdout.decode('utf-8', 'replace')
+    check(done.returncode == 0, 'aica_dsp_guest_oracle ended with exit code %d: %s\n%s' % (done.returncode, ' '.join(command), said))
+    found = [line[len('dsp='):] for line in said.splitlines() if re.match(r'^dsp=[0-9a-f]{16}$', line)]
+    check(len(found) == 1, 'aica_dsp_guest_oracle printed no line dsp=<hex>, or more than one:\n' + said)
+
+    check(fields['dsp'] == found[0], 'the DSP of the copy of the guest whose sends are 0 is not the DSP of the caique model: the line has dsp=%s, '
+          'aica_dsp_guest_oracle computes dsp=%s\n%s\n%s' % (fields['dsp'], found[0], text, said), copy.log)
+    (plain, plain_text, plain_fields), = lines.get(1)
+    check(plain_fields['dsp'] != found[0], 'the guest, whose first channel sends to the DSP, prints the dsp of the copy whose sends are 0, %s: '
+          'the comparison does not see the sends\n' % found[0] + plain_text, plain.log)
+
+    for line in said.splitlines():
+        print('aica_dsp_guest_oracle: ' + line)
+    print('the copy with IMXL 0 for the first channel (ISEL %d): dsp=%s, the DSP of the caique model on the guest\'s writes and schedule; %s'
+          % (value & 15, fields['dsp'], text))
+    print('and the guest, whose first channel sends, prints another: dsp=%s' % plain_fields['dsp'])
+
+
 def mode_files(args, lines):
     directory = os.path.abspath(args.dir)
     path = os.path.join(directory, 'SHA256SUMS')
@@ -709,7 +859,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     modes = {'same': mode_same, 'sounds': mode_sounds, 'muted': mode_muted, 'ignored': mode_ignored, 'engines': mode_engines,
              'record': mode_record, 'compare': mode_compare, 'neutral': mode_neutral, 'release': mode_release, 'held': mode_held,
-             'files': mode_files, 'names': mode_names}
+             'heard': mode_heard, 'oracle': mode_oracle, 'silent': mode_silent, 'files': mode_files, 'names': mode_names}
     parser.add_argument('--mode', action='append', required=True, choices=sorted(modes), help='one or more; they share their runs')
     parser.add_argument('--emulator', default='')
     parser.add_argument('--work', default='')
@@ -726,7 +876,8 @@ def main():
     parser.add_argument('--ignored', action='append', default=[], help='ignored: section:key=value, a key this build does not read')
     parser.add_argument('--build', default='', help='names: the build directory of the tests')
     parser.add_argument('--config', action='append', default=[], help='section:key=value, for every run')
-    parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release, held: the directory of the guest, with its manifest and its labels')
+    parser.add_argument('--oracle', default='', help='oracle: aica_dsp_guest_oracle, the tool of tests/aica_dsp')
+    parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release, held, heard, oracle: the directory of the guest, with its manifest and its labels')
     parser.add_argument('--watchdog', type=int, default=300, help='seconds a run may take')
     parser.add_argument('--keep', action='store_true', help='keep the work directory of a test that passed')
     args = parser.parse_args()
@@ -742,6 +893,8 @@ def main():
         args.emulator = os.path.abspath(args.emulator)
         args.work = os.path.abspath(args.work)
         args.guest = os.path.abspath(args.guest)
+        if args.oracle:
+            args.oracle = os.path.abspath(args.oracle)
 
         if not os.path.isfile(args.emulator):
             print('FAIL: no emulator at ' + args.emulator)

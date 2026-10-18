@@ -1,0 +1,62 @@
+! Made by gen.sh from dsptest_dsp.txt. Not edited by hand.
+! The DSP program of the sounding guest, for dsptest.s. dsp_table: an entry of the table that _start writes
+! for each MEMS_H line, (the address of bits 23:8 of MEMS[i], the value). dsp_block: the block g_dsp, COEF,
+! MADRS and MPRO as the register area of the DSP holds them, one .long for each 16-bit word (the word in its
+! low half), MPRO four words a step from step 0; the steps behind it are empty.
+
+	.macro	dsp_table
+	.long	0xA0704404, 0x00000001	! MEMS_H[0] = 0x0001
+	.endm
+
+	.macro	dsp_block
+	.align	2
+	.type	g_dsp, @object
+g_dsp:
+g_dsp_coef:
+	.long	0x00008000	! COEF[0]
+	.long	0x00007FF8	! COEF[1]
+	.long	0x00000000	! COEF[2]
+	.long	0x00004000	! COEF[3]
+	.long	0x0000E000	! COEF[4]
+	.long	0x00001000	! COEF[5]
+	.long	0x00002000	! COEF[6]
+	.long	0x00006000	! COEF[7]
+	.long	0x00000000	! COEF[8]
+	.long	0x00000000	! COEF[9]
+	.long	0x00000000	! COEF[10]
+	.long	0x00002000	! COEF[11]
+	.long	0x00000000	! COEF[12]
+	.long	0x0000F000	! COEF[13]
+	.long	0x00000000	! COEF[14]
+	.long	0x00000000	! COEF[15]
+	.long	0x00004000	! COEF[16]
+g_dsp_coef_end:
+g_dsp_madrs:
+	.long	0x00000000	! MADRS[0]
+	.long	0x00000100	! MADRS[1]
+	.long	0x00004000	! MADRS[2]
+	.long	0x00000200	! MADRS[3]
+g_dsp_madrs_end:
+g_dsp_mpro:
+	.long	0x00000200, 0x0000A000, 0x00000000, 0x00000000	! MPRO[0] = TRA:1 XSEL YSEL:1
+	.long	0x00000300, 0x00002000, 0x000040F0, 0x00008000	! MPRO[1] = TRA:1 TWT YSEL:1 MWT ADRL FRCL SHIFT:3 NOFL
+	.long	0x00000104, 0x00000000, 0x00000000, 0x00000000	! MPRO[2] = TWT TWA:2
+	.long	0x00000506, 0x0000A100, 0x000020A0, 0x00008080	! MPRO[3] = TRA:2 TWT TWA:3 XSEL YSEL:1 IRA:2 MRD ADRL SHIFT:2 NOFL NXADR
+	.long	0x00000708, 0x00002000, 0x00000055, 0x00000000	! MPRO[4] = TRA:3 TWT TWA:4 YSEL:1 FRCL SHIFT:1 NEGB BSEL
+	.long	0x00000000, 0x0000A1C6, 0x00004009, 0x00000200	! MPRO[5] = XSEL YSEL:1 IRA:3 IWT IWA:3 MWT YRL BSEL MASA:1
+	.long	0x00000000, 0x0000B180, 0x0000000A, 0x00000000	! MPRO[6] = XSEL YSEL:1 IRA:35 YRL ZERO
+	.long	0x00000C00, 0x00002000, 0x00002001, 0x00000280	! MPRO[7] = TRA:6 YSEL:1 MRD BSEL MASA:1 NXADR
+	.long	0x0000010A, 0x00004000, 0x00000002, 0x00000000	! MPRO[8] = TWT TWA:5 YSEL:2 ZERO
+	.long	0x00000000, 0x0000B844, 0x00002001, 0x00008680	! MPRO[9] = XSEL YSEL:1 IRA:48 IWT IWA:2 MRD BSEL NOFL MASA:3 NXADR
+	.long	0x00000A00, 0x00006000, 0x00000001, 0x00000000	! MPRO[10] = TRA:5 YSEL:3 BSEL
+	.long	0x00000800, 0x0000A14A, 0x00003100, 0x00008100	! MPRO[11] = TRA:4 XSEL YSEL:1 IRA:2 IWT IWA:5 MRD EWT EWA:1 NOFL ADREB
+	.long	0x00000000, 0x00008180, 0x00000009, 0x00000000	! MPRO[12] = XSEL IRA:3 YRL BSEL
+	.long	0x00000000, 0x0000204C, 0x0000C001, 0x00000500	! MPRO[13] = YSEL:1 IWT IWA:6 TABLE MWT BSEL MASA:2 ADREB
+	.long	0x00000600, 0x00004000, 0x00000001, 0x00000000	! MPRO[14] = TRA:3 YSEL:2 BSEL
+	.long	0x00000000, 0x0000E200, 0x0000A001, 0x00000500	! MPRO[15] = XSEL YSEL:3 IRA:4 TABLE MRD BSEL MASA:2 ADREB
+	.long	0x00000A00, 0x00002000, 0x00001001, 0x00000000	! MPRO[16] = TRA:5 YSEL:1 EWT BSEL
+	.long	0x00000000, 0x00000048, 0x00004000, 0x00008600	! MPRO[17] = IWT IWA:4 MWT NOFL MASA:3
+g_dsp_mpro_end:
+g_dsp_end:
+	.size	g_dsp, .-g_dsp
+	.endm

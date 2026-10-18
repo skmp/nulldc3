@@ -20,6 +20,9 @@
 #	aica_dsp_cases <case>.emu
 #	                      aica.dsp.case.<case>.emu: the cases anchored directly on the console's files on the
 #	                      emulator's sound chip, against those files
+#	aica_dsp_guest_oracle debugger.sound.oracle.dsptest.<jit|interp>: the DSP program of the sounding guest
+#	                      (tests/debugger/guest/dsptest) on the core and the caique model in lockstep, on the
+#	                      guest's schedule, against the field dsp of the emulator's line (below)
 #	aica_dsp_bench        samples a second, not a test
 #
 #	The model, the programs and the console's files are caique-rtl's and stay there: the tests are compiled with
@@ -197,7 +200,57 @@ else()
   endif()
 
   target_sources(aica_dsp_cases PRIVATE $<TARGET_OBJECTS:nulldc_caique_replay>)
+
+  # What the sounding guest's DSP program computes on the model, for the mode oracle of its runner
+  add_executable(aica_dsp_guest_oracle guest_oracle_main.cpp)
+  target_link_libraries(aica_dsp_guest_oracle PRIVATE nulldc_aica_dsp_caique)
 endif()
+
+
+## The sounding guest's DSP on the caique model ##
+#
+#	debugger.sound.oracle.dsptest.<jit|interp>: the mode oracle of tests/debugger/guest/dsptest/soundlines.py on the
+#	guest, N = 2000, on the emulator the system tests build (<build dir>/system/emulator, or NULLDC_EMULATOR), with
+#	aica_dsp_guest_oracle: the field dsp of the line of a copy of the guest whose sends to the DSP are 0 is what
+#	the core and the caique model compute in lockstep on the guest's writes and schedule. They need the caique
+#	checkout, as the other tests of the model, and the emulator, as the tests of tests/debugger/guest
+#
+
+find_package(Python3 COMPONENTS Interpreter)
+
+set(nulldc_oracle_skip "")
+if(NOT NULLDC_SYSTEM_TESTS AND NOT NULLDC_EMULATOR)
+  set(nulldc_oracle_skip "NULLDC_SYSTEM_TESTS is OFF and no NULLDC_EMULATOR is given: there is no emulator to run")
+elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX})
+  set(nulldc_oracle_skip "headless mode is there on Linux hosts only")
+elseif(NOT Python3_Interpreter_FOUND)
+  set(nulldc_oracle_skip "no python3 to run tests/debugger/guest/dsptest/soundlines.py with")
+endif()
+
+if(NULLDC_EMULATOR)
+  set(nulldc_oracle_emulator "${NULLDC_EMULATOR}")
+else()
+  set(nulldc_oracle_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
+endif()
+
+foreach(engine jit interp)
+  set(test debugger.sound.oracle.dsptest.${engine})
+
+  if(nulldc_oracle_skip)
+    nulldc_add_skipped_test(${test} "${nulldc_oracle_skip}")
+  elseif(NOT NULLDC_HAVE_CAIQUE)
+    nulldc_add_missing_data_test(${test} "${NULLDC_CAIQUE_MISSING}")
+  else()
+    add_test(NAME ${test}
+             COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/guest/dsptest/soundlines.py"
+                     --emulator "${nulldc_oracle_emulator}" --work "${CMAKE_BINARY_DIR}/debugger/guest/work/${test}"
+                     --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf" --ticks 2000
+                     --mode oracle --engine ${engine} --oracle $<TARGET_FILE:aica_dsp_guest_oracle>)
+    # soundlines.py has a watchdog per run of the emulator and of the tool, this is the one behind it. Python
+    # writes no bytecode into the source tree
+    set_tests_properties(${test} PROPERTIES TIMEOUT 900 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+  endif()
+endforeach()
 
 
 ## The C interface and the WebAssembly build ##

@@ -1,7 +1,8 @@
 ## The sounding guest, and the sound lines ##
 #
 #	dsptest.elf is the guest of this directory (README.md): a bare-metal program for the SH4 and the ARM7 that
-#	plays two channels and whose ARM7 state differs behind every sample. soundlines.py runs the emulator on it,
+#	plays two channels, whose ARM7 state differs behind every sample and whose DSP runs a program that is heard.
+#	soundlines.py runs the emulator on it,
 #	or on another program, with the sound regression harness (--config config:Debug.AicaHash=<N>), headless, on
 #	the emulator the system tests build (tests/debugger/guest/CMakeLists.txt), and says what the lines have to
 #	agree on. No line is stored in the tree: a test makes its runs itself.
@@ -20,8 +21,13 @@
 #	                                                        copy of the guest whose ARM7 stays held and one whose
 #	                                                        ARM7 idles on a branch to itself print one line in
 #	                                                        every field but arm7
-#	    debugger.sound.lines.2ndmix.<jit|interp>            two runs of 40000 ticks of 2ndmix.elf print one line
-#	                                                        (needs NULLDC_ELF_DIR; that program is silent here)
+#	    debugger.sound.heard.dsptest.<jit|interp>           the guest's DSP is heard: a copy of the guest whose
+#	                                                        outputs of the DSP have EFSDL 0 prints its line in
+#	                                                        arm7, sh4, dsp, ticks and cycles, and other samples
+#	    debugger.sound.lines.2ndmix.<jit|interp>            two runs of 40000 ticks of 2ndmix.elf print one line,
+#	                                                        and it is the silence of 40000 ticks, 32 pairs of
+#	                                                        zeroes for each (needs NULLDC_ELF_DIR; that program is
+#	                                                        silent here)
 #	    debugger.sound.muted.dsptest.<jit|interp>           "Disable Sound" (config:aica.NoSound=yes) mutes: the
 #	                                                        line of the run without the key in every field but
 #	                                                        samples, which is the hash of 2000 * 32 pairs of
@@ -36,11 +42,16 @@
 #	                                                        sound
 #	    debugger.sound.runner                               soundlines.py fails a run that was not made on the SH4
 #	                                                        engine it was asked for, its mode names fails those
-#	                                                        names and no other test's, and its mode held checks
-#	                                                        its patches and its fields on a copy of dsptest.elf
-#	                                                        (soundlines_test.py, on stand-ins for the emulator,
-#	                                                        whose line depends on the guest, and for a build: no
-#	                                                        emulator is run)
+#	                                                        names and no other test's, its modes held, heard and
+#	                                                        oracle check their copies and their fields on copies of
+#	                                                        dsptest.elf, its mode silent the k of the silence, and
+#	                                                        its mode release the empty end of the DSP part of the
+#	                                                        table (soundlines_test.py, on stand-ins for the
+#	                                                        emulator, whose line depends on the guest, for the
+#	                                                        oracle and for a build: no emulator is run)
+#
+#	debugger.sound.oracle.dsptest.<jit|interp>, the mode oracle (the DSP of a copy of the guest whose sends are 0
+#	against the caique model), is registered in tests/aica_dsp, where the tool it needs is built.
 #
 #	Every run of these tests has to say that it was made on the engine it was asked for. An emulator without a
 #	recompiler (-DNULLDC_EMULATOR= with a TARGET_NO_REC build, or a generic host) runs config:Dynarec.Enabled=yes
@@ -156,13 +167,19 @@ foreach(engine jit interp)
   nulldc_sound_test(debugger.sound.held.dsptest.${engine} "${CMAKE_CURRENT_SOURCE_DIR}/dsptest.elf" ${nulldc_sound_ticks}
                     --mode held --engine ${engine})
 
+  # The guest's DSP is heard: a copy of the guest whose outputs of the DSP have EFSDL 0 prints the guest's line but
+  # for samples (and regs, the register file has the levels): the mix takes EFREG from the DSP
+  nulldc_sound_test(debugger.sound.heard.dsptest.${engine} "${CMAKE_CURRENT_SOURCE_DIR}/dsptest.elf" ${nulldc_sound_ticks}
+                    --mode heard --engine ${engine})
+
   # 2ndmix stays in the matrix: a program of another kind (KallistiOS, a player that waits for a timer). Its
-  # ARM7 gets no interrupt under reios, so it plays nothing and has no "sounds"
+  # ARM7 gets no interrupt under reios, so it plays nothing and has no "sounds"; its samples are the silence of
+  # N ticks, every tick 32 pairs of zeroes, also while it holds its ARM7
   if(nulldc_sound_no_2ndmix AND NOT nulldc_guest_skip)
     nulldc_add_missing_data_test(debugger.sound.lines.2ndmix.${engine} "${nulldc_sound_no_2ndmix}")
   else()
     nulldc_sound_test(debugger.sound.lines.2ndmix.${engine} "${NULLDC_ELF_DIR}/2ndmix.elf" ${nulldc_sound_ticks_2ndmix}
-                      --mode same --engine ${engine})
+                      --mode same --mode silent --engine ${engine})
   endif()
 
   # "Disable Sound" mutes: the samples are made, and the harness folds a pair of zeroes for each, the pair the
