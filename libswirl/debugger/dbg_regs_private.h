@@ -72,11 +72,22 @@ enum MmrReader : uint32_t {
 	kMmrCount
 };
 
+// The rows of dc.aica.dsp: STEP and MDEC_CT, RBP and RBL of the word of 0x2804, and the datapath of the DSP core,
+// each a field of DspDebugState (hw/aica/dsp.h)
 enum DspReg : uint32_t {
 	kDspStep,
 	kDspMdecCt,
 	kDspRbp,
 	kDspRbl,
+	kDspAcc,
+	kDspYReg,
+	kDspFrcReg,
+	kDspAdrsReg,
+	kDspLatch,
+	kDspLatchCopy,
+	kDspMemval,
+	kDspNoflPipe,
+	kDspMixsBank,
 	kDspRegCount
 };
 

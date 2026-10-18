@@ -1337,22 +1337,27 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 		ok = ReadRegister("dc.aica.dsp", "MDEC_CT", &mdec_ct) && ReadRegister("dc.aica.dsp", "STEP", &step);
 		Check(ok && mdec_ct == state.mdecCt && step == 0, "dc.aica.dsp shows them: STEP %llu, MDEC_CT %llX", (unsigned long long)step, (unsigned long long)mdec_ct);
 
-		// the widths of the node: those of the registers on the hardware
+		// the widths of the node: those of the registers on the hardware, and of the datapath of the core behind them
+		// (M3-D25), in this order
 		{
 			const regs::Node* node = regs::Find("dc.aica.dsp");
-			const struct { const char* name; u32 width; } widths[] = { { "STEP", 8 }, { "MDEC_CT", 16 }, { "RBP", 16 }, { "RBL", 8 } };
+			const struct { const char* name; u32 width; } widths[] = { { "STEP", 8 }, { "MDEC_CT", 16 }, { "RBP", 16 }, { "RBL", 8 }, { "ACC", 26 },
+				{ "Y_REG", 24 }, { "FRC_REG", 13 }, { "ADRS_REG", 12 }, { "LATCH", 16 }, { "LATCH_COPY", 16 }, { "MEMVAL", 16 }, { "NOFL_PIPE", 2 },
+				{ "MIXS_BANK", 1 } };
+			const u32 count = sizeof(widths) / sizeof(widths[0]);
 			Tally tally;
 
-			for (const auto& want : widths)
+			for (u32 i = 0; i < count; i++)
 			{
-				int index = node ? regs::FindRegister(*node, want.name) : -1;
+				int index = node ? regs::FindRegister(*node, widths[i].name) : -1;
 
-				tally.Add(index >= 0 && node->registers[index].width == want.width, "dc.aica.dsp.%s: width %u, expected %u", want.name,
-					index >= 0 ? node->registers[index].width : 0, want.width);
+				tally.Add(index == (int)i && node->registers[index].width == widths[i].width && !(node->registers[index].flags & regs::kRegWritable),
+					"dc.aica.dsp.%s: row %d, width %u, flags %X, expected row %u, width %u, read-only", widths[i].name, index,
+					index >= 0 ? node->registers[index].width : 0, index >= 0 ? node->registers[index].flags : 0, i, widths[i].width);
 			}
 
-			tally.Add(node != nullptr && node->registerCount == 4, "dc.aica.dsp has other registers than these four");
-			tally.Report("the widths of dc.aica.dsp");
+			tally.Add(node != nullptr && node->registerCount == count, "dc.aica.dsp has %u registers, these %u", node ? node->registerCount : 0, count);
+			tally.Report("the widths of dc.aica.dsp, thirteen rows");
 		}
 
 		// The row of MDEC_CT is the core's counter at every value of its 16 bits, and its text has four digits
@@ -1434,7 +1439,9 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 				dsp->Core()->COEF[37]);
 
 			// The datapath as the accessor gives it: the core's fields, written here with values inside their bits, none
-			// 0 and no two alike, ACC with bit 25 set and Y_REG with bit 23 set, both negative
+			// 0 and no two alike, ACC with bit 25 set and Y_REG with bit 23 set, both negative, the step with bit 6 set
+			// (a step of 64 or more: an accessor that gave step & 63 would fail). And the rows of dc.aica.dsp: each
+			// field under the width of its row, the signed ones as their bits
 			{
 				AicaDsp* datapath = dsp->Core();
 				const s32 acc = (s32)0xFE5A5A5A, y_reg = (s32)0xFF9ABCDE;
@@ -1442,7 +1449,7 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 				u64 row_step = 99, row_mdec_ct = 99;
 
 				memset(&shown, 0xEE, sizeof(shown));
-				datapath->step = 37;
+				datapath->step = 101;
 				datapath->MDEC_CT = 0x9B3D;
 				datapath->ACC = acc;
 				datapath->Y_REG = y_reg;
@@ -1457,14 +1464,31 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 
 				const bool got = dsp->DebugGetState(&shown) && ReadRegister("dc.aica.dsp", "STEP", &row_step) && ReadRegister("dc.aica.dsp", "MDEC_CT", &row_mdec_ct);
 
-				Check(got && shown.step == 37 && shown.mdecCt == 0x9B3D && shown.rbpl == made && shown.acc == acc && shown.yReg == y_reg && shown.frcReg == 0x1ABC
+				Check(got && shown.step == 101 && shown.mdecCt == 0x9B3D && shown.rbpl == made && shown.acc == acc && shown.yReg == y_reg && shown.frcReg == 0x1ABC
 					&& shown.adrsReg == 0xA5C && shown.latch == 0xC0DE && shown.latchCopy == 0x7A31 && shown.memval == 0x4E95 && shown.noflPipe == 2
-					&& shown.mixsBank == 1 && row_step == 37 && row_mdec_ct == 0x9B3D,
-					"DSP written with step 37, MDEC_CT 9B3D, ACC %X, Y_REG %X, FRC_REG 1ABC, ADRS_REG A5C, the latch C0DE and its copy 7A31, MEMVAL 4E95, NOFL 2, the "
+					&& shown.mixsBank == 1 && row_step == 101 && row_mdec_ct == 0x9B3D,
+					"DSP written with step 101, MDEC_CT 9B3D, ACC %X, Y_REG %X, FRC_REG 1ABC, ADRS_REG A5C, the latch C0DE and its copy 7A31, MEMVAL 4E95, NOFL 2, the "
 					"MIXS bank 1: the accessor gives step %u, MDEC_CT %X, rbpl %04X (written %04X), ACC %X, Y_REG %X, FRC_REG %X, ADRS_REG %X, the latch %X and "
 					"its copy %X, MEMVAL %X, NOFL %X, the MIXS bank %X; the rows STEP %llu, MDEC_CT %llX", (u32)acc, (u32)y_reg, shown.step, shown.mdecCt,
 					shown.rbpl, made, (u32)shown.acc, (u32)shown.yReg, shown.frcReg, shown.adrsReg, shown.latch, shown.latchCopy, shown.memval, shown.noflPipe,
 					shown.mixsBank, (unsigned long long)row_step, (unsigned long long)row_mdec_ct);
+
+				// the nine rows of the datapath, each read twice
+				const struct { const char* name; u64 want; } rows[] = { { "ACC", (u32)acc & 0x3FFFFFFu }, { "Y_REG", (u32)y_reg & 0xFFFFFFu },
+					{ "FRC_REG", 0x1ABC }, { "ADRS_REG", 0xA5C }, { "LATCH", 0xC0DE }, { "LATCH_COPY", 0x7A31 }, { "MEMVAL", 0x4E95 }, { "NOFL_PIPE", 2 },
+					{ "MIXS_BANK", 1 } };
+				Tally tally;
+
+				for (const auto& row : rows)
+				{
+					u64 a = 99, b = 98;
+					const bool read = ReadRegister("dc.aica.dsp", row.name, &a) && ReadRegister("dc.aica.dsp", row.name, &b);
+
+					tally.Add(read && a == row.want && b == a, "dc.aica.dsp.%s reads %llX and %llX, the core's field under its width is %llX", row.name,
+						(unsigned long long)a, (unsigned long long)b, (unsigned long long)row.want);
+				}
+
+				tally.Report("the nine datapath rows of dc.aica.dsp are the core's fields under their widths, ACC and Y_REG as their bits");
 			}
 
 			RestoreDevice(aica, aica_kept);

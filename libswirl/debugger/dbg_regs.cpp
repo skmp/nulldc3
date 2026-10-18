@@ -394,25 +394,41 @@ static bool ReadRbpl(u32* word)
 
 static bool ReadDsp(u32 selector, u64* value)
 {
-	if (selector == kDspStep || selector == kDspMdecCt)
+	// RBP and RBL are bits 0..11 and 13..14 of the word of 0x2804
+	if (selector == kDspRbp || selector == kDspRbl)
 	{
-		DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
-		DspDebugState state;
+		u32 word;
 
-		if (dsp == nullptr || !dsp->DebugGetState(&state))
+		if (!ReadRbpl(&word))
 			return false;
 
-		*value = selector == kDspStep ? state.step : state.mdecCt;
+		*value = selector == kDspRbp ? word & 0xFFF : (word >> 13) & 3;
 		return true;
 	}
 
-	// RBP and RBL are bits 0..11 and 13..14 of the word of 0x2804
-	u32 word;
+	// everything else is a field of the DSP's state. The signed ones as their bits: Read() cuts them to the width
+	DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
+	DspDebugState state;
 
-	if (!ReadRbpl(&word))
+	if (dsp == nullptr || !dsp->DebugGetState(&state))
 		return false;
 
-	*value = selector == kDspRbp ? word & 0xFFF : (word >> 13) & 3;
+	switch (selector)
+	{
+	case kDspStep:      *value = state.step; break;
+	case kDspMdecCt:    *value = state.mdecCt; break;
+	case kDspAcc:       *value = (u32)state.acc; break;
+	case kDspYReg:      *value = (u32)state.yReg; break;
+	case kDspFrcReg:    *value = state.frcReg; break;
+	case kDspAdrsReg:   *value = state.adrsReg; break;
+	case kDspLatch:     *value = state.latch; break;
+	case kDspLatchCopy: *value = state.latchCopy; break;
+	case kDspMemval:    *value = state.memval; break;
+	case kDspNoflPipe:  *value = state.noflPipe; break;
+	case kDspMixsBank:  *value = state.mixsBank; break;
+	default:            return false;
+	}
+
 	return true;
 }
 

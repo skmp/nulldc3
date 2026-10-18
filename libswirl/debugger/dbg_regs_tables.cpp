@@ -582,12 +582,27 @@ static const char* const sgc_actions[]  = { "sgc" };
 	(DspDebugState::rbpl), 12 and 2 bits of it.
 	The widths are those of the registers: MDEC_CT has 16 bits on the hardware, and the DSP core keeps it in 16
 	bits, free running: it wraps from 0 to 0xFFFF and is never reloaded with the length of the ring.
+	Behind them the datapath of the DSP core, each a field of DspDebugState in the width of its register: ACC
+	and Y_REG are signed, and a value is given as its bits under the width (FormatValue); the read latch and its
+	copy, what an IWT stores (MEMVAL), the NOFL of the last two steps and the MIXS bank the DSP reads. They are
+	what a continuation of the DSP from a stop needs, and they are read-only, as every row of a device is.
+	Between two samples STEP reads 0; at a stop inside the DSP phase of a sample it is the step in front of
+	which the debugger suspended it.
 */
 static const Register dsp_regs[] = {
-	{ "STEP",     8, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspStep) },
-	{ "MDEC_CT", 16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspMdecCt) },
-	{ "RBP",     16, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbp) },
-	{ "RBL",      8, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbl) },
+	{ "STEP",        8, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspStep) },
+	{ "MDEC_CT",    16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspMdecCt) },
+	{ "RBP",        16, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbp) },
+	{ "RBL",         8, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbl) },
+	{ "ACC",        26, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspAcc) },
+	{ "Y_REG",      24, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspYReg) },
+	{ "FRC_REG",    13, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspFrcReg) },
+	{ "ADRS_REG",   12, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspAdrsReg) },
+	{ "LATCH",      16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspLatch) },
+	{ "LATCH_COPY", 16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspLatchCopy) },
+	{ "MEMVAL",     16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspMemval) },
+	{ "NOFL_PIPE",   2, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspNoflPipe) },
+	{ "MIXS_BANK",   1, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspMixsBank) },
 };
 
 static const char* const dsp_actions[] = { "dsp-disassembly" };

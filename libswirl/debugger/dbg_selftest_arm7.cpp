@@ -37,6 +37,7 @@
 #include "dbg_callstack.h"
 #include "dbg_core_private.h"
 #include "dbg_mem.h"
+#include "dbg_regs.h"
 
 #include "libswirl.h"
 #include "hw/sh4/sh4_if.h"
@@ -1119,7 +1120,15 @@ BOUNDED_GUEST_TEST(arm7_burst_plain, "arm7.burst.plain")
 	    (timer A, level 2, 13 samples), is raised and latched behind the hold, as the stored interrupt state of
 	    the sound CPU shows - aica_interr 1 with aica_reg_L 2, e68k_reg_M 1, e68k_reg_L 2 and e68k_out set; and
 	    INTR_PEND set with it where the held ARM7's F is clear, 0 where F is set (inside a_fwin, or at the
-	    return of a_fiq).
+	    return of a_fiq);
+	  - and so did the SH4's side of it. The guest's MCIEB enables only bit 5, which the ARM7 raises, so the test
+	    enables timer A's bit (bit 6) in MCIEB at the hold, as a write of the SH4 does (AICA::WriteReg: the debugger
+	    has no writer of the AICA's registers), and resets that bit of MCIPD through MCIRE, which updates the SH4's
+	    line: it is low then. Behind the held bursts the timer's bit is pending in MCIPD and the interrupt of the
+	    AICA is pending at Holly (SB_ISTEXT bit 1), which only the interrupt update of a held burst can have raised
+	    (UpdateSh4Ints). MCIEB is put back, and an MCIRE write of 0, which resets nothing, has the line follow it;
+	  - burst by burst: each of the k bursts is one burst, no ARM phase, 32 time steps and one tail, and counts
+	    MDEC_CT down by 32.
 	The hold is made with no request pending and none in service: the stored aica_interr and e68k_reg_M are 0 at
 	the pause in front of it, behind a burst; a pause that finds either is followed by another one burst later,
 	32 times at most. The held bursts span more than the 13 samples of the timer (one burst does)
@@ -1148,14 +1157,29 @@ u32 ScpuField(const std::vector<u8>& state, size_t at, size_t size)
 	return value;
 }
 
+// Registers of the AICA's interrupt controller of the SH4, as offsets into its register file, and the bit of timer A
+const u32 kMCIEB = 0x28B4, kMCIPD = 0x28B8, kMCIRE = 0x28BC;
+const u32 kTimerABit = 0x40;
+
+// Is the interrupt of the AICA pending at Holly? Bit 1 of SB_ISTEXT, as the device tree reads it
+bool AicaAtHolly()
+{
+	const regs::Node* intc = regs::Find("dc.holly.intc");
+	const int row = intc ? regs::FindRegister(*intc, "SB_ISTEXT") : -1;
+	u64 value = 0;
+
+	return row >= 0 && regs::Read(*intc, (u32)row, &value, nullptr, 0) && (value & 2) != 0;
+}
+
 struct {
 	Co co;
-	u32 tries;
+	u32 tries, burst, mcieb, perBurst;
 	bool ready;
-	Counts c;
+	Counts c, held;
 	ArmRegs regs;
 	std::vector<u8> state;
 	DspDebugState dsp;
+	u32 mdec;
 	AicaChannelDebug ch[2];
 } held_cl;
 
@@ -1211,11 +1235,21 @@ BOUNDED_GUEST_TEST(arm7_held_clocked, "arm7.held.clocked")
 
 	// the hold, in front of the held bursts
 	held_cl.c = c;
+	held_cl.held = c;
 	held_cl.regs = ReadArm();
 	held_cl.state = ScpuState();
 	held_cl.dsp = { };
 	held_cl.ch[0] = { };
 	held_cl.ch[1] = { };
+
+	// timer A's interrupt enabled for the SH4, its pending bit reset: the SH4's line is low
+	held_cl.mcieb = AicaReg16(kMCIEB);
+	Aica()->WriteReg(kMCIEB, held_cl.mcieb | kTimerABit, 2);
+	Aica()->WriteReg(kMCIRE, kTimerABit, 2);
+
+	Check((AicaReg16(kMCIEB) & kTimerABit) && !(AicaReg16(kMCIPD) & kTimerABit) && (AicaReg16(kMCIPD) & AicaReg16(kMCIEB)) == 0 && !AicaAtHolly(),
+		"timer A's bit enabled in MCIEB (%03X, it was %03X) and reset in MCIPD (%03X): nothing the SH4 enables is pending, the interrupt of the AICA is not "
+		"pending at Holly", AicaReg16(kMCIEB), held_cl.mcieb, AicaReg16(kMCIPD));
 
 	{
 		DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
@@ -1230,10 +1264,41 @@ BOUNDED_GUEST_TEST(arm7_held_clocked, "arm7.held.clocked")
 			held_cl.dsp.mdecCt & 0xFFFF, held_cl.ch[1].ca, held_cl.ch[1].caFraction, held_cl.ch[1].step >> 10, held_cl.ch[1].step & 0x3FF, held_cl.tries);
 	}
 
-	// k bursts that find the ARM7 held
-	while (!PauseAfter(stop, kHeldBursts))
-		CO_YIELD(held_cl.co);
+	// k bursts that find the ARM7 held, one by one
+	held_cl.perBurst = 0;
 
+	for (held_cl.burst = 0; held_cl.burst < kHeldBursts; held_cl.burst++)
+	{
+		held_cl.c = ReadCounts();
+
+		{
+			DspDebugState before = { };
+
+			sh4_cpu->GetA0H<DSP>(A0H_DSP)->DebugGetState(&before);
+			held_cl.mdec = before.mdecCt;
+		}
+
+		while (!PauseAfter(stop, 1))
+			CO_YIELD(held_cl.co);
+
+		c = ReadCounts();
+
+		{
+			DspDebugState after = { };
+
+			sh4_cpu->GetA0H<DSP>(A0H_DSP)->DebugGetState(&after);
+
+			if (stop.cause == StopCause::Pause && c.n[0] == held_cl.c.n[0] + 1 && c.n[1] == held_cl.c.n[1] && c.n[2] == held_cl.c.n[2] + 32
+				&& c.n[3] == held_cl.c.n[3] + 1 && ((held_cl.mdec - 32) & 0xFFFF) == (after.mdecCt & 0xFFFF))
+				held_cl.perBurst++;
+		}
+	}
+
+	Check(held_cl.perBurst == kHeldBursts,
+		"burst by burst: each of the %u is one burst, no ARM phase, 32 time steps and one tail, and counts MDEC_CT down by 32 (%u are)", kHeldBursts,
+		held_cl.perBurst);
+
+	held_cl.c = held_cl.held;
 	c = ReadCounts();
 
 	for (int i = 0; i < 4; i++)
@@ -1297,7 +1362,18 @@ BOUNDED_GUEST_TEST(arm7_held_clocked, "arm7.held.clocked")
 			ScpuField(state, kScpuE68kL, 4), ScpuField(state, kScpuOut, 1));
 		Check(pend == (f ? 0u : 1u), "INTR_PEND is e68k_out && armFiqEnable: %u, the held ARM7's F is %s (mode %02X, the PC %08X)", pend, f ? "set" : "clear",
 			ArmMode(), ArmPc());
+
+		// the SH4's side of the interrupt update
+		Check((AicaReg16(kMCIPD) & kTimerABit) && AicaAtHolly(),
+			"the interrupt update of the held bursts ran for the SH4 too: timer A's bit is pending in MCIPD (%03X, MCIEB %03X), and the interrupt of the AICA "
+			"is pending at Holly (SB_ISTEXT bit 1: %s)", AicaReg16(kMCIPD), AicaReg16(kMCIEB), AicaAtHolly() ? "set" : "clear");
 	}
+
+	// MCIEB as the guest had it, and the line following it
+	Aica()->WriteReg(kMCIEB, held_cl.mcieb, 2);
+	Aica()->WriteReg(kMCIRE, 0, 2);
+	Check(AicaReg16(kMCIEB) == held_cl.mcieb && AicaAtHolly() == ((AicaReg16(kMCIPD) & AicaReg16(kMCIEB)) != 0),
+		"MCIEB is put back (%03X), and the line of the SH4 follows it (MCIPD %03X)", AicaReg16(kMCIEB), AicaReg16(kMCIPD));
 
 	CO_END(held_cl.co);
 }
@@ -2677,7 +2753,8 @@ BOUNDED_GUEST_TEST(arm7_step_unclocked, "arm7.step.unclocked")
 
 /*
 	arm7.step.notclocked: with the ARM7 held in reset the three steps answer -32012, and arm nothing; the DSP's
-	step over and step out answer -32004 (and its step too, while it has no run control)
+	step over and step out answer -32004, as they do whatever the ARM7 does (a step of the DSP is taken with the
+	ARM7 held: dsp.step.held of dbg_selftest_dsp.cpp holds it, this test arms none)
 */
 namespace {
 
