@@ -979,7 +979,8 @@ bool SuspendAt(const emu::RunState& stop, u32 addr)
 
 /*
 	A pause behind `bursts` more sound bursts, asked for by the hand: the stop of a run that nothing of the ARM7
-	stopped. Works with the ARM7 held, where no timer overflows
+	stopped. It counts bursts, and works whether the ARM7 is clocked or held: with the ARM7 held the timers of the
+	AICA count on, but no handler arms timer A again, and no timer overflows in every burst
 */
 struct {
 	Co co;
@@ -1095,10 +1096,210 @@ BOUNDED_GUEST_TEST(arm7_burst_plain, "arm7.burst.plain")
 		d[i] = c.n[i] - bp_plain.a.n[i];
 
 	Check(stop.cause == StopCause::Pause && !ArmClocked() && d[0] >= 5, "two pauses with %u sound bursts between them, the ARM7 held in reset", d[0]);
-	Check(d[1] == 0 && d[2] == 0 && d[3] == d[0],
-		"a burst with the ARM7 held is no ARM phase, no time step and one tail: %u, %u and %u in %u bursts", d[1], d[2], d[3], d[0]);
+	Check(d[1] == 0 && d[2] == 32 * d[0] && d[3] == d[0],
+		"a burst with the ARM7 held is no ARM phase, 32 time steps of the AICA and one tail: %u, %u and %u in %u bursts", d[1], d[2], d[3], d[0]);
 
 	CO_END(bp_plain.co);
+}
+
+/*
+	arm7.held.clocked: the AICA is clocked whatever ARMRST says, and only the ARM7 is held by it. The guest holds
+	its ARM7 (g_hold_arm7) across k bursts, k odd:
+	  - each burst is one burst, no ARM phase, 32 time steps and one tail (SoundBurstCounts);
+	  - nothing of the ARM7 executed: every register of it as the debugger reads it is as at the hold, and so is
+	    every word of its stored context but INTR_PEND (which ARM7Backend::UpdateInterrupts sets to e68k_out &&
+	    armFiqEnable when the interrupt update latches a request: it moves with the request below), and the four
+	    fields behind the words (armIrqEnable, armFiqEnable, armMode, enabled);
+	  - the DSP made its samples: MDEC_CT, which counts down once a sample, is 32 k less modulo 2^16;
+	  - the channels the guest keyed play on: both are still enabled, and the play position of the second one
+	    moved. At OCT -1 and any of the four FNS the ARM7 gives it, it steps 16, 20, 24 or 28 samples a burst,
+	    so an odd number of bursts never closes its loop of 32 samples; the first channel, which at FNS 0 makes
+	    exactly one loop a burst, is no witness;
+	  - the interrupt update ran in the held bursts: the request of the ARM7's timer, which a_reset enabled
+	    (timer A, level 2, 13 samples), is raised and latched behind the hold, as the stored interrupt state of
+	    the sound CPU shows - aica_interr 1 with aica_reg_L 2, e68k_reg_M 1, e68k_reg_L 2 and e68k_out set; and
+	    INTR_PEND set with it where the held ARM7's F is clear, 0 where F is set (inside a_fwin, or at the
+	    return of a_fiq).
+	The hold is made with no request pending and none in service: the stored aica_interr and e68k_reg_M are 0 at
+	the pause in front of it, behind a burst; a pause that finds either is followed by another one burst later,
+	32 times at most. The held bursts span more than the 13 samples of the timer (one burst does)
+*/
+namespace {
+
+const u32 kHeldBursts = 3;
+const u32 kHeldSpinId = 50;
+
+// Fields of the stored state of the sound CPU (kScpuStateSize bytes): the interrupt controller in front of the
+// context, and the four fields behind it
+const size_t kScpuInterr = 0, kScpuRegL = 1, kScpuOut = 5, kScpuE68kL = 6, kScpuE68kM = 10;
+const size_t kScpuTailAt = kScpuWordsAt + RN_ARM_REG_COUNT * 4;
+const size_t kScpuTailSize = 1 + 1 + 4 + 1;
+
+u32 ScpuField(const std::vector<u8>& state, size_t at, size_t size)
+{
+	u32 value = 0xDEADBEEF;
+
+	if (state.size() == kScpuStateSize)
+	{
+		value = 0;
+		memcpy(&value, &state[at], size);
+	}
+
+	return value;
+}
+
+struct {
+	Co co;
+	u32 tries;
+	bool ready;
+	Counts c;
+	ArmRegs regs;
+	std::vector<u8> state;
+	DspDebugState dsp;
+	AicaChannelDebug ch[2];
+} held_cl;
+
+}
+
+BOUNDED_GUEST_TEST(arm7_held_clocked, "arm7.held.clocked")
+{
+	Counts c;
+	u32 d[4];
+
+	CO_BEGIN(held_cl.co);
+
+	while (!Settle(stop))
+		CO_YIELD(held_cl.co);
+
+	// a pause behind a burst that left no request of the AICA pending and none in service
+	held_cl.ready = false;
+
+	for (held_cl.tries = 0; held_cl.tries < 32 && !held_cl.ready; )
+	{
+		held_cl.tries++;
+
+		while (!PauseAfter(stop, 1))
+			CO_YIELD(held_cl.co);
+
+		held_cl.state = ScpuState();
+		held_cl.ready = stop.cause == StopCause::Pause && ArmClocked() && Suspended() == SOUND_BURST_NONE && ScpuField(held_cl.state, kScpuInterr, 1) == 0
+			&& ScpuField(held_cl.state, kScpuE68kM, 4) == 0;
+	}
+
+	Check(held_cl.ready, "a pause behind a burst with the ARM7 clocked, no request of the AICA pending and none in service (%u pauses)", held_cl.tries);
+	if (!held_cl.ready)
+		break;
+
+	// the guest holds its ARM7, and the SH4 stops in its spin, long before the next burst
+	held_cl.c = ReadCounts();
+	GotoSh4(DSPTEST_G_HOLD_ARM7);
+	Sh4Bps({ { kHeldSpinId, DSPTEST_G_HOLD_ARM7_SPIN } });
+
+	if (!Resume())
+		break;
+	CO_YIELD(held_cl.co);
+
+	Sh4Bps({ });
+	c = ReadCounts();
+
+	if (stop.cause != StopCause::Breakpoint || stop.breakpointId != kHeldSpinId || ArmClocked() || c.n[0] != held_cl.c.n[0])
+	{
+		Check(false, "the guest holds its ARM7 in front of the next burst: a stop at g_hold_arm7_spin (\"%s\" id %u), the ARM7 %s, %u bursts since the pause",
+			StopCauseName(stop.cause), stop.breakpointId, ArmClocked() ? "clocked" : "held", c.n[0] - held_cl.c.n[0]);
+		break;
+	}
+
+	// the hold, in front of the held bursts
+	held_cl.c = c;
+	held_cl.regs = ReadArm();
+	held_cl.state = ScpuState();
+	held_cl.dsp = { };
+	held_cl.ch[0] = { };
+	held_cl.ch[1] = { };
+
+	{
+		DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
+		const bool got = dsp->DebugGetState(&held_cl.dsp) && Aica()->DebugGetChannel(0, &held_cl.ch[0]) && Aica()->DebugGetChannel(1, &held_cl.ch[1]);
+
+		Check(got && held_cl.state.size() == kScpuStateSize && ScpuField(held_cl.state, kScpuInterr, 1) == 0 && ScpuField(held_cl.state, kScpuE68kM, 4) == 0
+			&& held_cl.ch[0].enabled && held_cl.ch[1].enabled,
+			"the ARM7 is held with no request pending (aica_interr %u) and none in service (e68k_reg_M %u), and the two channels the guest keyed play (%d, %d)",
+			ScpuField(held_cl.state, kScpuInterr, 1), ScpuField(held_cl.state, kScpuE68kM, 4), held_cl.ch[0].enabled, held_cl.ch[1].enabled);
+		Note("held at the ARM7's PC %08X, mode %02X, F %s; e68k_out %u, INTR_PEND %u; MDEC_CT %04X; the second channel at %u.%03X, %u.%03X a sample; after %u pauses",
+			ArmPc(), ArmMode(), (Arm(RN_CPSR) & 0x40) ? "set" : "clear", ScpuField(held_cl.state, kScpuOut, 1), StoredWord(held_cl.state, INTR_PEND),
+			held_cl.dsp.mdecCt & 0xFFFF, held_cl.ch[1].ca, held_cl.ch[1].caFraction, held_cl.ch[1].step >> 10, held_cl.ch[1].step & 0x3FF, held_cl.tries);
+	}
+
+	// k bursts that find the ARM7 held
+	while (!PauseAfter(stop, kHeldBursts))
+		CO_YIELD(held_cl.co);
+
+	c = ReadCounts();
+
+	for (int i = 0; i < 4; i++)
+		d[i] = c.n[i] - held_cl.c.n[i];
+
+	Check(stop.cause == StopCause::Pause && !ArmClocked() && Suspended() == SOUND_BURST_NONE && d[0] == kHeldBursts,
+		"a pause behind %u bursts that found the ARM7 held: %u bursts, a stop with \"%s\", the ARM7 %s", kHeldBursts, d[0], StopCauseName(stop.cause),
+		ArmClocked() ? "clocked" : "held");
+	Check(d[1] == 0 && d[2] == 32 * d[0] && d[3] == d[0],
+		"each burst that finds the ARM7 held is one burst, no ARM phase, 32 time steps of the AICA and one tail: %u, %u and %u in %u bursts", d[1], d[2], d[3], d[0]);
+
+	{
+		const ArmRegs regs = ReadArm();
+		const std::vector<u8> state = ScpuState();
+		const u32 differs = ArmDiffers(regs, held_cl.regs);
+		u32 words = 0, first = RN_ARM_REG_COUNT;
+
+		for (u32 i = 0; i < RN_ARM_REG_COUNT; i++)
+		{
+			if (i == INTR_PEND)
+				continue;
+
+			if (StoredWord(state, i) == StoredWord(held_cl.state, i))
+				words++;
+			else if (first == RN_ARM_REG_COUNT)
+				first = i;
+		}
+
+		const bool tail = state.size() == kScpuStateSize && held_cl.state.size() == kScpuStateSize
+			&& memcmp(&state[kScpuTailAt], &held_cl.state[kScpuTailAt], kScpuTailSize) == 0;
+
+		Check(differs == kArmRegs, "nothing of the ARM7 executed: every register of it reads as at the hold (the first that differs: %s; the PC %08X, at the hold %08X)",
+			differs == kArmRegs ? "none" : std::to_string(differs).c_str(), ArmPc(), held_cl.regs.r[15]);
+		Check(words == RN_ARM_REG_COUNT - 1 && tail,
+			"every word of its stored context but INTR_PEND is as at the hold (%u of %u; the first that differs: %s), and so are armIrqEnable, armFiqEnable, armMode and "
+			"enabled (%s)", words, RN_ARM_REG_COUNT - 1, first == RN_ARM_REG_COUNT ? "none" : std::to_string(first).c_str(), tail ? "the same" : "not the same");
+
+		DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
+		DspDebugState now = { };
+		const bool got = dsp->DebugGetState(&now);
+
+		Check(got && ((held_cl.dsp.mdecCt - 32 * kHeldBursts) & 0xFFFF) == (now.mdecCt & 0xFFFF),
+			"the DSP made the samples of the held bursts: MDEC_CT is %04X; it was %04X at the hold, and %u samples count it down to %04X modulo 2^16",
+			now.mdecCt & 0xFFFF, held_cl.dsp.mdecCt & 0xFFFF, 32 * kHeldBursts, (held_cl.dsp.mdecCt - 32 * kHeldBursts) & 0xFFFF);
+
+		AicaChannelDebug ch[2] = { };
+		const bool gotCh = Aica()->DebugGetChannel(0, &ch[0]) && Aica()->DebugGetChannel(1, &ch[1]);
+
+		Check(gotCh && ch[0].enabled && ch[1].enabled && (ch[1].ca != held_cl.ch[1].ca || ch[1].caFraction != held_cl.ch[1].caFraction),
+			"the channels the guest keyed play on: both are enabled (%d, %d), and the second's play position is %u.%03X, at the hold %u.%03X",
+			ch[0].enabled, ch[1].enabled, ch[1].ca, ch[1].caFraction, held_cl.ch[1].ca, held_cl.ch[1].caFraction);
+
+		// the interrupt update of the held bursts: the timer's request raised and latched
+		const bool f = (Arm(RN_CPSR) & 0x40) != 0;
+		const u32 pend = StoredWord(state, INTR_PEND);
+
+		Check(ScpuField(state, kScpuInterr, 1) == 1 && ScpuField(state, kScpuRegL, 4) == 2 && ScpuField(state, kScpuE68kM, 4) == 1
+			&& ScpuField(state, kScpuE68kL, 4) == 2 && ScpuField(state, kScpuOut, 1) == 1,
+			"the interrupt update ran in the held bursts: the request of timer A is raised and latched for the held ARM7, aica_interr %u with aica_reg_L %u, "
+			"e68k_reg_M %u, e68k_reg_L %u, e68k_out %u", ScpuField(state, kScpuInterr, 1), ScpuField(state, kScpuRegL, 4), ScpuField(state, kScpuE68kM, 4),
+			ScpuField(state, kScpuE68kL, 4), ScpuField(state, kScpuOut, 1));
+		Check(pend == (f ? 0u : 1u), "INTR_PEND is e68k_out && armFiqEnable: %u, the held ARM7's F is %s (mode %02X, the PC %08X)", pend, f ? "set" : "clear",
+			ArmMode(), ArmPc());
+	}
+
+	CO_END(held_cl.co);
 }
 
 /*
@@ -2466,8 +2667,9 @@ BOUNDED_GUEST_TEST(arm7_step_unclocked, "arm7.step.unclocked")
 		"the burst that finds the ARM7 held completes the step: \"%s\", a new stop counter, published %s", StopCauseName(stop.cause), SeenText(list).c_str());
 	Check(!ArmClocked() && ArmDiffers(regs, st_uncl.regs) == kArmRegs, "nothing executed: the ARM7 is held, and every register of it reads as before (the PC %08X)",
 		ArmPc());
-	Check(Suspended() == SOUND_BURST_NONE && c.n[0] == st_uncl.c.n[0] + 1 && c.n[1] == st_uncl.c.n[1] && c.n[2] == st_uncl.c.n[2] && c.n[3] == st_uncl.c.n[3] + 1,
-		"the burst is not suspended and went on with its rest: one burst, no ARM phase, no time step, one tail");
+	Check(Suspended() == SOUND_BURST_NONE && c.n[0] == st_uncl.c.n[0] + 1 && c.n[1] == st_uncl.c.n[1] && c.n[2] == st_uncl.c.n[2] + 32 && c.n[3] == st_uncl.c.n[3] + 1,
+		"the burst is not suspended and went on with its rest: one burst, no ARM phase, 32 time steps, one tail (%u, %u, %u, %u)", c.n[0] - st_uncl.c.n[0],
+		c.n[1] - st_uncl.c.n[1], c.n[2] - st_uncl.c.n[2], c.n[3] - st_uncl.c.n[3]);
 	Check(dbg_arm7_armed == 0 && !arm7::test::GetState().step, "the step is armed no more");
 
 	CO_END(st_uncl.co);
@@ -3383,7 +3585,7 @@ bool SuspendedEnding(const emu::RunState& stop, bool exit)
 
 	Check(st_susp_end.burstAtStop == SOUND_BURST_NONE && st_susp_end.atStop.n[0] == st_susp_end.c.n[0]
 		&& st_susp_end.atStop.n[1] - st_susp_end.c.n[1] <= 32 && st_susp_end.atStop.n[1] - st_susp_end.c.n[1] >= 1
-		&& st_susp_end.atStop.n[2] == st_susp_end.atStop.n[1] && st_susp_end.atStop.n[3] == st_susp_end.c.n[3] + 1,
+		&& st_susp_end.atStop.n[2] - st_susp_end.c.n[2] == st_susp_end.atStop.n[1] - st_susp_end.c.n[1] && st_susp_end.atStop.n[3] == st_susp_end.c.n[3] + 1,
 		"behind the thread no burst is suspended: the rest of its ARM phases ran (%u), each with its time step, and its tail once",
 		st_susp_end.atStop.n[1] - st_susp_end.c.n[1]);
 	Check(dbg_arm7_armed != 0 && !SeenHas(list, Lifetime::Parked, StopCause::Breakpoint),

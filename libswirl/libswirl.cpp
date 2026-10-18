@@ -825,37 +825,39 @@ struct Dreamcast_impl : VirtualDreamcast {
 
 
     /*
-        The sound burst: the work of one AICA scheduler callback (debugger/debugger.h, the ARM7 block). With the
-        ARM7 clocked it is 32 times { the ARM phase of a sample, 256 ticks; one time step of the AICA }, and then
-        the tail: the rest of the callback (AICA::Update: the batch render while it exists, the tick of the sound
-        regression harness), once per burst, with the ARM7 clocked or held.
+        The sound burst: the work of one AICA scheduler callback (debugger/debugger.h, the ARM7 block). It is 32
+        times { the ARM phase of a sample, 256 ticks, while the ARM7 is clocked; one time step of the AICA }, and
+        then the tail: the rest of the callback (AICA::Update: the tick of the sound regression harness), once
+        per burst. The AICA is clocked whatever ARMRST says: a burst that finds the ARM7 held in reset skips its
+        ARM phases and makes its 32 time steps all the same (the timers, the samples, the DSP, the interrupt
+        lines), whose samples go to the audio stream and pace it as every burst's do.
 
         A debugger can suspend it in front of an ARM7 instruction (SoundCPU::RunSample returns false). Where it
         stands is kept here, outside the context of the ARM7, whose every word is in the save state and in the
         hashes: the sample, the ticks its ARM phase has used, and whether the ARM7 was clocked when the burst
-        started, which is asked once. The callback returns its period all the same; the rest of the burst is
-        run on by the debugger's park loop, or by dc_run in front of the stop callback (RunSoundBurst), never
-        by the scheduler, and a reset discards it.
+        started, which is asked once and decides the ARM phases alone. The callback returns its period all the
+        same; the rest of the burst is run on by the debugger's park loop, or by dc_run in front of the stop
+        callback (RunSoundBurst), never by the scheduler, and a reset discards it.
     */
     struct {
         bool suspended = false;
-        bool arm_on = false;        // the ARM7 was clocked when the burst started
+        bool arm_on = false;        // the ARM7 was clocked when the burst started: its 32 ARM phases run
         u32 i = 0;                  // the sample, 0..31
         u32 ticks_done = 0;         // of the ARM phase of that sample; 0 between two phases
 
-        // SoundBurstCounts(): bursts started, ARM phases that ran to their end, time steps, tails. In no save
-        // state and no hash
+        // SoundBurstCounts(): bursts started, ARM phases that ran to their end (none in a burst that finds the
+        // ARM7 held), time steps (32 a burst), tails. In no save state and no hash
         u32 counts[4] = { 0, 0, 0, 0 };
     } burst;
 
     // Runs the burst from where it stands to its end. Returns false when the debugger suspended it
     bool RunBurst(SoundCPU* scpu, bool checks)
     {
-        if (burst.arm_on)
+        for (; burst.i < 32; burst.i++)
         {
-            for (; burst.i < 32; burst.i++)
+            // the ARM phase, while the ARM7 is clocked: 512 cycles of the SH4 a sample, 256 ticks of the ARM7
+            if (burst.arm_on)
             {
-                // 512 cycles of the SH4 a sample, 256 ticks of the ARM7
                 if (!scpu->RunSample(512 / arm_sh4_bias, &burst.ticks_done, checks))
                 {
                     burst.suspended = true;
@@ -864,10 +866,11 @@ struct Dreamcast_impl : VirtualDreamcast {
 
                 burst.counts[1]++;
                 burst.ticks_done = 0;
-
-                libAICA_TimeStep();
-                burst.counts[2]++;
             }
+
+            // the time step, whatever ARMRST says: the AICA is clocked also while the guest holds the ARM7
+            libAICA_TimeStep();
+            burst.counts[2]++;
         }
 
         burst.suspended = false;

@@ -171,21 +171,24 @@ register writer of the ARM7 (`SoundCPU::DebugSetReg`). Their guest is the soundi
 `dsptest_labels.inc`. Every test begins by bringing the guest to where a session finds it behind its boot: the
 SH4 in its loop, the ARM7 clocked and in its own, no breakpoint listed, no burst suspended.
 
-A sound burst is the work of one scheduler callback of the AICA: with the ARM7 clocked, 32 times an ARM phase
-(the ARM7 for the 256 ticks of a sample) and a time step of the AICA, which makes the sample, then the tail (the
-tick of the sound regression harness). The machine counts what its bursts did (`VirtualDreamcast::SoundBurstCounts`:
+A sound burst is the work of one scheduler callback of the AICA: 32 times an ARM phase (the ARM7 for the 256
+ticks of a sample, none while the guest holds it in reset: whether it is held is latched at the start of the
+burst) and a time step of the AICA, which makes the sample, then the tail (the tick of the sound regression
+harness). The AICA is clocked whatever `ARMRST` says: a burst that finds the ARM7 held makes its 32 time steps. The machine counts what its bursts did (`VirtualDreamcast::SoundBurstCounts`:
 bursts started, ARM phases that ran to their end, time steps, tails), and the tests read those counts: they say
 in which burst a stop was made, whether a step stayed inside one ARM phase, and how often a tail ran.
 
 What has to happen at a moment of the emulated machine is done by a scheduler callback of the tests that is
 registered behind the AICA's, and so runs behind the sound burst in a tick they share: a pause after a number of
-bursts (with the ARM7 held no timer of the AICA overflows, and nothing else stops a run), a host stop, a guest
+bursts (it counts bursts: with the ARM7 held the timers of the AICA count on, but no handler arms timer A
+again, so no timer overflows in every burst, and nothing else stops a run), a host stop, a guest
 exit or a guest reset in the first slice of a run, or in the tick in which a burst was suspended.
 
 | test | what has to hold |
 |---|---|
-| `debugger.selftest.arm7` `.interp` `.fallback` | the session `arm7`, the forty-three tests below, on the JIT, on the interpreter, and on the JIT with `Debugger:ForceFallback=yes` |
-| `arm7.burst.plain` | between two pauses of a run a burst is 32 ARM phases, 32 time steps and one tail while the ARM7 is clocked, and no ARM phase, no time step and one tail while the guest holds it in reset |
+| `debugger.selftest.arm7` `.interp` `.fallback` | the session `arm7`, the forty-four tests below, on the JIT, on the interpreter, and on the JIT with `Debugger:ForceFallback=yes` |
+| `arm7.burst.plain` | between two pauses of a run a burst is 32 ARM phases, 32 time steps and one tail while the ARM7 is clocked, and no ARM phase, 32 time steps and one tail while the guest holds it in reset |
+| `arm7.held.clocked` | the AICA is clocked whatever `ARMRST` says, and only the ARM7 is held. The guest holds its ARM7 (`g_hold_arm7`) across three bursts, the hold made at a pause behind a burst that left no request of the AICA pending and none in service (the stored `aica_interr` and `e68k_reg_M` 0; else one burst later, 32 times at most): each burst is one burst, no ARM phase, 32 time steps and one tail; nothing of the ARM7 executed (every register as the debugger reads it, every word of its stored context but `INTR_PEND`, and `armIrqEnable`, `armFiqEnable`, `armMode`, `enabled`, as at the hold); `MDEC_CT` is 96 less modulo 2^16; the two channels the guest keyed are still enabled and the second one's play position moved (at OCT -1 it steps 16, 20, 24 or 28 samples a burst, so three bursts never close its loop of 32). And the interrupt update ran in the held bursts: the request of timer A, which `a_reset` enabled, is raised and latched for the held ARM7 (`aica_interr` 1 with `aica_reg_L` 2, `e68k_reg_M` 1, `e68k_reg_L` 2, `e68k_out` set), with `INTR_PEND` set where the held ARM7's F is clear and 0 where it is set |
 | `arm7.bp.hit` | a breakpoint on the first instruction of the ARM7's loop stops within one burst of the resume: the burst is suspended in front of the instruction, its tail has not run, the stop is latched in the slice of its tick and no slice comes behind it. A resume from there executes the instruction and stops at the next arrival, in the same burst, with no Running published and no time passed |
 | `arm7.bp.context` | the debug loop leaves the context of the ARM7 as the interpreter's own loop leaves it, word for word of the save state, which the sound line and the state hash fold. At a breakpoint on the first instruction of the FIQ handler: the stored CPSR word is the one the entry composed, with F as the loop had it, where the core has F set (the debug loop composed none); R15 is what the branch of the vector left; nothing is kept in the tick remainder of the recompiler; and the debugger's reads leave the save state as it is. No tick of the guest falls inside the handler, so no sound line shows these words |
 | `arm7.bp.lowestid` | three breakpoints on one instruction, one of them through a mirror: the stop has the lowest id |
@@ -201,7 +204,7 @@ exit or a guest reset in the first slice of a run, or in the tick in which a bur
 | `arm7.step.frompause` | twenty steps from a stop with no burst suspended: one stop each, cause step, no Running, in the next burst, the SH4 run for one period of the AICA callback at most; while it ran, `g_parked` stayed set and the published state stayed Parked |
 | `arm7.step.fiq` | a step from a stop behind a burst whose last time step raised the timer's request: complete at the FIQ vector with nothing of the loop executed |
 | `arm7.step.fiqbehind` | a FIQ that becomes enterable inside a sample. The breakpoint is on the last instruction of the F window of the guest's loop; at each stop two steps, onto the `msr` that clears F and the `msr`. A pair counts when the count of the ARM phases reads the same at its three stops; a counted pair ends on the line behind the `msr` or on the FIQ vector, and one that ends on the vector comes within 64 bursts, with the `msr` executed (the saved status has F clear) and its return address in R14. A pair that went across the end of a phase is resumed and asserts nothing |
-| `arm7.step.unclocked` | the guest holds its ARM7 between the request of a step and the burst: the burst completes the step with nothing executed; it is not suspended and goes on with its tail |
+| `arm7.step.unclocked` | the guest holds its ARM7 between the request of a step and the burst: the burst completes the step with nothing executed; it is not suspended and goes on with its 32 time steps and its tail |
 | `arm7.step.notclocked` | with the ARM7 held, a step, a step over and a step out answer `-32012` and arm nothing; the DSP answers `-32004`, to its three steps while it has no run control (`emu::TargetSteps()`), and to a step over and a step out once it has |
 | `arm7.step.sh4first` | a breakpoint of the SH4 that is reached before the burst ends the wait of a step with its own cause, and no step is left armed |
 | `arm7.step.breakpointed` | a step executes the instruction it stands on also with a listed breakpoint on it: from a stop behind a burst, and from a PC written onto a breakpoint in a suspended burst |

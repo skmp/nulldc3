@@ -16,6 +16,10 @@
 #	                                                        field, the whole state of the DSP at every tick
 #	    debugger.sound.release.dsptest.<jit|interp>         a release of the ARM7 that finds a request of the AICA
 #	                                                        latched starts the program of the run without one
+#	    debugger.sound.held.dsptest.<jit|interp>            a held ARM7 is an idle one for the rest of the AICA: a
+#	                                                        copy of the guest whose ARM7 stays held and one whose
+#	                                                        ARM7 idles on a branch to itself print one line in
+#	                                                        every field but arm7
 #	    debugger.sound.lines.2ndmix.<jit|interp>            two runs of 40000 ticks of 2ndmix.elf print one line
 #	                                                        (needs NULLDC_ELF_DIR; that program is silent here)
 #	    debugger.sound.muted.dsptest.<jit|interp>           "Disable Sound" (config:aica.NoSound=yes) mutes: the
@@ -144,6 +148,12 @@ foreach(engine jit interp)
   nulldc_sound_test(debugger.sound.release.dsptest.${engine} "${CMAKE_CURRENT_SOURCE_DIR}/dsptest.elf" ${nulldc_sound_ticks}
                     --mode release --fields samples,regs,arm7,ticks,cycles --engine ${engine})
 
+  # The AICA is clocked whatever ARMRST says, and only the ARM7 is held by it: a copy of the guest whose last release
+  # of the ARM7 is a hold and a copy whose ARM7 stays on a branch to itself, both built in the work directory, agree
+  # in samples, regs, sh4, dsp, ticks and cycles; the held one sounds, and the idle one is not the guest
+  nulldc_sound_test(debugger.sound.held.dsptest.${engine} "${CMAKE_CURRENT_SOURCE_DIR}/dsptest.elf" ${nulldc_sound_ticks}
+                    --mode held --engine ${engine})
+
   # 2ndmix stays in the matrix: a program of another kind (KallistiOS, a player that waits for a timer). Its
   # ARM7 gets no interrupt under reios, so it plays nothing and has no "sounds"
   if(nulldc_sound_no_2ndmix AND NOT nulldc_guest_skip)
@@ -154,9 +164,9 @@ foreach(engine jit interp)
   endif()
 
   # "Disable Sound" mutes: the samples are made, and the harness folds a pair of zeroes for each, the pair the
-  # audio stream is handed (the guest's bursts all find its ARM7 clocked, so a tick is 32 such pairs; the stream
-  # itself, which keeps the speed limit going, is held by aica.dsp.emu.state). The run without the key has to
-  # sound, or its silence would say nothing
+  # audio stream is handed (every burst makes its 32 samples, whether it finds the ARM7 clocked or held, so a tick
+  # is 32 such pairs; the stream itself, which keeps the speed limit going, is held by aica.dsp.emu.state). The run
+  # without the key has to sound, or its silence would say nothing
   nulldc_sound_test(debugger.sound.muted.dsptest.${engine} "${CMAKE_CURRENT_SOURCE_DIR}/dsptest.elf" ${nulldc_sound_ticks}
                     --mode sounds --mode muted --engine ${engine})
 endforeach()

@@ -34,8 +34,8 @@ README.md has the modes:
 
     same      two runs with the same keys print the same line, field for field
     sounds    samples is none of the hashes of silence. The hash of k * 32 pairs of zeroes is one value for each
-              k, and a silent run prints one of them for a k from 0 to N: fewer than N where no pair exists while
-              the ARM7 is held in reset
+              k. Every tick makes its 32 pairs, whether the ARM7 is held in reset or not, so a silent run of N
+              ticks prints the one for N; the mode checks against the whole family, k from 0 to N, a superset
     muted     "Disable Sound" mutes: a run with config:aica.NoSound=yes prints the line of the run without it in
               every field but samples, and samples is the hash of N * 32 pairs of zeroes (see mode_muted; the
               audio stream itself, which no run here shows, is held by aica.dsp.emu.state)
@@ -53,6 +53,9 @@ README.md has the modes:
     release   the guest only: a release of the ARM7 starts the same program whatever the AICA holds for it. The
               line of a copy of the guest whose SH4 leaves a request latched for the ARM7 in front of the release
               is the line of the guest, in the fields of --fields (see mode_release)
+    held      the guest only: a held ARM7 is an idle one for the rest of the AICA. A copy of the guest whose ARM7
+              stays held behind the set-up and a copy whose ARM7 idles on a branch to itself print the same line
+              in every field but arm7 (see mode_held)
     files     the committed files of the guest are those of its manifest, SHA256SUMS; and where the assemblers
               are, gen.sh --check: they are what the sources give
     names     the tests of a build (the CTestTestfile.cmake files of --build): no test of the sound
@@ -262,13 +265,12 @@ def mode_muted(args, lines):
     """"Disable Sound" mutes. With config:aica.NoSound=yes the emulator makes every sample as without it, and the
     pair the harness folds, where the sample hands its pair to the audio stream, is a pair of zeroes. So the run
     with the key prints the line of the run without it in every field but samples, and samples is the hash of
-    N * 32 pairs of zeroes: one pair for each sample of each of the N ticks, which holds for a program whose bursts
-    all find its ARM7 clocked (the guest releases it in front of its first tick). A sound that is folded where
-    zeroes go out, a sample that folds no pair, or one that is not made (the ARM7, the DSP, the register file of
-    the run would differ), fails. What a line has is the harness's fold, not the stream: the runs have no audio
-    device (audio:backend=none). That the stream itself, the speed limit of the emulator (config:aica.LimitFPS),
-    is handed a pair of zeroes in every sample is held by aica.dsp.emu.state (its check nosound), on a stand-in
-    stream."""
+    N * 32 pairs of zeroes: one pair for each sample of each of the N ticks, which every burst makes, whether it
+    finds the ARM7 clocked or held in reset. A sound that is folded where zeroes go out, a sample that folds no
+    pair, or one that is not made (the ARM7, the DSP, the register file of the run would differ), fails. What a
+    line has is the harness's fold, not the stream: the runs have no audio device (audio:backend=none). That the
+    stream itself, the speed limit of the emulator (config:aica.LimitFPS), is handed a pair of zeroes in every
+    sample is held by aica.dsp.emu.state (its check nosound), on a stand-in stream."""
     (plain, plain_text, plain_fields), = lines.get(1)
     muted, text, fields = line_run(args, 'muted', args.engine, ['config:aica.NoSound=yes'])
     k = silence(args.ticks).get(fields['samples'])
@@ -558,6 +560,81 @@ def mode_release(args, lines):
     print('and the request was there: without the read of L or the write of M of a_reset the arm7 field is another')
 
 
+# The release of the ARM7 with which _start ends, in front of g_main: mov.l .L_armrst, r1; mov #0, r0; mov.b r0, @r1.
+# The copy held makes its mov #0, r0 (the halfword at g_main - 4) a mov #1, r0; the copy idle makes the instruction
+# at a_reset of the ARM7 program a branch to itself
+SH4_MOV_0_R0, SH4_MOV_1_R0 = 0xE000, 0xE001
+ARM_B_SELF = 0xEAFFFFFE
+
+# the fields the two copies of the mode held agree in: every field of the line but arm7
+HELD_FIELDS = tuple(f for f in LINE_FIELDS if f != 'arm7')
+
+
+def mode_held(args, lines):
+    """A held ARM7 is an idle ARM7 for the rest of the AICA (the guest only): the AICA is clocked whatever ARMRST
+    says, and only the ARM7 is not.
+
+    The runs are made on two copies of the guest, built in the work directory, that differ from it in one
+    instruction each. "held": the last release of the ARM7 in _start, in front of g_main, is made a hold (its
+    mov #0, r0, the halfword at g_main - 4, made mov #1, r0; the halfword has to be E000, else the mode fails):
+    the ARM7 stays held behind the set-up, and every burst from the second on finds it held. "idle": the
+    instruction at a_reset of the ARM7 program is made b . (EAFFFFFE): the released ARM7 stays on it, its FIQ
+    and IRQ masked by its reset, and touches nothing of the AICA. Neither copy's SH4 is interrupted (no ARM7
+    raises the AICA's interrupt to it), and the channels the SH4 keys play at the pitch it gave them.
+
+        held and idle      the same line in every field but arm7: the samples, the register file, the SH4, the DSP,
+                           the ticks and the time of a burst whose ARM7 is held are those of one whose ARM7 does
+                           nothing
+        held and idle      another arm7 field each: both patches took
+        held               samples is none of the hashes of silence: the channels the SH4 keyed play while the ARM7
+                           is held
+        idle and the guest another samples field: the guest's FIQ handler is heard, and the copy idle is not it
+
+    A build whose bursts make no time step while the ARM7 is held prints the 32 pairs of the first tick for the
+    copy held, and a DSP and a register file that stood still from then on."""
+    labels = guest_labels(args.dir)
+    for label in ('G_MAIN', 'G_ARM7_IMAGE', 'A_RESET'):
+        check(label in labels, 'dsptest_labels.inc in %s has no DSPTEST_%s' % (args.dir, label))
+    with open(args.guest, 'rb') as f:
+        image = bytes(f.read())
+
+    release = labels['G_MAIN'] - 4
+    at = file_offset(image, release, 'the release in front of g_main')
+    half, = struct.unpack_from('<H', image, at)
+    check(half == SH4_MOV_0_R0, 'the halfword at g_main - 4 (%08X) of the guest is %04X, not %04X (mov #0, r0): the copy held makes the release '
+          'with which _start ends a hold, and this guest has no such release there' % (release, half, SH4_MOV_0_R0))
+
+    reset = labels['G_ARM7_IMAGE'] + labels['A_RESET']
+    reset_at = file_offset(image, reset, 'a_reset of the ARM7 program')
+
+    def made(name, offset, fmt, value):
+        copy = bytearray(image)
+        struct.pack_into(fmt, copy, offset, value)
+        os.makedirs(args.work, exist_ok=True)
+        path = os.path.join(args.work, name + '.elf')
+        with open(path, 'wb') as f:
+            f.write(copy)
+        return line_run(args, name, args.engine, guest=path)
+
+    (plain, plain_text, plain_fields), = lines.get(1)
+    held, held_text, held_fields = made('held', at, '<H', SH4_MOV_1_R0)
+    idle, idle_text, idle_fields = made('idle', reset_at, '<I', ARM_B_SELF)
+
+    check(not different(held_fields, idle_fields, HELD_FIELDS), 'the copy whose ARM7 stays held and the copy whose ARM7 idles on b . differ in '
+          + different(held_fields, idle_fields, HELD_FIELDS) + ': a held ARM7 is not an idle one for the rest of the AICA\n' + held_text + '\n' + idle_text, held.log)
+    check(held_fields['arm7'] != idle_fields['arm7'], 'the copy held and the copy idle print one arm7 field, %s: one of the two patches did not take\n'
+          % held_fields['arm7'] + held_text + '\n' + idle_text, idle.log)
+    k = silence(args.ticks).get(held_fields['samples'])
+    check(k is None, 'the copy whose ARM7 stays held is silent: samples=%s is the hash of %d * 32 pairs of zeroes, where the channels the SH4 keyed '
+          'play while the ARM7 is held\n' % (held_fields['samples'], k if k is not None else 0) + held_text, held.log)
+    check(idle_fields['samples'] != plain_fields['samples'], 'the copy whose ARM7 idles on b . prints the samples of the guest, %s: the guest\'s FIQ '
+          'handler is not heard, and the copy is not the idle one\n' % plain_fields['samples'] + plain_text + '\n' + idle_text, idle.log)
+
+    print('a held ARM7 is an idle one for the rest of the AICA: ' + ' '.join('%s=%s' % (f, held_fields[f]) for f in HELD_FIELDS))
+    print('and the two copies are what they are: arm7=%s held, arm7=%s idle; the held one sounds; the guest, samples=%s, is another'
+          % (held_fields['arm7'], idle_fields['arm7'], plain_fields['samples']))
+
+
 def mode_files(args, lines):
     directory = os.path.abspath(args.dir)
     path = os.path.join(directory, 'SHA256SUMS')
@@ -631,8 +708,8 @@ def mode_names(args, lines):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     modes = {'same': mode_same, 'sounds': mode_sounds, 'muted': mode_muted, 'ignored': mode_ignored, 'engines': mode_engines,
-             'record': mode_record, 'compare': mode_compare, 'neutral': mode_neutral, 'release': mode_release, 'files': mode_files,
-             'names': mode_names}
+             'record': mode_record, 'compare': mode_compare, 'neutral': mode_neutral, 'release': mode_release, 'held': mode_held,
+             'files': mode_files, 'names': mode_names}
     parser.add_argument('--mode', action='append', required=True, choices=sorted(modes), help='one or more; they share their runs')
     parser.add_argument('--emulator', default='')
     parser.add_argument('--work', default='')
@@ -649,7 +726,7 @@ def main():
     parser.add_argument('--ignored', action='append', default=[], help='ignored: section:key=value, a key this build does not read')
     parser.add_argument('--build', default='', help='names: the build directory of the tests')
     parser.add_argument('--config', action='append', default=[], help='section:key=value, for every run')
-    parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release: the directory of the guest, with its manifest and its labels')
+    parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release, held: the directory of the guest, with its manifest and its labels')
     parser.add_argument('--watchdog', type=int, default=300, help='seconds a run may take')
     parser.add_argument('--keep', action='store_true', help='keep the work directory of a test that passed')
     args = parser.parse_args()
