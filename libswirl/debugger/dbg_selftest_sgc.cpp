@@ -592,42 +592,89 @@ bool Bounded(const emu::RunState& stop, const char* name, bool (*test)(const emu
 
 /*
 	The hand: a scheduler callback of the tests, in every slice in which emulated time passes while it is on,
-	registered behind the callback of the AICA. Here it asks for a pause once the bursts started have reached
-	hand.target: the stop of a run that nothing of the sound side stopped, and the backstop of a test that waits for
-	a stop of a capture which a mutation of the capture would never give
+	registered behind the callback of the AICA, so in a tick they share it runs behind the sound burst. It asks for a
+	pause once the bursts started have reached hand.target: the stop of a run that nothing of the sound side
+	stopped, and the backstop of a test that waits for a stop of a capture which a mutation of the capture would
+	never give. Or it has the host stop the machine, the guest end the run or reset the machine in the tick in which
+	a burst was suspended
 */
+enum HandMode {
+	HAND_PAUSE,
+	HAND_STOP_SUSPENDED,
+	HAND_EXIT_SUSPENDED,
+	HAND_RESET_SUSPENDED,
+};
+
 struct {
 	int id = -1;
 	bool on = false;
+	HandMode mode = HAND_PAUSE;
 	u32 target = 0;
 	bool asked = false;
+	u32 suspended = 0;					// slices that saw a burst suspended
+	std::atomic<int> stopCallbacks { 0 };
+	std::atomic<u32> stopSuspended { 0 };
+	Counts stopCounts;
 } hand;
+
+void HandStopped()
+{
+	hand.stopCallbacks++;
+	hand.stopSuspended = Suspended();
+	hand.stopCounts = ReadCounts();
+}
 
 int HandTick(void*, int, int, int)
 {
 	if (!hand.on)
 		return 0;
 
-	if (!hand.asked && (s32)(ReadCounts().n[0] - hand.target) >= 0)
+	const u32 burst = Suspended();
+
+	if (burst != SOUND_BURST_NONE)
+		hand.suspended++;
+
+	if (!hand.asked)
 	{
-		hand.asked = true;
-		emu::RequestPause();
+		if (hand.mode == HAND_PAUSE && (s32)(ReadCounts().n[0] - hand.target) >= 0)
+		{
+			hand.asked = true;
+			emu::RequestPause();
+		}
+		else if (hand.mode != HAND_PAUSE && burst != SOUND_BURST_NONE)
+		{
+			hand.asked = true;
+
+			if (hand.mode == HAND_STOP_SUSPENDED)
+				virtualDreamcast->Stop(HandStopped);
+			else if (hand.mode == HAND_EXIT_SUSPENDED)
+				virtualDreamcast->RequestExit();
+			else
+				virtualDreamcast->RequestReset();
+		}
 	}
 
 	return 1;
 }
 
-// On the emulator thread, parked: a pause once `bursts` more bursts have started
-void HandPauseAfter(u32 bursts)
+void HandOn(HandMode mode, u32 target)
 {
 	if (hand.id < 0)
 		hand.id = sh4_sched_register(nullptr, 0, HandTick);
 
 	hand.on = true;
-	hand.target = ReadCounts().n[0] + bursts;
+	hand.mode = mode;
+	hand.target = target;
 	hand.asked = false;
+	hand.suspended = 0;
 
 	sh4_sched_request(hand.id, 1);
+}
+
+// On the emulator thread, parked: a pause once `bursts` more bursts have started
+void HandPauseAfter(u32 bursts)
+{
+	HandOn(HAND_PAUSE, ReadCounts().n[0] + bursts);
 }
 
 void HandOff()
@@ -2651,7 +2698,10 @@ BOUNDED_GUEST_TEST(sgc_late, "sgc.late")
 	sgc.untaken: the deadline's cancel call is not taken - the test holds the emulator thread at the stop beyond the
 	2 s a call waits - so the core answers -32014 itself; the notice stays owed, a new request is -32003 until it has
 	come, the cancel is made again, and that notice answers nothing. A request behind it is answered by its own
-	capture
+	capture. Twice: the cancel made again is taken and cancels the capture; and, held at the stop again, the cancel
+	made again is not taken either, the capture ends by another way (the test cancels it) while the core waits in
+	that call, and a request that comes in between - no capture records, its notice is queued - is -32003 all the
+	same
 */
 namespace {
 
@@ -2744,9 +2794,227 @@ BOUNDED_GUEST_TEST(sgc_untaken, "sgc.untaken")
 	Check(stop.cause == StopCause::Capture && st_untaken.third == 0 && ServerFrames() == 2 && !Recording(),
 		"a request behind the notice is answered by its own capture, of 2 frames (%d)", st_untaken.third.load());
 
+	/*
+		the notice owed while no capture records
+	*/
+	DspBps({ { kAtId, 0 } });
+	Ask(kClient, 4, "state.recordSgcFrames", { { "frames", 4096 } });
+	CO_YIELD(st_untaken.co);
+
+	if (!Check(stop.cause == StopCause::Breakpoint && Recording(), "again: the capture is held at the breakpoint's stop"))
+		break;
+
+	DspBps({ });
+	st_untaken.counts = core::CaptureCountsForTest();
+
+	core::ExpireCaptureDeadlineForTest();
+
+	for (Clock::time_point t0 = Clock::now(); core::CaptureCountsForTest().deadlinesUntaken == st_untaken.counts.deadlinesUntaken && MsSince(t0) < 5000; Nap(2))
+		;
+
+	// the core waits in the cancel it makes again
+	for (Clock::time_point t0 = Clock::now(); core::CaptureCountsForTest().cancelsAgain == st_untaken.counts.cancelsAgain && MsSince(t0) < 2000; Nap(1))
+		;
+
+	Nap(20);
+	counts = core::CaptureCountsForTest();
+
+	Check(InBandCode(WaitResponse(kClient, 4, 100)) == kErrCaptureTimeout && counts.owed == 1 && counts.cancelsAgain == st_untaken.counts.cancelsAgain + 1,
+		"the core answered -32014 itself, and waits in the cancel it makes again");
+
+	// a request, and behind it the capture's end and its notice: the core takes them when its call is given up
+	Ask(kClient, 5, "state.recordSgcFrames", { { "frames", 16 } });
+	sgc::Cancel(kErrCaptureTimeout);
+
+	Check(!Recording() && dbg_sgc_active == 0, "no capture records any more; its notice is queued for the core");
+
+	{
+		const std::string fifth = WaitResponse(kClient, 5, 4000);
+
+		for (Clock::time_point t0 = Clock::now(); core::CaptureCountsForTest().owed != 0 && MsSince(t0) < 3000; Nap(2))
+			;
+
+		counts = core::CaptureCountsForTest();
+
+		Check(InBandCode(fifth) == kErrNotPaused, "the request that came while the notice was owed is -32003, though no capture recorded then (%s)", fifth.c_str());
+		Check(counts.owed == 0 && counts.unpaired == st_untaken.counts.unpaired + 1 && ResponsesTo(kClient, 4).size() == 1,
+			"then the notice came, and answered nothing: the request of the capture has its one answer");
+	}
+
+	Ask(kClient, 6, "state.recordSgcFrames", { { "frames", 2 } });
+	CO_YIELD(st_untaken.co);
+
+	Check(stop.cause == StopCause::Capture && InBandCode(WaitResponse(kClient, 6, 2000)) == 0 && ServerFrames() == 2,
+		"a request behind it is answered by its own capture");
+
 	CoreOff();
 
 	CO_END(st_untaken.co);
+}
+
+/*
+	sgc.sameslice.hoststop, .exit, .reset: the machine is asked to stop, to end or to reset in the tick in which the
+	last frame of a capture armed at a stop suspended its burst at the end of a sample (the hand asks, behind the
+	callback of the AICA in that tick). dc_run meets the suspended burst with no Park() in between: a host stop or a
+	guest exit runs it to its end without checks in front of the stop callback, and the capture's stop is not
+	published; a reset discards it, and the stop that is published is the reset's. The capture was complete at its
+	last frame either way: the server has its frames, and its notice was given once, with the answer 0
+*/
+namespace {
+
+const u32 kSameFrames = 10;
+
+struct {
+	Co co;
+	u32 stopId, given;
+	Counts c;
+	std::atomic<bool> failed { false };
+	std::atomic<u32> burstAtStop { 0 };
+	Counts atStop;
+	emu::RunState stopped;
+} st_same;
+
+bool SameSliceEnding(const emu::RunState& stop, bool exit)
+{
+	std::vector<Seen> list;
+	Counts c;
+
+	CO_BEGIN(st_same.co);
+
+	while (!Settle(stop))
+		CO_YIELD(st_same.co);
+
+	st_same.c = ReadCounts();
+	st_same.stopId = stop.stopId;
+	st_same.given = sgc::test::Notices().given;
+	st_same.failed = false;
+	hand.stopCallbacks = 0;
+	hand.stopSuspended = ~0u;
+	TakeSeen();
+
+	HandOn(exit ? HAND_EXIT_SUSPENDED : HAND_STOP_SUSPENDED, 0);
+
+	OtherStart([] {
+		if (!WaitLifetime(Lifetime::Stopped))
+		{
+			st_same.failed = true;
+			return;
+		}
+
+		st_same.stopped = emu::GetRunState();
+
+		// with no emulator thread the caller runs it itself
+		emu::Call(emu::CC_TABLE, [] {
+			st_same.burstAtStop = Suspended();
+			st_same.atStop = ReadCounts();
+		});
+
+		Restart(false);
+	});
+
+	if (!ArmAtStop(kSameFrames))
+		break;
+	CO_YIELD(st_same.co);
+
+	OtherJoin();
+	HandOff();
+	list = TakeSeen();
+
+	Check(!st_same.failed && hand.asked && hand.suspended == 1,
+		"%s in the tick in which the capture's last frame suspended the burst at the end of a sample, and the thread ended",
+		exit ? "the guest ended the run" : "the host stopped the machine");
+	Check(st_same.stopped.lifetime == Lifetime::Stopped && st_same.stopped.cause == (exit ? StopCause::GuestExit : StopCause::HostStopped)
+		&& !SeenHas(list, Lifetime::Parked, StopCause::Capture) && st_same.stopped.stopId == st_same.stopId + 1,
+		"the capture's stop is not published: %s", SeenText(list).c_str());
+
+	if (!exit)
+		Check(hand.stopCallbacks == 1 && hand.stopSuspended == SOUND_BURST_NONE && hand.stopCounts.n[3] == st_same.c.n[3] + 1,
+			"the burst is complete in front of the stop callback: the callback found none suspended, and the tail run");
+
+	Check(st_same.burstAtStop == SOUND_BURST_NONE && st_same.atStop.n[0] == st_same.c.n[0] + 1 && st_same.atStop.n[2] == st_same.c.n[2] + 32
+		&& st_same.atStop.n[3] == st_same.c.n[3] + 1, "behind the thread the burst is whole: 32 time steps, one tail, and none is suspended");
+	Check(ServerFrames() == kSameFrames && sgc::test::Notices().given == st_same.given + 1 && sgc::test::Notices().lastAnswer == 0 && !Recording(),
+		"the capture was complete at its last frame: the server has its %u frames, and one notice was given, with the answer 0", kSameFrames);
+	Check(stop.cause == StopCause::Start, "the host starts the next thread");
+
+	st_same.c = ReadCounts();
+
+	while (!PauseAfter(stop, 3))
+		CO_YIELD(st_same.co);
+
+	c = ReadCounts();
+
+	Check(stop.cause == StopCause::Pause && c.n[0] - st_same.c.n[0] >= 3 && c.n[3] - st_same.c.n[3] == c.n[0] - st_same.c.n[0],
+		"the next callback of the AICA finds no burst suspended, and the machine runs on: %u bursts", c.n[0] - st_same.c.n[0]);
+
+	CO_END(st_same.co);
+}
+
+struct {
+	Co co;
+	u32 stopId, given;
+	Counts c;
+} st_same_reset;
+
+}
+
+BOUNDED_GUEST_TEST(sgc_sameslice_hoststop, "sgc.sameslice.hoststop")
+{
+	return SameSliceEnding(stop, false);
+}
+
+BOUNDED_GUEST_TEST(sgc_sameslice_exit, "sgc.sameslice.exit")
+{
+	return SameSliceEnding(stop, true);
+}
+
+BOUNDED_GUEST_TEST(sgc_sameslice_reset, "sgc.sameslice.reset")
+{
+	std::vector<Seen> list;
+	Counts c;
+
+	CO_BEGIN(st_same_reset.co);
+
+	while (!Settle(stop))
+		CO_YIELD(st_same_reset.co);
+
+	st_same_reset.c = ReadCounts();
+	st_same_reset.stopId = stop.stopId;
+	st_same_reset.given = sgc::test::Notices().given;
+	TakeSeen();
+
+	HandOn(HAND_RESET_SUSPENDED, 0);
+
+	if (!ArmAtStop(kSameFrames))
+		break;
+	CO_YIELD(st_same_reset.co);
+
+	HandOff();
+	list = TakeSeen();
+	c = ReadCounts();
+
+	Check(hand.asked && hand.suspended == 1, "the guest reset the machine in the tick in which the capture's last frame suspended the burst at the end of a sample");
+	Check(stop.cause == StopCause::Reset && stop.stopId == st_same_reset.stopId + 1
+		&& SeenIs(list, { { Lifetime::Running, StopCause::NoCause }, { Lifetime::Parked, StopCause::Reset } }),
+		"the stop that is published is the reset's: \"%s\"; published %s", StopCauseName(stop.cause), SeenText(list).c_str());
+	Check(Suspended() == SOUND_BURST_NONE && c.n[0] == st_same_reset.c.n[0] + 1 && c.n[3] == st_same_reset.c.n[3] && c.n[2] == st_same_reset.c.n[2] + kSameFrames,
+		"the burst is discarded: none is suspended, and the rest of it and its tail never ran (%u time steps)", c.n[2] - st_same_reset.c.n[2]);
+	Check(ServerFrames() == kSameFrames && sgc::test::Notices().given == st_same_reset.given + 1 && sgc::test::Notices().lastAnswer == 0 && !Recording(),
+		"the capture was complete at its last frame, in front of the reset: the server has its %u frames, one notice with the answer 0", kSameFrames);
+	Check(Ctx().pc == kResetVector, "the machine is reset");
+
+	TakeSeen();
+
+	// the machine boots again, with nothing of the capture to stop it
+	while (!PauseAfter(stop, 3))
+		CO_YIELD(st_same_reset.co);
+
+	list = TakeSeen();
+
+	Check(stop.cause == StopCause::Pause && !SeenHas(list, Lifetime::Parked, StopCause::Capture), "the machine boots again, with no stop of the capture (published %s)",
+		SeenText(list).c_str());
+
+	CO_END(st_same_reset.co);
 }
 
 /*
