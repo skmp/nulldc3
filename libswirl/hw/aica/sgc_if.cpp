@@ -471,14 +471,24 @@ struct ChannelEx
 
 	//The sweep of one sample over the 64 channels, in their order: the direct outputs into mixl and mixr, and the
 	//sends to the DSP as sums per bus, at its 20-bit scale (the console's MIXS holds the sample times 16). Every
-	//channel sends to the bus of its ISEL, one that does not play 0: mask has a bit for each bus a channel names
-	__forceinline static void StepAll(ChannelEx* Chans, SampleType& mixl, SampleType& mixr, s32* sends, u32& mask)
+	//channel sends to the bus of its ISEL, one that does not play 0: mask has a bit for each bus a channel names.
+	//Keep: the outputs of each channel go to outs as well (left, right, the send at 16-bit scale), for the
+	//debugger while an SGC capture records; the sweep computes the same either way
+	template<bool Keep>
+	__forceinline static void StepAll(ChannelEx* Chans, SampleType& mixl, SampleType& mixr, s32* sends, u32& mask, s32 (*outs)[3])
 	{
 		for (int i = 0; i < 64; i++)
 		{
 			SampleType oLeft, oRight, oDsp;
 
 			Chans[i].Step(oLeft, oRight, oDsp);
+
+			if (Keep)
+			{
+				outs[i][0] = oLeft;
+				outs[i][1] = oRight;
+				outs[i][2] = oDsp;
+			}
 
 			u32 bus = Chans[i].dsp_bus & 15;
 
@@ -1062,6 +1072,12 @@ struct SGC_impl : SGC {
 	//the direct mix of the sample, from its sweep to its mix
 	SampleType mixl, mixr;
 
+	//The outputs of each channel in the last sweep (left, right, the send to the DSP, at 16-bit scale), kept only
+	//while an SGC capture records (dbg_sgc_active): outs_kept says that the last sweep kept them. In no save
+	//state; nothing of the guest reads them
+	s32 outs[64][3];
+	bool outs_kept;
+
 	void staticinitialise()
 	{
 		STREAM_STEP_LUT[0][0][0] = &StreamStep<0, 0, 0>;
@@ -1148,6 +1164,8 @@ struct SGC_impl : SGC {
 		CommonData = (CommonData_struct*)&aica_reg[0x2800];
 		this->dsp = dsp;
 		mixl = mixr = 0;
+		memset(outs, 0, sizeof(outs));
+		outs_kept = false;
 
 		staticinitialise();
 
@@ -1277,6 +1295,13 @@ struct SGC_impl : SGC {
 		out->alfo = ch.lfo.alfo;
 		out->plfo = ch.lfo.plfo;
 
+		//the outputs of the sample of the last sweep, while a capture records and that sweep kept them
+		const bool kept = dbg_sgc_active != 0 && outs_kept;
+
+		out->outLeft = kept ? outs[channel][0] : 0;
+		out->outRight = kept ? outs[channel][1] : 0;
+		out->outDsp = kept ? outs[channel][2] : 0;
+
 		return true;
 	}
 
@@ -1304,7 +1329,17 @@ struct SGC_impl : SGC {
 		//the sends of this sweep go to the bank the DSP reads from the next sample on
 		dsp->SweepBegin();
 
-		ChannelEx::StepAll(Chans, mixl, mixr, sends, mask);
+		//one test a sample while no SGC capture records
+		if (unlikely(dbg_sgc_active != 0))
+		{
+			ChannelEx::StepAll<true>(Chans, mixl, mixr, sends, mask, outs);
+			outs_kept = true;
+		}
+		else
+		{
+			ChannelEx::StepAll<false>(Chans, mixl, mixr, sends, mask, nullptr);
+			outs_kept = false;
+		}
 
 		for (u32 bus = 0; bus < 16; bus++)
 		{

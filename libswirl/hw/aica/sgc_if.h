@@ -67,7 +67,9 @@ struct SGC {
 	// to it, oDsp << 4); the CD-DA pair into AicaDsp::EXTS. SampleMix: EFREG of the DSP through EFSDL / EFPAN into
 	// the kept mix, mono, MVOL, the DAC; the pair goes to the audio stream, which is also the speed limit of the
 	// emulator (LimitFPS), and the harness folds it. With "Disable Sound" (config:aica.NoSound) the pair is made
-	// all the same and a pair of zeroes goes out in its place, to the stream and to the harness
+	// all the same and a pair of zeroes goes out in its place, to the stream and to the harness. While an SGC
+	// capture records (dbg_sgc_active, debugger/debugger.h) SampleSweep keeps each channel's outputs of the
+	// sample for DebugGetChannel; it tests the flag once a sample, and computes the same either way
 	virtual void SampleSweep() = 0;
 	virtual void SampleMix() = 0;
 
@@ -88,7 +90,8 @@ struct SGC {
 	//selected channel in 0x2810 without clearing its loop flag, its play position in 0x2814
 	virtual bool DebugReadCommonReg(u32 reg, u32* value) { return false; }
 
-	//The state of channel 0..63; false for any other
+	//The state of channel 0..63; false for any other. Its outputs (outLeft, outRight, outDsp) are those of the
+	//sample of the last sweep while an SGC capture records and that sweep kept them, 0 at any other time
 	virtual bool DebugGetChannel(u32 channel, AicaChannelDebug* out) { return false; }
 
 	virtual ~SGC() { }
