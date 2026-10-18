@@ -9,7 +9,7 @@ project(dbg_disasm_tests CXX)
 #   -DSH_OBJDUMP=<sh-elf-objdump>
 #   -DARM_OBJDUMP=<arm-eabi-objdump>
 #   -DDEVTOOLS_DIR=<dreamcast-devtools checkout with node_modules installed> (default: the submodule devtools/ of
-#                   the tree, else ../dreamcast-devtools beside it)
+#                   the tree, else ../dreamcast-devtools beside it): dsp_playground, and the second half of dsptest
 #
 # The tests project (tests/CMakeLists.txt) adds this directory as well. What it sets is all optional here:
 #   NULLDC_TEST_PREFIX          put in front of every test name (debugger.disasm.)
@@ -129,3 +129,15 @@ disasm_oracle_test(dsp_playground "${DSP_ORACLE_FOUND}"
   "no tsx / dspUtils.ts under \"${devtools_dir}\"; set -D${devtools_option}=<dreamcast-devtools checkout with node_modules>"
   "${TSX}" "${CMAKE_CURRENT_SOURCE_DIR}/dsp_playground.mts"
   --dsp-utils "${DSP_UTILS}" --test-bin $<TARGET_FILE:disasm_test>)
+
+# The DSP program of the sounding guest (tests/debugger/guest/dsptest): its text, dsptest_dsp.txt, is the
+# disassembly of the words its ELF loads, and with the checkout the playground's assembler gives those words for
+# that text (dsptest_text.py). Without the checkout the first half runs and the test says "SKIP: "
+if(DSP_ORACLE_FOUND)
+  set(dsptest_playground --tsx "${TSX}" --dsp-utils "${DSP_UTILS}")
+else()
+  set(dsptest_playground "")
+endif()
+disasm_oracle_test(dsptest "${Python3_Interpreter_FOUND}" "python3 not found"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/dsptest_text.py"
+  --test-bin $<TARGET_FILE:disasm_test> --guest "${DEVCAST_DIR}/tests/debugger/guest/dsptest" ${dsptest_playground})

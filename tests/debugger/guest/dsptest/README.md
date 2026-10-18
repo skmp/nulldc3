@@ -55,8 +55,9 @@ lines that start with `#` or `//`. It encodes the fields of a step into its four
 `libswirl/hw/aica/dsp_core/aica_dsp_core.h`, which the playground, the emulator's disassembler and caique share,
 and refuses an `MPRO` line that is not exactly the line the emulator's disassembler (`DisasmDsp`) prints for those
 words: the fields in its order, the zero ones left out, a field of one bit by its name. So the one text is the
-source, what the debugger's disassembly of the DSP shows, and what the playground assembles. The steps are given
-in their order from step 0, none of them empty and step 127 not among them.
+source, what the debugger's disassembly of the DSP shows, and what the playground assembles; and
+`debugger.disasm.dsptest` holds all three to the ELF. The steps are given in their order from step 0, none of them
+empty and step 127 not among them.
 
 ## What it does
 
@@ -154,6 +155,8 @@ The emulator's DSP is held to caique's model on this program by `debugger.sound.
 `IMXL` 0, so that every send is 0 (the emulator's attenuation of a send at `IMXL` 0 is 255 or more, capped by what
 the envelope leaves, and its table of levels has 0 there), the field `dsp` of the line, the DSP's whole state
 folded at every tick, is what the core and the model compute in lockstep on the guest's writes and schedule.
+
+The program's text, the ELF's words and the emulator's disassembly agree: `debugger.disasm.dsptest`.
 
 ## What tests may lean on
 
