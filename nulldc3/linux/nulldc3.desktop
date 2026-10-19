@@ -21,4 +21,5 @@ Icon=nulldc3
 Terminal=false
 Type=Application
 StartupNotify=false
+StartupWMClass=nulldc3
 Categories=Game;Emulator;
