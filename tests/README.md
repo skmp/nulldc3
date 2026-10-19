@@ -1,7 +1,7 @@
 # Tests
 
 A standalone CMake project. Every suite but one compiles the libswirl translation units it tests (with the
-emulator's own definitions and flags, from `reicast/cmake/config.cmake`) and links them against stubs for the
+emulator's own definitions and flags, from `nulldc3/cmake/config.cmake`) and links them against stubs for the
 rest. The system tests run the emulator itself, which the project builds for them.
 
 The suites of `debugger/` are CMake projects of their own, with their own flags, which this project adds: "The
@@ -161,7 +161,7 @@ captures.
 The emulator has an SH4 recompiler for x86-64 hosts and one for arm64 hosts, an ARM7 recompiler for arm64 hosts,
 and its interpreters on every host; its DSP is the one core of `libswirl/hw/aica/dsp_core` on every host; it does not configure for 32-bit x86 and arm hosts. Of the recompilers the
 tests here run the x86-64 backend. `-DTARGET_NO_REC=ON` builds the emulator without a recompiler on any host. A
-generic host, one whose processor `reicast/cmake/config.cmake` has no name for, gets that build without the fault
+generic host, one whose processor `nulldc3/cmake/config.cmake` has no name for, gets that build without the fault
 handler, so without nvmem; on an x86-64 machine `-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=<such a name>`
 configures it. The system tests take such a binary with `-DNULLDC_EMULATOR=`. On a `TARGET_NO_REC` build every case
 passes but `guest_exit.jit`, `boot.2ndmix.jit`, `boot.hello.jit` and the three `vmem.*` cases, which have to see the
@@ -500,7 +500,7 @@ without its data.
 * `debugger/disasm/README.md`: what is compared with objdump, the opcode table and the playground, and every
   difference that is accepted,
 * `debugger/regs/README.md`: what the table tests check, and the tests of `regs/aica`, the one directory of these
-  suites that takes the emulator's definitions and flags (`reicast/cmake/config.cmake`, for itself only),
+  suites that takes the emulator's definitions and flags (`nulldc3/cmake/config.cmake`, for itself only),
 * `debugger/symbols/README.md`: the fixture images of the symbol table's tests and what each test breaks in them,
 * the head of `debugger/net/CMakeLists.txt`: the sanitizer builds and the bundle of the net suite,
 * `debugger/sh4bp/README.md`: the suite of `tests/debugger` that compiles libswirl translation units as the
