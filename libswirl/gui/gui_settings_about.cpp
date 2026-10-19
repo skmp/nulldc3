@@ -21,7 +21,7 @@ void gui_settings_about()
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 	    if (ImGui::CollapsingHeader("nullDC", ImGuiTreeNodeFlags_DefaultOpen))
 	    {
-			ImGui::Text("Version: %s", REICAST_VERSION);
+			ImGui::Text("Version: %s", NULLDC_VERSION);
 			ImGui::Text("Git Hash: %s", GIT_HASH);
 			ImGui::Text("Build Date: %s", BUILD_DATE);
 			ImGui::Text("Target: %s",

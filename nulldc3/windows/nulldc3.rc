@@ -24,12 +24,12 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Reicast Team"
       VALUE "FileDescription", "nullDC"
-      VALUE "FileVersion", REICAST_VERSION
+      VALUE "FileVersion", NULLDC_VERSION
       VALUE "InternalName", "nulldc3"
       VALUE "LegalCopyright", "Copyright (c) Reicast Team. All rights reserved."
       VALUE "OriginalFilename", "nulldc3.exe"
       VALUE "ProductName", "nullDC"
-      VALUE "ProductVersion", REICAST_VERSION
+      VALUE "ProductVersion", NULLDC_VERSION
     END
   END
   BLOCK "VarFileInfo"

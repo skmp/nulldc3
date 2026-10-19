@@ -606,7 +606,7 @@ static bool ReadText(u32 selector, char* text, u32 n)
 	case kTextBuild:
 	{
 		// the revision the build system found; it finds none outside a plain checkout
-		const char* revision = REICAST_VERSION;
+		const char* revision = NULLDC_VERSION;
 		size_t len = strlen(revision);
 		const char notfound[] = "-NOTFOUND";
 
