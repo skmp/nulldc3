@@ -1,0 +1,84 @@
+.\" nulldc3-joyconfig.1:
+
+.TH  "NULLDC3-JOYCONFIG" "1" "August 27, 2015" "NULLDC3-JOYCONFIG" "nulldc3-joyconfig"
+
+.SH NAME
+
+nulldc3-joyconfig \- An editor for nullDC controller mappings.
+
+.SH SYNOPSIS
+
+\fBnulldc3-joyconfig\fR [-h | [-d DEVICE_ID] [-f FILE]]
+
+.SH "DESCRIPTION"
+
+\fBnulldc3-joyconfig\fR assists you when creating custom mappings for \fBnulldc3\fR, the nullDC Dreamcast emulator.
+It reads them from mappings/ in its directory: the directory of its executable, the one of \fB--portable\fR \fIdir\fR,
+or with \fB--shared\fR ~/.config/nulldc3 ($XDG_CONFIG_HOME/nulldc3).
+
+.SH "EXAMPLE COMMANDLINE"
+
+.TP
+\fBNo command line options will give you a list of devices that you can choose from and then start the mapping assistant.\fR
+nulldc3-joyconfig
+
+.TP
+\fBCreate a mapping for /dev/input/event3.\fR
+nulldc3-joyconfig -d 3
+
+.TP
+\fBCreate a mapping for /dev/input/event3 and save the mapping file to mappings/my_mapping.cfg of a nulldc3 whose executable is in ~/nulldc3.\fR
+nulldc3-joyconfig -d 3 -f ~/nulldc3/mappings/my_mapping.cfg
+
+.TP
+\fBThe same for a nulldc3 that is run with --shared.\fR
+nulldc3-joyconfig -d 3 -f ~/.config/nulldc3/mappings/my_mapping.cfg
+
+.SH "GENERAL OPTIONS"
+
+.TP
+\fB-h\fR, \fB--help\fR
+Show a short help text.
+
+.TP
+\fB-d DEVICE_ID\fR, \fB--device-id DEVICE_ID\fR
+Create a mapping for a specific device. The device ID is the number X from /dev/input/eventX.
+
+\fB-f FILE\fR, \fB--file FILE\fR
+Save the created mapping to a file. By default, the mapping will be printed to the standard output.
+
+.SH "KNOWN ISSUES"
+
+If you're using a wireless controller, please make sure it is on before creating a mapping. Some controllers emit "Button Pressed/Released" signals when turning them on, which may lead to wrongly mapped keys.
+
+.SH "PYTHON VERSION"
+
+.TP
+\fBnulldc3-joyconfig\fR is written in Python and needs the evdev module to work:
+\fIhttps://pypi.python.org/pypi/evdev\fP
+
+.TP
+Distributions like Ubuntu have the evdev module as a package in their repositories - in these cases you should use your package manager instead of pip to install it.
+
+.TP
+Although \fBnulldc3-joyconfig\fR does support both Python 2.6 or higher and 3.0 or higher, you need to run \fBnulldc3-joyconfig\fR with the same Python version that you installed the evdev module for, i.e. if you installed the evdev module for Python 2, you also need to run \fBnulldc3-joyconfig\fR using Python 2 and vice-versa.
+
+.SH "AUTHOR"
+
+.TP
+\fBreicast\fR is developed by a number of people. A list of contributors can be obtained at:
+\fIhttps://github.com/reicast/reicast-emulator/graphs/contributors\fP
+
+.TP
+Head over to reicast's git repository if you want to contibute:
+\fIhttps://github.com/reicast/reicast-emulator\fP
+
+.TP
+\fBnulldc3-joyconfig\fR is part of nullDC, which is developed at:
+\fIhttps://github.com/skmp/nulldc3\fP
+
+.TP
+This is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License (Version 2).
+
+.SH "SEE ALSO"
+\fBnulldc3\fR(1)

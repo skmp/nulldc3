@@ -4,9 +4,9 @@
 
 	#include "license/bsd"
 
-	reicast build options
+	nullDC build options
 
-		Reicast can support a lot of stuff, and this is an attempt
+		nullDC can support a lot of stuff, and this is an attempt
 		to organize the build time options
 
 		Option categories

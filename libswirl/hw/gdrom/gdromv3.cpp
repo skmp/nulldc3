@@ -1064,58 +1064,58 @@ struct GDRomV3_impl final : MMIODevice {
 
     void serialize(void** data, unsigned int* total_size) {
 
-        REICAST_S(sns_asc);
-        REICAST_S(sns_ascq);
-        REICAST_S(sns_key);
+        NULLDC_S(sns_asc);
+        NULLDC_S(sns_ascq);
+        NULLDC_S(sns_key);
 
-        REICAST_S(packet_cmd);
-        REICAST_S(set_mode_offset);
-        REICAST_S(read_params);
-        REICAST_S(packet_cmd);
-        REICAST_S(read_buff);
-        REICAST_S(pio_buff);
-        REICAST_S(set_mode_offset);
-        REICAST_S(ata_cmd);
-        REICAST_S(cdda);
-        REICAST_S(gd_state);
-        REICAST_S(gd_disk_type);
-        REICAST_S(data_write_mode);
-        REICAST_S(DriveSel);
-        REICAST_S(Error);
-        REICAST_S(IntReason);
-        REICAST_S(Features);
-        REICAST_S(SecCount);
-        REICAST_S(SecNumber);
-        REICAST_S(GDStatus);
-        REICAST_S(ByteCount);
+        NULLDC_S(packet_cmd);
+        NULLDC_S(set_mode_offset);
+        NULLDC_S(read_params);
+        NULLDC_S(packet_cmd);
+        NULLDC_S(read_buff);
+        NULLDC_S(pio_buff);
+        NULLDC_S(set_mode_offset);
+        NULLDC_S(ata_cmd);
+        NULLDC_S(cdda);
+        NULLDC_S(gd_state);
+        NULLDC_S(gd_disk_type);
+        NULLDC_S(data_write_mode);
+        NULLDC_S(DriveSel);
+        NULLDC_S(Error);
+        NULLDC_S(IntReason);
+        NULLDC_S(Features);
+        NULLDC_S(SecCount);
+        NULLDC_S(SecNumber);
+        NULLDC_S(GDStatus);
+        NULLDC_S(ByteCount);
     }
 
     void unserialize(void** data, unsigned int* total_size) {
         
-        REICAST_US(sns_asc);
-        REICAST_US(sns_ascq);
-        REICAST_US(sns_key);
+        NULLDC_US(sns_asc);
+        NULLDC_US(sns_ascq);
+        NULLDC_US(sns_key);
 
-        REICAST_US(packet_cmd);
-        REICAST_US(set_mode_offset);
-        REICAST_US(read_params);
-        REICAST_US(packet_cmd);
-        REICAST_US(read_buff);
-        REICAST_US(pio_buff);
-        REICAST_US(set_mode_offset);
-        REICAST_US(ata_cmd);
-        REICAST_US(cdda);
-        REICAST_US(gd_state);
-        REICAST_US(gd_disk_type);
-        REICAST_US(data_write_mode);
-        REICAST_US(DriveSel);
-        REICAST_US(Error);
-        REICAST_US(IntReason);
-        REICAST_US(Features);
-        REICAST_US(SecCount);
-        REICAST_US(SecNumber);
-        REICAST_US(GDStatus);
-        REICAST_US(ByteCount);
+        NULLDC_US(packet_cmd);
+        NULLDC_US(set_mode_offset);
+        NULLDC_US(read_params);
+        NULLDC_US(packet_cmd);
+        NULLDC_US(read_buff);
+        NULLDC_US(pio_buff);
+        NULLDC_US(set_mode_offset);
+        NULLDC_US(ata_cmd);
+        NULLDC_US(cdda);
+        NULLDC_US(gd_state);
+        NULLDC_US(gd_disk_type);
+        NULLDC_US(data_write_mode);
+        NULLDC_US(DriveSel);
+        NULLDC_US(Error);
+        NULLDC_US(IntReason);
+        NULLDC_US(Features);
+        NULLDC_US(SecCount);
+        NULLDC_US(SecNumber);
+        NULLDC_US(GDStatus);
+        NULLDC_US(ByteCount);
     }
 
     int Update(int i, int c, int j)

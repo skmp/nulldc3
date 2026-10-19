@@ -298,6 +298,6 @@ LUAMOD_API int luaopen_emulib(lua_State* L) {
 }
 
 void emulib_expose(lua_State* L) {
-	luaL_requiref(L, "reicast", luaopen_emulib, 1);
+	luaL_requiref(L, "nulldc3", luaopen_emulib, 1);
 	lua_pop(L, 1);  /* remove lib */
 }

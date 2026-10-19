@@ -711,8 +711,8 @@ FLASH = b'\xff' * (128 * 1024)
 
 # Below a scratch directory (scratch() points XDG_CONFIG_DIRS at sys/c and XDG_DATA_DIRS at sys/d): the places the
 # reicast builds read an emu.cfg from, and the places they read data/ from (the config directories as well)
-REICAST_CONFIGS = ('home/.reicast', 'home/.config/reicast', 'xdg/config/reicast', 'sys/c/reicast')
-REICAST_DATAS = REICAST_CONFIGS + ('home/.local/share/reicast', 'xdg/data/reicast', 'sys/d/reicast')
+LEGACY_CONFIGS = ('home/.reicast', 'home/.config/reicast', 'xdg/config/reicast', 'sys/c/reicast')
+LEGACY_DATAS = LEGACY_CONFIGS + ('home/.local/share/reicast', 'xdg/data/reicast', 'sys/d/reicast')
 # the places of nulldc3 that --shared reads: the per-user ones of HOME and of the XDG variables, the system lists
 SHARED_CONFIGS = ('home/.config/nulldc3', 'xdg/config/nulldc3', 'sys/c/nulldc3')
 SHARED_DATAS = ('home/.local/share/nulldc3', 'xdg/data/nulldc3', 'sys/d/nulldc3')
@@ -809,7 +809,7 @@ def case_dirs_default(h):
     places (an emu.cfg and a flash in each place of reicast and of --shared). Started through a symbolic link in a
     third directory, the directory is the one of the file the link points at."""
     top, binary, env = scratch(h, 'default.dirs')
-    seed(top, REICAST_CONFIGS + SHARED_CONFIGS, REICAST_DATAS + SHARED_DATAS)
+    seed(top, LEGACY_CONFIGS + SHARED_CONFIGS, LEGACY_DATAS + SHARED_DATAS)
     before = listing(top)
     run = guest_run(h, 'default', binary, os.path.join(top, 'cwd'), env)
     check_clean(run, 'guest-exit')
@@ -819,7 +819,7 @@ def case_dirs_default(h):
     check(sorted(os.listdir(run.directory)) == ['log.txt'], 'the run wrote into its working directory', run)
 
     top, binary, env = scratch(h, 'link.dirs')
-    seed(top, REICAST_CONFIGS + SHARED_CONFIGS, REICAST_DATAS + SHARED_DATAS)
+    seed(top, LEGACY_CONFIGS + SHARED_CONFIGS, LEGACY_DATAS + SHARED_DATAS)
     os.makedirs(os.path.join(top, 'link'))
     link = os.path.join(top, 'link', 'nulldc3')
     os.symlink(binary, link)
@@ -838,7 +838,7 @@ def case_dirs_portable(h):
     places is read (an emu.cfg and a flash in each place of reicast and of --shared). "--" ends the switches: a
     game behind it may begin with a dash."""
     top, binary, env = scratch(h, 'portable.dirs')
-    seed(top, REICAST_CONFIGS + SHARED_CONFIGS, REICAST_DATAS + SHARED_DATAS)
+    seed(top, LEGACY_CONFIGS + SHARED_CONFIGS, LEGACY_DATAS + SHARED_DATAS)
     cwd = os.path.join(top, 'cwd')
     # the directory that is there has an emu.cfg that asks for a state hash and a flash: both are read
     seed(top, ['there'], ['there'])
@@ -882,7 +882,7 @@ def case_dirs_shared(h):
     cwd = os.path.join(top, 'cwd')
     # every place the reicast builds read a config or a flash from, and the two below HOME that the XDG variables
     # replace: none of them is read
-    seed(top, REICAST_CONFIGS + ('home/.config/nulldc3',), REICAST_DATAS + ('home/.local/share/nulldc3',))
+    seed(top, LEGACY_CONFIGS + ('home/.config/nulldc3',), LEGACY_DATAS + ('home/.local/share/nulldc3',))
 
     before = listing(top)
     run = guest_run(h, 'shared_xdg', binary, cwd, env, extra_args=['--shared'])

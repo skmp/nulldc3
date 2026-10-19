@@ -1427,8 +1427,8 @@ struct SGC_impl : SGC {
 
 	bool channel_serialize(void** data, unsigned int* total_size)
 	{
-		REICAST_SA(cdda_sector, CDDA_SIZE);
-		REICAST_S(cdda_index);
+		NULLDC_SA(cdda_sector, CDDA_SIZE);
+		NULLDC_S(cdda_index);
 
 		int i = 0;
 		int addr = 0;
@@ -1436,47 +1436,47 @@ struct SGC_impl : SGC {
 		for (i = 0; i < 64; i++)
 		{
 			addr = (int)(Chans[i].SA - Chans[i].aica_ram);
-			REICAST_S(addr);
+			NULLDC_S(addr);
 
-			REICAST_S(Chans[i].CA);
-			REICAST_S(Chans[i].step);
-			REICAST_S(Chans[i].update_rate);
-			REICAST_S(Chans[i].s0);
-			REICAST_S(Chans[i].s1);
-			REICAST_S(Chans[i].loop);
-			REICAST_S(Chans[i].adpcm.last_quant);
-			REICAST_S(Chans[i].noise_state);
-			REICAST_S(Chans[i].VolMix.DLAtt);
-			REICAST_S(Chans[i].VolMix.DRAtt);
-			REICAST_S(Chans[i].VolMix.DSPAtt);
+			NULLDC_S(Chans[i].CA);
+			NULLDC_S(Chans[i].step);
+			NULLDC_S(Chans[i].update_rate);
+			NULLDC_S(Chans[i].s0);
+			NULLDC_S(Chans[i].s1);
+			NULLDC_S(Chans[i].loop);
+			NULLDC_S(Chans[i].adpcm.last_quant);
+			NULLDC_S(Chans[i].noise_state);
+			NULLDC_S(Chans[i].VolMix.DLAtt);
+			NULLDC_S(Chans[i].VolMix.DRAtt);
+			NULLDC_S(Chans[i].VolMix.DSPAtt);
 
 			//the DSP's bus the channel sends to, its ISEL (V4 had the offset of the bus in the old DSP's array: the same number)
 			addr = (int)Chans[i].dsp_bus;
-			REICAST_S(addr);
+			NULLDC_S(addr);
 
-			REICAST_S(Chans[i].AEG.val);
-			REICAST_S(Chans[i].AEG.state);
-			REICAST_S(Chans[i].AEG.AttackRate);
-			REICAST_S(Chans[i].AEG.Decay1Rate);
-			REICAST_S(Chans[i].AEG.Decay2Rate);
-			REICAST_S(Chans[i].AEG.Decay2Value);
-			REICAST_S(Chans[i].AEG.ReleaseRate);
-			REICAST_S(Chans[i].FEG);
-			REICAST_S(Chans[i].step_stream_lut1);
-			REICAST_S(Chans[i].step_stream_lut2);
-			REICAST_S(Chans[i].step_stream_lut3);
+			NULLDC_S(Chans[i].AEG.val);
+			NULLDC_S(Chans[i].AEG.state);
+			NULLDC_S(Chans[i].AEG.AttackRate);
+			NULLDC_S(Chans[i].AEG.Decay1Rate);
+			NULLDC_S(Chans[i].AEG.Decay2Rate);
+			NULLDC_S(Chans[i].AEG.Decay2Value);
+			NULLDC_S(Chans[i].AEG.ReleaseRate);
+			NULLDC_S(Chans[i].FEG);
+			NULLDC_S(Chans[i].step_stream_lut1);
+			NULLDC_S(Chans[i].step_stream_lut2);
+			NULLDC_S(Chans[i].step_stream_lut3);
 
-			REICAST_S(Chans[i].lfo.counter);
-			REICAST_S(Chans[i].lfo.start_value);
-			REICAST_S(Chans[i].lfo.state);
-			REICAST_S(Chans[i].lfo.alfo);
-			REICAST_S(Chans[i].lfo.alfo_shft);
-			REICAST_S(Chans[i].lfo.plfo);
-			REICAST_S(Chans[i].lfo.plfo_shft);
-			REICAST_S(Chans[i].lfo.alfo_calc_lut);
-			REICAST_S(Chans[i].lfo.plfo_calc_lut);
-			REICAST_S(Chans[i].enabled);
-			REICAST_S(Chans[i].ChanelNumber);
+			NULLDC_S(Chans[i].lfo.counter);
+			NULLDC_S(Chans[i].lfo.start_value);
+			NULLDC_S(Chans[i].lfo.state);
+			NULLDC_S(Chans[i].lfo.alfo);
+			NULLDC_S(Chans[i].lfo.alfo_shft);
+			NULLDC_S(Chans[i].lfo.plfo);
+			NULLDC_S(Chans[i].lfo.plfo_shft);
+			NULLDC_S(Chans[i].lfo.alfo_calc_lut);
+			NULLDC_S(Chans[i].lfo.plfo_calc_lut);
+			NULLDC_S(Chans[i].enabled);
+			NULLDC_S(Chans[i].ChanelNumber);
 		}
 
 		/* TODO/FIXME - no possibility for this to return false? */
@@ -1485,61 +1485,61 @@ struct SGC_impl : SGC {
 
 	bool channel_unserialize(void** data, unsigned int* total_size)
 	{
-		REICAST_USA(cdda_sector, CDDA_SIZE);
-		REICAST_US(cdda_index);
+		NULLDC_USA(cdda_sector, CDDA_SIZE);
+		NULLDC_US(cdda_index);
 
 		int i = 0;
 		int addr = 0;
 
 		for (i = 0; i < 64; i++)
 		{
-			REICAST_US(addr);
+			NULLDC_US(addr);
 			Chans[i].SA = addr + Chans[i].aica_ram;
 
-			REICAST_US(Chans[i].CA);
-			REICAST_US(Chans[i].step);
-			REICAST_US(Chans[i].update_rate);
-			REICAST_US(Chans[i].s0);
-			REICAST_US(Chans[i].s1);
-			REICAST_US(Chans[i].loop);
-			REICAST_US(Chans[i].adpcm.last_quant);
-			REICAST_US(Chans[i].noise_state);
-			REICAST_US(Chans[i].VolMix.DLAtt);
-			REICAST_US(Chans[i].VolMix.DRAtt);
-			REICAST_US(Chans[i].VolMix.DSPAtt);
+			NULLDC_US(Chans[i].CA);
+			NULLDC_US(Chans[i].step);
+			NULLDC_US(Chans[i].update_rate);
+			NULLDC_US(Chans[i].s0);
+			NULLDC_US(Chans[i].s1);
+			NULLDC_US(Chans[i].loop);
+			NULLDC_US(Chans[i].adpcm.last_quant);
+			NULLDC_US(Chans[i].noise_state);
+			NULLDC_US(Chans[i].VolMix.DLAtt);
+			NULLDC_US(Chans[i].VolMix.DRAtt);
+			NULLDC_US(Chans[i].VolMix.DSPAtt);
 
-			REICAST_US(addr);
+			NULLDC_US(addr);
 			Chans[i].dsp_bus = (u32)addr;
 
-			REICAST_US(Chans[i].AEG.val);
-			REICAST_US(Chans[i].AEG.state);
+			NULLDC_US(Chans[i].AEG.val);
+			NULLDC_US(Chans[i].AEG.state);
 			Chans[i].StepAEG = AEG_STEP_LUT[Chans[i].AEG.state];
-			REICAST_US(Chans[i].AEG.AttackRate);
-			REICAST_US(Chans[i].AEG.Decay1Rate);
-			REICAST_US(Chans[i].AEG.Decay2Rate);
-			REICAST_US(Chans[i].AEG.Decay2Value);
-			REICAST_US(Chans[i].AEG.ReleaseRate);
-			REICAST_US(Chans[i].FEG);
+			NULLDC_US(Chans[i].AEG.AttackRate);
+			NULLDC_US(Chans[i].AEG.Decay1Rate);
+			NULLDC_US(Chans[i].AEG.Decay2Rate);
+			NULLDC_US(Chans[i].AEG.Decay2Value);
+			NULLDC_US(Chans[i].AEG.ReleaseRate);
+			NULLDC_US(Chans[i].FEG);
 			Chans[i].StepFEG = FEG_STEP_LUT[Chans[i].FEG.state];
-			REICAST_US(Chans[i].step_stream_lut1);
-			REICAST_US(Chans[i].step_stream_lut2);
-			REICAST_US(Chans[i].step_stream_lut3);
+			NULLDC_US(Chans[i].step_stream_lut1);
+			NULLDC_US(Chans[i].step_stream_lut2);
+			NULLDC_US(Chans[i].step_stream_lut3);
 			Chans[i].StepStream = STREAM_STEP_LUT[Chans[i].step_stream_lut1][Chans[i].step_stream_lut2][Chans[i].step_stream_lut3];
 			Chans[i].StepStreamInitial = STREAM_INITAL_STEP_LUT[Chans[i].step_stream_lut1];
 
-			REICAST_US(Chans[i].lfo.counter);
-			REICAST_US(Chans[i].lfo.start_value);
-			REICAST_US(Chans[i].lfo.state);
-			REICAST_US(Chans[i].lfo.alfo);
-			REICAST_US(Chans[i].lfo.alfo_shft);
-			REICAST_US(Chans[i].lfo.plfo);
-			REICAST_US(Chans[i].lfo.plfo_shft);
-			REICAST_US(Chans[i].lfo.alfo_calc_lut);
-			REICAST_US(Chans[i].lfo.plfo_calc_lut);
+			NULLDC_US(Chans[i].lfo.counter);
+			NULLDC_US(Chans[i].lfo.start_value);
+			NULLDC_US(Chans[i].lfo.state);
+			NULLDC_US(Chans[i].lfo.alfo);
+			NULLDC_US(Chans[i].lfo.alfo_shft);
+			NULLDC_US(Chans[i].lfo.plfo);
+			NULLDC_US(Chans[i].lfo.plfo_shft);
+			NULLDC_US(Chans[i].lfo.alfo_calc_lut);
+			NULLDC_US(Chans[i].lfo.plfo_calc_lut);
 			Chans[i].lfo.alfo_calc = ALFOWS_CALC[Chans[i].lfo.alfo_calc_lut];
 			Chans[i].lfo.plfo_calc = PLFOWS_CALC[Chans[i].lfo.plfo_calc_lut];
-			REICAST_US(Chans[i].enabled);
-			REICAST_US(Chans[i].ChanelNumber);
+			NULLDC_US(Chans[i].enabled);
+			NULLDC_US(Chans[i].ChanelNumber);
 
 		}
 

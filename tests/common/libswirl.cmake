@@ -1,11 +1,11 @@
 ## libswirl for the tests ##
 #
 #	The suites link libraries made of hand-picked libswirl translation units. They are compiled with the
-#	definitions and flags of the emulator build (reicast/cmake/config.cmake), so a test runs the same code
+#	definitions and flags of the emulator build (nulldc3/cmake/config.cmake), so a test runs the same code
 #	the emulator runs.
 #
 
-list(APPEND CMAKE_MODULE_PATH "${nulldc_root_path}/reicast/cmake")
+list(APPEND CMAKE_MODULE_PATH "${nulldc_root_path}/nulldc3/cmake")
 include(config)
 
 # The recompiler selection belongs to each libswirl library (nulldc_add_libswirl_library), not to the project

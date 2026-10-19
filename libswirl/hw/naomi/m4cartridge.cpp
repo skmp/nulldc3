@@ -305,28 +305,28 @@ std::string M4Cartridge::GetGameId()
 
 void M4Cartridge::Serialize(void** data, unsigned int* total_size)
 {
-	REICAST_S(buffer);
-	REICAST_S(rom_cur_address);
-	REICAST_S(buffer_actual_size);
-	REICAST_S(iv);
-	REICAST_S(counter);
-	REICAST_S(encryption);
-	REICAST_S(cfi_mode);
-	REICAST_S(xfer_ready);
+	NULLDC_S(buffer);
+	NULLDC_S(rom_cur_address);
+	NULLDC_S(buffer_actual_size);
+	NULLDC_S(iv);
+	NULLDC_S(counter);
+	NULLDC_S(encryption);
+	NULLDC_S(cfi_mode);
+	NULLDC_S(xfer_ready);
 
 	NaomiCartridge::Serialize(data, total_size);
 }
 
 void M4Cartridge::Unserialize(void** data, unsigned int* total_size)
 {
-	REICAST_US(buffer);
-	REICAST_US(rom_cur_address);
-	REICAST_US(buffer_actual_size);
-	REICAST_US(iv);
-	REICAST_US(counter);
-	REICAST_US(encryption);
-	REICAST_US(cfi_mode);
-	REICAST_US(xfer_ready);
+	NULLDC_US(buffer);
+	NULLDC_US(rom_cur_address);
+	NULLDC_US(buffer_actual_size);
+	NULLDC_US(iv);
+	NULLDC_US(counter);
+	NULLDC_US(encryption);
+	NULLDC_US(cfi_mode);
+	NULLDC_US(xfer_ready);
 
 	NaomiCartridge::Unserialize(data, total_size);
 }

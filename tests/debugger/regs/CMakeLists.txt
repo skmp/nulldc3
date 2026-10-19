@@ -26,8 +26,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(REGS_SANITIZE "Build with -fsanitize=address,undefined" OFF)
 
-get_filename_component(DEVCAST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
-set(LIBSWIRL_DIR "${DEVCAST_DIR}/libswirl")
+get_filename_component(nulldc_root_path "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+set(LIBSWIRL_DIR "${nulldc_root_path}/libswirl")
 
 add_executable(regs_test regs_test.cpp "${LIBSWIRL_DIR}/debugger/dbg_regs_tables.cpp")
 target_include_directories(regs_test PRIVATE "${LIBSWIRL_DIR}" "${LIBSWIRL_DIR}/debugger")
@@ -59,9 +59,9 @@ else()
   # the submodule devtools/ of the tree, else a checkout beside it; a place counts when it has the list (an
   # uninitialised submodule is an empty directory, tests/devtools/lookup.cmake)
   include("${CMAKE_CURRENT_LIST_DIR}/../../devtools/lookup.cmake")
-  nulldc_find_devtools(devtools_default "${DEVCAST_DIR}" src/lib/debuggerSchema.ts)
+  nulldc_find_devtools(devtools_default "${nulldc_root_path}" src/lib/debuggerSchema.ts)
   if(NOT devtools_default)
-    set(devtools_default "${DEVCAST_DIR}/../dreamcast-devtools")
+    set(devtools_default "${nulldc_root_path}/../dreamcast-devtools")
   endif()
   set(DEVTOOLS_DIR "${devtools_default}" CACHE PATH "dreamcast-devtools checkout (panel id list)")
   set(devtools_option DEVTOOLS_DIR)

@@ -89,7 +89,7 @@ namespace dbg {
 	  read by dbg::selftest   SelfTest (empty)
 */
 
-// (U), once, at the end of reicast_init(); lifetime NoMachine. With Debugger:Enabled (in an automated run and
+// (U), once, at the end of nulldc_init(); lifetime NoMachine. With Debugger:Enabled (in an automated run and
 // in a selftest session: only when the key is set explicitly, on the command line or in emu.cfg) it starts
 // the server and the core thread and prints exactly "Debugger: http://<bind>:<port>/" with the bound port, as
 // one line on stdout, flushed (a Bind that contains a colon is printed in brackets: http://[::1]:<port>/); it
@@ -109,12 +109,12 @@ namespace dbg {
 // not change signal dispositions.
 void Init();
 
-// (U), once, at the start of reicast_term(), before the GUI and with it the machine are destroyed; any
+// (U), once, at the start of nulldc_term(), before the GUI and with it the machine are destroyed; any
 // lifetime state: an emulator thread may be running or parked. The caller must not hold L. Stops the server
 // (every client is closed), ends the core thread and joins both; a call the core thread is waiting for is
 // given up. Afterwards no listener is installed and no debugger thread exists; the hooks and helpers below
 // stay callable until the process ends, and a parked emulator thread is released by the stop request that
-// the emulator's shutdown makes right behind this call (reicast_term).
+// the emulator's shutdown makes right behind this call (nulldc_term).
 void Term();
 
 /*

@@ -29,12 +29,8 @@ static void PatchRegion_0(u8* sector,int size)
 }
 static void PatchRegion_6(u8* sector,int size)
 {
-#ifndef NOT_REICAST
 	if (settings.imgread.PatchRegion==0)
 		return;
-#else
-	return;
-#endif
 
 	u8* usersect=sector;
 

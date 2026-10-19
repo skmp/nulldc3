@@ -10,7 +10,7 @@ if(NULLDC_DEBUGGER)
   include("${CMAKE_CURRENT_LIST_DIR}/cmake/dbg_webui.cmake")
 
   file(GLOB debugger_SRCS ${d_core}/debugger/*.cpp ${d_core}/debugger/*.h)
-  dbg_webui_data("${reicast_root_path}" debugger_webui_SRC)
+  dbg_webui_data("${nulldc_root_path}" debugger_webui_SRC)
   list(APPEND core_SRCS ${debugger_SRCS} ${debugger_webui_SRC})
 
   add_definitions(-DNULLDC_DEBUGGER=1)

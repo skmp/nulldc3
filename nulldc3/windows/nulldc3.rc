@@ -1,0 +1,39 @@
+// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+#include "../../libswirl/version.h"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_ICON1               ICON                    "nulldc3.ico"
+
+/////////////////////////////////////////////////////////////////////////////
+
+1 VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904E4"
+    BEGIN
+      VALUE "CompanyName", "nullDC Team"
+      VALUE "FileDescription", "nullDC"
+      VALUE "FileVersion", NULLDC_VERSION
+      VALUE "InternalName", "nulldc3"
+      VALUE "LegalCopyright", "Copyright (c) 2026 nullDC Team"
+      VALUE "OriginalFilename", "nulldc3.exe"
+      VALUE "ProductName", "nullDC"
+      VALUE "ProductVersion", NULLDC_VERSION
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1252
+  END
+END

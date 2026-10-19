@@ -63,7 +63,7 @@ void gui_welcome(ImFont* font64) {
 
 	DrawTextCentered("nullDC");
 	
-		string ver = REICAST_VERSION;
+		string ver = NULLDC_VERSION;
 	auto ver_numeric = ver.substr(0, ver.find_last_of("-"));
 	auto ver_hash = "(" + ver.substr(ver.find_last_of("-") + 2) + ")";
 

@@ -328,7 +328,7 @@ int main(int argc, wchar* argv[])
 	setvbuf(stdout, nullptr, _IOLBF, 0);
 
 
-	// the directories to choose from, the command line chooses in reicast_init()
+	// the directories to choose from, the command line chooses in nulldc_init()
 	cl_SetHostDirs(find_host_dirs());
 
 	#if defined(USE_SDL)
@@ -342,7 +342,7 @@ int main(int argc, wchar* argv[])
 
 	settings.profile.run_counts=0;
 
-	int init_rv = reicast_init(argc, argv);
+	int init_rv = nulldc_init(argc, argv);
 	if (init_rv == rv_cli_finish)
 		return 0;	// --help: the usage text is all that was asked for
 	if (init_rv == rv_cli_error)
@@ -362,14 +362,14 @@ int main(int argc, wchar* argv[])
 	install_prof_handler(1);
 	#endif
 	
-	reicast_ui_loop();
+	nulldc_ui_loop();
 #if FEAT_HAS_SERIAL_TTY
 	if (cleanup_pty_symlink)
 	{
 		unlink(settings.debug.VirtualSerialPortFile.c_str());
 	}
 #endif
-	reicast_term();
+	nulldc_term();
 
 
 	#if defined(USE_EVDEV)

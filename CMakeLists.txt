@@ -6,7 +6,7 @@ if (CCACHE_FOUND AND NOT CMAKE_HOST_WIN32)
   set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
 endif()
 
-# The executable: nulldc3 on every system (macOS: nulldc3.app, reicast/apple/emulator-osx/emulator-osx/build_app_bundle.sh)
+# The executable: nulldc3 on every system (macOS: nulldc3.app, nulldc3/apple/build_app_bundle.sh)
 set(TNAME nulldc3)
 
 project(${TNAME})
@@ -16,20 +16,20 @@ set(DEBUG_CMAKE ON)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-set(reicast_root_path  "${CMAKE_CURRENT_SOURCE_DIR}")
-set(reicast_core_path  "${reicast_root_path}/libswirl")
-set(reicast_shell_path "${reicast_root_path}/reicast")
+set(nulldc_root_path  "${CMAKE_CURRENT_SOURCE_DIR}")
+set(nulldc_core_path  "${nulldc_root_path}/libswirl")
+set(nulldc_shell_path "${nulldc_root_path}/nulldc3")
 
-list(APPEND CMAKE_MODULE_PATH "${reicast_shell_path}/cmake")
+list(APPEND CMAKE_MODULE_PATH "${nulldc_shell_path}/cmake")
 
 include(GetGitRevisionDescription)
 git_describe(GIT_VERSION --tags)
-configure_file(${reicast_core_path}/version.h.in ${reicast_core_path}/version.h @ONLY)
+configure_file(${nulldc_core_path}/version.h.in ${nulldc_core_path}/version.h @ONLY)
 
-## reicast build modules #
+## nulldc3 build modules #
 #
 
-set(reicast_SRCS "")
+set(nulldc_SRCS "")
 
 include(config)			# configure build settings, must be first
 
@@ -38,7 +38,7 @@ add_definitions(/DSCRIPTING)
 
 ### libdreamcast.cmake #########################################################################
 
-set(d_core ${reicast_core_path})
+set(d_core ${nulldc_core_path})
 
 file(GLOB_RECURSE hw_SRCS	${d_core}/hw/*.cpp			${d_core}/hw/*.h)
 # the C interface of the DSP core is the playground's (its wasm build), not the emulator's
@@ -131,8 +131,8 @@ include(${d_core}/debugger/debugger.cmake)
 
 ### deps.cmake #################################################################################
 
-set(d_deps ${reicast_core_path}/deps)
-set(gpl_deps ${reicast_core_path}/gpl/deps)
+set(d_deps ${nulldc_core_path}/deps)
+set(gpl_deps ${nulldc_core_path}/gpl/deps)
 
 include_directories ("${d_deps}")
 include_directories ("${gpl_deps}/picotcp/include")
@@ -204,7 +204,7 @@ endif()
 
 ### libosd.cmake ################################################################################
 
-set(d_aout ${reicast_core_path}/oslib)
+set(d_aout ${nulldc_core_path}/oslib)
 
 include_directories ("${d_core}/khronos")
 
@@ -236,7 +236,7 @@ elseif (${HOST_OS} EQUAL ${OS_LINUX})
 
 elseif(${HOST_OS} EQUAL ${OS_DARWIN})
 
-  set(d_osx ${reicast_shell_path}/apple/emulator-osx/emulator-osx)
+  set(d_osx ${nulldc_shell_path}/apple)
 
   list(APPEND objc_SRCS
     ${d_osx}/main.m
@@ -263,14 +263,11 @@ else()
 
 endif()
 
-include_directories ("${reicast_core_path}")
+include_directories ("${nulldc_core_path}")
 
-set(reicast_SRCS ${core_SRCS} ${deps_SRCS} ${osd_SRCS})
+set(nulldc_SRCS ${core_SRCS} ${deps_SRCS} ${osd_SRCS})
 
-  add_executable(${TNAME}${binSuffix} ${reicast_SRCS}) 
-set_target_properties(${TNAME}${binSuffix} PROPERTIES
-    XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS
-    "${CMAKE_CURRENT_LIST_DIR}/reicast.entitlements")
+  add_executable(${TNAME}${binSuffix} ${nulldc_SRCS}) 
 
 target_compile_features(${TNAME}${binSuffix} PRIVATE cxx_std_20)
 

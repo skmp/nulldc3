@@ -26,7 +26,7 @@ void cfgSetVirtual(const wchar * lpSection, const wchar * lpKey, const wchar * l
 void cfgSetReadOnly();
 
 // The command line (cfg/cl.cpp). The operating system layer hands it the directories a run can keep its files in
-// (cl_SetHostDirs) before reicast_init(); ParseCommandLine() reads the switches and the game, and chooses one:
+// (cl_SetHostDirs) before nulldc_init(); ParseCommandLine() reads the switches and the game, and chooses one:
 // the directory of the executable (portable, the default), the one of --portable <dir>, or with --shared the
 // per-user ones. Each of them has the same layout, README.md has it.
 struct HostDirs

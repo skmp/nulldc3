@@ -1,7 +1,7 @@
 # Tests
 
 A standalone CMake project. Every suite but one compiles the libswirl translation units it tests (with the
-emulator's own definitions and flags, from `reicast/cmake/config.cmake`) and links them against stubs for the
+emulator's own definitions and flags, from `nulldc3/cmake/config.cmake`) and links them against stubs for the
 rest. The system tests run the emulator itself, which the project builds for them.
 
 The suites of `debugger/` are CMake projects of their own, with their own flags, which this project adds: "The
@@ -92,6 +92,7 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `devtools.commit` | the UI checkout the tests are given (`NULLDC_DEVTOOLS_DIR`) is at the commit the repository pins for its submodule `devtools/`, when both are git checkouts; it says what it compared | `NULLDC_DEVTOOLS_DIR` |
 | `devtools.commit_check` | the script of `devtools.commit` on repositories made for the test: a UI at the commit the tree pins passes and says so; one at another commit fails and names both; a tree without the gitlink fails; a UI directory that is no git checkout or not the top of one, and a tree that is no git checkout, are not compared and pass | git |
 | `devtools.lookup` | where the tests look for the UI when they are given none (`devtools/lookup.cmake`), on scratch layouts of a tree and a checkout beside it: an uninitialised submodule (an empty directory), one without `node_modules`, one with `node_modules` as a file and one with half of what is needed are passed over for the checkout beside the tree; a complete submodule is taken first; with neither the look-up is empty | none |
+| `rebrand.names` | the tree says the name of the emulator it was forked from only as history: every line of a tracked text file that has the name, in any case (`git grep -I -i -n`), and every tracked file whose name has it, is allowed by an entry of `rebrand/allowed.txt`, a whole path (the licence files, `docs/nulldc3/**`, the test's own files) or a row of path and line pattern, and every row still finds its line; an occurrence no entry allows and a row whose line is gone fail and are named (`rebrand/README.md` has the format and how a package changes a row). Skipped when the tree is not a git checkout | git, the tree as a git checkout |
 | `debugger.selftest.emu` `.interp` | the selftest of the debugger in the emulator (`nulldc3 --config Debugger:SelfTest=emu`, headless, on the emulator the system tests build; the SH4 on the JIT and, as `.interp`, on the interpreter): the emulator thread and run control, nineteen tests on a guest of the suite's own. Pauses, event breakpoints, calls of every class in every state, host stops against a parked thread, resets, guest exits, steps, the lifetime of the machine (`debugger/selftest/README.md` has every test of these rows) | none |
 | `debugger.selftest.core` `.interp` | the session `core`: the core of the debugger (`libswirl/debugger/dbg_core.cpp`, `dbg_events.cpp`, `dbg_symbols.cpp`, `dbg_callstack.cpp`) against the live machine, in a session without a server. Eight tests: `core.events` (the event log: 200 entries, ids that ascend and stay, the oldest dropped, a message cut to its bound, nothing logged and no argument evaluated with the gates closed, the direct append), `core.opcodes` (for all 65536 encodings the disassembler reports an instruction exactly where the opcode table executes one, but for the reios trap `0x085B`, whose line is `.word 0x085b ! reios trap`), `core.tables` (breakpoint and watch ids from 1 and never used twice, the bounds of 1024 breakpoints, 64 expressions and 256 characters, and of 256 watches, which a watch on every register of the tree reaches: of its 46 calls each that fits is taken whole and each that would pass the bound is refused whole; the order of the checks of `breakpoints.add`, the breakpoints of each processor handed to that processor alone, watch resolution without regard to case, duplicates, all-or-nothing, the category of a breakpoint, the active mask for mute, solo and no client, the event gates), `core.tick` (the JSON of ticks and of describe: no `null`, the required keys, every register list that of describe, values in their wire form, a full tick and the four base paths, watches on paths a tick does not carry, a symbol name and an event message with bytes that are no ASCII as `?`, the envelope errors, memory that does not wrap), `core.guest` (on the booted program: a step on the reios trap runs the boot, the entry resolves to a symbol, the SH4 call stack, the ARM7 call stack against `dc.aica.arm7.ENABLED` held in reset and running, `breakpointId` in the ticks of a stop until its breakpoint is removed, an event and a code breakpoint under mute), `core.lifetime` (with a thread that plays the host and sends what a client sends: the machine stopped, its guest exited, the machine gone and made again: reason, a new `stopId` for each, `registers: {}` and a tree of `"n/a"` without a machine, bookkeeping in every state, -32001 and -32002), `core.reset` (`control.reset` at the stop of a breakpoint: one more stop, reason `reset`, no `Running` and no breakpoint named, the PC of the SH4 the one a reset leaves, the breakpoints, watches and categories kept, no tick of its own; and while the machine runs: `{}`, nothing published, and the machine boots again into a breakpoint on its entry), `core.writes` (`state.writeMemory`, `state.setRegister` and `state.editWatch` by parameter, by the order of their own errors, in-band, and by lifetime, -32001 and -32002 behind -32602 and in front of every error of a method's own; a path, a name or a watch expression with a NUL in it is none of the tree; the text of a value, of which the low bits of any length count; five capabilities besides the engine's; `flags.writable` in describe on the 109 registers that have a writer and on none of a tick; one tick behind every accepted write, of the stop it was made in; writes served while the machine runs, with a running tick behind them, never -32003) | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.selftest.regs` `.interp` | the session `regs`, fifteen tests: the registers of the device tree, guest memory for the debugger and the device accessors against the live machine, that reading changes nothing, and `dc.aica.arm7.ENABLED` (0 while the ARM7 is held in reset, 1 while it is clocked) where the booted program holds and releases the ARM7. The rows of the devices (milestone M2) at states the tests make up, a value of its own in every word a row reads: `regs.rows.sb` (the system bus rows against a guest read and against the value each slot was given; a write-only register reads `"n/a"` whatever its slot holds; `SB_MST`, which nothing assigns, reads 0), `regs.rows.pvr` (the PVR's register file against a guest read), `regs.rows.aica` (the fields of the common block against the emulator's own struct; the 2479 fields of the register file as the accessor delivers them, as the state was made, and against guest reads of the channel words; `AR`, `VREG`, `MIEMP`, `MOEMP` and the loop flag as a read delivers them; `SCILV0-2`, `SCIRE` and `MCIRE` `"n/a"` while the file holds a value; `L` and `M` what `SoundCPU::DebugGetInterrupt` says, in four states of the controller), `regs.rows.gdrom` (the rows of `dc.gdrom` against the drive's snapshot in 24 made-up states, whose state and disc type are enumerators of their enums, and the clock), `regs.rows.pure` (every register read a hundred times: the save state of every device and the PVR's register file as they were, also with a channel's loop flag set, which a guest read of the status clears), `regs.tick` (a full tick with no breakpoint and no watch listed is at most 192 KiB; the time the emulator thread takes to build one is printed) | `2ndmix.elf` of `NULLDC_ELF_DIR` |
@@ -161,7 +162,7 @@ captures.
 The emulator has an SH4 recompiler for x86-64 hosts and one for arm64 hosts, an ARM7 recompiler for arm64 hosts,
 and its interpreters on every host; its DSP is the one core of `libswirl/hw/aica/dsp_core` on every host; it does not configure for 32-bit x86 and arm hosts. Of the recompilers the
 tests here run the x86-64 backend. `-DTARGET_NO_REC=ON` builds the emulator without a recompiler on any host. A
-generic host, one whose processor `reicast/cmake/config.cmake` has no name for, gets that build without the fault
+generic host, one whose processor `nulldc3/cmake/config.cmake` has no name for, gets that build without the fault
 handler, so without nvmem; on an x86-64 machine `-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=<such a name>`
 configures it. The system tests take such a binary with `-DNULLDC_EMULATOR=`. On a `TARGET_NO_REC` build every case
 passes but `guest_exit.jit`, `boot.2ndmix.jit`, `boot.hello.jit` and the three `vmem.*` cases, which have to see the
@@ -172,12 +173,12 @@ and their `.interp.` tests pass. The `debugger.selftest.*` and `debugger.contrac
 runs: on such a binary every one of them that asks for the JIT fails.
 
 Every test of this table but `common.selftest`, `sh4.core`, the `debugger.sh4bp.*`, `debugger.selftest.*` and
-`debugger.contract.*` tests, `cfg.overrides`, `cfg.log_file`, `runctl.guest_exit.*`, the system tests, the `devtools.*` tests, `aica.dsp.capi` and the `aica.dsp.wasm` tests is
+`debugger.contract.*` tests, `cfg.overrides`, `cfg.log_file`, `runctl.guest_exit.*`, the system tests, the `devtools.*` tests, `rebrand.names`, `aica.dsp.capi` and the `aica.dsp.wasm` tests is
 gated on a baseline file, and ctest runs them with `--strict`: a count that is worse than its baseline fails, and
 so does one that is better, until the baseline is updated and committed. `common.selftest`, `sh4.core`, each
 `debugger.sh4bp.*` test, each `debugger.selftest.*` test, each `debugger.contract.*` test, `cfg.overrides`,
 `cfg.log_file`, each `runctl.guest_exit.*` test, each
-system test, each `devtools.*` test, `aica.dsp.capi`, `aica.dsp.wasm` and `aica.dsp.wasm.devtools` are lists of checks that all have to hold;
+system test, each `devtools.*` test, `rebrand.names`, `aica.dsp.capi`, `aica.dsp.wasm` and `aica.dsp.wasm.devtools` are lists of checks that all have to hold;
 `aica.dsp.wasm.emsdk` and `aica.dsp.wasm.noemcc` are what the build script returns and prints.
 
 More about the suites:
@@ -193,6 +194,8 @@ More about the suites:
 * `debugger/contract/README.md`: the server of the emulator against the contract runner of the devtools UI, the
   grace period, the configuration errors, the slow-client rule and the state hashes, test by test; where the mock
   of the UI repository and the emulator's server differ,
+* `rebrand/README.md`: `rebrand.names`, the format of its allow list `rebrand/allowed.txt` and how a package
+  changes a row of it when it adds, moves, rewraps or deletes a line of history,
 * `aica_dsp/README.md`: the AICA DSP core's tests, which of the console's captures are compared with the core
   directly and which through the caique model, and the tests of the core in the emulator's sound chip;
   `aica_dsp/KNOWN_FAILURES.md`: the three lines of a console report that depend on the console's timing, and the
@@ -222,6 +225,8 @@ More about the suites:
     devtools/          devtools.commit: the UI checkout of the tests against the submodule devtools/, and
                        its script on scratch repositories (devtools.commit_check); lookup.cmake, where the
                        tests look for the UI, on scratch layouts (devtools.lookup)
+    rebrand/           rebrand.names: where the tree may say the name of the emulator it was forked from
+                       (allowed.txt, README.md)
     vendor/            the submodules
     files/             fixtures
     debugger/          the debugger's modules that link without the emulator, one CMake project per directory:
@@ -500,7 +505,7 @@ without its data.
 * `debugger/disasm/README.md`: what is compared with objdump, the opcode table and the playground, and every
   difference that is accepted,
 * `debugger/regs/README.md`: what the table tests check, and the tests of `regs/aica`, the one directory of these
-  suites that takes the emulator's definitions and flags (`reicast/cmake/config.cmake`, for itself only),
+  suites that takes the emulator's definitions and flags (`nulldc3/cmake/config.cmake`, for itself only),
 * `debugger/symbols/README.md`: the fixture images of the symbol table's tests and what each test breaks in them,
 * the head of `debugger/net/CMakeLists.txt`: the sanitizer builds and the bundle of the net suite,
 * `debugger/sh4bp/README.md`: the suite of `tests/debugger` that compiles libswirl translation units as the

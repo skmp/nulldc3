@@ -30,12 +30,12 @@ struct ASICDevice_impl final : ASIC {
 
 	virtual void serialize(void** data, unsigned int* total_size)
 	{
-		REICAST_S(SB_ISTNRM);
+		NULLDC_S(SB_ISTNRM);
 	}
 	
 	virtual void unserialize(void** data, unsigned int* total_size) 
 	{
-		REICAST_US(SB_ISTNRM);
+		NULLDC_US(SB_ISTNRM);
 	}
 
 
