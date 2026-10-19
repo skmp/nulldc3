@@ -3,7 +3,7 @@
 > **This copy.** `docs/nulldc3/devtools-integration-m3-round.md` is the repository's copy of the working document
 > `M3-ROUND.md` as it stands at the end of the M3 round (package M3G, 2026-10-19): the cut with the project owner's
 > answers (7.2), the reviews of the cut (Appendix R) and the integrator's notes on the packages of the round (Appendix
-> I, I.1 to I.11). It replaces the copy that package R7 committed with header revision 7. The text below names its
+> I, I.1 to I.12). It replaces the copy that package R7 committed with header revision 7. The text below names its
 > companion documents by their working names; in `docs/nulldc3/` they are:
 >
 > | Named below | In `docs/nulldc3/` |
@@ -3064,6 +3064,24 @@ brief has them): the known limits (the SGC panel's default view flat against the
 sound generator; what the smoke spec's held steps show) and the UI's backlog (an unhandled rejection, audio started by
 a load whose panel closed, Start DSP's clear of the banner untested, the smoke spec's capture by text). Cut feedback
 recorded: a brief with a "loaded from" banner says when the banner goes.
+
+### I.12 M3G (verified 2026-10-19, two verifications)
+
+Merged as `8e8dae71` (head `5cb05a86`, 7 commits, documents only). The gate on the merged state, from builds of this host
+taken in the round: the contract gate M3 against emulators that carry the UI's bundle (`ui` `3.0.0-pre+066fcbc`), run 1
+20 passed, 0 partial, 0 not applicable on the JIT, the interpreter and the forced fallback; run 2 on the guest 3 passed
+with `sgc: captured with the arm7 held` and `--only S00,S21` 2 passed with `dsp: stepped with the arm7 held`; the M2
+gate's second run 2 passed with both notes; 307 ctest targets twice, none skipped; the sound lines 12 of 12 and the
+state hashes 38 of 38 equal to B4 taken again on its commit; the UI's `npm run check` (735 passed, 1 skipped) and e2e
+(401 passed, 1 skipped) in a fresh clone at `066fcbc`; ThreadSanitizer on the sessions `dsp` and `sgc` and the guest's
+contract runs, no report; the smoke spec passed. Speed, for the record: the head against B0 0.798 (JIT) and 0.919
+(interpreter) of its default, 0.902 and 0.960 of its per-sample setting; host instructions a sample about +3060 for W1
+to W3 (B4 against B0), +940 for E8a and E8b (the head against B4), about +4000 for the round. The first verification
+failed on the documents (a sentence of 5.6 twice, W1 to W3 counted on the head instead of on G's merge, the call class
+of `recordSgcFrames` under the wrong method, the PR text's placeholder and its follow-ups); the fix round corrected them
+and added checks that find each. The pushes and the two PRs were the integrator's (item 8). Cut feedback recorded: a
+brief that asks for a split count names each count's pair of commits; one-decimal instruction counts move by a few a
+sample between builds of the same source, so a cut asks for them rounded to 10 or tied to the binaries' checksums.
 
 ---
 
