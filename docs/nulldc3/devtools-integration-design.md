@@ -2744,19 +2744,19 @@ A method of a later milestone answers `-32004` until that milestone (before its 
     refused behind the arm cancels the capture and the notice answers `-32003`; a table closure that finds no emulator
     thread arms nothing and the method answers by the lifetime then. A selftest request (client 0) gets the response
     through a test hook.
+  - **Its call class** follows the state, because the frozen `dbg_emu.h` allows `emu::Resume()` inside a `CC_EXEC`
+    call only, and a `CC_TABLE` call returns no lifetime error (it runs on the caller in `Stopped` and `NoMachine`,
+    2.2.2): the core looks at the published state (`emu::GetRunState()`) and answers `-32002` in `NoMachine` and
+    `-32001` in `Stopped` itself, without a call; for a parked thread it makes a `CC_EXEC` call whose closure arms the
+    capture and the resume; for a running one a `CC_TABLE` call whose closure arms the capture. A call that finds the
+    other state than the one it was made for arms nothing and is made again in the other class (the `-32003` that
+    `Call` returns for an exec call when the thread runs; a table closure that finds a stop in force), and one that
+    finds no thread answers the lifetime error. No declaration changes for this (the mock classes the method as exec).
 - `state.getMemoryBinary` (`M3-ROUND.md` M3-D36) is `state.getMemorySlice` with another bound (16 MiB,
   `kMaxMemoryBinaryBytes`) and a binary payload: a read (in the slice hook while running), no wrap above `addressMax`,
   unreadable bytes 0 and listed in `unreadable`, JSON-RPC `-32010` when nothing is readable, `-32004` for `dsp`, no
   `validity`. Its frame (kind 2) goes behind the response to the requesting client only; `binaryId` counts per
-  connection from 1, one counter for kinds 1 and 2 (3.4). Its call class follows the state, because the frozen `dbg_emu.h` allows `emu::Resume()` inside a
-  `CC_EXEC` call only, and a `CC_TABLE` call returns no lifetime error (it runs on the caller in `Stopped` and
-  `NoMachine`, 2.2.2): the core looks at the published state (`emu::GetRunState()`) and answers `-32002` in
-  `NoMachine` and `-32001` in `Stopped` itself, without a call; for a parked thread it makes a `CC_EXEC` call whose
-  closure arms the capture and the resume; for a running one a `CC_TABLE` call whose closure arms the capture. A call
-  that finds the other state than the one it was made for arms nothing and is made again in the other class (the
-  `-32003` that `Call` returns for an exec call when the thread runs; a table closure that finds a stop in force),
-  and one that finds no thread answers the lifetime error. No declaration changes for this (the mock classes the
-  method as exec).
+  connection from 1, one counter for kinds 1 and 2 (3.4).
 - `state.captureHolly {core}` returns the refsw2 render log of the next rendered frame (the text format of
   devtools-panels-tools.md 6.2, first line `REFSW2LOG: 0`), gzip-compressed; it is available only with a renderer that
   produces that log: `refsw2` / `refmister` today, and the wgpu renderer of PLAN track 9, which is expected to keep
