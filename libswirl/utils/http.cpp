@@ -68,7 +68,7 @@ size_t HTTP(HTTP_METHOD method, string url, size_t offs, size_t len, std::functi
 	if (method == HM_GET)
 	{
 		request2 << "GET " << path << " HTTP/1.1"<<endl;
-		request2 << "User-Agent: reicastdc" << endl;
+		request2 << "User-Agent: nulldc3" << endl;
 		request2 << "Host: " << host << endl;
 		request2 << "Accept: */*" << endl;
 		if (offs != 0 || len != 0)
@@ -83,7 +83,7 @@ size_t HTTP(HTTP_METHOD method, string url, size_t offs, size_t len, std::functi
 		verify(offs == 0 && len == 0);
 
 		request2 << "HEAD " << path << " HTTP/1.1"<<endl;
-		request2 << "User-Agent: reicastdc" << endl;
+		request2 << "User-Agent: nulldc3" << endl;
 		request2 << "Host: " << host << endl;
 		request2 << endl;
 	}
