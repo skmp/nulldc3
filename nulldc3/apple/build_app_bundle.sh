@@ -3,7 +3,7 @@
 # Constants
 # the name of the executable, from CMakeLists.txt (TNAME): the bundle is ${APP_NAME}.app
 readonly APP_NAME="${APP_NAME:-nulldc3}"
-readonly APP_BUNDLE_IDENTIFIER="com.reicast.${APP_NAME}"
+readonly APP_BUNDLE_IDENTIFIER="org.emudev.nulldc3"
 readonly APP_DEPLOYMENT_TARGET="10.9"
 readonly SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
 readonly LIBSWIRL_ROOT="${SOURCE_ROOT}/libswirl"
