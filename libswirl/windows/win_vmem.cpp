@@ -130,7 +130,7 @@ static void* vmem_platform_prepare_jit_block_template(void *code_area, unsigned 
 	// Take this function addr as reference.
 	uintptr_t base_addr = reinterpret_cast<uintptr_t>(&vmem_platform_init) & ~0xFFFFF;
 
-	// Probably safe to assume reicast code is <200MB (today seems to be <16MB on every platform I've seen).
+	// Probably safe to assume the emulator's code is <200MB (today seems to be <16MB on every platform I've seen).
 	for (unsigned i = 0; i < 1800*1024*1024; i += 8*1024*1024) {  // Some arbitrary step size.
 		uintptr_t try_addr_above = base_addr + i;
 		uintptr_t try_addr_below = base_addr - i;

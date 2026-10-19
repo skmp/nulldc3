@@ -195,7 +195,7 @@ bool vmem_platform_prepare_jit_block(void *code_area, unsigned size, void **code
 	// Try to map is as RWX, this fails apparently on OSX (and perhaps other systems?)
 	if (mprotect(code_area, size, PROT_READ | PROT_WRITE | PROT_EXEC)) {
 		// Well it failed, use another approach, unmap the memory area and remap it back.
-		// Seems it works well on Darwin according to reicast code :P
+		// Seems it works well on Darwin according to the emulator's earlier code :P
 		munmap(code_area, size);
 		void *ret_ptr = mmap(code_area, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_JIT | MAP_PRIVATE | MAP_ANON, 0, 0);
 		// Ensure it's the area we requested
