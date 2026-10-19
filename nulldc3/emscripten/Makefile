@@ -34,4 +34,4 @@ INCS	:= -I$(RZDCY_SRC_DIR) -I$(RZDCY_SRC_DIR)/deps -I$(RZDCY_SRC_DIR)/khronos -I
 
 LIBS	:= #emscripten has all the basic libs, and egl, and sdl, built in
 
-EXECUTABLE=reicast.html
+EXECUTABLE=nulldc3.html
