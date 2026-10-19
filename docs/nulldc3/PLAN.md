@@ -10,7 +10,9 @@ track.
 ## Ground rules
 
 - Repos: emulator `dreamster/devcast`, UI `dreamster/dreamcast-devtools`; work on local branch `skmp/nulldc3` in each;
-  commits are made as work lands, nothing is pushed. A second, older checkout of `devcast` outside `dreamster` is stale — do not
+  packages commit on local branches and push nothing; after every milestone the integrator pushes `skmp/nulldc3` of both
+  repositories and opens review PRs into `main`, the UI's first (the owner, 2026-10-16); nothing is merged by the
+  integrator. A second, older checkout of `devcast` outside `dreamster` is stale — do not
   use it.
 - New surfaces say "nullDC" / "3.0.0". The tree is not mass-renamed. **The executable becomes `nulldc3` and is portable by
   default** (user, 2026-10-12; package `N1` below, behind M2G): until it lands the binary is `devcast` and the Linux
@@ -146,17 +148,101 @@ merged as 6fe01759, 259 ctest targets: tests, three header sentences, one refusa
 four verifications and one integrator commit; devtools `skmp/nulldc3` = d59336b, the UI pin moved there): the end of an address
 space reachable in a small memory panel, a watch renamed from the keyboard, 0x-only register values, sharper tests.
 M2G, the gate, is done (2026-10-15; branch `skmp/nulldc3-m2g` on 6fe01759, documents only): **M2 IS COMPLETE.** On devcast 6fe01759 with the UI at `d59336b` and emulators that carry its bundle (`ui` of `debugger.describe` is `3.0.0-pre+d59336b`): the M2 gate passes against the emulator on the JIT, the interpreter and the forced fallback (19 scenarios passed, 0 partial, 0 not applicable each) and its second run against the sounding guest (2 passed, both notes); the 259 ctest targets are green twice, none skipped; the sound lines of the guest and of 2ndmix equal those of the tree before E6b, and the state hashes of 5.7 those of the tree before the round, in the five builds; `npm run check` and the e2e suite pass in a fresh clone; the smoke spec passes against a headless emulator on the guest. ThreadSanitizer of the contract parts on the guest: no report. Speed (tests/perf, none renderer, by CPU time, ten rounds): the JIT 0.6 % faster than before E6b, the interpreter 3.4 % slower, from code placement (the same machine code of the interpreter's dispatch 32 bytes off its place in a cache line; 0.07 % more instructions), not from added work; nothing changed for it. The design is brought to the cut (its section 7), with the known limits of the round in its 2.3.7 and what each package left in its Appendix A.3, "M2 as built". What the round leaves to later work is listed below ("Backlog left by the M2 round").
-Next: `N1` (the rebrand: `nulldc3`, portable by default, two-dash switches).
-After that, one workflow at a time, in this order unless the user reorders: M3-M4 (E8, E9, F4, F5, the DSP core wired in), track
-10 (one web UI), track 3 (cycle-similar). Devtools: F0, F1, F2 and the round after design revision 3 are done and verified.
+Merged as f640f21a (2026-10-15). Two findings of the gate come first, as package `D1` (the integrator's order, 2026-10-15):
+(1) **an intermittent crash at boot**: the default build with the SH4 recompiler ends about one run in six right behind
+"REIOS: Booting up" with `fault_handler: unhandled SIGSEGV at address 0x...0d0 ... not a guest memory fault`, with no exit
+line; it is there on d546aa76 and 5a3ad3d6 as on the tip, and E4a's verifier runs (2026-10-08) carry the same signature, so it
+is older than the round; a run that boots gives the identical hash. (A person who starts the emulator meets it: not so,
+see D1 below.) (2) **the
+fallback leg of the gates checks no engine**: `contract.py --fallback` and the selftest registrations `arm7.fallback` /
+`writes.fallback` pass when the emulator ignores `Debugger:ForceFallback`, and `debugger.contract.m2` on the JIT passes on the
+fallback engine; M2G's own check (`m2g/fix-1/scripts/contract_lines.py`) held the gate. Both directions are to be required
+(`sh4-debug-fallback` in --fallback mode, `sh4-debug-native` on a JIT target without it), and the two mutants `nofallback`
+and `allfallback` (`m2g/verify-2/`) turn every such target red.
+**D1 DONE 2026-10-15** (`resume/m2-d1.final-result.json`; two verifications; devcast `skmp/nulldc3` = 388e1b38, merge of
+3c4481f9, plus the integrator's comment commit e9b945e0; 265 ctest targets). The cause of (1), shown: every emulator
+created its memory file under one shm name, `/dcnzorz_mem`, with `O_EXCL`, and unlinked it right after
+(`libswirl/linux/posix_vmem.cpp`, since 2019); an emulator starting inside that window removed the other's name and,
+with no data directory to fall back to (the gates' bare `HOME`), ran without the virtual memory layout ("nvmem is
+DISABLED"); there the recompiler's write-protected code page could not be resolved (M2-Q6 below) and KOS's first store,
+`old_sr` at 8C0100D0 in the page of the code just compiled, ended the process. So it hits emulators started at nearly the
+same moment, as the gates start them; a person with a data directory only fell back to a file. Fixed at the cause (the
+memory file is the process's own: memfd, else a per-process shm name, else `mkstemp`) and at M2-Q6 (`bm_LockedWrite`
+measures from main memory's own buffer without the layout). Measured: base 24-35 of 100 gated boots crashed per JIT
+build, the interpreter 0 (it runs without the layout fine); tip 0 of 500. New targets `system.vmem.concurrent`,
+`.taken`, `.none` (+ hle). (2): `contract.py` checks the debug engine both ways, every selftest session checks the SH4
+engine and the debug engine against its configuration (`engine.asked`); the mutants `nofallback` / `allfallback` turn
+every such target red. The `unhandled SIGSEGV at address (nil)` of E4a's windowed close-during-reset runs is another
+cause (at shutdown, behind DestroyContext, on the interpreter too), and so is the ThreadSanitizer fault of
+`e4a/fix-3` (TSan's shadow store on Xbyak's first write into the code cache, deterministic on a TSan JIT build).
+Then: `N1` (the rebrand: `nulldc3`, portable by default, two-dash switches; done).
+**M3 IS COMPLETE (M3G, 2026-10-19).** The round was cut in `M3-ROUND.md` (2026-10-16, three review rounds and the owner's
+answers to M3-Q1 to M3-Q4: the AICA clocked whatever ARMRST says, speed gates nothing, the device writes to M4, no BIOS
+workload) and built as twelve packages, each verified by verifiers who did not write it, with mutations: the UI's F4a
+(the contract of M3), F4b (the playground on the emscripten build of the one DSP core), F4c (the SGC panel), F4d ("Load
+from emulator", the DSP's controls whatever the ARM7 does) on devtools `skmp/nulldc3` = 066fcbc; the emulator's R7
+(header revision 7), W1 (the T5.0 core is the emulator's DSP), W2 (the batch path and its settings go), W3 (the AICA
+clocked whatever ARMRST says), G (the guest's DSP program and its oracle), E8a (DSP breakpoints and steps), E8b (SGC
+capture, memory binary, the binary path) on devcast `skmp/nulldc3` = 9fbc988a (307 ctest targets), and the gate M3G:
+passed (2026-10-19; branch `skmp/nulldc3-m3g` on 9fbc988a, documents only), with emulators that carry the UI's bundle (`ui` of `debugger.describe` is `3.0.0-pre+066fcbc`): the M3 gate's run 1 on the JIT, the interpreter and the forced fallback (20 scenarios passed, 0 partial, 0 not applicable each), its run 2 on the guest (S00, S17, S21: 3 passed with the note `sgc: captured with the arm7 held`; `--only S00,S21`: 2 passed with the note `dsp: stepped with the arm7 held`) and the M2 gate's second run on the changed guest (2 passed, both notes); 307 ctest targets green twice, none skipped; the sound lines and the state hashes equal B4's (12 of 12 entries, 38 of 38 rows); `npm run check` (735 unit tests) and the e2e suite (401 passed, 1 skipped: the smoke spec, run on its own against the emulator) in a fresh clone; the smoke spec against the emulator; ThreadSanitizer of the sessions `dsp` and `sgc` and of the guest's contract runs: no report. Speed (tests/perf, none renderer, by CPU time, ten rounds, measured and reported, gating nothing): the end of the round 0.798 (JIT) and 0.919 (interpreter) of the round's start in its default setting (the batch render without a DSP), 0.902 and 0.960 of its per-sample path; host instructions about +3060 a sample for W1 to W3 together (G's merge against the round's start), +940 for E8a and E8b, about +4000 for the round's total (the end of the round against its start). The design is brought to the cut (its section 8), with the known limits of the round in its 2.3.7
+(items 25 to 30) and what each package left in its Appendix A.3, "M3 as built". What the round leaves to later work is
+listed below ("Backlog left by the M3 round").
+After that, one workflow at a time, in this order unless the user reorders: M4 (E9, F5), track 10 (one web UI), track 3
+(cycle-similar). Devtools: F0, F1, F2 and the round after design revision 3 are done and verified.
 Known defects recorded by E4a's verifier, not caused by it (package J1): the x64 JIT keeps the code of earlier emulator threads, so after a
 few hundred host stop/start cycles in one process the 10 MB code cache is full and the guest crawls; `Sh4Context::CpuRunning`
 is a plain volatile written across threads (every ThreadSanitizer report); event breakpoints latched inside SLEEP waits and
 single steps on the JIT shift guest time (the documented skew class).
 
+**Backlog left by the M3 round** (from the cut's 1.2, the owner's answers to M3-Q1 to M3-Q4, the integrator's notes of its
+Appendix I and M3G; none of them blocks M4):
+- *The SGC's sends and fetches in time* (M3-D10): `ChannelFetch`, `BusRead` and `MixsSendLate` are not called in the
+  `fast` tier; they come with the `cycle-similar` AICA of track 5 (caique's sound generator), and with them SGC record
+  bytes 76..83 (the filtered, post-AEG, post-FEG and post-TL samples).
+- *The AICA's register writes* (the owner's answer to M3-Q3, "Move to M4"): the write semantics of `dc.aica.common`,
+  `dc.aica.sgc.N`, the RTC and the DSP's rows, and the body of `AICA::DebugWriteReg`, with every device's write table in
+  M4 (E9).
+- *A BIOS workload* (the owner's answer to M3-Q4, "Not in M3"): a package of its own once the owner names a data path
+  for a BIOS; the state-hash workloads are 2ndmix 600 and 4000 vblanks, hello 300 and the guest at 90.
+- *The DSP core's state over the wire* (M3-D35): a protocol method for the core's blob would let "Load from emulator"
+  continue the DSP exactly from any stop (today only from a stop inside a sample's DSP phase, `STEP` 1 to 127).
+- *Speed* (the owner's answer to M3-Q2, "don't mind perf for now"): nothing was changed for speed in M3 (the
+  empty-program lever of the cut's round 2 is not started); M3G's numbers (design 5.7, "Speed at the end of M3") are the
+  start of a round that takes it up.
+- *Left by G*: `reios_loadElf` (`libswirl/reios/reios_elf.cpp`) never frees the ELF's buffer (valgrind's memcheck: the
+  guest's 2708 bytes definitely lost; older than G); `tests/aica_dsp/guest_oracle_main.cpp` reads the ELF's section and
+  symbol tables without bounds checks (a truncated copy could read past the buffer instead of exiting with code 2); no
+  target checks the rules of the cut's 6.3 on the guest's program text (`dsptest_dsp.txt`: odd memory steps below 100 and
+  away from the channels' slots, every IWT two steps behind an odd MRD, the ring at or above 0x20000, step 127 empty).
+- *Left by E8b*: a capture's deadline taken when the arming call has returned, not at the request (design 2.3.7 item
+  29); a `std::bad_alloc` on the server's send of a 32 MiB frame escaping to `std::terminate`, peak memory about three
+  times the frame (item 30); two possible flakes, never a false pass (`sgc.drain`'s fixed 300 ms nap, which a hook such
+  as `SetBeforeTableCallForTest` could replace; `test_bounds`' margin of about 4.6 against its slow read); a failed check
+  of the session `sgc` between `CoreOn()` and `CoreOff()` fails every later core-based test of the run; not tested: a
+  `recordSgcFrames` table call that the park loop takes at a stop, a request while a step runs, `HandleRequestText` with
+  no core thread; `contract.py`'s modes `m3` and `m3dsp` do not assert 20 and 3 scenarios (the gate states them).
+- *Left by F4d* (the UI): `emulatorSnapshot.ts` leaves a rejected promise unhandled when `describe` outlasts the tick
+  timeout and then fails; closing the playground's panel while the 8 MiB read is on its way still starts its audio (an
+  AudioContext nothing closes); no test holds that Start DSP ends the snapshot's banner; the smoke spec finds the
+  capture's "1024 frames" by text, not by F4c's "Capture length" status, and does not check the request's
+  `{frames: 1024}`; the e2e test of the DSP's controls with the ARM7 held covers its step, not its breakpoints.
+- *Left by W1 and W2*: the macOS Xcode project lists none of the files added since the debugger came in (the DSP core,
+  `aica_hash.cpp`, `libswirl/debugger/`) and is not built here: one macOS pass; two mutations accepted (the `dsp` fold
+  leaving out the blob's last byte; the CD-DA pair given to EXTS under the dead `CDDAMute`);
+  `libswirl/profiler/profiler.cpp` declares and prints `samples_gen` inside `#if defined(HAS_PROFILE)` (no build defines
+  it; one that did would not link), and `ChannelEx::Step` has an unused `bool` return.
+
 **Backlog left by the M2 round** (what the design's 2.3.7 and its Appendix A.3 cite as "PLAN's backlog"; from the cut's
 1.2, the answers to M2-Q3 to M2-Q6 and the integrator's notes of its Appendix I; none of them blocks M3):
-- *The SH4 recompiler without the virtual memory layout* (M2-Q6; design 2.3.7 item 15). `bm_AddBlock` protects a page
+- *Left by D1* (its verifier's notes and the engineer's): `debugger.describe` names no SH4 backend, so `contract.py`
+  cannot see a backend that prints the wrong one (the selftest sessions do: `engine.asked`; a capability would be a
+  protocol decision); `contract.py`'s modes `grace` and `hash-listening` check the StartPaused stop without waiting for
+  it, and fail an emulator whose machine is made 1.5 s behind its port line (older than D1; the UI runner's
+  `awaitStartStop` is the model); `vmem_platform_destroy` never closes the memory fd, one per re-made machine; a TSan
+  build with the JIT faults in the recompiler's init (TSan versus the code cache); the `(nil)` fault at shutdown of
+  windowed close-during-reset runs (E4a) is open.
+- ~~*The SH4 recompiler without the virtual memory layout* (M2-Q6)~~ **fixed by D1 (e6105303), target
+  `system.vmem.none`.** The text as it was: (M2-Q6; design 2.3.7 item 15). `bm_AddBlock` protects a page
   from which a block was compiled in every build, and `bm_LockedWrite` measures the faulting address from
   `virt_ram_base`, which is null there, so a guest store into such a page ends the process. To do: resolve the fault
   from the address of main memory when there is no layout. No configuration gives that build on the development
@@ -198,7 +284,7 @@ single steps on the JIT shift guest time (the documented skew class).
 | M0 | devtools hygiene: lint/typecheck/tests/build green, real scripts, versions, docs, fresh clone works without Rust — **DONE** (13 commits, verified from a fresh clone); follow-up in progress: Playwright e2e smoke suite, error boundaries, offline Monaco | `npm run check` |
 | M1 | protocol v3 + contract runner; emulator transport; SH4 debugging complete; device tree with real registers; events | contract test green on mock and emulator |
 | M2 | ARM7 step/breakpoints; memory/register writes; reset; generic register panels; follow-PC; toolbar run control | contract (arm7), UI tests |
-| M3 | SGC capture; DSP step/breakpoints/disassembly; playground linked to the live emulator | contract (sgc/dsp) |
+| M3 | SGC capture; DSP step/breakpoints/disassembly; playground linked to the live emulator — **DONE** (M3G, 2026-10-19; `M3-ROUND.md`) | contract gate M3 in its two runs (sgc/dsp) |
 | M4 | CORE inspector fed by the emulator; TA inspector; TLB/SQ/OC-RAM tables; TA/CORE event breakpoints | contract (holly) |
 | M5 | SH4 simulator panel re-based on the measured model (shares the table generator of track 3) | fixture gate >= 300/305 |
 
@@ -312,10 +398,13 @@ Reports: `devcast-sh4-timing.md`, `shrike4-timing-model.md`, `devcast-fpu.md`, `
 ### Track 5 — AICA tiers
 
 Reports: `devcast-aica-arm7.md`, `caique-for-devcast.md`.
-- **T5.0 — DONE (core), merged: one DSP core.** `libswirl/hw/aica/dsp_core` matches the caique model after every step
+- **T5.0 — DONE, merged: one DSP core.** `libswirl/hw/aica/dsp_core` matches the caique model after every step
   (independent driver: 511 M steps, 0 mismatches), has a C interface and a reproducible emscripten build tested equal to
-  native, runs about 40x real time. Still to do under this item: wire it into the emulator's AICA, and swap the playground
-  (devtools F4). Original scope: A standalone C++ AICA DSP that matches caique (derived from the
+  native, runs about 40x real time. It is wired into the emulator's AICA and the playground runs it, by the M3 round
+  (`M3-ROUND.md`): W1 made it the emulator's DSP (the old interpreter and the arm64 DSP recompiler deleted; the CPUs'
+  accesses routed to it; the sound line's `dsp` field), W2 removed the batch path, W3 clocked the AICA whatever ARMRST
+  says, F4b put its emscripten build behind the devtools playground (the Rust crate removed), and W2's
+  `aica.dsp.wasm.devtools` holds the UI's module equal to native. Original scope: A standalone C++ AICA DSP that matches caique (derived from the
   sample model's DSP: per-step execution with persistent state, the shared read latch, MRD/MWT/IWT step distances, the NOFL
   float format, ring buffer, MEMS/MIXS/TEMP/COEF/MADRS/MPRO/EFREG), with no dependency on the rest of the emulator. It is the
   single source for: (a) devcast's DSP in every tier (replaces the MAME-derived interpreter; the existing DSP JITs are ported
@@ -325,8 +414,9 @@ Reports: `devcast-aica-arm7.md`, `caique-for-devcast.md`.
   dsp_wslot, dsp_unpack, dsp_pack, dsp_coll), identical results native and under wasm.
 - The DSP is always on (user, 2026-10-08): no "Enable DSP" setting and no DSP-less batch path in any tier.
 - `fast` fixes (order from the report): DSP float pack/unpack; effective-rate formula; slot filter + filter envelope; pitch
-  LFO / ALFO depth; ADPCM loop-start state; envelope shape and key-on; timers/interrupts not gated by the ARM, MCIPD bit 10,
-  monitor values; noise LFSR; `SA` masked to the RAM size; DSP on by default once it is right.
+  LFO / ALFO depth; ADPCM loop-start state; envelope shape and key-on; MCIPD bit 10, monitor values; noise LFSR; `SA`
+  masked to the RAM size; DSP on by default once it is right. ("Timers/interrupts not gated by the ARM" is done: W3 of the
+  M3 round clocks the whole time step — the samples, the DSP, the timers and the interrupt lines — whatever ARMRST says.)
 - `cycle-similar`: caique's sample model (bit-exact per sample, 3.5-8x real time) behind an adapter (register access merge,
   RAM pointer, `step()` per sample, interrupts, CDDA in), register writes stamped with their position inside the sample.
 - `cycle-accurate` (plan): the clock-level C++ cycle model as the engine (about 1x real time today; needs its own thread or
@@ -480,8 +570,71 @@ cut like the others (readers, a cut with its decisions, implementation in a work
   the list of keys behind `--config` keeps its form (`section:key=value , section:key=value`, with the blanks around the
   comma).
 - The tests name their directory with `--portable <dir>`: a run of the suite writes nothing beside the binary under test.
-- It goes with the items of the preview offered on 2026-10-11 (a quick-start README, a build that embeds the UI, the
-  history scrub of the two early docs commits) and with open question Q13 (the name of the config section).
+- It goes with the items of the preview offered on 2026-10-11 (a quick-start README, a build that embeds the UI) and with
+  open question Q13 (the name of the config section). The history scrub is not a package item: it rewrites the trees of
+  193 emulator commits and the UI's committed DSP wasm (a home path inside the binary) and is my last step before the
+  first push, which the user put after N1 (2026-10-15; `resume/RESUME.md`, "Before anything is pushed").
+- **Repository names (user, 2026-10-15):** the emulator's GitHub repository is `skmp/nulldc3` (renamed from
+  `skmp/devcast`); the UI stays `skmp/dreamcast-devtools` (a `skmp/nulldc3-devtools` was created and then dropped by the
+  user the same day: "i prefer to keep dreamcast-devtools"), so `../dreamcast-devtools` stays the checkout the build and
+  the tests look for. The committer of every commit is the git identity configured on the development machine (user,
+  same day); no document names it.
+- **`dreamcast-devtools` becomes a submodule of the emulator at `devtools/`** (user, 2026-10-15: "as part of the
+  rebrand, can you add dreamcast-devtools as a submodule?"; answers Q14). The UI bundle and the tests already look at
+  `<tree>/devtools` first (`dbg_webui.cmake`, `tests/CMakeLists.txt`, `tests/debugger/net/CMakeLists.txt`);
+  `tests/debugger/{disasm,regs}/CMakeLists.txt` look only at `../dreamcast-devtools` and gain the `devtools` candidate in
+  front of it. The gitlink becomes the UI pin: each emulator commit names the UI commit its gates ran with (today the pin
+  is the worktree `agents/nulldc3/wt/ui-pin`). Proposed, decisions of the cut: the URL absolute,
+  `https://github.com/skmp/dreamcast-devtools.git`, as the two test-vector submodules write theirs (a fork of the emulator
+  and a clone without ssh keys still get it); no `shallow`, no `branch`; the build runs no npm (`dist-native` is built,
+  not committed; configure says whether a bundle was found, as today; the quick-start README gives `git submodule update
+  --init devtools`, `npm ci && npm run build:native` in it, then the emulator build); a gate check that the UI checkout
+  the tests are given (`NULLDC_DEVTOOLS_DIR`) is at the gitlink's commit. Local work: worktrees do not clone the UI from
+  GitHub (its branch is not pushed): `submodule.devtools.url` in the local config names the local checkout, not
+  committed, and gates keep giving a checkout with `node_modules`. **Push order:** the gitlink names a commit of the UI's
+  `skmp/nulldc3` branch, so the UI branch has to be on GitHub before the emulator branch, or a clone's `git submodule
+  update` fails.
+- **The UI is called "Dreamcast DevTools"** (user, 2026-10-15: "can you rebrand the devtools to say "Dreamcast DevTools"
+  instead of nulldc?"). As the UI is today (read 2026-10-15; 100 lines in 42 files say nullDC in some form), three kinds,
+  proposed for the cut:
+  - **Its own name becomes "Dreamcast DevTools":** `index.html` (`<title>`, `og:title`, `twitter:title`), the About
+    dialog ("About nullDC DevTools"), the home page ("Welcome to the nullDC DevTools"), the status bar ("nullDC Debugger
+    <version>" becomes "Dreamcast DevTools <version>"), the documentation text, `README.md` and `IDEA.md` titles,
+    `config.clientName` and the client string `debuggerClient.ts` sends in `debugger.describe`, the contract runner's
+    client name ("Dreamcast DevTools contract runner"), `package.json` `name` (`dreamcast-devtools`, the repository's
+    name), the plugin name in `scripts/bundle-info.ts`, and the unit and e2e tests that assert those strings. The emulator
+    checks no client name (read the same day).
+  - **Where it names the emulator it keeps nullDC:** "the web debugger UI for nullDC 3.0.0, the Dreamcast emulator", the
+    mock emulator's `nullDC (mock)` and its `BUILD` register, the describe fixtures. **The target label reads the name
+    the emulator reports** (user, 2026-10-15: "it should read the emulator name @ host"): `<emulator.name> @ <host>`
+    from `debugger.describe`, not the fixed `nullDC @ <host>` of today.
+  - **Identifiers no one reads stay:** the localStorage keys `nulldc-debugger-*` and `nulldc-theme-mode` (a rename would
+    drop everyone's saved layouts and sources), the `nulldc:crash-test` event, environment
+    variable names, and `fly.toml`'s app name (a deployment, the user's; removed with the fly.io deployment by devtools 0bbd8d1, 2026-10-16, at the owner's request, together with the Dockerfile; CI runs on pull requests only). **The in-browser transport's channels become
+    `dreamcast-devtools-announce` and `dreamcast-devtools-<id>`** (user, 2026-10-15; no emulator build speaks the old
+    `nulldc-debugger-*` names yet, so they are not kept).
+  - On the emulator side the configure messages "nullDC devtools UI: ..." (`dbg_webui.cmake`, `dbg_webui_embed.cmake`,
+    their test `tests/debugger/net/embed_check/run.cmake`) and the text of the page served without a bundle
+    (`dbg_webui.cpp`) name the UI "Dreamcast DevTools".
+  - **Open for the user:** `public/nulldc_logo.png` (the favicon and the `og:image`) is the nullDC snail with the word
+    "nullDC" on it. Kept until the user gives another image or says otherwise.
+  N1 therefore touches both repositories and is run as two packages, like EXe / EXu: N1e (emulator, the submodule pinned
+  at N1u's result) behind N1u (UI).
+  **N1u DONE 2026-10-16:** devtools `skmp/nulldc3` = 2eb0b9e (the UI pin moved there). N1e started the same day.
+  **N1e DONE 2026-10-16** (`resume/m2-n1e.final-result.json`; interrupted overnight and resumed; two verifications):
+  merged as 00f9295c (21d1d183), plus the integrator's f986304c (mkdir's reason kept in the "cannot be made" message;
+  `portable_unmakable_below` three levels deep; `devtools.lookup` layout `both_incomplete`; each shown by a mutant).
+  devcast `skmp/nulldc3` = f986304c, **278 ctest targets** (+ `cfg.log_file`, `devtools.lookup`, `devtools.commit_check`;
+  the tests project has to be configured again: `system/work.link` is made at configure time). **N1 IS COMPLETE.**
+  Not built here (no MSVC, no Xcode): the Windows help/error message box (`output_is_kept`), `cl_LogToFile` under UCRT,
+  `narrow_path` with a UTF-8 code page, the macOS `AppDelegate` filter and scheme. `submodule.devtools.url` is set in the
+  local config of the devcast repository to the UI checkout (not committed); a local `git submodule update` needs
+  `-c protocol.file.allow=always`. What still says devcast: the README's history sentence, the `docs/nulldc3/` records,
+  the internal `DEVCAST_DIR` CMake variables; reicast: the tool `reicast-joyconfig`, the Lua module, the tree's
+  directory names.
+  **Pushed 2026-10-16** at the owner's word (devtools ed4da47 to skmp/dreamcast-devtools, devcast 54f21352 to
+  skmp/nulldc3; history as it was). Since 54f21352 the submodule's URL is relative (`../dreamcast-devtools.git`, the
+  owner's wish) and pins ed4da47 (the DSP wasm without the builder's cargo path).
 
 ## Order of work
 
@@ -495,7 +648,8 @@ cut like the others (readers, a cut with its decisions, implementation in a work
 
 - Debugger server on by default, localhost only, with an Origin check; port 55543.
 - JSON: nlohmann/json single header vendored into `libswirl/deps`.
-- The generated DSP wasm glue is committed in the devtools repo so the UI builds without Rust.
+- The emscripten module of the DSP core is committed in the devtools repo (`src/wasm/aica-dsp-core/`, with its
+  provenance and pinned emscripten version), so the UI builds without emcc (and, since F4b, without Rust).
 - Breakpoints and single-steps are native to the active SH4 backend (compiled-in checks on the x64 JIT, temporary
   one-instruction blocks for steps): "what you debug is what runs". Prototyped on `skmp/nulldc3-proto-bp` with zero time
   skew; other JIT backends use a block-charging interpreter fallback with a UI notice until they implement the check.
@@ -503,7 +657,7 @@ cut like the others (readers, a cut with its decisions, implementation in a work
 ## Needs the user
 
 - A licence line for the shrike4 FPU headers, wren7 and the console dumps before they are copied into devcast (caique is MIT).
-- Whether `dreamcast-devtools` becomes a submodule of devcast (today: auto-detected sibling directory, or a path option).
+- ~~Whether `dreamcast-devtools` becomes a submodule of devcast~~ answered 2026-10-15: yes, at `devtools/`, in package N1 (section "Rebrand").
 - Needs the console (unmeasured, behaviour chosen and marked in the code until then): FLOAT; scalar ops with DN=1 + RZ (the
   reset mode); FTRC boundaries; reserved RM values; FDIV/FSQRT rounding sweeps; ARM7 STR-of-R15 / base-in-list / TEQP probes
   (already written in the runner's format).

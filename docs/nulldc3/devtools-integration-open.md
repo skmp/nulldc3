@@ -5,7 +5,8 @@ recommendation, and the list of the questions that were answered on 2026-10-09. 
 package (E5), which is done: milestone M1 is complete. Part 2: "header revision 4", the comment-only changes that
 brought the frozen headers to what the document says: it is applied, and its list is kept as the record. Part 3:
 header revision 5, applied with package J1: one declaration (the run flag as an `AtomicU32`) and one comment.
-Revision 6 is applied (package R6 of the M2 round); its list is section 2 of `M2-ROUND.md`.
+Revision 6 is applied (package R6 of the M2 round); its list is section 2 of `M2-ROUND.md`. Revision 7 is applied
+(package R7 of the M3 round); its list is section 2 of `M3-ROUND.md`.
 
 History. The independent check of revision 3 added Q15 and Q16, widened Q4, added H17 to H19 and extended H8, H9 and
 one row of H10. Its second pass added H20 and H21 and rewrote H8; it added no question. On 2026-10-09 thirteen of the
@@ -42,6 +43,9 @@ UI repository (`debugger.net.interop_ws`, `debugger.disasm.dsp_playground`, `deb
 when `NULLDC_DEVTOOLS_DIR` is not given; the other contract tests (`.grace`, `.config`, `.slow`, `.hash.off`,
 `.hash.noclient`) need only the test program. A submodule would make the contract gate part of every checkout. It is
 decided when M1 is merged, which it now is: the question is due.
+
+**Answered by the user 2026-10-15:** yes, "as part of the rebrand": a submodule at `devtools/`, in package N1 (PLAN.md,
+"Rebrand", has the proposed details).
 
 ### 1.2 Answered on 2026-10-09
 
@@ -701,12 +705,14 @@ New:
 - The re-wrap of the 180-column line that H8 left in the `Init()` comment of `libswirl/debugger/debugger.h`: it was
   done on the integration branch behind the merge of revision 4 (commit `ecc4652c`), with line breaks only (decision
   45; section 2, first paragraph).
-- The removal of the three forcing names: declarations, which go with the revision of the M3 work ("What revision 4
-  does not contain").
+- The removal of the three forcing names: declarations, which went with the revision of the M3 work ("What revision 4
+  does not contain"): header revision 7 removed `NOTICE_DSP_FORCED` and `EV_DEBUGGER_DSP_FORCED`, F4a the capability
+  string `"dsp-forced"`.
 - The register `ENABLED` of `dc.aica.arm7` (decision 31, design 6.1.1 item 8): no frozen header is touched. It is a
   row of `dbg_regs_tables.cpp` and a selector in `dbg_regs.cpp` with E3's private header `dbg_regs_private.h`; the
   comment of `Unwind()` in `dbg_callstack.h` (H14) already names the same source, `SoundCPU::DebugEnabled()`.
 - The removal of `resetting`, `stopping` and `StopForReset()` (design 2.2.5, 6.1.2): they are members of
   `SuperH4_impl`, whose header is not one of the frozen ones.
 
-**Revision 6 is applied** (package R6 of the M2 round); its list is section 2 of `M2-ROUND.md`.
+**Revision 6 is applied** (package R6 of the M2 round); its list is section 2 of `M2-ROUND.md`. **Revision 7 is
+applied** (package R7 of the M3 round); its list is section 2 of `M3-ROUND.md`.
