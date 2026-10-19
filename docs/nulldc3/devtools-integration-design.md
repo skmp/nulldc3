@@ -3959,7 +3959,6 @@ Built in round 1 (E3, `hw/aica/aica_hash.h/.cpp`), before the sound burst is tou
   `aica.dsp.emu.lockstep`); with `debugger.disasm.dsptest` (the program's text, the ELF's words and the emulator's
   disassembly together). The render key left the runner and the names with W2 (`.batch` and `.persample` are gone); the
   runner checks the engine of every run, so on an emulator without a recompiler the `.jit` targets fail and are not
-  runner checks the engine of every run, so on an emulator without a recompiler the `.jit.` targets fail and are not
   skipped (no gate hands such a binary to the tests project; the fifth build of a gate is run by its own commands).
   `nulldc_sound_neutral` also takes `CONFIG` and `TIMEOUT` (default 900 s) and can be called from a sibling directory;
   a guest directory cannot call `nulldc_debugger_selftest` or the contract function (they read variables of their own
