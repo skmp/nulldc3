@@ -19,8 +19,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(SYMBOLS_SANITIZE "Build with -fsanitize=address,undefined" OFF)
 
-get_filename_component(DEVCAST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
-set(LIBSWIRL_DIR "${DEVCAST_DIR}/libswirl")
+get_filename_component(nulldc_root_path "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+set(LIBSWIRL_DIR "${nulldc_root_path}/libswirl")
 
 add_executable(symbols_test symbols_test.cpp "${LIBSWIRL_DIR}/debugger/dbg_symbols.cpp")
 target_include_directories(symbols_test PRIVATE "${LIBSWIRL_DIR}" "${LIBSWIRL_DIR}/debugger")

@@ -27,8 +27,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(DISASM_SANITIZE "Build with -fsanitize=address,undefined" OFF)
 
-get_filename_component(DEVCAST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
-set(LIBSWIRL_DIR "${DEVCAST_DIR}/libswirl")
+get_filename_component(nulldc_root_path "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+set(LIBSWIRL_DIR "${nulldc_root_path}/libswirl")
 
 add_executable(disasm_test disasm_test.cpp "${LIBSWIRL_DIR}/debugger/dbg_disasm.cpp")
 target_include_directories(disasm_test PRIVATE "${LIBSWIRL_DIR}" "${LIBSWIRL_DIR}/debugger")
@@ -109,9 +109,9 @@ else()
   # the submodule devtools/ of the tree, else a checkout beside it; a place counts when it has tsx (npm ci was run
   # there) and dspUtils.ts: an uninitialised submodule is an empty directory (tests/devtools/lookup.cmake)
   include("${CMAKE_CURRENT_LIST_DIR}/../../devtools/lookup.cmake")
-  nulldc_find_devtools(devtools_default "${DEVCAST_DIR}" node_modules/.bin/tsx src/app/dsp/dspUtils.ts)
+  nulldc_find_devtools(devtools_default "${nulldc_root_path}" node_modules/.bin/tsx src/app/dsp/dspUtils.ts)
   if(NOT devtools_default)
-    set(devtools_default "${DEVCAST_DIR}/../dreamcast-devtools")
+    set(devtools_default "${nulldc_root_path}/../dreamcast-devtools")
   endif()
   set(DEVTOOLS_DIR "${devtools_default}" CACHE PATH "dreamcast-devtools checkout (DSP playground oracle)")
   set(devtools_option DEVTOOLS_DIR)
@@ -140,4 +140,4 @@ else()
 endif()
 disasm_oracle_test(dsptest "${Python3_Interpreter_FOUND}" "python3 not found"
   "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/dsptest_text.py"
-  --test-bin $<TARGET_FILE:disasm_test> --guest "${DEVCAST_DIR}/tests/debugger/guest/dsptest" ${dsptest_playground})
+  --test-bin $<TARGET_FILE:disasm_test> --guest "${nulldc_root_path}/tests/debugger/guest/dsptest" ${dsptest_playground})

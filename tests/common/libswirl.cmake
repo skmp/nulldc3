@@ -1,7 +1,7 @@
 ## libswirl for the tests ##
 #
 #	The suites link libraries made of hand-picked libswirl translation units. They are compiled with the
-#	definitions and flags of the emulator build (reicast/cmake/config.cmake), so a test runs the same code
+#	definitions and flags of the emulator build (nulldc3/cmake/config.cmake), so a test runs the same code
 #	the emulator runs.
 #
 
