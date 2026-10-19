@@ -5,7 +5,7 @@
 #	the emulator runs.
 #
 
-list(APPEND CMAKE_MODULE_PATH "${nulldc_root_path}/reicast/cmake")
+list(APPEND CMAKE_MODULE_PATH "${nulldc_root_path}/nulldc3/cmake")
 include(config)
 
 # The recompiler selection belongs to each libswirl library (nulldc_add_libswirl_library), not to the project

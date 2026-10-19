@@ -4,7 +4,7 @@
 # What the units reference from the rest of the emulator is in aica_test.cpp; the DSP core the generator sends to
 # is linked. NULLDC_DEBUGGER is not defined: the events of the generator compile to nothing.
 
-list(APPEND CMAKE_MODULE_PATH "${DEVCAST_DIR}/reicast/cmake")
+list(APPEND CMAKE_MODULE_PATH "${DEVCAST_DIR}/nulldc3/cmake")
 include(config)
 
 add_executable(aica_test aica_test.cpp "${LIBSWIRL_DIR}/hw/aica/sgc_if.cpp" "${LIBSWIRL_DIR}/hw/aica/aica_hash.cpp"

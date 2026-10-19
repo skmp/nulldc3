@@ -18,7 +18,7 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 set(reicast_root_path  "${CMAKE_CURRENT_SOURCE_DIR}")
 set(reicast_core_path  "${reicast_root_path}/libswirl")
-set(reicast_shell_path "${reicast_root_path}/reicast")
+set(reicast_shell_path "${reicast_root_path}/nulldc3")
 
 list(APPEND CMAKE_MODULE_PATH "${reicast_shell_path}/cmake")
 
@@ -236,7 +236,7 @@ elseif (${HOST_OS} EQUAL ${OS_LINUX})
 
 elseif(${HOST_OS} EQUAL ${OS_DARWIN})
 
-  set(d_osx ${reicast_shell_path}/apple/emulator-osx/emulator-osx)
+  set(d_osx ${reicast_shell_path}/apple)
 
   list(APPEND objc_SRCS
     ${d_osx}/main.m
