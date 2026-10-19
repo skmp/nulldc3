@@ -154,7 +154,7 @@
 #define COMPILER_CLANG 0x30000003
 #define COMPILER_INTEL 0x30000004
 
-//FEAT_SHREC, FEAT_AREC, FEAT_DSPREC
+//FEAT_SHREC, FEAT_AREC
 #define DYNAREC_NONE	0x40000001
 #define DYNAREC_JIT		0x40000002
 
@@ -225,13 +225,11 @@
 #if defined(TARGET_NO_REC)
 #define FEAT_SHREC DYNAREC_NONE
 #define FEAT_AREC DYNAREC_NONE
-#define FEAT_DSPREC DYNAREC_NONE
 #endif
 
 #if defined(TARGET_NO_AREC)
 #define FEAT_SHREC DYNAREC_JIT
 #define FEAT_AREC DYNAREC_NONE
-#define FEAT_DSPREC DYNAREC_NONE
 #endif
 
 #endif	// !CMAKE_BUILD
@@ -268,14 +266,6 @@
 		#define FEAT_AREC DYNAREC_JIT
 	#else
 		#define FEAT_AREC DYNAREC_NONE
-	#endif
-#endif
-
-#ifndef FEAT_DSPREC
-	#if HOST_CPU == CPU_ARM64
-		#define FEAT_DSPREC DYNAREC_JIT
-	#else
-		#define FEAT_DSPREC DYNAREC_NONE
 	#endif
 #endif
 
@@ -328,13 +318,14 @@
 #endif
 
 
-// The recompilers there are: SH4 for x86_64 and arm64 (both with FEAT_NO_RWX_PAGES), ARM7 and DSP for arm64
+// The recompilers there are: SH4 for x86_64 and arm64 (both with FEAT_NO_RWX_PAGES), ARM7 for arm64. The DSP has none:
+// it is the one core of hw/aica/dsp_core on every host
 #if FEAT_SHREC == DYNAREC_JIT && HOST_CPU != CPU_X64 && HOST_CPU != CPU_ARM64
 #error "FEAT_SHREC is DYNAREC_JIT and this HOST_CPU has no SH4 recompiler"
 #endif
 
-#if (FEAT_AREC == DYNAREC_JIT || FEAT_DSPREC == DYNAREC_JIT) && HOST_CPU != CPU_ARM64
-#error "FEAT_AREC or FEAT_DSPREC is DYNAREC_JIT and this HOST_CPU has no ARM7 and no DSP recompiler"
+#if FEAT_AREC == DYNAREC_JIT && HOST_CPU != CPU_ARM64
+#error "FEAT_AREC is DYNAREC_JIT and this HOST_CPU has no ARM7 recompiler"
 #endif
 
 

@@ -117,14 +117,24 @@ nulldc_debugger_selftest(sh4bpbase ELF 2ndmix.elf CONFIG Debugger:StartPaused=ye
 # The sound side: the sound burst that the debugger suspends and runs on, the breakpoints and steps of the ARM7
 # and its register writer (libswirl/debugger/dbg_selftest_arm7.cpp), on the sounding guest of the tree
 # (tests/debugger/guest/dsptest), which needs no NULLDC_ELF_DIR. On the JIT, on the interpreter and on the JIT
-# with the interpreter fallback of the SH4 forced; and on the first two with the sound rendered sample by sample
-# (aica.NoBatch), which is the path that stays when the batch render goes: there a time step of the AICA that
-# runs in the park context renders its sample
+# with the interpreter fallback of the SH4 forced. Every time step of the AICA makes its sample, also one that
+# runs in the park context
 nulldc_debugger_selftest(arm7 ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
 nulldc_debugger_selftest(arm7.fallback SELFTEST arm7 ENGINES jit CONFIG Debugger:ForceFallback=yes
                          ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
-nulldc_debugger_selftest(arm7.persample SELFTEST arm7 CONFIG config:aica.NoBatch=yes
+
+# The run control of the DSP: the DSP phase of the sound burst and the end of a sample as places the burst is
+# suspended at, the breakpoints and steps of the DSP, and the rows of dc.aica.dsp (libswirl/debugger/
+# dbg_selftest_dsp.cpp), on the sounding guest of the tree, whose DSP program the guest loads at its start. On the
+# JIT, on the interpreter and on the JIT with the interpreter fallback of the SH4 forced
+nulldc_debugger_selftest(dsp ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
+nulldc_debugger_selftest(dsp.fallback SELFTEST dsp ENGINES jit CONFIG Debugger:ForceFallback=yes
                          ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
+
+# The SGC frame capture, the outputs the sound generator keeps for it, the binary frames of the core and its
+# deferred response of state.recordSgcFrames (libswirl/debugger/dbg_selftest_sgc.cpp: sgc.* and mem.binary.*), on
+# the sounding guest of the tree, whose two channels play. On the JIT and the interpreter
+nulldc_debugger_selftest(sgc SELFTEST sgc,mem.binary ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
 
 # The debugger's writes: guest memory and the registers of the two processors, with what each write owes the
 # machine (libswirl/debugger/dbg_selftest_writes.cpp), on the same guest. On the JIT, on the interpreter and on

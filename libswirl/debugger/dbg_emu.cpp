@@ -21,6 +21,8 @@
 #include "dbg_emu.h"
 #include "dbg_sh4.h"
 #include "dbg_arm7.h"
+#include "dbg_dsp.h"
+#include "dbg_sgc.h"
 #include "dbg_selftest.h"
 #include "dbg_symbols.h"
 
@@ -132,6 +134,7 @@ enum Action {
 	ACT_ARM7_STEP,
 	ACT_ARM7_STEP_OVER,
 	ACT_ARM7_STEP_OUT,
+	ACT_DSP_STEP,
 };
 
 // What Leave() says when nothing was left: the sound burst it ran on was suspended again, the stop of that is
@@ -143,8 +146,8 @@ struct {
 	bool firstPark;				// Park() has not run on this thread yet
 	bool inPark;				// in the park context: the guest does not execute
 	bool inStep;				// a step is executing: the park loop is inside a step of the SH4, or the SH4 runs
-								// towards the sound burst that a step of the ARM7 waits for. The second lasts
-								// across a return of Park(), and ends at the Park() that follows
+								// towards the sound burst that a step of the ARM7 or of the DSP waits for. The
+								// second lasts across a return of Park(), and ends at the Park() that follows
 	bool stopInForce;			// a debugger stop is published and in force
 	u32 stopPc;					// the pc it was published with
 	bool stepped;				// a step has executed since it was published
@@ -161,6 +164,9 @@ struct {
 	// A freezing cause that the slice hook has not latched yet
 	StopCause freeze;
 	u32 freezeId;
+
+	// emu::OnSoundStop recorded a stop in the park context since the park loop began to run a burst on
+	bool soundStop;
 
 	Action armed;
 	bool resetSeen;				// the guest state was replaced on this thread since the park loop last looked
@@ -207,17 +213,19 @@ const char* JitName()
 #endif
 }
 
-// When several causes meet in one stop: the one that is published
+// When several causes meet in one stop: the one that is published (the priority of StopCause, dbg_emu.h).
+// Capture is the lowest cause: a breakpoint, a step or a pause that falls on the last frame of a capture wins
 int Rank(StopCause cause)
 {
 	switch (cause)
 	{
-	case StopCause::Reset:      return 6;
-	case StopCause::Start:      return 5;
-	case StopCause::Breakpoint: return 4;
-	case StopCause::Event:      return 3;
-	case StopCause::Step:       return 2;
-	case StopCause::Pause:      return 1;
+	case StopCause::Reset:      return 7;
+	case StopCause::Start:      return 6;
+	case StopCause::Breakpoint: return 5;
+	case StopCause::Event:      return 4;
+	case StopCause::Step:       return 3;
+	case StopCause::Pause:      return 2;
+	case StopCause::Capture:    return 1;
 	default:                    return 0;
 	}
 }
@@ -444,13 +452,15 @@ void SelectArm7()
 }
 
 // The ARM7 is about to execute, or can, with the debug loop of the sound burst in place of its recompiler: a
-// sound burst that the debugger suspended is run on (the rest of a suspended ARM phase is always the debug
-// loop's), or the park context is left with dbg_arm7_armed not 0. The stop that follows says so
+// sound burst that the debugger suspended in front of an ARM7 instruction is run on (the rest of a suspended ARM
+// phase is always the debug loop's), or the park context is left, or a burst is run on, with dbg_arm7_armed not 0.
+// A burst suspended in front of a DSP step or at the end of a sample has no suspended ARM phase: the ARM phases
+// of its run-on are the debug loop's only while dbg_arm7_armed says so. The stop that follows says so
 // (NOTICE_ARM7_FALLBACK), whatever is armed when it is published: a step and a temporary breakpoint are gone by
 // then (arm7::OnStop). Asked before the burst is run on, and behind everything that arms for the leave
 void NoteArm7Fallback()
 {
-	if (engine.arm7Recompiler && (dbg_arm7_armed != 0 || virtualDreamcast->SoundBurstSuspended() != SOUND_BURST_NONE))
+	if (engine.arm7Recompiler && (dbg_arm7_armed != 0 || virtualDreamcast->SoundBurstSuspended() == SOUND_BURST_ARM7))
 		e.arm7Fallback = true;
 }
 
@@ -515,8 +525,10 @@ void EnterStop()
 	sh4::StopInfo info;
 	sh4::OnStop(&info);
 
-	// the temporary breakpoint and a step of the ARM7 end here, also when the stop is the SH4's
+	// the temporary breakpoint and a step of the ARM7, and a step of the DSP, end here, also when the stop is the
+	// SH4's
 	arm7::OnStop();
+	dsp::OnStop();
 	SelectArm7();
 
 	// The notices of the stop: what holds now, and what held for the step, the resume or the run it ends. A
@@ -558,10 +570,24 @@ void EnterStop()
 	}
 }
 
+// Runs a suspended sound burst on in the park context, with the checks of the ARM7 and of the DSP. No emulated
+// time passes: it is the rest of the AICA tick that was due. Returns false when a stop is decided in it
+// (emu::OnSoundStop has recorded it, the park loop publishes it next): the burst is suspended again, or it ran to
+// its end with a stop recorded in its last sample (a step of the DSP complete at its end, an SGC capture armed at
+// a stop that took its last frame there). True when it ran to its end with nothing recorded
+bool RunSuspendedBurst()
+{
+	e.soundStop = false;
+
+	if (!virtualDreamcast->RunSoundBurst(true))
+		return false;
+
+	return !e.soundStop;
+}
+
 // The first step of every leave: a sound burst that the debugger suspended is run on before the SH4 executes
-// anything, with the checks of the ARM7. No emulated time passes: it is the rest of the AICA tick that was due.
-// Returns false when a check suspended the burst again: the stop is decided (emu::OnSoundStop has recorded it),
-// nothing is left, and the caller drops what it was leaving for
+// anything. Returns false when a stop is decided in it (RunSuspendedBurst): nothing is left, and the caller drops
+// what it was leaving for
 bool RunBurstOn()
 {
 	if (virtualDreamcast->SoundBurstSuspended() == SOUND_BURST_NONE)
@@ -569,13 +595,14 @@ bool RunBurstOn()
 
 	NoteArm7Fallback();
 
-	return virtualDreamcast->RunSoundBurst(true);
+	return RunSuspendedBurst();
 }
 
 // Leaves the park context for Run(). resume: the stop in force ends with it. arm7Decided: the resume exemption
 // of the ARM7 has been armed by the caller, for a step-over or a step-out of the ARM7.
-// Returns kParkStay, with nothing left and the thread parked, when a breakpoint of the ARM7 suspended the sound
-// burst again that was run on: the park loop publishes that stop
+// Returns kParkStay, with nothing left and the thread parked, when a stop was decided in the sound burst that
+// was run on (a breakpoint of the ARM7 or of the DSP suspended it again; a stop recorded in its last sample):
+// the park loop publishes that stop
 u32 Leave(bool resume, bool arm7Decided = false)
 {
 	// Also for the stop that the thread before this one ended in, which nothing has resumed: the instruction
@@ -584,6 +611,10 @@ u32 Leave(bool resume, bool arm7Decided = false)
 
 	if (resumes && !arm7Decided)
 		arm7::PrepareResume();
+
+	// the DSP's for every resume, the step-over and the step-out of the ARM7 among them
+	if (resumes)
+		dsp::PrepareResume();
 
 	if (!RunBurstOn())
 		return kParkStay;
@@ -621,9 +652,11 @@ u32 Leave(bool resume, bool arm7Decided = false)
 // step is decided and the park loop goes on with it
 bool DoStep(Action action, u32* rv)
 {
-	// The step can let the ARM7 execute: its slice end can start a sound burst, and one that is suspended is
-	// run on first. A breakpoint of the ARM7 that suspends it again is the stop, and the step is dropped
+	// The step can let the ARM7 and the DSP execute: its slice end can start a sound burst, and one that is
+	// suspended is run on first. A stop decided in that run-on (a breakpoint of the ARM7 or of the DSP that
+	// suspends it again) is the stop, and the step is dropped
 	arm7::PrepareResume();
+	dsp::PrepareResume();
 
 	if (!RunBurstOn())
 		return false;
@@ -711,55 +744,14 @@ bool DoStep(Action action, u32* rv)
 	return true;
 }
 
-// Executes the step of the ARM7 a call armed. Returns true with *rv when Park() returns; false when the park
-// loop goes on with a stop that is decided: the stop of the step, or that of a breakpoint of the ARM7 in the
-// burst that a step-over or a step-out ran on
-bool DoArm7Step(Action action, u32* rv)
+// The third way out of the park context, for a step of the ARM7 or of the DSP with no burst suspended: what it
+// steps is in the next burst, which only the scheduler starts. The loop leaves as for a resume and the stop stays
+// in force: nothing is published, g_parked stays set, and the slice hook treats the run of the SH4 as a step that
+// is executing. A check of that burst (or, for the ARM7, the burst itself when it finds the ARM7 held) records the
+// stop of the step, the hook latches it, and the next Park() publishes it. Returns true with *rv, which Park()
+// returns
+bool WaitForBurst(u32* rv)
 {
-	bool resume = false;
-
-	if (action == ACT_ARM7_STEP_OVER)
-	{
-		resume = arm7::PrepareStepOver();
-	}
-	else if (action == ACT_ARM7_STEP_OUT)
-	{
-		arm7::PrepareStepOut();
-		resume = true;
-	}
-
-	if (resume)
-	{
-		// a resume with one temporary breakpoint: it publishes Running when it leaves
-		*rv = Leave(true, true);
-		return *rv != kParkStay;
-	}
-
-	arm7::PrepareStep();
-
-	if (virtualDreamcast->SoundBurstSuspended() != SOUND_BURST_NONE)
-	{
-		// In the park context: the burst is run on until the check behind the instruction suspends it again,
-		// or the check in front of it does (a FIQ was entered there). No emulated time passes, the SH4 executes
-		// nothing, the latch stays set, nothing is published in between
-		NoteArm7Fallback();
-
-		if (!virtualDreamcast->RunSoundBurst(true))
-			return false;
-
-		// the instruction was the last of its burst: the step is complete at the end of the burst
-		if (arm7::CompleteStepAtBurstEnd())
-			return false;
-
-		// (a step that is armed is the first check of the burst that is run on, so its instruction has executed
-		// when that burst is over. Were it not so, the instruction would be in the next burst, as below)
-	}
-
-	// With no burst suspended the instruction is in the next burst, which only the scheduler starts. The loop
-	// leaves as for a resume and the stop stays in force: nothing is published, g_parked stays set, and the slice
-	// hook treats the run of the SH4 as a step that is executing. The check of that burst, or the burst itself
-	// when it finds the ARM7 held, records the stop of the step, the hook latches it, and the next Park()
-	// publishes it
 	SelectArm7();
 	NoteArm7Fallback();
 
@@ -788,6 +780,97 @@ bool DoArm7Step(Action action, u32* rv)
 
 	*rv = PARK_RUN;
 	return true;
+}
+
+// Executes the step of the ARM7 a call armed. Returns true with *rv when Park() returns; false when the park
+// loop goes on with a stop that is decided: the stop of the step, that of a check of the DSP or the ARM7 in the
+// burst that the step ran on, or that of a breakpoint of the ARM7 in the burst that a step-over or a step-out ran
+// on
+bool DoArm7Step(Action action, u32* rv)
+{
+	bool resume = false;
+
+	if (action == ACT_ARM7_STEP_OVER)
+	{
+		resume = arm7::PrepareStepOver();
+	}
+	else if (action == ACT_ARM7_STEP_OUT)
+	{
+		arm7::PrepareStepOut();
+		resume = true;
+	}
+
+	if (resume)
+	{
+		// a resume with one temporary breakpoint: it publishes Running when it leaves. It decides the DSP's
+		// exemption, as every resume does
+		*rv = Leave(true, true);
+		return *rv != kParkStay;
+	}
+
+	arm7::PrepareStep();
+
+	// The step can let the DSP execute, in the rest of a suspended burst or in front of the instruction in the
+	// next one: its exemption is decided, so that a step of the ARM7 from a stop of a DSP breakpoint runs through
+	// that breakpoint once
+	dsp::PrepareResume();
+
+	if (virtualDreamcast->SoundBurstSuspended() != SOUND_BURST_NONE)
+	{
+		// In the park context: the burst is run on until the check behind the instruction suspends it again,
+		// or the check in front of it does (a FIQ was entered there), or a check of the DSP in front of it does.
+		// No emulated time passes, the SH4 executes nothing, the latch stays set, nothing is published in
+		// between
+		NoteArm7Fallback();
+
+		e.soundStop = false;
+
+		if (!virtualDreamcast->RunSoundBurst(true))
+			return false;
+
+		// The burst ran to its end. When the instruction was the last of its burst the step is complete at the
+		// end of the burst; a stop recorded in the last sample of the burst is decided all the same, and the two
+		// meet in one stop
+		if (arm7::CompleteStepAtBurstEnd() || e.soundStop)
+			return false;
+
+		// Nothing stopped: the burst was suspended in front of a DSP step of its last sample, which has no ARM
+		// phase behind it. The instruction is in the next burst, as below. (Otherwise a step that is armed is the
+		// first check of the burst that is run on, so its instruction has executed when that burst is over)
+	}
+
+	return WaitForBurst(rv);
+}
+
+// Executes the step of the DSP a call armed. Returns true with *rv when Park() returns; false when the park loop
+// goes on with a stop that is decided: the stop of the step, or that of a check of the ARM7 in the burst that the
+// step ran on
+bool DoDspStep(u32* rv)
+{
+	// The step can let the ARM7 execute (the rest of its ARM phase, or the ARM phase of the next sample): its
+	// exemption is decided first. The DSP's step has its own rule for the first check
+	arm7::PrepareResume();
+	dsp::PrepareStep();
+
+	if (virtualDreamcast->SoundBurstSuspended() != SOUND_BURST_NONE)
+	{
+		// In the park context: the burst is run on until the check behind the step suspends it again, or, for a
+		// step of the last step of the sample, until the end of the sample, where the burst is suspended or, behind
+		// its last sample, ends. A check of the ARM7 in the ARM phase that comes first stops it with its own
+		// cause. No emulated time passes, the SH4 executes nothing, the latch stays set, nothing is published in
+		// between
+		NoteArm7Fallback();
+
+		if (!RunSuspendedBurst())
+			return false;
+
+		// (Not reached by a burst of 32 samples: a DSP phase follows every place a burst is suspended at, in the
+		// same burst, and its first check lets the step execute. Were it not so, the step would be in the next
+		// burst, as below)
+	}
+
+	// With no burst suspended the step is step 0 of the first sample of the next burst
+	return WaitForBurst(rv);
 }
 
 enum Taken {
@@ -975,9 +1058,19 @@ int Step(Target t, StepKind k, const char** why)
 	if (!OnEmuThread() || !e.inPark || !e.stopInForce || e.armed != ACT_NONE)
 		return kErrNotPaused;
 
-	// the DSP has no run control
 	if (!TargetSteps(t))
 		return kErrNotSupported;
+
+	// The DSP: one step, armed whether the ARM7 is held or not (the AICA is clocked whatever ARMRST says). There
+	// is nothing to step over or out of in a DSP program
+	if (t == Target::Dsp)
+	{
+		if (k != StepKind::Into)
+			return kErrNotSupported;
+
+		e.armed = ACT_DSP_STEP;
+		return 0;
+	}
 
 	if (t == Target::Arm7)
 	{
@@ -1010,7 +1103,7 @@ int Step(Target t, StepKind k, const char** why)
 
 bool TargetSteps(Target t)
 {
-	return t == Target::Sh4 || t == Target::Arm7;
+	return t == Target::Sh4 || t == Target::Arm7 || t == Target::Dsp;
 }
 
 int Reset()
@@ -1045,6 +1138,11 @@ void SetArm7Breakpoints(const u32* ids, const u32* addrs, u32 n)
 	SelectArm7();
 }
 
+void SetDspBreakpoints(const u32* ids, const u32* steps, u32 n)
+{
+	dsp::SetBreakpoints(ids, steps, n);
+}
+
 void SetEventBreakpoints(const u32* ids, const u8* events, u32 n)
 {
 	memset(eventBp, 0, sizeof(eventBp));
@@ -1067,6 +1165,7 @@ void SetActiveMask(u32 categories)
 
 	sh4::SetActiveMask(categories);
 	arm7::SetActiveMask(categories);
+	dsp::SetActiveMask(categories);
 
 	SelectArm7();
 }
@@ -1096,10 +1195,12 @@ void LatchStop(StopCause cause, u32 breakpointId)
 
 void OnSoundStop(StopCause cause, u32 breakpointId)
 {
-	// The park loop runs a suspended burst on: this is the stop it publishes next
+	// The park loop runs a suspended burst on: this is the stop it publishes next, also when the burst runs to its
+	// end behind it
 	if (e.inPark)
 	{
 		Merge(e.want, e.wantId, cause, breakpointId);
+		e.soundStop = true;
 		return;
 	}
 
@@ -1347,6 +1448,7 @@ void OnThreadExiting(bool guestExit)
 
 	sh4::OnStop(nullptr);
 	arm7::OnStop();
+	dsp::OnStop();
 	SelectArm7();
 
 	// A thread that ends in a debugger stop leaves the resume of that stop to the next one, when the guest is
@@ -1407,6 +1509,12 @@ void OnThreadExiting(bool guestExit)
 		RunCall(call);
 	}
 
+	// Behind the drain, with the queue empty and L still held, so that no queued call runs behind it: an SGC
+	// capture that records goes, also one that a CC_TABLE call of the drain armed (that call ran on this thread,
+	// which is the emulator thread until the end of this function). Its request is answered -32001. A call made
+	// from here on finds Stopped and runs on its caller, under L, behind this thread
+	sgc::Cancel(kErrHostStopped);
+
 	Announce(stopped);
 
 	// No call of the window from here: this is behind the stop callback, and the thread of the user interface
@@ -1425,14 +1533,20 @@ void OnGuestStateReplaced()
 
 	sh4::OnPcWritten();
 	arm7::OnPcWritten();
+	dsp::OnStateReplaced();
 
 	if (OnEmuThread())
 	{
-		// temporary breakpoints, a step-out and a step of the ARM7 end with the state they were made for.
-		// Without an emulator thread there are none: the thread ended them on its way out
+		// temporary breakpoints, a step-out and the steps of the ARM7 and of the DSP end with the state they were
+		// made for. Without an emulator thread there are none: the thread ended them on its way out
 		sh4::OnStop(nullptr);
 		arm7::OnStop();
+		dsp::OnStop();
 		SelectArm7();
+
+		// An SGC capture would span two states of the machine: it goes, and its request is answered -32014 at
+		// once. Without an emulator thread there is none: the thread cancelled it on its way out
+		sgc::Cancel(kErrCaptureTimeout);
 
 		// the park loop publishes the stop, if one is in force
 		e.resetSeen = true;
@@ -1454,7 +1568,8 @@ u32 Park()
 {
 	e.inPark = true;
 
-	// The run of the SH4 towards the sound burst that a step of the ARM7 waited for is over, whatever ended it
+	// The run of the SH4 towards the sound burst that a step of the ARM7 or of the DSP waited for is over, whatever
+	// ended it
 	e.inStep = false;
 
 	// In the park context nothing is accepted and no time passes, whatever a call does: an interrupt that a
@@ -1517,14 +1632,17 @@ u32 Park()
 			{
 				rv = Leave(true);
 
-				// a breakpoint of the ARM7 stopped the burst that was run on: that stop is published
+				// a stop was decided in the burst that was run on (a check of the ARM7 or of the DSP): that stop is
+				// published
 				if (rv == kParkStay)
 					continue;
 
 				return rv;
 			}
 
-			if (action >= ACT_ARM7_STEP ? DoArm7Step(action, &rv) : DoStep(action, &rv))
+			const bool returns = action == ACT_DSP_STEP ? DoDspStep(&rv) : action >= ACT_ARM7_STEP ? DoArm7Step(action, &rv) : DoStep(action, &rv);
+
+			if (returns)
 				return rv;
 
 			continue;

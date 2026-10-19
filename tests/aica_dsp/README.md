@@ -1,7 +1,9 @@
 # AICA DSP core tests
 
 What is tested is `libswirl/hw/aica/dsp_core`: the DSP of the AICA as one self-contained core (its README has the
-hardware rules and the interface). The tests need nothing of the emulator.
+hardware rules and the interface), and how the emulator's sound chip drives it (`aica.dsp.emu.*` and the `.emu`
+cases, below). The tests of the core alone need nothing of the emulator; those of the wiring compile the
+emulator's own `hw/aica/aica_mmio.cpp`, `sgc_if.cpp` and `dsp.cpp` (`emu_aica.h`).
 
 The reference is the caique project (`caique-rtl`), which is not in this repository: its sample model of the AICA,
 the DSP programs it ran on a Dreamcast and what the console answered are compiled in and read from a checkout,
@@ -16,13 +18,19 @@ Without it the tests that need it are skipped, or fail with `-DNULLDC_TESTS_REQU
 | `aica.dsp.capi` | the C interface of the core (`wasm/aica_dsp_capi.h`), compiled for the host, against the core called itself, call for call, on random programs and on the known-answer programs | none |
 | `aica.dsp.wasm` | `aica_dsp_core.wasm` and its loader in node against the core compiled for the host and called itself, call for call, on the same programs | emcc (on the PATH, or an emsdk in `EMSDK` or `~/emsdk`) and node; skipped without them |
 | `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | `wasm/build.sh` finding its emcc, run by sh on a PATH that has none: with the emsdk in `EMSDK` it builds the module, with no emsdk there it says that it has no emcc | an emcc that is in an emsdk, and node; skipped otherwise |
+| `aica.dsp.wasm.devtools` | the module the UI commits, `src/wasm/aica-dsp-core/` of `NULLDC_DEVTOOLS_DIR` (the playground's DSP): its `PROVENANCE.json` has the keys `repository`, `treeCommit`, `dspCoreCommit`, `dirty`, `emscripten`, `apiVersion`, `files` and no other, and the two files beside it are those `files` names, size and SHA-256; the trace of `aica.dsp.wasm` replayed on its loader and wasm gives every answer of the native core; and where the emcc `build.sh` uses (on the `PATH`, else in the emsdk of `EMSDK`, or of `~/emsdk` when `EMSDK` is not set) says by `emcc -dumpversion` the `emscripten` of `PROVENANCE.json`, the two files are the bytes of a fresh `build.sh` of this tree (`devtools_test.mjs`) | node and the UI checkout; no emcc. A test whose data is missing without the checkout |
+| `aica.dsp.case.<case>.emu` | the seven cases anchored directly on the console's files (below) on the emulator's own sound chip, against those files and against the core alone | a caique-rtl checkout |
+| `aica.dsp.emu.lockstep` | generated programs through the emulator's sound chip, with CPU writes of every form and channels that send, against a core of the test's own, behind every sample | none |
+| `aica.dsp.emu.state` | the mix takes EFREG from the core, the DSP device's reset is the core's power on, its save state is the core's blob, the AICA's save state keeps the bus a channel sends to, "Disable Sound" hands the audio stream a pair of zeroes in every sample, which the harness folds, and changes nothing else | none |
+| `debugger.sound.oracle.dsptest.jit` `.interp` | the DSP program of the sounding guest (`tests/debugger/guest/dsptest`) on the emulator, on the JIT and on the interpreter, against the core and the caique model in lockstep on the same writes and schedule (`aica_dsp_guest_oracle`, below): the field `dsp` of the line of a copy of the guest whose sends are 0 is what the tool computes | a caique-rtl checkout, the emulator, python3 |
 
 All but `aica.dsp.capi` and the `aica.dsp.wasm` tests count their cases into checks and are gated on
 `baseline.txt`: a check that passes fewer cases than its baseline, or has another number of cases, fails, and
 ctest runs the tests with `--strict`, where more passes than the baseline fail as well until the baseline is
 updated (`<executable> ... --update-baseline`) and committed. `KNOWN_FAILURES.md` has the reason for every check
 that is below its total. `aica.dsp.capi` and `aica.dsp.wasm` are lists of answers that all have to be the same,
-the two tests of `build.sh` are what the script returns and prints.
+the two tests of `build.sh` are what the script returns and prints, and `aica.dsp.wasm.devtools` is a list of checks
+that all have to hold.
 
 ## Step for step: `dsp_lockstep`
 
@@ -181,6 +189,99 @@ on every value in `aica.dsp.diff.directed`.
 
 The case sources use C that is not C++, so the tests project enables C when the checkout is there.
 
+## The emulator's sound chip: `emu_aica.h`
+
+`EmuAica` is the emulator's AICA device with its sound generator and its DSP device, which holds the core, built
+from the emulator's own `aica_mmio.cpp`, `sgc_if.cpp` and `dsp.cpp` with the emulator's definitions and flags;
+`emu_aica.cpp` has what they reference of the rest of the emulator, after the stubs of `tests/arm7` and
+`tests/debugger/regs/aica` (no SH4, no ARM7, no scheduler). A register access is `AICA::ReadReg` /
+`AICA::WriteReg`, the CPU's path with its byte and slot handling; a sample is `libAICA_TimeStep()`, the
+emulator's time step of the AICA; the wave memory is the device's. The audio stream is a stand-in that keeps what
+each sample hands it, and so is the CD-DA drive: off it gives silence, on a pair of its own in every sample,
+neither half 0 (`EmuCddaPair`).
+
+* **`aica.dsp.case.<case>.emu`**: `dsp_basic`, `dsp_mem`, `dsp_mem2`, `dsp_mem3`, `dsp_wslot`, `dsp_unpack` and
+  `dsp_pack` on that chip (`aica_dsp_cases <case>.emu`). A register access of the case is a 32-bit access of the
+  SH4. No channel is keyed, so every channel sends 0 to the bus of its ISEL: the silent sound generator of the
+  core machine, which runs next to it (`emu-as-core:lines`). The emulator puts no CPU read of the wave memory into
+  the DSP's latch (`AicaDsp::BusRead` is not wired, the cut of the M3 round, M3-D10): five lines of `dsp_mem3`
+  are not the console's for that (`KNOWN_FAILURES.md`). `dsp_coll` and `sh4_latch` key channels, and the
+  emulator's channels are not caique's: they do not run here.
+* **`aica.dsp.emu.lockstep`** (`aica_dsp_emu lockstep`): 1200 programs of 48 samples from the generator of
+  `aica_dsp_diff` (`dsp_gen.h`), random and sparse, each on a new machine with random wave memory, against a core
+  of the test's own. Every write of the program and between the samples is in one of the forms a CPU has: a 16-bit
+  or a 32-bit write of a slot, its two bytes, one of them, a write of the upper half of the slot (16-bit or a byte)
+  with a value other than the low half's behind a write of the low half; between the samples also the upper half
+  alone, with no write of the low half in front of it, which on a TEMP, MEMS, MIXS or EFREG slot the program or the
+  sweep has written since leaves the DSP with another value than the file's word. The test keeps the register file
+  as its CPU wrote it and gives its core
+  what the rules of the file make of each write: the file's word of the slot when the low half of a slot of the
+  DSP was written, nothing for the upper half. One to three keyed channels on each side, IMXL = DISDL, the pan all
+  to that side, MVOL 15, no output of the DSP or of the CD-DA mixed: a channel's send is then its direct output, so
+  the pair a sample hands the stream is, side by side, the sum of the sends to the left bus and to the right bus.
+  The test's core gets, behind a `SweepBegin`, those sums times 16 and 0 for every other bus a channel names, the
+  CD-DA pair of the stand-in in `EXTS`, and runs the sample. Behind every sample the two state blobs are equal;
+  CPU reads between the samples (of every form, also of the offsets next to the DSP's) give what the test's core
+  answers, the upper half of a slot 0, the file elsewhere; and behind every program the two wave memories are
+  equal. The checks `did:*` count what was done: samples with sends on both buses, with a CD-DA pair, writes of
+  each form, writes the core was given, and per array the writes of an upper half alone on a slot where the DSP
+  given the file's word again would differ (`did:upper-alone-moved:*`).
+* **`aica.dsp.emu.state`** (`aica_dsp_emu state`): `efreg-mix`, a program whose EWT writes 0x1234 into EFREG3: the
+  pair of each sample with EFSDL 15 differs from the pair with EFSDL 0 by the VOLPAN of the core's EFREG3, which is
+  0x1234; `reset`, the DSP device's `Reset(false)` behind a program that ran leaves the core's blob that of a core
+  after `Reset()`; `save-load`, the DSP device's save state, a CPU write and a sample, the save state loaded:
+  the core's blob of before, and the save state is the core's blob, `StateSize()` bytes; `refused-blob`, a save
+  state whose DSP part has another header resets the DSP; `save-bus`, a channel keyed with IMXL 15 and ISEL 13, the
+  AICA's and the DSP's save states, ISEL written with 6 and a sample (it sends to bus 6), the states loaded: the
+  two samples behind the load send to bus 13 and to no bus 6, and the core is that of a machine that ran the same
+  samples with no save, write and load. 13 has bit 3 set and differs from 6 in the low three bits: a load that kept
+  three bits of the bus would send to bus 5; `nosound`, "Disable Sound" (`settings.aica.NoSound`, the emulator's
+  `config:aica.NoSound`) on a machine that sounds (a channel keyed with a direct output to both sides and a send to
+  the DSP, the program of `efreg-mix` at EFSDL 15, the CD-DA stand-in in EXTS and in the mix), against a machine
+  without it, over 64 samples: behind every sample the muted machine has handed the audio stream exactly one pair
+  more, and that pair is (0, 0) where the other machine's is not; the harness (`aica_hash.h`) has folded what each
+  machine handed the stream, the other's pairs and as many pairs of zeroes; and the DSP's blob, the AICA's save
+  state and the register file are the other machine's. With the setting off again, the 65th sample hands the stream
+  the other machine's 65th pair. The stream is the speed limit of the emulator (`LimitFPS`): a sample that hands
+  it nothing, or folds another pair than it hands, fails, which no run of the emulator with `audio:backend=none`
+  shows.
+
+## The sounding guest's DSP: `aica_dsp_guest_oracle`
+
+The guest of `tests/debugger/guest/dsptest` loads a DSP program of 18 steps between the first tick of the AICA and
+the second (its README, "The DSP"). Its lines move with the program, and what justifies them is the model, which
+ends at EFREG and has a sound generator that is not the emulator's: so the oracle holds the DSP's state where its
+inputs are known. `soundlines.py --mode oracle` builds a copy of the guest whose first channel has `IMXL` 0, so that
+every send to the DSP is exactly 0 (the emulator's attenuation of a send is `TL` plus 255 for `IMXL` 0, capped by
+what the envelope leaves, and its table of levels has 0 there: `hw/aica/sgc_if.cpp`, `UpdateAtts`,
+`ChannelEx::Step`), runs the emulator's line on it at N = 2000, and runs
+
+    aica_dsp_guest_oracle --elf <the copy> --ticks 2000
+
+The tool reads from the ELF, by its symbols, the table `_start` writes (`g_table` to `g_table_end`: the writes of
+the DSP's registers and of the channels' `ISEL`) and the block `g_dsp` (`COEF`, `MADRS`, `MPRO`, each 32-bit word
+the low half of a register), and runs the core and the model's DSP in lockstep (`DspLockstep`, `StepDsp`) on the
+guest's schedule: tick 1, 32 samples of the empty program from the state after reset; then every write, in the
+order `_start` makes them, the table first; then 32 samples a tick. Every sample has the emulator's sweep:
+`SweepBegin`, then a send of 0 to every bus a channel's `ISEL` names (bus 0 before the table, bus 0 and 3 behind
+it), EXTS 0, no channel fetch and no bus read. It folds the core's blob behind every tick as the harness folds the
+line's `dsp` and prints `dsp=<hex>`; exit code 1 when the model and the core differ. The sends of 0 are part of
+it: the blob has the buses a sweep sent to, and a send marks its bus whatever the value. The line's `dsp` folds
+the DSP's whole state at every tick, so the test holds every datapath register, TEMP, MEMS, MIXS, EFREG and
+MDEC_CT of the emulator's DSP to the model's, tick by tick, on both engines, **on the values the copy gives them**;
+that the set-up's writes all fall between the first tick and the second on both engines is what the schedule rests
+on (the guest's README, "The first tick").
+
+What it does not hold (the guest's README, "The DSP", has the steps): every send of the copy is 0, so the half of
+the program that is the send's is compared at 0 only: `MIXS[3]`, `Y_REG` while it holds the send, the two products
+with it, the filter in `TEMP[5]` and `TEMP[6]`, `EFREG[1]`, and the filter's part of the sum the program writes
+into the ring. A defect that shows only on a send other than 0 (the scale of the read of MIXS, the slices of a
+`Y_REG` that holds a send) is not seen here; `aica.dsp.diff.*` holds the core on sends and `aica.dsp.emu.lockstep`
+the emulator's sends. Wave memory is not in the blob: the program reads every word it writes back into MEMS, so
+the words are held, and their addresses only where two ways of addressing meet (the tap of step 11, whose
+`ADREB` address reads words written without it: a wrong sign extension of `ADRS_REG` is seen); the word of its
+`TABLE` 1 access is read back from where it was written, so where that lies is not held.
+
 ## Looking at a failure
 
     aica_dsp_diff directed --verbose          # the first difference of each family, with sample, step and register
@@ -202,12 +303,20 @@ machine's. The core's README has the ones of the machine it was written on.
 
     dsp_suite.*        options, report, checks and baseline; a reproducible random stream
     dsp_known.*        the known-answer programs, on a machine of the core's calls
+    dsp_gen.*          the generator of programs of aica_dsp_diff, also for aica.dsp.emu.lockstep
     caique_model.*     the caique sample model behind a wrapper, with the hook between its steps
     dsp_lockstep.*     the core next to the model, step for step; the second core for RunSample
     diff_main.cpp      aica.dsp.diff.*: the generated programs
-    cases_main.cpp     aica.dsp.case.*: the two machines, caique's case interface on them, the console's files
+    cases_main.cpp     aica.dsp.case.*: the three machines, caique's case interface on them, the console's files
+    emu_aica.*         the emulator's sound chip on a machine of its own, and its stand-ins
+    emu_main.cpp       aica.dsp.emu.*: the lockstep with a core of the test's own, the mix, the reset, the save state
     api_main.cpp       aica.dsp.api: the interface, and the known-answer programs on the core
     wasm_trace.cpp     aica.dsp.capi: the C interface against the core's own calls, on random programs and on
                        the known-answer programs; writes those calls and the core's answers for aica.dsp.wasm
     wasm_test.mjs      aica.dsp.wasm: the replay on the module, in node
+    devtools_test.mjs  aica.dsp.wasm.devtools: the UI's module against this tree, its provenance, the replay of
+                       wasm_test.mjs on it and its bytes against a fresh build
+    guest_oracle_main.cpp
+                       aica_dsp_guest_oracle: the sounding guest's DSP program on the core and the model in
+                       lockstep, for debugger.sound.oracle.dsptest.*
     bench_main.cpp     aica_dsp_bench

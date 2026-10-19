@@ -2,7 +2,7 @@
 """Speed of the emulator on a guest program, in percent of real time.
 
     perf.py --emulator <binary> --program <elf> [--renderer none|gl] [--engines jit,interp]
-            [--seconds 60] [--runs 5] [--json <file>]
+            [--seconds 60] [--runs 5] [--config <section:key=value>]... [--json <file>]
 
 Each run is one process: the program runs for --seconds emulated seconds (config:Exit.AfterSeconds). Two
 figures come out of it, both in percent of real time:
@@ -24,6 +24,10 @@ with --json, to a file as JSON. Not a test: nothing here passes or fails on a nu
                     prints is recorded, and a run on a software rasteriser (llvmpipe) is refused: its number
                     is not the speed of the hardware renderer. --allow-software-gl measures it anyway and labels
                     the result gl-software.
+
+  --config          a key of the emulator's configuration (section:key=value, e.g. config:aica.NoSound=yes) given
+                    to every run, behind the keys of the script; the option can be given more than once, and a
+                    value may be a list of keys separated by commas. The keys are in the JSON result.
 
 The reference software renderers (refsw2, refmister) are not offered: they make the run render-bound.
 """
@@ -111,6 +115,7 @@ def run_once(options, engine, environment, directory):
     else:
         keys += ['config:pvr.backend=gles']
         base = dict(environment)
+    keys += options.config
 
     args = [options.emulator, '--portable', portable, '--config']
     for i, key in enumerate(keys):
@@ -163,9 +168,15 @@ def main():
     parser.add_argument('--seconds', type=float, default=60, help='emulated seconds per run (60)')
     parser.add_argument('--runs', type=int, default=5, help='runs per engine, the median is reported (5)')
     parser.add_argument('--allow-software-gl', action='store_true')
+    parser.add_argument('--config', action='append', default=[],
+                        help='section:key=value for every run (a list separated by commas, or the option again)')
     parser.add_argument('--json', help='write the result to this file')
     options = parser.parse_args()
 
+    options.config = [key for value in options.config for key in value.split(',') if key]
+    for key in options.config:
+        if ':' not in key or '=' not in key:
+            sys.exit('perf: --config takes section:key=value, not %s' % key)
     options.emulator = os.path.abspath(options.emulator)
     options.program = os.path.abspath(options.program)
     engines = [e for e in options.engines.split(',') if e]
@@ -184,6 +195,7 @@ def main():
         'program': os.path.basename(options.program),
         'emulated_seconds': options.seconds,
         'runs_per_engine': options.runs,
+        'config': options.config,
         'results': [],
     }
     if gl is not None:

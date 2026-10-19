@@ -280,7 +280,6 @@ void InitSettings()
     settings.dynarec.unstable_opt = false;
     settings.dynarec.safemode = true;
     settings.dynarec.ScpuEnable = true;
-    settings.dynarec.DspEnable = true;
 
     settings.savepopup.isShown = false; // if false, popup on save state should appear
 
@@ -292,7 +291,6 @@ void InitSettings()
     settings.dreamcast.RTC = 0;
     settings.dynarec.SmcCheckLevel = FullCheck;
     settings.aica.LimitFPS = true;
-    settings.aica.NoBatch = false;	// This also controls the DSP. Disabled by default
     settings.aica.NoSound = false;
     settings.audio.backend = "auto";
     settings.rend.UseMipmaps = true;
@@ -362,7 +360,6 @@ void LoadSettings(bool game_specific)
     settings.dynarec.safemode = cfgLoadBool(config_section, "Dynarec.safe-mode", settings.dynarec.safemode);
     settings.dynarec.SmcCheckLevel = (SmcCheckEnum)cfgLoadInt(config_section, "Dynarec.SmcCheckLevel", settings.dynarec.SmcCheckLevel);
     settings.dynarec.ScpuEnable = cfgLoadInt(config_section, "Dynarec.ScpuEnabled", settings.dynarec.ScpuEnable);
-    settings.dynarec.DspEnable = cfgLoadInt(config_section, "Dynarec.DspEnabled", settings.dynarec.DspEnable);
 
     settings.savepopup.isShown = cfgLoadBool(config_section, "SavePopup.isShown", settings.savepopup.isShown);
 
@@ -377,7 +374,6 @@ void LoadSettings(bool game_specific)
     // game is set the config store puts a key of the game's own section in front of the one of the section named
     settings.dreamcast.RTC = aica_hash.pinned_rtc != nullptr ? aica_hash.pinned_rtc() : 0;
     settings.aica.LimitFPS = cfgLoadBool(config_section, "aica.LimitFPS", settings.aica.LimitFPS);
-    settings.aica.NoBatch = cfgLoadBool(config_section, "aica.NoBatch", settings.aica.NoBatch);
     settings.aica.NoSound = cfgLoadBool(config_section, "aica.NoSound", settings.aica.NoSound);
     settings.audio.backend = cfgLoadStr(audio_section, "backend", settings.audio.backend.c_str());
     settings.rend.UseMipmaps = cfgLoadBool(config_section, "rend.UseMipmaps", settings.rend.UseMipmaps);
@@ -499,7 +495,6 @@ void SaveSettings()
 {
     cfgSaveBool("config", "Dynarec.Enabled", settings.dynarec.Enable);
     cfgSaveInt("config", "Dynarec.ScpuEnabled", settings.dynarec.ScpuEnable);
-    cfgSaveInt("config", "Dynarec.DspEnabled", settings.dynarec.DspEnable);
     cfgSaveInt("config", "Dreamcast.Cable", settings.dreamcast.cable);
     cfgSaveInt("config", "Dreamcast.Region", settings.dreamcast.region);
     cfgSaveInt("config", "Dreamcast.Broadcast", settings.dreamcast.broadcast);
@@ -515,7 +510,6 @@ void SaveSettings()
 
     cfgSaveInt("config", "Dreamcast.Language", settings.dreamcast.language);
     cfgSaveBool("config", "aica.LimitFPS", settings.aica.LimitFPS);
-    cfgSaveBool("config", "aica.NoBatch", settings.aica.NoBatch);
     cfgSaveBool("config", "aica.NoSound", settings.aica.NoSound);
     cfgSaveStr("audio", "backend", settings.audio.backend.c_str());
 
@@ -731,18 +725,6 @@ struct Dreamcast_impl : VirtualDreamcast {
             printf("Using SCPU Interpreter\n");
         }
 
-        auto dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
-
-        if (settings.dynarec.DspEnable && dsp->setBackend(DSPBE_DYNAREC))
-        {
-            printf("Using DSP Recompiler\n");
-        }
-        else
-        {
-            dsp->setBackend(DSPBE_INTERPRETER);
-            printf("Using DSP Interpreter\n");
-        }
-
         // Not when the machine was asked to stop while this thread started. The thread then goes to the reasons
         // below with no park in front of them: a request that came in before the debugger heard of this thread
         // woke no park loop, and a park made at the start of the thread would wait with the request pending
@@ -790,11 +772,11 @@ struct Dreamcast_impl : VirtualDreamcast {
         // callback, and the exit line that it prints in an automated run, find the burst whole.
         //
         // Whole is the burst, not yet the SH4's answer to it. A thread that gets here with the debugger's stop
-        // latch set (a check of the ARM7 or an event breakpoint stopped in the tick of the request, or the
-        // thread was parked) has the interrupt acceptance of its last slice end still owed: the latch held it
-        // back, and dbg::emu::OnThreadExiting makes it, behind the callback. An interrupt that is pending
-        // here, one that the rest of this burst raised among them, is accepted in the state the next thread
-        // starts from and not in the state the callback sees. In a run no debugger stopped the slice end
+        // latch set (a check of the ARM7 or of the DSP, or an event breakpoint, stopped in the tick of the
+        // request, or the thread was parked) has the interrupt acceptance of its last slice end still owed: the
+        // latch held it back, and dbg::emu::OnThreadExiting makes it, behind the callback. An interrupt that is
+        // pending here, one that the rest of this burst raised among them, is accepted in the state the next
+        // thread starts from and not in the state the callback sees. In a run no debugger stopped the slice end
         // accepted it before Run() returned: an exit line taken in such a tick can have another `sh4` part
         RunSoundBurst(false);
 
@@ -843,55 +825,160 @@ struct Dreamcast_impl : VirtualDreamcast {
 
 
     /*
-        The sound burst: the work of one AICA scheduler callback (debugger/debugger.h, the ARM7 block). With the
-        ARM7 clocked it is 32 times { the ARM phase of a sample, 256 ticks; one time step of the AICA }, and then
-        the tail: the rest of the callback (AICA::Update: the batch render while it exists, the tick of the sound
-        regression harness), once per burst, with the ARM7 clocked or held.
+        The sound burst: the work of one AICA scheduler callback (debugger/debugger.h, the ARM7 block). It is 32
+        samples, each
+            { the ARM phase, 256 ticks, while the ARM7 is clocked; the time step of the AICA in its phases: the
+              timers, the sound generator's sweep, the frame of an SGC capture that records, the DSP phase, the
+              mix, the interrupt lines; the end of the sample }
+        and then the tail: the rest of the callback (AICA::Update: the tick of the sound regression harness), once
+        per burst. The AICA is clocked whatever ARMRST says: a burst that finds the ARM7 held in reset skips its
+        ARM phases and makes every other phase of its 32 samples all the same, whose samples go to the audio
+        stream and pace it as every burst's do (the mix hands each pair to the stream and to the harness's fold in
+        one call, AICA::SampleMix).
 
-        A debugger can suspend it in front of an ARM7 instruction (SoundCPU::RunSample returns false). Where it
-        stands is kept here, outside the context of the ARM7, whose every word is in the save state and in the
-        hashes: the sample, the ticks its ARM phase has used, and whether the ARM7 was clocked when the burst
-        started, which is asked once. The callback returns its period all the same; the rest of the burst is
-        run on by the debugger's park loop, or by dc_run in front of the stop callback (RunSoundBurst), never
-        by the scheduler, and a reset discards it.
+        A debugger can suspend it in front of an ARM7 instruction (SoundCPU::RunSample returns false), in front of
+        a DSP step (DSP::RunPhase returns false), and at the end of a sample that is not the last of the burst
+        (dbg_dsp_SampleEnd or dbg_sgc_Frame recorded a stop in it). Where it stands is kept here, outside the
+        context of the ARM7, whose every word is in the save state and in the hashes: where it was suspended, the
+        sample, the ticks its ARM phase has used, and whether the ARM7 was clocked when the burst started, which
+        is asked once and decides the ARM phases alone. The step the DSP stands in front of is the DSP core's, and
+        the direct mix of the sweep is the sound generator's. The callback returns its period all the same; the
+        rest of the burst is run on by the debugger's park loop, or by dc_run in front of the stop callback
+        (RunSoundBurst), never by the scheduler, and a reset discards it.
     */
     struct {
-        bool suspended = false;
-        bool arm_on = false;        // the ARM7 was clocked when the burst started
+        u32 phase = SOUND_BURST_NONE;   // where the burst is suspended: SoundBurstSuspended()
+        bool arm_on = false;        // the ARM7 was clocked when the burst started: its 32 ARM phases run
         u32 i = 0;                  // the sample, 0..31
         u32 ticks_done = 0;         // of the ARM phase of that sample; 0 between two phases
+        bool dsp_loop = false;      // the debug loop of the DSP has executed a step in the DSP phase of that sample
 
-        // SoundBurstCounts(): bursts started, ARM phases that ran to their end, time steps, tails. In no save
-        // state and no hash
+        // SoundBurstCounts(): bursts started, ARM phases that ran to their end (none in a burst that finds the
+        // ARM7 held), time steps (32 a burst, counted behind the interrupt update of the sample), tails.
+        // SoundBurstDspCounts(): DSP phases that ran to the end of their sample, and those in which the debug loop
+        // executed a step. In no save state and no hash
         u32 counts[4] = { 0, 0, 0, 0 };
+        u32 dsp_counts[2] = { 0, 0 };
     } burst;
+
+    // The step the DSP stands in front of, read from inside the burst between two of its steps (the debug
+    // accessor has no side effect)
+    static u32 DspStep(DSP* dsp)
+    {
+        DspDebugState state = { };
+
+        dsp->DebugGetState(&state);
+        return state.step;
+    }
+
+    // The DSP phase of sample burst.i, from the step the DSP stands on. Returns false when the debugger suspended
+    // it in front of a step
+    bool RunDspPhase(DSP* dsp, bool checks)
+    {
+        // the debug loop runs it while checks and dbg_dsp_armed say so (DSP::RunPhase), and only then is it
+        // counted: one load and a branch more on the path of a run that uses no debugger
+        if (unlikely(checks && dbg_dsp_armed != 0))
+        {
+            const u32 from = DspStep(dsp);
+
+            if (!dsp->RunPhase(true))
+            {
+                if (DspStep(dsp) != from)
+                    burst.dsp_loop = true;
+
+                return false;
+            }
+
+            // the loop returns true behind the last step of the sample, which it executed
+            burst.dsp_loop = true;
+        }
+        else
+        {
+            dsp->RunPhase(checks);
+        }
+
+        burst.dsp_counts[0]++;
+
+        if (burst.dsp_loop)
+            burst.dsp_counts[1]++;
+
+        return true;
+    }
 
     // Runs the burst from where it stands to its end. Returns false when the debugger suspended it
     bool RunBurst(SoundCPU* scpu, bool checks)
     {
-        if (burst.arm_on)
+        AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
+        DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
+
+        // A burst suspended in front of a DSP step goes on with the DSP phase of its sample: the ARM phase, the
+        // timers, the sweep and the frame of that sample are made. One suspended at the end of a sample, or in
+        // front of an ARM7 instruction, goes on with the ARM phase of the sample it stands in
+        bool in_dsp = burst.phase == SOUND_BURST_DSP;
+
+        burst.phase = SOUND_BURST_NONE;
+
+        for (; burst.i < 32; burst.i++)
         {
-            for (; burst.i < 32; burst.i++)
+            // a stop recorded in this sample that the end of the sample makes
+            bool sample_stop = false;
+
+            if (!in_dsp)
             {
-                // 512 cycles of the SH4 a sample, 256 ticks of the ARM7
-                if (!scpu->RunSample(512 / arm_sh4_bias, &burst.ticks_done, checks))
+                // the ARM phase, while the ARM7 is clocked: 512 cycles of the SH4 a sample, 256 ticks of the ARM7
+                if (burst.arm_on)
                 {
-                    burst.suspended = true;
-                    return false;
+                    if (!scpu->RunSample(512 / arm_sh4_bias, &burst.ticks_done, checks))
+                    {
+                        burst.phase = SOUND_BURST_ARM7;
+                        return false;
+                    }
+
+                    burst.counts[1]++;
+                    burst.ticks_done = 0;
                 }
 
-                burst.counts[1]++;
-                burst.ticks_done = 0;
+                // the time step, whatever ARMRST says: the AICA is clocked also while the guest holds the ARM7
+                aica->SampleTimers();
+                aica->SampleSweep();
 
-                libAICA_TimeStep();
-                burst.counts[2]++;
+                // the frame of the sample, behind its sweep
+                if (dbg_sgc_active != 0 && dbg_sgc_Frame(checks))
+                    sample_stop = true;
+
+                burst.dsp_loop = false;
+            }
+
+            in_dsp = false;
+
+            if (!RunDspPhase(dsp, checks))
+            {
+                burst.phase = SOUND_BURST_DSP;
+                return false;
+            }
+
+            aica->SampleMix();
+            aica->SampleIrq();
+            burst.counts[2]++;
+
+            // the end of the sample: a step of the DSP that is complete here
+            if (checks && dbg_dsp_armed != 0 && dbg_dsp_SampleEnd())
+                sample_stop = true;
+
+            // A stop recorded in this sample (the stop is decided: emu::OnSoundStop) suspends the burst in front of
+            // the ARM phase of the next sample, nothing of which has executed. Behind the last sample the burst
+            // ends with its tail, and the stop is decided all the same
+            if (sample_stop && burst.i < 31)
+            {
+                burst.i++;
+                burst.ticks_done = 0;
+                burst.phase = SOUND_BURST_SAMPLE;
+                return false;
             }
         }
 
-        burst.suspended = false;
-
         // the tail, on every path
-        sh4_cpu->GetA0H<AICA>(A0H_AICA)->Update(1 * 32);
+        aica->Update(1 * 32);
         burst.counts[3]++;
 
         return true;
@@ -900,7 +987,7 @@ struct Dreamcast_impl : VirtualDreamcast {
     int AicaUpdate(int tag, int c, int j)
     {
         // under the stop latch no scheduler callback runs, and a suspended burst is dealt with under it
-        verify(!burst.suspended);
+        verify(burst.phase == SOUND_BURST_NONE);
 
         SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
 
@@ -909,7 +996,10 @@ struct Dreamcast_impl : VirtualDreamcast {
         burst.ticks_done = 0;
         burst.counts[0]++;
 
-        // no instruction of the ARM7 executes in this burst: a step that waits for one is complete
+        burst.dsp_loop = false;
+
+        // no instruction of the ARM7 executes in this burst: a step that waits for one is complete. The rest of
+        // the burst is made all the same; nothing of the DSP depends on the ARM7
         if (!burst.arm_on && dbg_arm7_armed != 0)
             dbg_arm7_OnBurstUnclocked();
 
@@ -921,12 +1011,12 @@ struct Dreamcast_impl : VirtualDreamcast {
 
     u32 SoundBurstSuspended()
     {
-        return burst.suspended ? SOUND_BURST_ARM7 : SOUND_BURST_NONE;
+        return burst.phase;
     }
 
     bool RunSoundBurst(bool checks)
     {
-        if (!burst.suspended)
+        if (burst.phase == SOUND_BURST_NONE)
             return true;
 
         return RunBurst(sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU), checks);
@@ -936,6 +1026,12 @@ struct Dreamcast_impl : VirtualDreamcast {
     {
         for (int n = 0; n < 4; n++)
             out[n] = burst.counts[n];
+    }
+
+    void SoundBurstDspCounts(u32 out[2])
+    {
+        out[0] = burst.dsp_counts[0];
+        out[1] = burst.dsp_counts[1];
     }
 
 
@@ -960,10 +1056,12 @@ struct Dreamcast_impl : VirtualDreamcast {
     {
         dbg::emu::LifetimeLock lifetime;
 
-        // a sound burst that the debugger suspended is discarded: its rest belongs to the state that goes
-        burst.suspended = false;
+        // a sound burst that the debugger suspended is discarded: its rest belongs to the state that goes. The
+        // step a suspended DSP phase stood in front of is the DSP's, which the reset below puts on step 0
+        burst.phase = SOUND_BURST_NONE;
         burst.i = 0;
         burst.ticks_done = 0;
+        burst.dsp_loop = false;
 
         plugins_Reset(false);
 

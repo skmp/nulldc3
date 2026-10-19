@@ -90,7 +90,7 @@ same `sh4`, `ram`, `vram`, `aram` and `arm7` in both, and a different `sched`.
 one scheduler callback, 32 samples (145124 SH4 cycles); the first one comes at the end of the first slice of the
 SH4, 448 cycles behind the start of the machine. Behind the N-th tick the emulator prints one line on stdout
 
-    AicaHash: samples=<16 hex digits> regs=<16> arm7=<16> sh4=<16> ticks=<N> cycles=<decimal>
+    AicaHash: samples=<16 hex digits> regs=<16> arm7=<16> sh4=<16> dsp=<16> ticks=<N> cycles=<decimal>
 
 and **ends the process there**, on the emulator thread, with exit code 0 and without the shutdown of a run: nothing
 is saved and **no `nulldc-exit:` line is printed**. A run gives the sound line or the state hash of
@@ -104,6 +104,7 @@ in front of `AicaHash:`.
 | `regs` | the same hash over the `0x8000` bytes of the register file of the AICA, at every tick |
 | `arm7` | over what the sound CPU writes into a save state (its registers of every mode, the interrupt latches, the reset state), at every tick |
 | `sh4` | over PC, R0-R15, PR, SR and FPSCR of the SH4, at every tick, on a backend whose context is complete inside a scheduler callback (the interpreter and the x64 recompiler); on any other it stays the offset basis `cbf29ce484222325` |
+| `dsp` | over the state blob of the DSP core (`AicaDsp::SaveState`, `AicaDsp::StateSize()` bytes, `libswirl/hw/aica/dsp_core/aica_dsp_core.h`), at every tick: its registers, its datapath, MDEC_CT, both MIXS banks. The same on every host |
 | `ticks` | N |
 | `cycles` | scheduler time behind the N-th tick, in SH4 cycles |
 
@@ -111,8 +112,11 @@ The line has no field for wave memory, main memory or the scheduler: those are i
 
 Two runs of one binary with the same program and keys print the same line when the run does not depend on the
 host, which takes what every deterministic run takes: `audio:backend=none`, the clock pinned (`Dreamcast.RTC` or
-`Debug.FixedRtc`) and no host input (`Headless`). `config:aica.NoBatch=yes` renders sample by sample instead of in
-batches of 32, which is another `samples` (and no pair at all while the ARM7 is held in reset); the SH4 engine
+`Debug.FixedRtc`) and no host input (`Headless`). The sound is made sample by sample, with the DSP, in every time
+step of the AICA, and every tick has its 32 time steps, whether the ARM7 is held in reset or not: the AICA is clocked
+whatever `ARMRST` says, and only the ARM7 is held (`config:aica.NoBatch`, which chose a render of 32 samples a burst
+without the DSP in older builds, is read no more); `config:aica.NoSound=yes` hands the
+audio stream a pair of zeroes for every sample, and `samples` is then the hash of those. The SH4 engine
 (`config:Dynarec.Enabled`) is another `sh4`, and for a program whose SH4 reaches the sound at times of its own
 another everything. A line is good for one build on one host (the generator's tables come from `pow()`), so no
 line is stored in the tree: a test compares runs it makes itself.
@@ -122,8 +126,9 @@ up, runs the SH4 on its interpreter, prints `Using MCPU Interpreter` where the o
 and ends like any other run. Whoever compares the lines of the two engines looks for that line first.
 
 A program that plays nothing has a `samples` field too: the hash of `k * 32` pairs of zeroes, one value for each
-`k`. `tests/debugger/guest/dsptest/` has a program that does play (`dsptest.elf`, part of the tree), the script
-that makes these runs and compares their lines (`soundlines.py`), and the tests `debugger.sound.*`.
+`k`, and `k` is N for a line at N ticks. `tests/debugger/guest/dsptest/` has a program that does play
+(`dsptest.elf`, part of the tree), the script that makes these runs and compares their lines (`soundlines.py`),
+and the tests `debugger.sound.*`.
 
 ## Headless mode
 

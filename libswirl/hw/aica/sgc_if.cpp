@@ -7,7 +7,7 @@
 #include "sgc_if.h"
 #include "aica_mmio.h"
 #include "dsp.h"
-#include "dsp_backend.h"
+#include "dsp_core/aica_dsp_core.h"
 #include "aica_mem.h"
 #include "oslib/audiostream.h"
 #include <math.h>
@@ -77,8 +77,6 @@ const s32 adpcm_scale[16] =
 	1,3,5,7,9,11,13,15,
 	-1,-3,-5,-7,-9,-11,-13,-15,
 };
-
-void AICA_Sample();
 
 //Remove the fractional part , with rounding ;) -- does not need an extra bit
 #define well(a,bits) (((a) + ((1<<(bits-1))))>>bits)
@@ -280,7 +278,6 @@ void (* PLFOWS_CALC[4])(ChannelEx* ch);
 struct ChannelEx
 {
 	ChannelEx* Chans;
-	dsp_context_t* dsp;
 
 	ChannelCommonData* ccd;
 	u8* aica_ram;
@@ -320,8 +317,10 @@ struct ChannelEx
 		u32 DLAtt;
 		u32 DRAtt;
 		u32 DSPAtt;
-		SampleType* DSPOut;
 	} VolMix;
+
+	//The DSP's bus the channel sends to: its ISEL, from the write of the register (UpdateDSPMIX) or from a save state
+	u32 dsp_bus;
 	
 	void (* StepAEG)(ChannelEx* ch);
 	void (* StepFEG)(ChannelEx* ch);
@@ -374,12 +373,11 @@ struct ChannelEx
 	bool enabled;	//set to false to 'freeze' the channel
 	int ChanelNumber;
 	
-	void Setup(int cn, u8* ccd_raw, u8* aica_ram, ChannelEx* chans, dsp_context_t* dsp) {
+	void Setup(int cn, u8* ccd_raw, u8* aica_ram, ChannelEx* chans) {
 		ccd = (ChannelCommonData*)&ccd_raw[cn * 0x80];
 		ChanelNumber = cn;
 		this->aica_ram = aica_ram;
 		this->Chans = chans;
-		this->dsp = dsp;
 	}
 
 	void Init()
@@ -471,22 +469,33 @@ struct ChannelEx
 		}
 	}
 
-	__forceinline void Step(SampleType& mixl, SampleType& mixr)
-	{
-		SampleType oLeft,oRight,oDsp;
-
-		Step(oLeft, oRight, oDsp);
-
-		*VolMix.DSPOut+=oDsp;
-		mixl+=oLeft;
-		mixr+=oRight;
-	}
-
-	__forceinline static void StepAll(ChannelEx* Chans, SampleType& mixl, SampleType& mixr)
+	//The sweep of one sample over the 64 channels, in their order: the direct outputs into mixl and mixr, and the
+	//sends to the DSP as sums per bus, at its 20-bit scale (the console's MIXS holds the sample times 16). Every
+	//channel sends to the bus of its ISEL, one that does not play 0: mask has a bit for each bus a channel names.
+	//Keep: the outputs of each channel go to outs as well (left, right, the send at 16-bit scale), for the
+	//debugger while an SGC capture records; the sweep computes the same either way
+	template<bool Keep>
+	__forceinline static void StepAll(ChannelEx* Chans, SampleType& mixl, SampleType& mixr, s32* sends, u32& mask, s32 (*outs)[3])
 	{
 		for (int i = 0; i < 64; i++)
 		{
-			Chans[i].Step(mixl, mixr);
+			SampleType oLeft, oRight, oDsp;
+
+			Chans[i].Step(oLeft, oRight, oDsp);
+
+			if (Keep)
+			{
+				outs[i][0] = oLeft;
+				outs[i][1] = oRight;
+				outs[i][2] = oDsp;
+			}
+
+			u32 bus = Chans[i].dsp_bus & 15;
+
+			sends[bus] += oDsp * 16;
+			mask |= 1u << bus;
+			mixl += oLeft;
+			mixr += oRight;
 		}
 	}
 	void SetAegState(_EG_state newstate)
@@ -657,7 +666,7 @@ struct ChannelEx
 	//ISEL
 	void UpdateDSPMIX()
 	{
-		VolMix.DSPOut = &dsp->MIXS[ccd->ISEL];
+		dsp_bus = ccd->ISEL;
 	}
 	//TL,DISDL,DIPAN,IMXL
 	void UpdateAtts()
@@ -1058,8 +1067,16 @@ void FegStep(ChannelEx* ch)
 struct SGC_impl : SGC {
 	DSP_OUT_VOL_REG* dsp_out_vol;
 	CommonData_struct* CommonData;
-	DSPData_struct* DSPData;
-	dsp_context_t* dsp;
+	AicaDsp* dsp;
+
+	//the direct mix of the sample, from its sweep to its mix
+	SampleType mixl, mixr;
+
+	//The outputs of each channel in the last sweep (left, right, the send to the DSP, at 16-bit scale), kept only
+	//while an SGC capture records (dbg_sgc_active): outs_kept says that the last sweep kept them. In no save
+	//state; nothing of the guest reads them
+	s32 outs[64][3];
+	bool outs_kept;
 
 	void staticinitialise()
 	{
@@ -1138,15 +1155,17 @@ struct SGC_impl : SGC {
 	u32 aram_mask;
 	AudioStream* audio_stream;
 
-	SGC_impl(AudioStream* audio_stream, u8* aica_reg, dsp_context_t* dsp, u8* aica_ram, u32 aram_size)
+	SGC_impl(AudioStream* audio_stream, u8* aica_reg, AicaDsp* dsp, u8* aica_ram, u32 aram_size)
 	{
 		this->audio_stream = audio_stream;
 		this->aica_reg = aica_reg;
 		this->aram_mask = aram_size - 1;
 		dsp_out_vol = (DSP_OUT_VOL_REG*)&aica_reg[0x2000];
 		CommonData = (CommonData_struct*)&aica_reg[0x2800];
-		DSPData = (DSPData_struct*)&aica_reg[0x3000];
 		this->dsp = dsp;
+		mixl = mixr = 0;
+		memset(outs, 0, sizeof(outs));
+		outs_kept = false;
 
 		staticinitialise();
 
@@ -1172,7 +1191,7 @@ struct SGC_impl : SGC {
 			AEG_DSR_SPS[i] = CalcAegSteps(AEG_DSR_Time[i]);
 		}
 		for (int i = 0; i < 64; i++)
-			Chans[i].Setup(i, aica_reg, aica_ram, Chans, dsp);
+			Chans[i].Setup(i, aica_reg, aica_ram, Chans);
 
 		for (int i = 0; i < 64; i++)
 			Chans[i].Init();
@@ -1276,160 +1295,58 @@ struct SGC_impl : SGC {
 		out->alfo = ch.lfo.alfo;
 		out->plfo = ch.lfo.plfo;
 
+		//the outputs of the sample of the last sweep, while a capture records and that sweep kept them
+		const bool kept = dbg_sgc_active != 0 && outs_kept;
+
+		out->outLeft = kept ? outs[channel][0] : 0;
+		out->outRight = kept ? outs[channel][1] : 0;
+		out->outDsp = kept ? outs[channel][2] : 0;
+
 		return true;
 	}
 
 	void WriteCommonReg8(u32 reg, u32 data)
 	{
 		WriteMemArr(aica_reg, reg, data, 1);
+
+		//RBP and RBL are the DSP's (AicaDsp::RBPL): it gets the file's word of the slot, as for its other registers
 		if (reg == 0x2804 || reg == 0x2805)
-		{
-			dsp->RBL = (8192 << CommonData->RBL) - 1;
-			dsp->RBP = ((CommonData->RBP * 2048) & aram_mask);
-			dsp->dyndirty = true;
-		}
+			dsp->RegWrite(0x2804, aica_reg[0x2804] | (aica_reg[0x2805] << 8));
 	}
 
 #define CDDA_SIZE  (2352/2)
 	s16 cdda_sector[CDDA_SIZE] = { 0 };
 	u32 cdda_index = CDDA_SIZE << 1;
 
-
-	SampleType mxlr[64];
-
-	u32 samples_gen;
-
-	//no DSP for now in this version
-	void AICA_Sample32()
+	void SampleSweep()
 	{
-		if (settings.aica.NoBatch)
-		{
-			return;
-		}
+		s32 sends[16] = { };
+		u32 mask = 0;
 
-		memset(mxlr, 0, sizeof(mxlr));
-
-		//Generate 32 samples for each channel, before moving to next channel
-		//much more cache efficient !
-		u32 sg = 0;
-		for (int ch = 0; ch < 64; ch++)
-		{
-			for (int i = 0; i < 32; i++)
-			{
-				SampleType oLeft, oRight, oDsp;
-				//stop working on this channel if its turned off ...
-				if (!Chans[ch].Step(oLeft, oRight, oDsp))
-					break;
-
-				sg++;
-
-				if (0 == (oLeft + oRight))
-				{
-					oLeft = oRight = oDsp;
-				}
-
-				mxlr[i * 2 + 0] += oLeft;
-				mxlr[i * 2 + 1] += oRight;
-			}
-		}
-#if HOST_OS==OS_WINDOWS
-		samples_gen += sg;
-#endif
-		//OK , generated all Channels  , now DSP/ect + final mix ;p
-		//CDDA EXTS input
-
-		for (int i = 0; i < 32; i++)
-		{
-			SampleType mixl, mixr;
-
-			mixl = mxlr[i * 2 + 0];
-			mixr = mxlr[i * 2 + 1];
-
-			if (cdda_index >= CDDA_SIZE)
-			{
-				cdda_index = 0;
-				libCore_CDDA_Sector(cdda_sector);
-			}
-			s32 EXTS0L = cdda_sector[cdda_index];
-			s32 EXTS0R = cdda_sector[cdda_index + 1];
-			cdda_index += 2;
-
-			//Final MIX ..
-			//Add CDDA / DSP effect(s)
-
-			//CDDA
-			if (settings.aica.CDDAMute == 0)
-			{
-				VOLPAN(EXTS0L, dsp_out_vol[16].EFSDL, dsp_out_vol[16].EFPAN, mixl, mixr);
-				VOLPAN(EXTS0R, dsp_out_vol[17].EFSDL, dsp_out_vol[17].EFPAN, mixl, mixr);
-			}
-
-			/*
-			no dsp for now -- needs special handling of oDSP for ch paraller version ...
-			if (settings.aica.DSPEnabled)
-			{
-				dsp_step();
-
-				for (int i=0;i<16;i++)
-				{
-					VOLPAN( (*(s16*)&DSPData->EFREG[i]) ,dsp_out_vol[i].EFSDL,dsp_out_vol[i].EFPAN,mixl,mixr);
-				}
-			}
-			*/
-
-			//Mono !
-			if (CommonData->Mono)
-			{
-				//Yay for mono =P
-				mixl += mixr;
-				mixr = mixl;
-			}
-
-			//MVOL !
-			//we want to make sure mix* is *At least* 23 bits wide here, so 64 bit mul !
-			u32 mvol = CommonData->MVOL;
-			s32 val = volume_lut[mvol];
-			mixl = (s32)FPMul((s64)mixl, val, 15);
-			mixr = (s32)FPMul((s64)mixr, val, 15);
-
-
-			if (CommonData->DAC18B)
-			{
-				//If 18 bit output , make it 16b :p
-				mixl = FPs(mixl, 2);
-				mixr = FPs(mixr, 2);
-			}
-
-			//Sample is ready ! clip/saturate and store :}
-
-#ifdef CLIP_WARN
-			if (((s16)mixl) != mixl)
-				printf("Clipped mixl %d\n", mixl);
-			if (((s16)mixr) != mixr)
-				printf("Clipped mixr %d\n", mixr);
-#endif
-
-			clip16(mixl);
-			clip16(mixr);
-
-			pl = mixl;
-			pr = mixr;
-
-			aica_hash_sample(mixr, mixl);
-			audio_stream->WriteSample(mixr, mixl);
-		}
-	}
-
-	void AICA_Sample()
-	{
-		SampleType mixl, mixr;
 		mixl = 0;
 		mixr = 0;
-		memset(dsp->MIXS, 0, sizeof(dsp->MIXS));
 
-		ChannelEx::StepAll(Chans, mixl, mixr);
+		//the sends of this sweep go to the bank the DSP reads from the next sample on
+		dsp->SweepBegin();
 
-		//OK , generated all Channels  , now DSP/ect + final mix ;p
+		//one test a sample while no SGC capture records
+		if (unlikely(dbg_sgc_active != 0))
+		{
+			ChannelEx::StepAll<true>(Chans, mixl, mixr, sends, mask, outs);
+			outs_kept = true;
+		}
+		else
+		{
+			ChannelEx::StepAll<false>(Chans, mixl, mixr, sends, mask, nullptr);
+			outs_kept = false;
+		}
+
+		for (u32 bus = 0; bus < 16; bus++)
+		{
+			if (mask & (1u << bus))
+				dsp->MixsSend(bus, sends[bus]);
+		}
+
 		//CDDA EXTS input
 
 		if (cdda_index >= CDDA_SIZE)
@@ -1441,38 +1358,20 @@ struct SGC_impl : SGC {
 		s32 EXTS0R = cdda_sector[cdda_index + 1];
 		cdda_index += 2;
 
-		//No dsp tho ;p
-
-		//Final MIX ..
-		//Add CDDA / DSP effect(s)
-
 		//CDDA
-		if (settings.aica.CDDAMute == 0)
-		{
-			VOLPAN(EXTS0L, dsp_out_vol[16].EFSDL, dsp_out_vol[16].EFPAN, mixl, mixr);
-			VOLPAN(EXTS0R, dsp_out_vol[17].EFSDL, dsp_out_vol[17].EFPAN, mixl, mixr);
+		VOLPAN(EXTS0L, dsp_out_vol[16].EFSDL, dsp_out_vol[16].EFPAN, mixl, mixr);
+		VOLPAN(EXTS0R, dsp_out_vol[17].EFSDL, dsp_out_vol[17].EFPAN, mixl, mixr);
 
-			DSPData->EXTS[0] = EXTS0L;
-			DSPData->EXTS[1] = EXTS0R;
-		}
-		else
-		{
-			DSPData->EXTS[0] = 0;
-			DSPData->EXTS[1] = 0;
-		}
-		//if (settings.aica.DSPEnabled)
-		{
-			libDSP_Step();
+		dsp->EXTS[0] = (s16)EXTS0L;
+		dsp->EXTS[1] = (s16)EXTS0R;
+	}
 
-			for (int i = 0; i < 16; i++)
-			{
-				VOLPAN((*(s16*)&DSPData->EFREG[i]), dsp_out_vol[i].EFSDL, dsp_out_vol[i].EFPAN, mixl, mixr);
-			}
-		}
-
-		if (settings.aica.NoSound)
+	void SampleMix()
+	{
+		//the 16 outputs of the DSP
+		for (int i = 0; i < 16; i++)
 		{
-			return;
+			VOLPAN(dsp->EFREG[i], dsp_out_vol[i].EFSDL, dsp_out_vol[i].EFPAN, mixl, mixr);
 		}
 
 		//Mono !
@@ -1510,6 +1409,15 @@ struct SGC_impl : SGC {
 		clip16(mixl);
 		clip16(mixr);
 
+		//"Disable Sound" mutes: the sample is made, and a pair of zeroes goes out in its place. The audio stream
+		//still gets a pair every sample, which keeps the speed limit of the emulator (LimitFPS) going, and the
+		//harness folds what goes to the stream
+		if (settings.aica.NoSound)
+		{
+			mixl = 0;
+			mixr = 0;
+		}
+
 		pl = mixl;
 		pr = mixr;
 
@@ -1521,8 +1429,6 @@ struct SGC_impl : SGC {
 	{
 		REICAST_SA(cdda_sector, CDDA_SIZE);
 		REICAST_S(cdda_index);
-		REICAST_SA(mxlr, 64);
-		REICAST_S(samples_gen);
 
 		int i = 0;
 		int addr = 0;
@@ -1544,7 +1450,8 @@ struct SGC_impl : SGC {
 			REICAST_S(Chans[i].VolMix.DRAtt);
 			REICAST_S(Chans[i].VolMix.DSPAtt);
 
-			addr = (int)(Chans[i].VolMix.DSPOut - (&(dsp->MIXS[0])));
+			//the DSP's bus the channel sends to, its ISEL (V4 had the offset of the bus in the old DSP's array: the same number)
+			addr = (int)Chans[i].dsp_bus;
 			REICAST_S(addr);
 
 			REICAST_S(Chans[i].AEG.val);
@@ -1580,8 +1487,6 @@ struct SGC_impl : SGC {
 	{
 		REICAST_USA(cdda_sector, CDDA_SIZE);
 		REICAST_US(cdda_index);
-		REICAST_USA(mxlr, 64);
-		REICAST_US(samples_gen);
 
 		int i = 0;
 		int addr = 0;
@@ -1604,7 +1509,7 @@ struct SGC_impl : SGC {
 			REICAST_US(Chans[i].VolMix.DSPAtt);
 
 			REICAST_US(addr);
-			Chans[i].VolMix.DSPOut = addr + (&(dsp->MIXS[0]));
+			Chans[i].dsp_bus = (u32)addr;
 
 			REICAST_US(Chans[i].AEG.val);
 			REICAST_US(Chans[i].AEG.state);
@@ -1643,6 +1548,6 @@ struct SGC_impl : SGC {
 	}
 };
 
-SGC* SGC::Create(AudioStream* audio_stream, u8* aica_reg, dsp_context_t* dsp, u8* aica_ram, u32 aram_size) {
+SGC* SGC::Create(AudioStream* audio_stream, u8* aica_reg, AicaDsp* dsp, u8* aica_ram, u32 aram_size) {
 	return new SGC_impl(audio_stream, aica_reg, dsp, aica_ram, aram_size);
 }

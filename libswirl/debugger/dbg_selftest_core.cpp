@@ -43,6 +43,7 @@
 #include "dbg_selftest.h"
 #include "dbg_arm7.h"
 #include "dbg_core_private.h"
+#include "dbg_dsp.h"
 #include "dbg_disasm.h"
 #include "dbg_mem.h"
 #include "dbg_regs.h"
@@ -921,13 +922,11 @@ DBG_SELFTEST(core_tables, "core.tables")
 	// the order of the checks of breakpoints.add
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.no.such.event" }, { "kind", "event" } })) == kErrNotSupported, "an event that no node lists: -32004");
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.no.such.event" } })) == kErrNotSupported, "the same without kind (no address: an event breakpoint)");
-	Check(InBand(Send("breakpoints.add", { { "event", "dc.debugger.dsp_forced" }, { "kind", "event" } })) == kErrNotSupported, "a row of the event table that no node lists: -32004");
+	Check(InBand(Send("breakpoints.add", { { "event", "dc.debugger.dsp_forced" }, { "kind", "event" } })) == kErrNotSupported && FindEvent("dc.debugger.dsp_forced") == EV_ID_COUNT,
+		"a name that is in no row of the event table, the one the forcing of the DSP had: -32004");
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.sh4.cpu.pc" }, { "kind", "event" } })) == kErrNotSupported, "the event of a code breakpoint is no event: -32004");
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.holly.core.vblank" }, { "kind", "code" }, { "address", 0 } })) == kErrNotSupported,
 		"a code breakpoint on a name that is no target's: -32004");
-	Check(InBand(Send("breakpoints.add", { { "event", "dc.aica.dsp.step" }, { "address", 3 } })) == kErrNotSupported,
-		"a code breakpoint of a target without stepping: -32004, before its address is looked at");
-
 	// The ARM7 is what emu::TargetSteps() says: such a target while its run control does not exist, and one
 	// whose code breakpoints the core takes and hands over once it does
 	if (!emu::TargetSteps(Target::Arm7))
@@ -1018,6 +1017,105 @@ DBG_SELFTEST(core_tables, "core.tables")
 			"one of the two removed: the hand-over has the other");
 		Check(Ok(Send("breakpoints.remove", { { "id", arm7_ids[1] } })) && Ok(Send("breakpoints.remove", { { "id", arm7_ids[2] } })) && handed().empty(),
 			"all three removed: dbg::arm7 has none");
+	}
+
+	// The DSP is what emu::TargetSteps() says, as the ARM7 is: a target without stepping while its run control does
+	// not exist, and one whose code breakpoints the core takes and hands over, each at its step, once it does
+	if (!emu::TargetSteps(Target::Dsp))
+	{
+		Check(InBand(Send("breakpoints.add", { { "event", "dc.aica.dsp.step" }, { "address", 3 } })) == kErrNotSupported,
+			"a code breakpoint of a target without stepping, the DSP: -32004, before its address is looked at");
+	}
+	else
+	{
+		auto dsp_at = [](const json& step) {
+			return json({ { "event", "dc.aica.dsp.step" }, { "address", step } });
+		};
+
+		typedef std::vector<std::pair<u32, u32>> Pairs;
+
+		// what a processor was handed last, as { id, address or step } pairs in ascending order
+		auto pairs_of = [](u32 (*get)(u32*, u32*, u32)) {
+			u32 got_ids[8], got_at[8];
+			const u32 n = get(got_ids, got_at, 8);
+			Pairs pairs;
+
+			for (u32 i = 0; i < n && i < 8; i++)
+				pairs.push_back({ got_ids[i], got_at[i] });
+
+			// more than the test ever lists: no set of the test equals it
+			if (n > 8)
+				pairs.push_back({ 0, n });
+
+			std::sort(pairs.begin(), pairs.end());
+			return pairs;
+		};
+		auto handed = [&] { return pairs_of(dsp::GetBreakpoints); };
+		auto handed_arm7 = [&] { return pairs_of(arm7::GetBreakpoints); };
+
+		Check(InBand(Send("breakpoints.add", { { "event", "dc.aica.dsp.step" }, { "kind", "code" } })) == kErrInvalidParams,
+			"the DSP steps: a code breakpoint of it without an address is -32602");
+		Check(InBand(Send("breakpoints.add", dsp_at(128))) == kErrInvalidParams, "step 128, above the DSP's addressMax, 127: -32602");
+		Check(InBand(Send("breakpoints.add", dsp_at(-1))) == kErrInvalidParams, "step -1: -32602");
+		Check(Tick(false)["breakpoints"].size() == 3 && handed().empty(), "the refused requests add nothing, and nothing of the DSP is handed to dbg::dsp");
+
+		// Three of them: the last step, the first and one between. The steps are kept as given
+		const u32 dsp_steps[3] = { 127, 0, 64 };
+		u32 dsp_ids[3] = { 0, 0, 0 };
+		bool added = true, shown = true;
+
+		for (u32 i = 0; i < 3; i++)
+		{
+			added = added && Ok(Send("breakpoints.add", dsp_at(dsp_steps[i])));
+			dsp_ids[i] = BreakpointIds(Tick(false)).back();
+		}
+
+		tick = Tick(false);
+
+		for (u32 i = 0; i < 3; i++)
+		{
+			const std::string key = std::to_string(dsp_ids[i]);
+
+			shown = shown && tick["breakpoints"].contains(key) && tick["breakpoints"][key].size() == 5 && tick["breakpoints"][key]["id"] == dsp_ids[i]
+				&& tick["breakpoints"][key]["event"] == "dc.aica.dsp.step" && tick["breakpoints"][key]["kind"] == "code"
+				&& tick["breakpoints"][key]["address"] == dsp_steps[i] && tick["breakpoints"][key]["enabled"] == true;
+		}
+
+		Check(added && shown && tick["breakpoints"].size() == 6 && dsp_ids[0] < dsp_ids[1] && dsp_ids[1] < dsp_ids[2],
+			"code breakpoints of the DSP on the steps 127, 0 and 64 are taken and listed: id, event, the step as given, kind, enabled (%s)", tick["breakpoints"].dump().c_str());
+		Check(handed() == Pairs({ { dsp_ids[0], dsp_steps[0] }, { dsp_ids[1], dsp_steps[1] }, { dsp_ids[2], dsp_steps[2] } }),
+			"the hand-over: dbg::dsp has the three, each id at its step (%zu pairs)", handed().size());
+
+		// no processor is handed another's: the three arm nothing of the SH4 and are not in the set of the ARM7,
+		// and a code breakpoint of the SH4 and one of the ARM7 beside them go to their own processor alone
+		Check(dbg_sh4_armed == 0 && handed_arm7().empty(), "the hand-over: the breakpoints of the DSP arm nothing of the SH4 and are not the ARM7's (%u armed, %zu pairs of the ARM7)",
+			dbg_sh4_armed, handed_arm7().size());
+		{
+			const bool added_sh4 = Ok(Send("breakpoints.add", { { "event", "dc.sh4.cpu.pc" }, { "address", 0x8C010000u } }));
+			const u32 sh4_id = BreakpointIds(Tick(false)).back();
+			const bool added_arm7 = Ok(Send("breakpoints.add", { { "event", "dc.aica.arm7.pc" }, { "address", 0x40u } }));
+			const u32 arm7_id = BreakpointIds(Tick(false)).back();
+
+			Check(added_sh4 && added_arm7 && dbg_sh4_armed == 1 && handed_arm7() == Pairs({ { arm7_id, 0x40u } })
+				&& handed() == Pairs({ { dsp_ids[0], dsp_steps[0] }, { dsp_ids[1], dsp_steps[1] }, { dsp_ids[2], dsp_steps[2] } }),
+				"the hand-over: a code breakpoint of the SH4 and one of the ARM7 beside them are their processors' alone, and dbg::dsp has its three "
+				"(%u armed, %zu pairs of the ARM7, %zu of the DSP)", dbg_sh4_armed, handed_arm7().size(), handed().size());
+
+			const bool removed = Ok(Send("breakpoints.remove", { { "id", sh4_id } })) && Ok(Send("breakpoints.remove", { { "id", arm7_id } }));
+
+			Check(removed && dbg_sh4_armed == 0 && handed_arm7().empty() && handed().size() == 3,
+				"(the breakpoints of the SH4 and of the ARM7 removed: %u armed, %zu pairs of the ARM7, %zu of the DSP)", dbg_sh4_armed, handed_arm7().size(), handed().size());
+		}
+
+		Check(Ok(Send("breakpoints.toggle", { { "id", dsp_ids[1] }, { "enabled", false } })) && Tick(false)["breakpoints"][std::to_string(dsp_ids[1])]["enabled"] == false,
+			"one of them toggled off: it stays listed, disabled");
+		Check(handed() == Pairs({ { dsp_ids[0], dsp_steps[0] }, { dsp_ids[2], dsp_steps[2] } }),
+			"the hand-over: dbg::dsp has the two enabled ones with their ids at their steps, and not the disabled one (%zu pairs)", handed().size());
+
+		Check(Ok(Send("breakpoints.remove", { { "id", dsp_ids[0] } })) && handed() == Pairs({ { dsp_ids[2], dsp_steps[2] } }),
+			"one of the two removed: the hand-over has the other");
+		Check(Ok(Send("breakpoints.remove", { { "id", dsp_ids[1] } })) && Ok(Send("breakpoints.remove", { { "id", dsp_ids[2] } })) && handed().empty(),
+			"all three removed: dbg::dsp has none");
 	}
 
 	Check(InBand(Send("breakpoints.add", { { "event", "dc.sh4.cpu.pc" }, { "kind", "code" } })) == kErrInvalidParams, "a code breakpoint of the SH4 without an address: -32602");
@@ -1371,18 +1469,18 @@ DBG_SELFTEST(core_tick, "core.tick")
 		const bool known = emu::GetSh4Engine(&engine);
 
 		Check(caps.count("event-breakpoints") == 1 && caps.count("callstack") == 1 && caps.count("memory-write") == 1 && caps.count("register-write") == 1
-			&& caps.count("reset") == 1 && known && caps.count(engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native") == 1 && caps.size() == 6
-			&& shape["capabilities"].size() == 6, "the capabilities of M1 and of M2, five, and the one of the engine that is selected (%s)",
-			shape["capabilities"].dump().c_str());
+			&& caps.count("reset") == 1 && caps.count("sgc-capture") == 1 && caps.count("memory-binary") == 1 && known
+			&& caps.count(engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native") == 1 && caps.size() == 8 && shape["capabilities"].size() == 8,
+			"the capabilities of M1, M2 and M3, seven, and the one of the engine that is selected (%s)", shape["capabilities"].dump().c_str());
 
 		json& targets = shape["targets"];
 
 		Check(targets.size() == 3 && targets[0]["id"] == "sh4" && targets[0]["stepping"] == true && targets[0]["memory"] == true && targets[0]["addressMax"] == 0xFFFFFFFFu
 			&& targets[1]["id"] == "arm7" && targets[1]["stepping"] == emu::TargetSteps(Target::Arm7) && targets[1]["addressMax"] == 0x00FFFFFFu && targets[1]["instructionSize"] == 4
-			&& targets[2]["id"] == "dsp" && targets[2]["stepping"] == false && targets[2]["memory"] == false && !targets[2].contains("defaultMemoryAddress")
+			&& targets[2]["id"] == "dsp" && targets[2]["stepping"] == emu::TargetSteps(Target::Dsp) && targets[2]["memory"] == false && !targets[2].contains("defaultMemoryAddress")
 			&& targets[2]["addressRadix"] == 10 && targets[2]["addressDigits"] == 3 && targets[2]["addressMax"] == 127 && targets[0].size() == 13 && targets[2].size() == 12,
-			"three targets: the SH4 steps, the ARM7 as emu::TargetSteps() has it (%s), the DSP does not yet, the DSP has no memory and no defaultMemoryAddress",
-			emu::TargetSteps(Target::Arm7) ? "it steps" : "not yet");
+			"three targets: the SH4 steps, the ARM7 and the DSP as emu::TargetSteps() has them (%s, %s), the DSP has no memory and no defaultMemoryAddress",
+			emu::TargetSteps(Target::Arm7) ? "it steps" : "not yet", emu::TargetSteps(Target::Dsp) ? "it steps" : "not yet");
 	}
 
 	/*
@@ -1547,10 +1645,20 @@ DBG_SELFTEST(core_tick, "core.tick")
 		"params that are no object: -32600");
 	Check(core::HandleRequestText(R"({"jsonrpc":"2.0","id":5})") == R"({"jsonrpc":"2.0","id":5,"error":{"code":-32600,"message":"invalid request"}})", "no method: -32600");
 	Check(RpcError(Send("no.such.method")) == kErrMethodNotFound && RpcError(Send("event.tick")) == kErrMethodNotFound, "a method the protocol does not have: -32601");
-	Check(RpcError(Send("state.getTable", { { "id", 5 } })) == kErrNotSupported && RpcError(Send("state.getMemoryBinary")) == kErrNotSupported
-		&& RpcError(Send("state.getSgcFrameData")) == kErrNotSupported && RpcError(Send("state.captureHolly", { { "what", 1 } })) == kErrNotSupported
-		&& InBand(Send("state.recordSgcFrames", { { "frames", "x" } })) == kErrNotSupported && InBand(Send("state.recordSgcFrames")) == kErrNotSupported,
-		"a method of a later milestone: -32004 on the channel of the method, whatever its parameters are");
+	Check(RpcError(Send("state.getTable", { { "id", 5 } })) == kErrNotSupported && RpcError(Send("state.captureHolly", { { "what", 1 } })) == kErrNotSupported
+		&& RpcError(Send("state.getTable")) == kErrNotSupported, "a method of a later milestone: -32004 on the channel of the method, whatever its parameters are");
+
+	// The methods of milestone M3, which no longer answer -32004, by what this machine test may ask of them: no
+	// capture is armed here (that is the session sgc's, dbg_selftest_sgc.cpp)
+	Check(RpcError(Send("state.getMemoryBinary")) == kErrInvalidParams && RpcError(Send("state.getMemoryBinary", { { "address", 0x8C010000u }, { "length", 0 } })) == kErrInvalidParams
+		&& RpcError(Send("state.getMemoryBinary", { { "address", 0x8C010000u }, { "length", kMaxMemoryBinaryBytes + 1 } })) == kErrInvalidParams
+		&& RpcError(Send("state.getMemoryBinary", { { "target", "dsp" }, { "address", 0 }, { "length", 16 } })) == kErrNotSupported,
+		"state.getMemoryBinary: -32602 without an address and outside 1..16777216, -32004 for the target dsp, as JSON-RPC errors");
+	Check(Send("state.getMemoryBinary", { { "address", 0x8C010000u }, { "length", 16 } }).contains("result"), "state.getMemoryBinary of 16 bytes has a result");
+	Check(RpcError(Send("state.getSgcFrameData")) == kErrNoCapture, "state.getSgcFrameData without a capture: -32011, a JSON-RPC error");
+	Check(InBand(Send("state.recordSgcFrames", { { "frames", "x" } })) == kErrInvalidParams && InBand(Send("state.recordSgcFrames", { { "frames", 0 } })) == kErrInvalidParams
+		&& InBand(Send("state.recordSgcFrames", { { "frames", kMaxSgcFrames + 1 } })) == kErrInvalidParams,
+		"state.recordSgcFrames: -32602 for frames that are no number or outside 1..4096, in-band");
 	Check(Ok(json::parse(core::HandleRequestText(R"({"jsonrpc":"2.0","id":9,"method":"state.unwatch","more":1,"params":{"watchIds":[],"other":{"a":null}}})"), nullptr, false)),
 		"a member of the request and a key of params that the protocol does not name are not looked at");
 	Check(RpcError(Send("state.getMemorySlice", { { "address", "0" }, { "length", 4 } })) == kErrInvalidParams && InBand(Send("control.step", { { "target", 4 } })) == kErrInvalidParams
@@ -1947,7 +2055,7 @@ struct Found {
 	bool reached = false;
 	emu::RunState state;
 	std::string tick, describe;
-	std::string add, watch, slice, stack, disasm, run, step, pause, later_inband, later_rpc, remove, unwatch;
+	std::string add, watch, slice, stack, disasm, run, step, pause, record, binary, frames, later_rpc, remove, unwatch;
 };
 
 struct {
@@ -1995,7 +2103,9 @@ void Look(Found* found, bool with_tables)
 	found->run = Ask("control.runUntil");
 	found->step = Ask("control.step", { { "target", "sh4" } });
 	found->pause = Ask("control.pause", { { "target", "sh4" } });
-	found->later_inband = Ask("state.recordSgcFrames", { { "frames", "many" } });
+	found->record = Ask("state.recordSgcFrames", { { "frames", 64 } });
+	found->binary = Ask("state.getMemoryBinary", { { "address", 0x8C010000u }, { "length", 16 } });
+	found->frames = Ask("state.getSgcFrameData");
 	found->later_rpc = Ask("state.getTable", { { "id", "sq" } });
 }
 
@@ -2071,14 +2181,17 @@ BOUNDED_GUEST_TEST(core_lifetime, "core.lifetime")
 				tick["callstacks"]["sh4"].size());
 		}
 
-		Check(shape.is_object() && shape["deviceTree"][0]["registers"][0]["value"] == "200MHz" && shape["capabilities"].size() == 6, "describe: the tree with its values, and the engine capability (%s)",
+		Check(shape.is_object() && shape["deviceTree"][0]["registers"][0]["value"] == "200MHz" && shape["capabilities"].size() == 8, "describe: the tree with its values, and the engine capability (%s)",
 			shape.is_object() ? shape["capabilities"].dump().c_str() : "no JSON");
 		Check(Ok(Parsed(f.add)) && Ok(Parsed(f.watch)), "bookkeeping works: breakpoints.add and state.watch are answered {} (%s, %s)", f.add.c_str(), f.watch.c_str());
 		Check(Parsed(f.slice).contains("result") && Parsed(f.stack).contains("result") && Parsed(f.disasm).contains("result")
 			&& Parsed(f.stack)["result"]["frames"] == tick["callstacks"]["sh4"], "reads work: memory, disassembly and the call stack of the stopped machine");
 		Check(InBand(Parsed(f.run)) == kErrHostStopped && InBand(Parsed(f.step)) == kErrHostStopped && InBand(Parsed(f.pause)) == kErrHostStopped,
 			"run control is refused: -32001, in-band (%s)", f.run.c_str());
-		Check(InBand(Parsed(f.later_inband)) == kErrNotSupported && RpcError(Parsed(f.later_rpc)) == kErrNotSupported, "a method of a later milestone is -32004 there as well");
+		Check(RpcError(Parsed(f.later_rpc)) == kErrNotSupported, "a method of a later milestone is -32004 there as well");
+		Check(InBand(Parsed(f.record)) == kErrHostStopped && Parsed(f.binary).contains("result") && RpcError(Parsed(f.frames)) == kErrNoCapture,
+			"state.recordSgcFrames is refused by the lifetime, -32001 in-band; state.getMemoryBinary is a read, under L; state.getSgcFrameData too: -32011, no "
+			"capture (%s, %s)", f.record.c_str(), f.frames.c_str());
 		Check(stop.cause == StopCause::Start && stop.stopId == f.state.stopId + 1, "the thread the host starts parks at its start, as every thread of a session");
 
 		{
@@ -2192,13 +2305,15 @@ BOUNDED_GUEST_TEST(core_lifetime, "core.lifetime")
 
 			Check(shape.is_object() && nodes.size() == count && problems.empty() && values > 200 && not_na == 0,
 				"describe: the static tree, %u nodes, with every one of its %u values \"n/a\" (%u are not)", count, values, not_na);
-			Check(shape.is_object() && shape["capabilities"] == json::array({ "event-breakpoints", "callstack", "memory-write", "register-write", "reset" })
+			Check(shape.is_object() && shape["capabilities"] == json::array({ "event-breakpoints", "callstack", "memory-write", "register-write", "reset", "sgc-capture", "memory-binary" })
 				&& shape["targets"].size() == 3, "no engine capability, and the three targets (%s)", shape.is_object() ? shape["capabilities"].dump().c_str() : "no JSON");
 
 			Check(RpcError(Parsed(f.slice)) == kErrNoGame && RpcError(Parsed(f.stack)) == kErrNoGame && RpcError(Parsed(f.disasm)) == kErrNoGame,
 				"reads of guest state: -32002, as JSON-RPC errors (%s)", f.slice.c_str());
 			Check(InBand(Parsed(f.run)) == kErrNoGame && InBand(Parsed(f.step)) == kErrNoGame && InBand(Parsed(f.pause)) == kErrNoGame, "run control: -32002, in-band (%s)", f.run.c_str());
-			Check(InBand(Parsed(f.later_inband)) == kErrNotSupported && RpcError(Parsed(f.later_rpc)) == kErrNotSupported, "a method of a later milestone: -32004, not -32002");
+			Check(RpcError(Parsed(f.later_rpc)) == kErrNotSupported, "a method of a later milestone: -32004, not -32002");
+			Check(InBand(Parsed(f.record)) == kErrNoGame && RpcError(Parsed(f.binary)) == kErrNoGame && RpcError(Parsed(f.frames)) == kErrNoGame,
+				"the methods of M3: -32002, state.recordSgcFrames in-band and the two reads as JSON-RPC errors (%s)", f.record.c_str());
 			Check(Ok(Parsed(f.add)) && Ok(Parsed(f.watch)) && Ok(Parsed(f.unwatch)) && InBand(Parsed(f.remove)) == kErrInvalidParams,
 				"bookkeeping works without a machine: a breakpoint and a watch are added, an unknown id is -32602 (%s, %s)", f.add.c_str(), f.watch.c_str());
 			Check(tick["breakpoints"].size() == 2 && tick["watches"].size() == 2 && tick["watches"][1]["expression"] == "dc.timing.sh4_cycles" && tick["watches"][1]["value"] == "n/a"
@@ -2558,7 +2673,7 @@ BOUNDED_GUEST_TEST(core_reset, "core.reset")
 /*
 	core.writes: the three write methods as a client meets them. By parameter (-32602, in front of everything
 	else), by lifetime, by the errors of each method in their order, all of them in-band; what describe says:
-	five capabilities besides the engine's, and flags.writable on the registers that have a writer and nowhere
+	seven capabilities besides the engine's, and flags.writable on the registers that have a writer and nowhere
 	else; the tick behind an accepted write, which is of the stop the write was made in; and a write made while
 	the machine runs, which is served, with a running tick behind it, and never answered -32003.
 
@@ -2671,13 +2786,13 @@ BOUNDED_GUEST_TEST(core_writes, "core.writes")
 		{
 			emu::Sh4EngineInfo engine;
 			json caps = shape.is_object() ? shape["capabilities"] : json::array();
-			json want = json::array({ "event-breakpoints", "callstack", "memory-write", "register-write", "reset" });
+			json want = json::array({ "event-breakpoints", "callstack", "memory-write", "register-write", "reset", "sgc-capture", "memory-binary" });
 
 			if (emu::GetSh4Engine(&engine))
 				want.push_back(engine.fallback ? "sh4-debug-fallback" : "sh4-debug-native");
 
-			Check(caps == want && caps.size() == 6, "describe has five capabilities besides the engine's: the two of M1, and memory-write, register-write and reset (%s)",
-				caps.dump().c_str());
+			Check(caps == want && caps.size() == 8, "describe has seven capabilities besides the engine's: the two of M1, memory-write, register-write and reset of "
+				"M2, sgc-capture and memory-binary of M3 (%s)", caps.dump().c_str());
 		}
 
 		{

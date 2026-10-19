@@ -82,6 +82,13 @@ target_compile_options(test_e2e PRIVATE ${warnings})
 target_link_libraries(test_e2e dbg_net)
 add_test(NAME ${NULLDC_TEST_PREFIX}test_e2e COMMAND test_e2e)
 
+# The bounds of what a client may leave waiting, 16 MiB of text and 64 MiB of binary messages, counted apart: a
+# binary message of 32 MiB followed by ticks, read slowly, keeps the client; more of either cuts it off
+add_executable(test_bounds test_bounds.cpp)
+target_compile_options(test_bounds PRIVATE ${warnings})
+target_link_libraries(test_bounds dbg_net)
+add_test(NAME ${NULLDC_TEST_PREFIX}test_bounds COMMAND test_bounds)
+
 add_executable(test_webui test_webui.cpp $<TARGET_OBJECTS:dbg_webui>)
 target_compile_options(test_webui PRIVATE ${warnings})
 target_link_libraries(test_webui dbg_net)
@@ -91,7 +98,7 @@ add_executable(dbg_net_demo demo.cpp $<TARGET_OBJECTS:dbg_webui>)
 target_compile_options(dbg_net_demo PRIVATE ${warnings})
 target_link_libraries(dbg_net_demo dbg_net)
 
-foreach(name test_ws test_http test_fuzz test_e2e test_webui)
+foreach(name test_ws test_http test_fuzz test_e2e test_bounds test_webui)
   set_tests_properties(${NULLDC_TEST_PREFIX}${name} PROPERTIES TIMEOUT 300)
 endforeach()
 

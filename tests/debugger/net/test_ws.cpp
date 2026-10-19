@@ -333,15 +333,15 @@ static void TestUtf8() {
 // Memory a connection's queue holds, as far as the queue can tell.
 static size_t Held(const Conn& c) {
 	size_t bytes = 0;
-	for (const std::string& chunk : c.queue)
-		bytes += sizeof(std::string) + chunk.capacity();
+	for (const Chunk& chunk : c.queue)
+		bytes += sizeof(Chunk) + chunk.bytes.capacity();
 	return bytes;
 }
 
 static std::string Joined(const Conn& c) {
 	std::string all;
-	for (const std::string& chunk : c.queue)
-		all += chunk;
+	for (const Chunk& chunk : c.queue)
+		all += chunk.bytes;
 	return all;
 }
 
@@ -352,21 +352,23 @@ static void TestQueue() {
 		std::string pong = FrameHeader(kOpPong, 0);
 		size_t pushed = 0;
 		while (!c.overflow && pushed < 100000000) {
-			Push(c, pong, true);
+			Push(c, pong, true, false);
 			pushed++;
 		}
 		CHECK(c.overflow);
-		CHECK(c.queued >= kMaxQueuedBytes - pong.size() && c.queued <= kMaxQueuedBytes + pong.size());
-		CHECK_EQ(Joined(c).size(), (size_t)c.queued);
-		CHECK(c.queue.size() <= 2 * c.queued / kMergeBytes + 1);
-		CHECK(Held(c) <= 2 * c.queued + (1u << 20));
-		printf("%zu pongs: %zu bytes queued in %zu chunks that hold %zu bytes\n", pushed - 1, (size_t)c.queued, c.queue.size(), Held(c));
+		CHECK(c.Queued() >= kMaxQueuedBytes - pong.size() && c.Queued() <= kMaxQueuedBytes + pong.size());
+		CHECK_EQ(c.queuedBinary.load(), (size_t)0);
+		CHECK_EQ(Joined(c).size(), c.Queued());
+		CHECK(c.queue.size() <= 2 * c.Queued() / kMergeBytes + 1);
+		CHECK(Held(c) <= 2 * c.Queued() + (1u << 20));
+		printf("%zu pongs: %zu bytes queued in %zu chunks that hold %zu bytes\n", pushed - 1, c.Queued(), c.queue.size(), Held(c));
 
 		// cut off: nothing more is taken
-		size_t queued = c.queued;
-		Push(c, pong, true);
-		Push(c, pong, false);
-		CHECK_EQ((size_t)c.queued, queued);
+		size_t queued = c.Queued();
+		Push(c, pong, true, false);
+		Push(c, pong, false, false);
+		Push(c, pong, true, true);
+		CHECK_EQ(c.Queued(), queued);
 	}
 
 	// Messages of mixed sizes: every byte in order, and no chunk ends inside a message.
@@ -379,76 +381,120 @@ static void TestQueue() {
 			seed = seed * 1664525u + 1013904223u;
 			size_t size = (seed >> 8) % 7 == 0 ? (seed >> 12) % 30000 : 1 + (seed >> 12) % 300;
 			std::string message(size, (char)('a' + i % 26));
-			Push(c, message, i % 2 == 0);
+			Push(c, message, i % 2 == 0, false);
 			all += message;
 			ends.push_back(all.size());
 		}
 		CHECK(!c.overflow);
-		CHECK_EQ((size_t)c.queued, all.size());
+		CHECK_EQ(c.Queued(), all.size());
 		CHECK(Joined(c) == all);
 		size_t at = 0;
 		bool whole = true, merged = true;
 		for (size_t i = 0; i < c.queue.size(); i++) {
-			at += c.queue[i].size();
+			at += c.queue[i].bytes.size();
 			if (!std::binary_search(ends.begin(), ends.end(), at))
 				whole = false;
-			if (i > 0 && c.queue[i - 1].size() + c.queue[i].size() <= kMergeBytes)
+			if (i > 0 && c.queue[i - 1].bytes.size() + c.queue[i].bytes.size() <= kMergeBytes)
 				merged = false;
 		}
 		CHECK(whole);
 		CHECK(merged);		// two neighbours that would have fitted one chunk
-		CHECK(c.queue.size() <= 2 * c.queued / kMergeBytes + 1);
+		CHECK(c.queue.size() <= 2 * c.Queued() / kMergeBytes + 1);
 	}
 
 	// A chunk is closed when the next message would take it past kMergeBytes; larger messages stand alone.
 	{
 		Conn c(kNoSocket, kLimit);
-		Push(c, std::string(kMergeBytes - 1, 'a'), true);
-		Push(c, "b", true);
-		Push(c, "c", true);
-		Push(c, std::string(kMergeBytes, 'd'), true);
-		Push(c, std::string(3 * kMergeBytes, 'e'), true);
-		Push(c, "", true);
-		Push(c, "f", true);
+		Push(c, std::string(kMergeBytes - 1, 'a'), true, false);
+		Push(c, "b", true, false);
+		Push(c, "c", true, false);
+		Push(c, std::string(kMergeBytes, 'd'), true, false);
+		Push(c, std::string(3 * kMergeBytes, 'e'), true, false);
+		Push(c, "", true, false);
+		Push(c, "f", true, false);
 		REQUIRE(c.queue.size() == 5);
-		CHECK_EQ(c.queue[0], std::string(kMergeBytes - 1, 'a') + "b");
-		CHECK_EQ(c.queue[1], std::string("c"));
-		CHECK_EQ(c.queue[2].size(), kMergeBytes);
-		CHECK_EQ(c.queue[3].size(), 3 * kMergeBytes);
-		CHECK_EQ(c.queue[4], std::string("f"));
-		CHECK_EQ((size_t)c.queued, 5 * kMergeBytes + 2);
+		CHECK_EQ(c.queue[0].bytes, std::string(kMergeBytes - 1, 'a') + "b");
+		CHECK_EQ(c.queue[1].bytes, std::string("c"));
+		CHECK_EQ(c.queue[2].bytes.size(), kMergeBytes);
+		CHECK_EQ(c.queue[3].bytes.size(), 3 * kMergeBytes);
+		CHECK_EQ(c.queue[4].bytes, std::string("f"));
+		CHECK_EQ(c.Queued(), 5 * kMergeBytes + 2);
 	}
 
-	// The bound is on what already waits. A message of any size is taken while no more than kMaxQueuedBytes
-	// are ahead of it; the first message after that cuts the client off.
+	// Text and binary messages: in the order they were queued, merged only with their own kind, each kind counted
+	// and bounded apart (16 MiB of text, 64 MiB of binary messages)
 	{
 		Conn c(kNoSocket, kLimit);
-		Push(c, "reply", true);
-		Push(c, std::string(kMaxQueuedBytes + 100, 'x'), true);
+		Push(c, "t1", true, false);
+		Push(c, "b1", true, true);
+		Push(c, "b2", true, true);
+		Push(c, "t2", true, false);
+		REQUIRE(c.queue.size() == 3);
+		CHECK(!c.queue[0].binary && c.queue[0].bytes == "t1");
+		CHECK(c.queue[1].binary && c.queue[1].bytes == "b1b2");
+		CHECK(!c.queue[2].binary && c.queue[2].bytes == "t2");
+		CHECK_EQ(c.queuedText.load(), (size_t)4);
+		CHECK_EQ(c.queuedBinary.load(), (size_t)4);
+		CHECK_EQ(Joined(c), std::string("t1b1b2t2"));
+
+		// 32 MiB of binary waiting: text is still taken up to its own bound
+		Push(c, std::string(32u << 20, 'x'), true, true);
+		Push(c, std::string(16u << 20, 'y'), true, false);
 		CHECK(!c.overflow);
-		CHECK_EQ((size_t)c.queued, kMaxQueuedBytes + 105);
-		Push(c, "tick", true);
+		Push(c, "z", true, false);
 		CHECK(c.overflow);
-		CHECK_EQ((size_t)c.queued, kMaxQueuedBytes + 105);
+		CHECK_EQ(c.queuedText.load(), (size_t)(16u << 20) + 4);
 	}
 	{
 		Conn c(kNoSocket, kLimit);
-		Push(c, std::string(kMaxQueuedBytes, 'x'), true);
-		Push(c, "y", true);		// exactly the bound was waiting
+		Push(c, std::string((16u << 20) + 1, 'y'), true, false);
+		Push(c, std::string(64u << 20, 'x'), true, true);
 		CHECK(!c.overflow);
-		Push(c, "z", true);
+		Push(c, "t", true, false);
+		CHECK(c.overflow);		// more than 16 MiB of text waiting for the text message
+	}
+	{
+		Conn c(kNoSocket, kLimit);
+		Push(c, std::string(16u << 20, 'y'), true, false);
+		Push(c, std::string(64u << 20, 'x'), true, true);
+		CHECK(!c.overflow);		// the text waiting does not count for a binary message
+		Push(c, "b", true, true);
+		CHECK(!c.overflow);		// 64 MiB of binary waiting, not more than that
+		Push(c, "b", true, true);
 		CHECK(c.overflow);
-		CHECK_EQ((size_t)c.queued, kMaxQueuedBytes + 1);
+		CHECK_EQ(c.queuedBinary.load(), (size_t)(64u << 20) + 1);
+	}
+
+	// The bound is on what already waits. A text message of any size is taken while no more than kMaxQueuedBytes
+	// of text are ahead of it; the first message after that cuts the client off.
+	{
+		Conn c(kNoSocket, kLimit);
+		Push(c, "reply", true, false);
+		Push(c, std::string(kMaxQueuedBytes + 100, 'x'), true, false);
+		CHECK(!c.overflow);
+		CHECK_EQ(c.Queued(), kMaxQueuedBytes + 105);
+		Push(c, "tick", true, false);
+		CHECK(c.overflow);
+		CHECK_EQ(c.Queued(), kMaxQueuedBytes + 105);
+	}
+	{
+		Conn c(kNoSocket, kLimit);
+		Push(c, std::string(kMaxQueuedBytes, 'x'), true, false);
+		Push(c, "y", true, false);		// exactly the bound was waiting
+		CHECK(!c.overflow);
+		Push(c, "z", true, false);
+		CHECK(c.overflow);
+		CHECK_EQ(c.Queued(), kMaxQueuedBytes + 1);
 	}
 
 	// What a plain response queues is not bounded here: files are bounded where they are read.
 	{
 		Conn c(kNoSocket, kLimit);
-		Push(c, "HTTP/1.1 200 OK\r\n\r\n", false);
-		Push(c, std::string(kMaxQueuedBytes + 1, 'x'), false);
+		Push(c, "HTTP/1.1 200 OK\r\n\r\n", false, false);
+		Push(c, std::string(kMaxQueuedBytes + 1, 'x'), false, false);
 		CHECK(!c.overflow);
 		CHECK_EQ(c.queue.size(), (size_t)2);
-		CHECK_EQ((size_t)c.queued, kMaxQueuedBytes + 20);
+		CHECK_EQ(c.Queued(), kMaxQueuedBytes + 20);
 	}
 }
 

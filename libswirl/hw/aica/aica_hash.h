@@ -7,6 +7,8 @@
 #pragma once
 #include "types.h"
 
+struct AicaDsp;
+
 /*
 	The sound regression harness: a run that folds what the sound side produces into hashes and ends by itself.
 
@@ -14,7 +16,7 @@
 
 	After N AICA ticks (a tick is 32 samples) the emulator prints
 
-	    AicaHash: samples=<hex> regs=<hex> arm7=<hex> sh4=<hex> ticks=<N> cycles=<scheduler time, decimal>
+	    AicaHash: samples=<hex> regs=<hex> arm7=<hex> sh4=<hex> dsp=<hex> ticks=<N> cycles=<scheduler time, decimal>
 
 	and ends the process with exit code 0. The hashes are 64-bit FNV-1a:
 
@@ -24,6 +26,8 @@
 	           the reset state), at every tick
 	  sh4      PC, R0..R15, PR, SR and FPSCR of the SH4, four bytes each, low byte first, at every tick; only on a
 	           backend with SH4DBG_CTX_AT_SLICE (hw/sh4/sh4_if.h), on any other it stays the FNV offset basis
+	  dsp      the AicaDsp::StateSize() bytes AicaDsp::SaveState writes (hw/aica/dsp_core/aica_dsp_core.h): the
+	           whole state of the DSP, its registers and its datapath, at every tick
 
 	Two runs of one binary with the same program and settings print the same line when the run does not depend
 	on the host: config:Debug.FixedRtc pins the real-time clock (config:Dreamcast.RTC is the same setting and is
@@ -42,10 +46,11 @@ struct AicaHash
 	u64 regs;
 	u64 arm7;
 	u64 sh4;
+	u64 dsp;
 
 	// From aica_hash.cpp; null without it
 	void (*configure)();					// when the AICA is initialised: reads config:Debug.AicaHash
-	void (*tick)(const u8* aica_reg);		// at the end of every AICA tick while ticks_wanted is not 0
+	void (*tick)(const u8* aica_reg, const AicaDsp* dsp);	// at the end of every AICA tick while ticks_wanted is not 0
 	u32 (*pinned_rtc)();					// config:Debug.FixedRtc, else config:Dreamcast.RTC: seconds since 1970, 0 for the clock of the host
 };
 

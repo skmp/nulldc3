@@ -20,8 +20,8 @@
     LoadState, SaveState, Reset and Resume are for a machine without an emulator thread; Reset is also what the
     emulator thread itself calls for a guest reset.
 */
-// The phases a sound burst can be suspended in (VirtualDreamcast::SoundBurstSuspended)
-enum : u32 { SOUND_BURST_NONE = 0, SOUND_BURST_ARM7 = 1 };
+// The places a sound burst can be suspended at (VirtualDreamcast::SoundBurstSuspended)
+enum : u32 { SOUND_BURST_NONE = 0, SOUND_BURST_ARM7 = 1, SOUND_BURST_DSP = 2, SOUND_BURST_SAMPLE = 3 };
 
 struct VirtualDreamcast {
     virtual void LoadState() = 0;
@@ -66,21 +66,27 @@ struct VirtualDreamcast {
     // The body here is that of a machine without an emulator thread
     virtual bool StartCpu(bool leavePark) { return false; }
 
-    // Emulator thread. Whether a sound burst is suspended, and in which phase: 0 none; SOUND_BURST_ARM7: the
-    // AICA scheduler callback returned in front of an ARM7 instruction because the debugger asked
-    // (dbg_arm7_Check), and the rest of that burst has not run. Not 0 only between such a return and the
-    // moment the park loop, dc_run or Reset() has dealt with it; the stop latch is set for all of that time
-    // but for the slice end in which it happened.
+    // Emulator thread. Whether a sound burst is suspended, and where: 0 none; SOUND_BURST_ARM7: in front of an
+    // ARM7 instruction of the ARM phase of a sample, because the ARM7's check asked (dbg_arm7_Check);
+    // SOUND_BURST_DSP: in front of a DSP step, because the DSP's check asked (dbg_dsp_Check): the sweep of the
+    // sample is made, its DSP phase has executed the steps in front of that one, its mix and its interrupt update
+    // are to come; SOUND_BURST_SAMPLE: at the end of a sample that is not the last of the burst, because a step of
+    // the DSP was complete there (dbg_dsp_SampleEnd) or an SGC capture armed at a stop took its last frame in it
+    // (dbg_sgc_Frame): nothing of the next sample has executed. In each case the rest of the burst has not run.
+    // Not 0 only between such a return and the moment the park loop, dc_run or Reset() has dealt with it; the stop
+    // latch is set for all of that time but for the slice end in which it happened.
     // The body here is that of a machine that never suspends
     virtual u32 SoundBurstSuspended() { return 0; }
 
     // Emulator thread, the CPU is stopped. Runs a suspended sound burst on, outside the scheduler: no emulated
     // time passes (it is the rest of the AICA tick that was due), and an interrupt it raises waits for the next
-    // acceptance of the SH4. checks true: the ARM phases use the debugger's check while dbg_arm7_armed is not 0
-    // (the park loop). checks false: nothing can stop it (dc_run, in front of the stop callback of a host stop
-    // or a guest exit). Returns true when the burst ran to its end, the rest of the callback included (the
-    // batch render, the tick of the sound regression harness: once per burst, behind the last sample), and at
-    // once when none is suspended. Returns false when it is suspended again, which it never is with checks false.
+    // acceptance of the SH4. checks true: the ARM phases use the ARM7's check while dbg_arm7_armed is not 0, the
+    // DSP phases the DSP's while dbg_dsp_armed is not 0, and the end of a sample stops for a complete step of the
+    // DSP or a capture armed at a stop (the park loop). checks false: nothing can stop it (dc_run, in front of the
+    // stop callback of a host stop or a guest exit). Returns true when the burst ran to its end, the rest of the
+    // callback included (the tick of the sound regression harness: once per burst, behind the last sample), and
+    // at once when none is suspended. Returns false when it is suspended again, which it never is with checks
+    // false.
     // The body here is that of a machine that never suspends
     virtual bool RunSoundBurst(bool checks) { return true; }
 
@@ -92,6 +98,13 @@ struct VirtualDreamcast {
     // selftests of the debugger.
     // The body here is that of a machine that counts nothing
     virtual void SoundBurstCounts(u32 out[4]) { out[0] = out[1] = out[2] = out[3] = 0; }
+
+    // Emulator thread. What the DSP phases of this machine's bursts have done since it was created: out[0] the
+    // DSP phases that ran to the end of their sample (DSP::RunPhase returned true), out[1] the DSP phases in which
+    // the debug loop executed at least one step. The counts wrap, are in no save state and in no hash, and nothing
+    // of the guest reads them. For the selftests of the debugger.
+    // The body here is that of a machine that counts nothing
+    virtual void SoundBurstDspCounts(u32 out[2]) { out[0] = out[1] = 0; }
 
     virtual bool HandleFault(unat addr, rei_host_context_t* ctx) = 0;
     virtual ~VirtualDreamcast() { }

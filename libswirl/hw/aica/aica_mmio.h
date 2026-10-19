@@ -35,23 +35,43 @@ struct AicaChannelDebug {
 	u8   lfoState;       // phase of the low-frequency oscillator
 	u8   alfo;           // amplitude modulation it gives now
 	u8   plfo;           // pitch modulation it gives now
+	s32  outLeft;        // the channel's outputs of the sample of the last sweep: its direct left and right signal
+	s32  outRight;       // and its send to the DSP, at 16-bit scale, while an SGC capture records (dbg_sgc_active,
+	s32  outDsp;         // debugger/debugger.h); 0 at any other time
 };
 
 struct AICA : MMIODevice {
-	//Mainloop
+	// The tail of a sound burst, once per burst behind its last sample, also when the ARM7 is held: the tick of
+	// the sound regression harness (aica_hash.h). Samples is ignored
 	virtual void Update(u32 Samples) = 0;
 
 	//Aica reads (both sh4&arm)
 	virtual u32 ReadReg(u32 addr, u32 size) = 0;
 	virtual void WriteReg(u32 addr, u32 data, u32 size) = 0;
 
+	// One sample of the sound chip, in its phases; emulator thread. The sound burst (Dreamcast_impl, libswirl.cpp)
+	// makes them behind the ARM phase of the sample, in this order, and nothing else of the sound chip runs between
+	// them; it makes them in every sample of every burst, also while the guest holds the ARM7 in reset, which
+	// skips only the ARM phase:
+	//   SampleTimers(); SampleSweep(); DSP::RunPhase(checks); SampleMix(); SampleIrq();
+	// TimeStep() is the five with RunPhase(false), for callers outside the sound burst
+	virtual void SampleTimers() = 0;   // the three timers count one sample; SAMPLE_DONE is set
+	virtual void SampleSweep() = 0;    // the 64 channels and the CD-DA pair of the sample: the direct mix, kept for
+	                                   // SampleMix(); the sends to the DSP (AicaDsp::SweepBegin, then one MixsSend
+	                                   // for each bus a channel sends to, of the sum of its sends at 20-bit scale);
+	                                   // the CD-DA pair into AicaDsp::EXTS
+	virtual void SampleMix() = 0;      // EFREG of the DSP through EFSDL / EFPAN into the kept mix; mono, MVOL, the
+	                                   // DAC; the harness's sample fold; the audio stream
+	virtual void SampleIrq() = 0;      // the interrupt lines of the ARM7 and of the SH4 follow the AICA's state
 	virtual void TimeStep() = 0;
 
 	/*
-		Debugger access. Called on the emulator thread outside Update() and TimeStep() - between two sound
-		bursts, or while the debugger has one suspended in front of an ARM7 instruction, where the sound
-		generator stands between two samples -, or by a thread that holds the debugger's lifetime lock while
-		no emulator thread exists; DebugWriteReg on the emulator thread only. Update() and TimeStep()
+		Debugger access. Called on the emulator thread outside Update() and the time step of a sample (TimeStep,
+		or its phases) - between two sound bursts, or while the debugger has one suspended: in front of an ARM7
+		instruction or at the end of a sample, where the sound generator stands between two samples, or in front
+		of a DSP step, where the sweep of the sample is made (its channels have stepped, its timers have counted)
+		and its mix and its interrupt update are to come -, or by a thread that holds the debugger's lifetime lock
+		while no emulator thread exists; DebugWriteReg on the emulator thread only. Update() and the time step
 		themselves also run in the debugger's park context, when a suspended burst is run on. The defaults are
 		those of a device that gives the debugger nothing.
 	*/
@@ -59,14 +79,15 @@ struct AICA : MMIODevice {
 	// Copies len bytes of the register file from offset (offset + len <= 0x8000) as guest reads deliver
 	// them, and changes nothing: the channel status and play position of the common block (0x2810..0x2815)
 	// are worked out for the selected channel without clearing its loop flag; 0x2C00 is ARMRST, 0x2C01 VREG.
+	// The registers of the DSP (0x2804, 0x3000..0x45C7) are what the DSP answers a read of the CPU.
 	// ReadReg is not a substitute: it rewrites those fields and clears the flag.
 	virtual bool DebugReadRegs(u32 offset, u32 len, u8* out) { return false; }
 
 	// Writes the 16-bit register at offset (even, below 0x8000) as a write by the SH4 does: the sound
 	// generator, the timers, the interrupt lines and the ARM7 reset follow it. Returns false, having
 	// changed nothing, when the register cannot be written. No device has a body for it and nothing calls
-	// it: in M2 the debugger writes no register of the AICA, ARMRST among them (the debugger does not hold or
-	// release the ARM7).
+	// it: in M2 and M3 the debugger writes no register of the AICA, ARMRST among them (the debugger does not
+	// hold or release the ARM7).
 	virtual bool DebugWriteReg(u32 offset, u32 value) { return false; }
 
 	// The state of channel 0..63 at this moment. No side effects. Returns false for any other channel

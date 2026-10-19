@@ -37,8 +37,7 @@ static const Register dc_regs[] = {
 	{ "BUILD",  0, 0, kNoAddr, MakeKey(kSrcText, kTextBuild) },
 };
 
-// A node lists the events this build raises. EV_DEBUGGER_DSP_FORCED names this node and is not listed: nothing
-// raises it (per-sample forcing of the DSP is transitional and not built).
+// A node lists the events this build raises.
 static const uint8_t dc_events[] = { EV_SYSTEM_RESET, EV_SYSTEM_STATE, EV_DEBUGGER_ENGINE, EV_DEBUGGER_NOTE };
 
 /*
@@ -578,17 +577,32 @@ static const char* const arm7_actions[] = { "arm7-disassembly", "arm7-memory", "
 static const char* const sgc_actions[]  = { "sgc" };
 
 /*
-	dc.aica.dsp. STEP is the program step that executes next; MDEC_CT is the counter that counts down from the
-	ring buffer length; RBP and RBL are the fields of the common register 0x2804 (12 and 2 bits of it).
-	The widths are those of the registers: MDEC_CT has 16 bits on the hardware. The emulator keeps the counter
-	as a 32-bit value and reloads it with the ring buffer length, which can be 0x10000, so the register shows
-	the counter modulo 2^16 and can read 0x0000 for one sample.
+	dc.aica.dsp. STEP is the program step that executes next; MDEC_CT is the counter of the ring buffer, which
+	counts down once a sample; RBP and RBL are fields of the word of 0x2804 as the DSP uses it
+	(DspDebugState::rbpl), 12 and 2 bits of it.
+	The widths are those of the registers: MDEC_CT has 16 bits on the hardware, and the DSP core keeps it in 16
+	bits, free running: it wraps from 0 to 0xFFFF and is never reloaded with the length of the ring.
+	Behind them the datapath of the DSP core, each a field of DspDebugState in the width of its register: ACC
+	and Y_REG are signed, and a value is given as its bits under the width (FormatValue); the read latch and its
+	copy, what an IWT stores (MEMVAL), the NOFL of the last two steps and the MIXS bank the DSP reads. They are
+	what a continuation of the DSP from a stop needs, and they are read-only, as every row of a device is.
+	Between two samples STEP reads 0; at a stop inside the DSP phase of a sample it is the step in front of
+	which the debugger suspended it.
 */
 static const Register dsp_regs[] = {
-	{ "STEP",     8, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspStep) },
-	{ "MDEC_CT", 16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspMdecCt) },
-	{ "RBP",     16, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbp) },
-	{ "RBL",      8, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbl) },
+	{ "STEP",        8, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspStep) },
+	{ "MDEC_CT",    16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspMdecCt) },
+	{ "RBP",        16, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbp) },
+	{ "RBL",         8, 0,            0x00702804, MakeKey(kSrcDsp, kDspRbl) },
+	{ "ACC",        26, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspAcc) },
+	{ "Y_REG",      24, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspYReg) },
+	{ "FRC_REG",    13, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspFrcReg) },
+	{ "ADRS_REG",   12, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspAdrsReg) },
+	{ "LATCH",      16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspLatch) },
+	{ "LATCH_COPY", 16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspLatchCopy) },
+	{ "MEMVAL",     16, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspMemval) },
+	{ "NOFL_PIPE",   2, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspNoflPipe) },
+	{ "MIXS_BANK",   1, kRegComputed, kNoAddr,    MakeKey(kSrcDsp, kDspMixsBank) },
 };
 
 static const char* const dsp_actions[] = { "dsp-disassembly" };
@@ -596,7 +610,8 @@ static const char* const dsp_actions[] = { "dsp-disassembly" };
 /*
 	The register file of the AICA, by field. A register of the file is a word of 16 bits in the low half of four
 	bytes; addr is the area 0 address of the word a row is in (of its first word, for a row of two). The rows are
-	read through AICA::DebugReadRegs, which gives the file as a read by the SH4 delivers it and changes nothing.
+	read through AICA::DebugReadRegs, which gives the file as a read by the SH4 delivers it and changes nothing,
+	but for the word of 0x2804 (below).
 
 	Names are those of the data sheet, which are the members of the structs of hw/aica (CommonData_struct in
 	aica.h, ChannelCommonData in sgc_if.cpp) in upper case, without the '$' of two of them. A quantity that the
@@ -613,6 +628,8 @@ static const char* const dsp_actions[] = { "dsp-disassembly" };
 /*
 	dc.aica.common: the fields of the 23 words of the common block, 0x2800 to 0x2C00.
 
+	  RBP, RBL, TESTB0      the word of 0x2804 as the DSP uses it (DspDebugState::rbpl, DSP::DebugGetState), not
+	                        what a read by the SH4 gives: the two are equal while the old DSP runs
 	  MIEMP, MOEMP          set, as every read has them
 	  EG, SGC, LP, CA       of the channel MSLC selects, worked out at the read; the read of the debugger does not
 	                        clear the loop flag LP, as a read by the guest does

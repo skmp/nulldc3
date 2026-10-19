@@ -39,8 +39,9 @@ Where a decision changes what a package already implemented, the package is name
    verified"). `--only` narrows the selection and never turns an empty result into a success. The gates are invoked as
    `npm run contract -- --url ws://127.0.0.1:<port>/ws --profile emulator --elf <path> --milestone M1` (M3 and M4 alike; the
    M2 gate is two runs: the second is `--elf <dsptest.elf> --milestone M2 --only S00,S16` against an emulator started with
-   the sounding guest, with its two required notes — `M2-ROUND.md` M2-D34; the M3 DSP part is a further run with the DSP
-   test program).
+   the sounding guest, with its two required notes — `M2-ROUND.md` M2-D34; the M3 gate is two runs, the second
+   `--elf <dsptest.elf> --milestone M3 --dsp-program` (S00, S17, S21, and `--only S00,S21`), and the M2 gate's second run
+   is made again on the changed guest — `M3-ROUND.md` M3-D32).
 10. **Bounds are probed**: the 1 MiB inbound message bound (a larger message closes the connection with 1009 or is answered with
     an error; the server stays up), next to the bounds already probed.
 11. **`control.pause {target}`**: the target is ignored when it is one of `sh4`, `arm7`, `dsp` — also when the server does not
@@ -61,8 +62,10 @@ Where a decision changes what a package already implemented, the package is name
     only data is cleared.
 20. **Repeated refusals** are shown once with a count, not as a stack of identical notices.
 21. `Target.memory: false` is pinned with a scripted server (no real server has a target without memory that owns a memory panel).
-22. `state.getDisassembly` for `dsp`: `bytes` is the step's four MPRO words as 16 hex digits; widths of `dc.aica.dsp` registers:
-    `STEP` 8, `MDEC_CT` 16, `RBP` 16, `RBL` 8.
+22. `state.getDisassembly` for `dsp`: `bytes` is the step's four MPRO words as 16 hex digits; the widths of the thirteen
+    registers of `M3-ROUND.md` M3-D25 (`STEP` 8, `MDEC_CT` 16, `RBP` 16, `RBL` 8, `ACC` 26, `Y_REG` 24, `FRC_REG` 13,
+    `ADRS_REG` 12, `LATCH` 16, `LATCH_COPY` 16, `MEMVAL` 16, `NOFL_PIPE` 2, `MIXS_BANK` 1) are normative for every server
+    that lists one of them, the nine of M3 required under the M3 gate.
 
 ## B. Emulator side (sections 2 and 6)
 
@@ -78,8 +81,9 @@ Where a decision changes what a package already implemented, the package is name
 25. **Backends** (project owner, 2026-10-08): only the x64 and arm64 JITs and the interpreter exist. The breakpoint fallback
     concerns arm64 only (until it implements the check) and, later, new ports. There is **no user-facing interpreter choice**;
     `dc.timing.SH4_BACKEND` / `SH4_DEBUG_ENGINE` and the fallback notice stay, because they tell what executed.
-26. **Per-sample forcing (2.5.5) is transitional**: the DSP is always on in nullDC 3 and the DSP-less batch path is removed when
-    the one DSP core is wired in (PLAN T5.0); from then on nothing is forced and the capability `dsp-forced` does not exist.
+26. **Forcing was never built; its names went with header revision 7** (2.5.5): the DSP is always on in nullDC 3 and the
+    DSP-less batch path was removed when the one DSP core was wired in (PLAN T5.0; W1 and W2 of the M3 round); nothing is
+    forced, R7 removed `NOTICE_DSP_FORCED` and `EV_DEBUGGER_DSP_FORCED`, and F4a the capability `dsp-forced`.
 27. **The server is the control surface, not only a debugger** (PLAN track 10): it works with no game loaded (already so), its
     config keys stay under `Debugger:` for now, and nothing in the core may assume that a client is a debugging session. In
     automated runs (headless, or any `Exit.*` key) the server is off unless `Debugger:Enabled` is set explicitly. Save states
@@ -111,15 +115,16 @@ and passed. Their verifiers left these points for the design owner; the answers 
     CPU), which is a question for the AICA / ARM7 tier work and a console measurement, not for the debugger. The emulator
     gains the register as an integrator's correction before E5 (`dbg_regs_tables.cpp`, `dbg_regs.cpp` and their tests);
     the mock gains it with the runner follow-up.
-32. **The widths of `dc.aica.dsp`** (`STEP` 8, `MDEC_CT` 16, `RBP` 16, `RBL` 8; decision 22) are normative for every server
-    that lists those registers: 2.8's list of what is normative gains them, and S01 checks the width of each one it finds.
+32. **The widths of `dc.aica.dsp`**: the widths of the thirteen registers of `M3-ROUND.md` M3-D25 (decision 22) are
+    normative for every server that lists one of them, the nine of M3 required under the M3 gate: 2.8's list of what is
+    normative has them, and S01 checks the width of each one it finds.
 33. **Second-level nodes without registers** (`dc.sh4`, `dc.holly`, `dc.aica`, `dc.system`) is the emulator's choice, not
     contract; the runner does not check it.
 34. **The gates are run with the default `TickMs` and `FullTickEvery`**; the contract's time bounds are written for them.
     "Only running ticks for 600 ms" (S06, S07) asks for no paused tick in the window and nothing else: the runner's demand
     for two ticks inside it goes.
-35. **S17 and `state.getMemoryBinary`**: package F4 gives the mock the method together with the scenario part, so the mock
-    keeps passing S17 without `--milestone` (5.5.3 stays as written; 4.5 says so).
+35. **S17 and `state.getMemoryBinary`**: package F4a gave the mock the method with the scenario part, so the mock kept
+    passing S17 without `--milestone` (5.5.3; 4.5 says so).
 36. **S18**: the `icache` / `ocache` tables have rows, or no rows and a note (3.3: a tier with a cache model has rows).
     **S16**: an ARM7 step asserts `stopId`, `reason` and no running tick; the PC is compared only on a line that is not
     control flow, as S04 does.
@@ -134,9 +139,9 @@ and passed. Their verifiers left these points for the design owner; the answers 
 40. **Focus over a reconnect**: a row control gets the focus back only while the focus is on the page body; a focus the
     user moved during the outage stays where they put it.
 41. **Toolbar alignment is not contract.**
-42. **`tests/debugger/regs`, the event listing**: every row of `dbg_events.h` is listed by exactly one node, except
-    `EV_DEBUGGER_DSP_FORCED`, which is listed by none (replaces "at most once" of 6.1.1 item 2, which no longer noticed an
-    event dropped from its node).
+42. **`tests/debugger/regs`, the event listing**: every row of `dbg_events.h` is listed by exactly one node (revision 7
+    removed `EV_DEBUGGER_DSP_FORCED`, the one row that none listed; this replaces "at most once" of 6.1.1 item 2, which no
+    longer noticed an event dropped from its node).
 43. **`tests/debugger/sh4bp`, the "Per slice" paragraph**: the two stand-ins of that directory keep the latch test in front
     of the attention word (the B11 cost was measured on that form); the README says so instead of claiming the order of
     `slice_end()`.

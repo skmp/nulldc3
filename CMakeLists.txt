@@ -41,6 +41,8 @@ add_definitions(/DSCRIPTING)
 set(d_core ${reicast_core_path})
 
 file(GLOB_RECURSE hw_SRCS	${d_core}/hw/*.cpp			${d_core}/hw/*.h)
+# the C interface of the DSP core is the playground's (its wasm build), not the emulator's
+list(FILTER hw_SRCS EXCLUDE REGEX "/hw/aica/dsp_core/wasm/")
 file(GLOB_RECURSE lxdream_SRCS	${d_core}/gpl/lxdream/*.cpp			${d_core}/gpl/lxdream/*.h)
 
 file(GLOB cfg_SRCS			${d_core}/cfg/*.cpp			${d_core}/cfg/*.h)

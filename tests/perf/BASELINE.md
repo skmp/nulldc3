@@ -8,7 +8,7 @@ not says so.
 |---|---|
 | program | `2ndmix.elf` (KallistiOS 2.2.2 example), booted under reios |
 | length | 60 emulated seconds per run (3596 vblanks), 5 runs per row, one after the other |
-| settings | `audio:backend=none`, `config:Dreamcast.RTC=946684800`, everything else default: the "fast" timing of today, `Dynarec.idleskip` on, ARM7 and DSP interpreters |
+| settings | `audio:backend=none`, `config:Dreamcast.RTC=946684800`, everything else default: the "fast" timing of that tree, `Dynarec.idleskip` on, the ARM7 interpreter, and the sound in batches of 32 samples without the DSP (the default of that tree, `config:aica.NoBatch=no`). The tree has had one way to make the sound since the M3 round: sample by sample with the DSP core, which these rows do not have |
 | emulators | the tree at `0f571cf7`, built RelWithDebInfo with g++ 13.3 by the tests project |
 | machine | AMD Ryzen 9 3900X (12 cores, 24 threads), Linux 6.18.33.2-microsoft-standard-WSL2 |
 | measured | 2026-10-05 between 16:53 and 17:00, during the verification of that tree |

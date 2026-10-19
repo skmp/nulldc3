@@ -1,0 +1,92 @@
+# The DSP program of the sounding guest (README.md, "The DSP"), in the syntax of the DSP playground of the devtools
+# UI. gen.sh assembles it into dsptest_dsp.inc, and every MPRO line is the line the emulator's disassembler prints
+# for the four words of its step. _start loads it while it holds the ARM7, between the first tick of the AICA and
+# the second; its table sets RBP 0x40 and RBL 0 (a ring of 8192 words at 0x20000 of the wave memory), EFSDL 10 for
+# EFREG[0] and EFREG[1], and ISEL 3 with IMXL 15 for the first channel, whose send is MIXS[3] (dsptest.s).
+#
+# TEMP[k] below is TEMP[k + MDEC_CT], which moves on by one every sample: what a step writes to TEMP[k] in one
+# sample is TEMP[k + 1] in the next. The same holds for the ring (TABLE 0): MADRS[i] + 1 is the word MADRS[i] was
+# one sample earlier. The memory steps are odd and below 100; each IWT is two steps behind an odd MRD; every word
+# the program writes to the wave memory is read back into MEMS.
+#
+#   c  a counter, 0x100 less every sample, in TEMP[0], and its word (bits 23:8) in the ring at MADRS[0]
+#   r  that word read back one sample later: MEMS[3], as it is (NOFL)
+#   d  a delay line in the float format of the wave memory: written at MADRS[1], read back one sample later into
+#      MEMS[2]
+#   x  the send of the first channel, MIXS[3]
+#   y  x through a filter of one pole in TEMP[5]
+#   t  a word of a table beyond the ring (TABLE 1) at MADRS[2] + ADRS_REG, ADRS_REG being d[23:16] (-128 to 127):
+#      written in the float format and read back in the same sample into MEMS[4]
+#   m  the two outputs together, in the ring at MADRS[3] (NOFL), read back one sample later into MEMS[5]
+#   p  a tap of the ring at MADRS[0] + ADRS_REG, into MEMS[6] as it is: for an ADRS_REG of 0 or more the word of c
+#      ADRS_REG samples ago, for one below 0 a word of m from 7552 to 7679 samples ago (0 until the ring has gone
+#      round once). Which word it reads is what ADREB adds, sign extended from 12 bits
+#
+# EFREG[0] does not depend on x: c, d, r, t and what the shifter makes of them. EFREG[1] is the path of x. m has
+# both, and so has p.
+
+# the counter's step: -4096 (-1.0) times MEMS[0] = 0x000100
+COEF[0] = 0x8000
+MEMS_H[0] = 0x0001
+# 4095 / 4096
+COEF[1] = 0x7FF8
+# 0.5, -0.25, 0.125, 0.25, 0.75
+COEF[3] = 0x4000
+COEF[4] = 0xE000
+COEF[5] = 0x1000
+COEF[6] = 0x2000
+COEF[7] = 0x6000
+# COEF[9] is 0: the product with EXTS is 0, whatever EXTS holds
+COEF[11] = 0x2000
+# -0.125, 0.5
+COEF[13] = 0xF000
+COEF[16] = 0x4000
+
+# the ring: c, d, m; and 0x4000, beyond the ring, for the table t (TABLE 1)
+MADRS[0] = 0x0000
+MADRS[1] = 0x0100
+MADRS[2] = 0x4000
+MADRS[3] = 0x0200
+
+# ACC = TEMP[1] - MEMS[0]: c of this sample, from c of the one before
+MPRO[0] = TRA:1 XSEL YSEL:1
+# SHIFT 3 (cut to 24 bits): TEMP[0] = c, the ring at MADRS[0] = c[23:8] (NOFL); FRC_REG = c[11:0], ADRS_REG = c[23:12];
+# ACC = TEMP[1] * 4095 / 4096 + TEMP[1], about twice c of the sample before
+MPRO[1] = TRA:1 TWT YSEL:1 MWT ADRL FRCL SHIFT:3 NOFL
+# SHIFT 0: TEMP[2] = twice c, saturated once that is out of 24 bits; ACC = TEMP[0] * FRC_REG / 4096 + TEMP[0]
+MPRO[2] = TWT TWA:2
+# SHIFT 2: TEMP[3] = twice that, cut to 24 bits; ADRS_REG = INPUTS[23:16] of d (MEMS[2]), for the rest of the sample;
+# the ring at MADRS[0] + 1, r, into the latch (NOFL: the IWT two steps on stores it as it is); ACC = d * 0.5 + TEMP[2]
+MPRO[3] = TRA:2 TWT TWA:3 XSEL YSEL:1 IRA:2 MRD ADRL SHIFT:2 NOFL NXADR
+# SHIFT 1: TEMP[4] = twice ACC, saturated; FRC_REG = its bits 23:11; ACC = TEMP[3] * -0.25 - ACC
+MPRO[4] = TRA:3 TWT TWA:4 YSEL:1 FRCL SHIFT:1 NEGB BSEL
+# MEMS[3] = r; the ring at MADRS[1] = ACC, packed into the float format: d; Y_REG = the r of the sample before (INPUTS
+# reads MEMS before the IWT); ACC = that r * 0.125 + ACC
+MPRO[5] = XSEL YSEL:1 IRA:3 IWT IWA:3 MWT YRL BSEL MASA:1
+# Y_REG = x (INPUTS from MIXS[3]); ACC = x * 0.25
+MPRO[6] = XSEL YSEL:1 IRA:35 YRL ZERO
+# the ring at MADRS[1] + 1, d, into the latch; ACC = TEMP[6] * 0.75 + ACC: y = 0.75 y of the sample before + 0.25 x
+MPRO[7] = TRA:6 YSEL:1 MRD BSEL MASA:1 NXADR
+# TEMP[5] = y; ACC = TEMP[0] * Y_REG[23:11] / 4096: c times x
+MPRO[8] = TWT TWA:5 YSEL:2 ZERO
+# MEMS[2] = d, unpacked from the float format; the ring at MADRS[3] + 1, m of the sample before, into the latch
+# (NOFL); INPUTS from EXTS[0], times COEF 0, + ACC
+MPRO[9] = XSEL YSEL:1 IRA:48 IWT IWA:2 MRD BSEL NOFL MASA:3 NXADR
+# ACC = TEMP[5] * Y_REG[15:4] / 4096 + ACC: y times x
+MPRO[10] = TRA:5 YSEL:3 BSEL
+# EFREG[1] = ACC[23:8], the path of x; MEMS[5] = m; the ring at MADRS[0] + ADRS_REG (ADREB), p, into the latch
+# (NOFL); ACC = d * 0.25 + TEMP[4]
+MPRO[11] = TRA:4 XSEL YSEL:1 IRA:2 IWT IWA:5 MRD EWT EWA:1 NOFL ADREB
+# Y_REG = r, which is not x; ACC = r * FRC_REG / 4096 + ACC
+MPRO[12] = XSEL IRA:3 YRL BSEL
+# MEMS[6] = p; TABLE 1: the word MADRS[2] + ADRS_REG = ACC, packed: t; ACC = TEMP[0] * -0.125 + ACC: c
+MPRO[13] = YSEL:1 IWT IWA:6 TABLE MWT BSEL MASA:2 ADREB
+# ACC = TEMP[3] * Y_REG[23:11] / 4096 + ACC: twice twice c times r
+MPRO[14] = TRA:3 YSEL:2 BSEL
+# TABLE 1: the word MADRS[2] + ADRS_REG, t, into the latch; ACC = MEMS[4] * Y_REG[15:4] / 4096 + ACC: the t of the
+# sample before times r
+MPRO[15] = XSEL YSEL:3 IRA:4 TABLE MRD BSEL MASA:2 ADREB
+# EFREG[0] = ACC[23:8], saturated: c, d, r, t and nothing of x; ACC = TEMP[5] * 0.5 + ACC
+MPRO[16] = TRA:5 YSEL:1 EWT BSEL
+# MEMS[4] = t, unpacked from the float format; the ring at MADRS[3] = ACC[23:8], m (NOFL)
+MPRO[17] = IWT IWA:4 MWT NOFL MASA:3

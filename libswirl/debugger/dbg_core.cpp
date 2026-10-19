@@ -13,6 +13,7 @@
 #include "dbg_mem.h"
 #include "dbg_net.h"
 #include "dbg_regs.h"
+#include "dbg_sgc.h"
 #include "dbg_symbols.h"
 #include "dbg_webui.h"
 
@@ -43,7 +44,8 @@
 	Who does what
 	  (N)  the network thread calls the handler, which only puts what it got into the queue of (C)
 	  (C)  takes a message, parses and validates it, and reaches guest state and the tables through
-	       dbg::emu::Call. It owns the timers: the periodic tick, the grace period after the last client left
+	       dbg::emu::Call. It owns the timers: the periodic tick, the capture's deadline, the grace period after
+	       the last client left
 	  (E)  runs the closures of those calls and the run-state listener; both read and change the tables and
 	       build ticks. With no emulator thread the caller of a call runs its closure itself, under L, and so
 	       does the thread that changes the lifetime for the listener
@@ -51,10 +53,12 @@
 	The one rule: the tables below (breakpoints, watches, categories) are touched inside calls and in the
 	listener only. What (C) keeps for itself (the open clients, the timers) has a lock of its own, a leaf.
 
-	Order. A tick is handed to the server in the place that built it, a call or the listener, and those run
-	one at a time, so ticks reach a client in the order they were built. The response of debugger.describe is
-	handed over inside the same call as its tick, directly in front of it. Every other response is sent by
-	(C) when its call has returned.
+	Order. A tick is handed to the server in the place that built it, a call or the listener, and those run one at a
+	time, so ticks reach a client in the order they were built. The response of debugger.describe is handed over inside
+	the same call as its tick, directly in front of it. Every other response is sent by (C) when its call has returned,
+	and a binary frame behind the response it belongs to, to that client only (a tick may come between the two: a
+	client pairs a frame with its response by its binaryId). The response of state.recordSgcFrames is deferred: (C)
+	sends it when the capture's notice comes (below, "The capture's deferred response").
 
 	No client is a debugging session: connecting stops nothing. What depends on a client being connected is
 	the event gates, the activity of breakpoints with the grace period, and the periodic tick; all of them
@@ -364,7 +368,7 @@ void PushPresence()
 // Inside a table call that changed a breakpoint: the enabled sets, all of them, and what follows them
 void PushBreakpoints()
 {
-	std::vector<u32> sh4_ids, sh4_addrs, arm7_ids, arm7_addrs, event_ids;
+	std::vector<u32> sh4_ids, sh4_addrs, arm7_ids, arm7_addrs, dsp_ids, dsp_steps, event_ids;
 	std::vector<u8> events;
 
 	for (const auto& entry : breakpoints)
@@ -389,10 +393,17 @@ void PushBreakpoints()
 			arm7_ids.push_back(bp.id);
 			arm7_addrs.push_back(bp.address);
 		}
+		else if (bp.target == Target::Dsp)
+		{
+			// the address of a code breakpoint of the DSP is its step, 0..127
+			dsp_ids.push_back(bp.id);
+			dsp_steps.push_back(bp.address);
+		}
 	}
 
 	emu::SetSh4Breakpoints(sh4_ids.data(), sh4_addrs.data(), (u32)sh4_ids.size());
 	emu::SetArm7Breakpoints(arm7_ids.data(), arm7_addrs.data(), (u32)arm7_ids.size());
+	emu::SetDspBreakpoints(dsp_ids.data(), dsp_steps.data(), (u32)dsp_ids.size());
 	emu::SetEventBreakpoints(event_ids.data(), events.data(), (u32)event_ids.size());
 
 	PushPresence();
@@ -406,6 +417,8 @@ std::atomic<net::Server*> server { nullptr };
 struct ClientEntry {
 	u32 id;
 	bool needsFull;		// a periodic tick was not queued for it: the next tick it is sent is a full one
+	u32 binaryId;		// the binaryId of the last binary frame it was sent: per connection from 1, one counter for
+						// the frames of every kind (design 3.4)
 };
 
 std::mutex& clients_lock = *new std::mutex();									// a leaf
@@ -416,6 +429,13 @@ std::atomic<u32> tick_id { 0 };
 // For the selftest, whose session has no server: what takes the ticks that would be broadcast (SetTickSinkForTest)
 std::atomic<void (*)(const std::string& tick)> tick_sink { nullptr };
 
+// For the selftest, whose session has no server: what takes what would be sent to one client, a response or a
+// binary frame (SetSendSinkForTest)
+std::atomic<void (*)(u32 client, const std::string& message, bool binary)> send_sink { nullptr };
+
+// The selftest's own requests (client 0, HandleRequestText) have no connection: the counter of their binaryIds
+u32 selftest_binary_id;
+
 u32 tick_ms = kDefaultTickMs;
 u32 full_tick_every = kDefaultFullTickEvery;
 
@@ -423,8 +443,63 @@ void SendTo(u32 client, const std::string& text)
 {
 	net::Server* s = server.load();
 
-	if (s != nullptr && client != 0)
-		s->SendText(client, text);
+	if (s != nullptr)
+	{
+		if (client != 0)
+			s->SendText(client, text);
+	}
+	else if (auto sink = send_sink.load())
+	{
+		sink(client, text, false);
+	}
+}
+
+void SendBinaryTo(u32 client, std::string bytes)
+{
+	net::Server* s = server.load();
+
+	if (s != nullptr)
+	{
+		if (client != 0)
+			s->SendBinary(client, std::move(bytes));
+	}
+	else if (auto sink = send_sink.load())
+	{
+		sink(client, bytes, true);
+	}
+}
+
+// The binaryId of the next binary frame to a client: per connection from 1, one counter for the frames of every
+// kind. A client that is gone gets 0, the id of nobody: what it is sent is dropped
+u32 NextBinaryId(u32 client)
+{
+	std::lock_guard<std::mutex> lock(clients_lock);
+
+	for (ClientEntry& c : clients)
+	{
+		if (c.id == client)
+			return ++c.binaryId;
+	}
+
+	return client == 0 ? ++selftest_binary_id : 0;
+}
+
+// The 16 bytes in front of the payload of a binary frame (design 3.4): "NDB3", then kind, binaryId and
+// payloadBytes, each a little-endian u32. frame has room for them at its start
+void PutBinaryHeader(std::string& frame, u32 kind, u32 binaryId, u32 payloadBytes)
+{
+	const u32 words[3] = { kind, binaryId, payloadBytes };
+
+	frame[0] = 'N';
+	frame[1] = 'D';
+	frame[2] = 'B';
+	frame[3] = '3';
+
+	for (u32 w = 0; w < 3; w++)
+	{
+		for (u32 b = 0; b < 4; b++)
+			frame[4 + w * 4 + b] = (char)(u8)(words[w] >> (8 * b));
+	}
 }
 
 /*
@@ -583,9 +658,6 @@ std::string NoticeText(u32 notice)
 	if (notice & NOTICE_ARM7_FALLBACK)
 		line("ARM7 runs on the interpreter fallback: timing differs");
 
-	if (notice & NOTICE_DSP_FORCED)
-		line("the per-sample DSP path is forced on by the debugger");
-
 	return text;
 }
 
@@ -605,7 +677,7 @@ std::string BuildTick(const emu::RunState& state, bool full)
 
 	JsonOut w;
 
-	// the 2940 registers of the tree are 124 KiB of a full tick, the four base paths 6 KiB
+	// the 2949 registers of the tree are 124 KiB of a full tick, the four base paths 6 KiB
 	w.text.reserve(full ? 144 * 1024 : 12 * 1024);
 
 	w.BeginObject();
@@ -951,6 +1023,10 @@ std::string BuildDescribe(const emu::RunState& state)
 	w.String("register-write");
 	w.String("reset");
 
+	// milestone M3: each with its method (state.recordSgcFrames and state.getSgcFrameData; state.getMemoryBinary)
+	w.String("sgc-capture");
+	w.String("memory-binary");
+
 	// what executes SH4 breakpoints and steps, once a backend is selected
 	if (machine)
 	{
@@ -1034,14 +1110,18 @@ struct Request {
 	const json* params;		// an object
 };
 
-// What a method answers. code 0: `result`, the JSON text of the result; otherwise the error, which the
-// dispatcher puts on the channel of the method
+// What a method answers. code 0: `result`, the JSON text of the result, and `binary`, a binary frame (header and
+// payload) that goes to the client directly behind the response; otherwise the error, which the dispatcher puts on
+// the channel of the method, and nothing behind it. deferred: no response now, the method answers later
+// (state.recordSgcFrames)
 struct Outcome {
 	int code = 0;
 	std::string message;
 	std::string result = "{}";
 	std::string response;		// sent by the method itself (debugger.describe): the text
 	bool sent = false;
+	std::string binary;
+	bool deferred = false;
 };
 
 void Fail(Outcome& out, int code, const std::string& message)
@@ -1136,6 +1216,126 @@ int RunCall(emu::CallClass cls, std::function<void()> fn)
 	}
 
 	return emu::Call(cls, std::move(fn));
+}
+
+/*
+	The capture's deferred response (M3-ROUND, M3-D28). The response of state.recordSgcFrames is sent when the
+	capture is complete, and (C) answers one message at a time: the method makes its call and leaves a record, and
+	the notice of dbg::sgc (dbg_sgc.h, SetCompletionNotice) queues a message for (C). The notice names no capture;
+	what pairs it with its request:
+	  - a request whose call armed a capture (sgc::Arm returned 0) leaves the pending record {client, id,
+	    deadline} before (C) takes its next message, and one notice owed;
+	  - a notice answers the pending record, if one exists, and clears it; one that finds none answers nothing;
+	  - while a notice is owed a new state.recordSgcFrames is answered -32003, also when no capture records any
+	    more (its notice is queued);
+	  - the core does not answer a capture it armed: at the deadline it cancels the capture in a CC_TABLE call
+	    (sgc::Cancel(kErrCaptureTimeout)), and the notice answers: -32014, or the result of a capture that was
+	    complete in front of the call. Only when that call is not taken (kErrBusy) does (C) answer -32014 itself
+	    and clear the record; the notice stays owed, and the cancel is made again kRetryMs later while it is
+	    owed. No capture can be armed meanwhile, so it cancels no other.
+	All of it is (C)'s, or the dispatching thread's in a session without the core thread (where nothing takes a
+	notice: a selftest that arms a capture through the core starts the core thread, StartForTest). What a
+	selftest reads of it from another thread is atomic.
+*/
+struct CaptureRequests {
+	bool pending = false;				// the pending record
+	u32 client = 0;
+	std::string id;
+	Clock::time_point deadline;
+	bool deadlineArmed = false;			// the deadline of the pending record has not come
+
+	bool cancelOwed = false;			// the cancel of the deadline was not taken: it is made again at cancelAt
+	Clock::time_point cancelAt;
+};
+
+CaptureRequests& capture = *new CaptureRequests();
+
+std::atomic<u32> notices_owed { 0 };
+
+// For the selftest (dbg_core_private.h)
+std::atomic<u32> capture_timeout_ms { kCaptureTimeoutMs };
+std::atomic<void (*)()> before_arm { nullptr };
+std::atomic<void (*)()> before_table_call { nullptr };
+std::atomic<bool> pending_seen { false };
+std::atomic<u32> notices_taken { 0 }, notices_unpaired { 0 }, deadlines_made { 0 }, deadlines_taken { 0 }, deadlines_untaken { 0 },
+	answered_by_core { 0 }, cancels_again { 0 };
+
+// Answers the pending record, which goes
+void AnswerCapture(int answer)
+{
+	const std::string text = ResultResponse(capture.id, answer == 0 ? std::string("{}") : InBandError(answer, ""));
+	const u32 client = capture.client;
+
+	capture.pending = false;
+	capture.deadlineArmed = false;
+	capture.id.clear();
+	pending_seen.store(false);
+
+	SendTo(client, text);
+}
+
+// A notice of dbg::sgc, as (C) takes it from its queue
+void TakeNotice(int answer)
+{
+	notices_taken++;
+
+	if (notices_owed.load() != 0)
+		notices_owed--;
+
+	if (notices_owed.load() == 0)
+		capture.cancelOwed = false;
+
+	if (capture.pending)
+		AnswerCapture(answer);
+	else
+		notices_unpaired++;
+}
+
+// The deadline of the pending record: the capture is cancelled, and its notice answers
+void CaptureDeadline()
+{
+	capture.deadlineArmed = false;
+
+	deadlines_made++;
+
+	const int rv = RunCall(emu::CC_TABLE, [] { sgc::Cancel(kErrCaptureTimeout); });
+
+	if (rv == 0)
+	{
+		deadlines_taken++;
+		return;
+	}
+
+	// not taken: the core answers, and the cancel is made again while the notice is owed
+	deadlines_untaken++;
+
+	if (capture.pending)
+	{
+		answered_by_core++;
+		AnswerCapture(kErrCaptureTimeout);
+	}
+
+	if (notices_owed.load() != 0)
+	{
+		capture.cancelOwed = true;
+		capture.cancelAt = Clock::now() + std::chrono::milliseconds(kRetryMs);
+	}
+}
+
+void CancelAgain()
+{
+	capture.cancelOwed = false;
+
+	if (notices_owed.load() == 0)
+		return;
+
+	cancels_again++;
+
+	if (RunCall(emu::CC_TABLE, [] { sgc::Cancel(kErrCaptureTimeout); }) != 0)
+	{
+		capture.cancelOwed = true;
+		capture.cancelAt = Clock::now() + std::chrono::milliseconds(kRetryMs);
+	}
 }
 
 /*
@@ -1402,23 +1602,18 @@ struct MemoryJob {
 	const TargetInfo* target;
 	u32 address;
 	u32 length;
-	std::vector<u8> data;
+	bool binary = false;			// state.getMemoryBinary: the bytes go into `frame`, behind its header
+	std::vector<u8> data;			// state.getMemorySlice: the bytes
+	std::string frame;				// state.getMemoryBinary: kBinaryHeaderBytes, then the bytes
 	std::vector<u8> readable;		// one bit per byte
 	u32 covered = 0;				// bytes of the range that lie at or below the target's last address
 	int code = 0;
 };
 
-void MethodGetMemorySlice(const Request& req, Outcome& out)
+// The read of a slice or of a memory binary: one CC_READ call. Unreadable bytes are 0. Fails the outcome as
+// both methods do: by the lifetime, -32004 for a target without memory, -32010 when nothing is readable
+bool ReadMemory(const std::shared_ptr<MemoryJob>& job, Outcome& out)
 {
-	auto job = std::make_shared<MemoryJob>();
-	u64 length;
-
-	if (!ParamTarget(req, out, &kTargets[0], &job->target) || !ParamAddress(req, out, &job->address)
-		|| !ParamUnsigned(req, out, "length", 1, kMaxMemorySliceBytes, &length))
-		return;
-
-	job->length = (u32)length;
-
 	int rv = RunCall(emu::CC_READ, [job] {
 		try
 		{
@@ -1430,7 +1625,19 @@ void MethodGetMemorySlice(const Request& req, Outcome& out)
 				return;
 			}
 
-			job->data.assign(job->length, 0);
+			u8* into;
+
+			if (job->binary)
+			{
+				job->frame.assign((size_t)kBinaryHeaderBytes + job->length, '\0');
+				into = (u8*)&job->frame[kBinaryHeaderBytes];
+			}
+			else
+			{
+				job->data.assign(job->length, 0);
+				into = job->data.data();
+			}
+
 			job->readable.assign((job->length + 7) / 8, 0);
 
 			// A slice does not wrap: a byte above the last address of the target is not readable. The reader
@@ -1445,7 +1652,7 @@ void MethodGetMemorySlice(const Request& req, Outcome& out)
 			u32 readable = 0;
 
 			if (job->covered != 0)
-				readable = mem::Read(t.target, job->address, job->covered, job->data.data(), job->readable.data());
+				readable = mem::Read(t.target, job->address, job->covered, into, job->readable.data());
 
 			if (readable == 0)
 				job->code = kErrNotReadable;
@@ -1457,35 +1664,34 @@ void MethodGetMemorySlice(const Request& req, Outcome& out)
 	});
 
 	if (rv != 0)
-		return Fail(out, rv);
+	{
+		Fail(out, rv);
+		return false;
+	}
 
 	if (job->code == kErrNotSupported)
-		return Unsupported(out, std::string("target ") + job->target->id + " has no memory");
+	{
+		Unsupported(out, std::string("target ") + job->target->id + " has no memory");
+		return false;
+	}
 
 	if (job->code != 0)
-		return Fail(out, job->code);
+	{
+		Fail(out, job->code);
+		return false;
+	}
 
-	JsonOut w;
+	return true;
+}
 
-	w.text.reserve((size_t)job->length * 4 + 128);
-
-	w.BeginObject();
-	w.Key("baseAddress");
-	w.Number(job->address);
-	w.Key("data");
-	w.BeginArray();
-	for (u32 i = 0; i < job->length; i++)
-		w.Number(job->data[i]);
-	w.EndArray();
-	w.Key("validity");
-	w.String("ok");
-
-	// the runs of bytes that could not be read
+// "unreadable": the runs of bytes that could not be read, as [offset, length]; left out when there are none
+void WriteUnreadable(JsonOut& w, const MemoryJob& job)
+{
 	bool any = false;
 
-	for (u32 i = 0; i < job->length; )
+	for (u32 i = 0; i < job.length; )
 	{
-		auto unreadable = [&job](u32 at) { return at >= job->covered || !(job->readable[at >> 3] & (1 << (at & 7))); };
+		auto unreadable = [&job](u32 at) { return at >= job.covered || !(job.readable[at >> 3] & (1 << (at & 7))); };
 
 		if (!unreadable(i))
 		{
@@ -1495,7 +1701,7 @@ void MethodGetMemorySlice(const Request& req, Outcome& out)
 
 		u32 end = i + 1;
 
-		while (end < job->length && unreadable(end))
+		while (end < job.length && unreadable(end))
 			end++;
 
 		if (!any)
@@ -1515,10 +1721,77 @@ void MethodGetMemorySlice(const Request& req, Outcome& out)
 
 	if (any)
 		w.EndArray();
+}
 
+void MethodGetMemorySlice(const Request& req, Outcome& out)
+{
+	auto job = std::make_shared<MemoryJob>();
+	u64 length;
+
+	if (!ParamTarget(req, out, &kTargets[0], &job->target) || !ParamAddress(req, out, &job->address)
+		|| !ParamUnsigned(req, out, "length", 1, kMaxMemorySliceBytes, &length))
+		return;
+
+	job->length = (u32)length;
+
+	if (!ReadMemory(job, out))
+		return;
+
+	JsonOut w;
+
+	w.text.reserve((size_t)job->length * 4 + 128);
+
+	w.BeginObject();
+	w.Key("baseAddress");
+	w.Number(job->address);
+	w.Key("data");
+	w.BeginArray();
+	for (u32 i = 0; i < job->length; i++)
+		w.Number(job->data[i]);
+	w.EndArray();
+	w.Key("validity");
+	w.String("ok");
+	WriteUnreadable(w, *job);
 	w.EndObject();
 
 	out.result = std::move(w.text);
+}
+
+// state.getMemorySlice with the bound of a memory binary, and the bytes in a binary frame of kind 2 behind the
+// response (M3-ROUND, M3-D36): {baseAddress, totalBytes, unreadable?, binaryId}, no validity
+void MethodGetMemoryBinary(const Request& req, Outcome& out)
+{
+	auto job = std::make_shared<MemoryJob>();
+	u64 length;
+
+	if (!ParamTarget(req, out, &kTargets[0], &job->target) || !ParamAddress(req, out, &job->address)
+		|| !ParamUnsigned(req, out, "length", 1, kMaxMemoryBinaryBytes, &length))
+		return;
+
+	job->length = (u32)length;
+	job->binary = true;
+
+	if (!ReadMemory(job, out))
+		return;
+
+	const u32 id = NextBinaryId(req.client);
+
+	PutBinaryHeader(job->frame, kBinaryMemory, id, job->length);
+
+	JsonOut w;
+
+	w.BeginObject();
+	w.Key("baseAddress");
+	w.Number(job->address);
+	w.Key("totalBytes");
+	w.Number(job->length);
+	WriteUnreadable(w, *job);
+	w.Key("binaryId");
+	w.Number(id);
+	w.EndObject();
+
+	out.result = std::move(w.text);
+	out.binary = std::move(job->frame);
 }
 
 bool SymbolCallback(void*, uint32_t addr, const char** name, uint32_t* offset)
@@ -1810,6 +2083,233 @@ void MethodGetCallstack(const Request& req, Outcome& out)
 	w.EndObject();
 
 	out.result = std::move(w.text);
+}
+
+/*
+	SGC capture (design 3.3, 3.4; M3-ROUND, M3-D27, M3-D28)
+*/
+struct FrameDataJob {
+	std::string frame;		// kBinaryHeaderBytes, then the server's capture
+	u32 frames = 0;
+	int code = 0;
+};
+
+// A read: the server's capture, which is the last one that was complete, also while another records; -32011
+// without one. The frames in a binary frame of kind 1 behind the response
+void MethodGetSgcFrameData(const Request& req, Outcome& out)
+{
+	auto job = std::make_shared<FrameDataJob>();
+
+	int rv = RunCall(emu::CC_READ, [job] {
+		try
+		{
+			u32 frames = 0;
+
+			sgc::GetState(&frames);
+
+			if (frames == 0)
+			{
+				job->code = kErrNoCapture;
+				return;
+			}
+
+			job->frame.reserve((size_t)kBinaryHeaderBytes + (size_t)frames * sgc::kBytesPerFrame);
+			job->frame.assign(kBinaryHeaderBytes, '\0');
+			job->frames = sgc::Copy(&job->frame);
+
+			if (job->frames == 0)
+				job->code = kErrNoCapture;
+		}
+		catch (...)
+		{
+			job->code = kErrInternal;
+		}
+	});
+
+	if (rv != 0)
+		return Fail(out, rv);
+
+	if (job->code != 0)
+		return Fail(out, job->code);
+
+	const u32 total = job->frames * sgc::kBytesPerFrame;
+	const u32 id = NextBinaryId(req.client);
+
+	PutBinaryHeader(job->frame, kBinarySgc, id, total);
+
+	JsonOut w;
+
+	w.BeginObject();
+	w.Key("frameCount");
+	w.Number(job->frames);
+	w.Key("channelsPerFrame");
+	w.Number(sgc::kChannelsPerFrame);
+	w.Key("bytesPerChannel");
+	w.Number(sgc::kBytesPerChannel);
+	w.Key("totalBytes");
+	w.Number(total);
+	w.Key("binaryId");
+	w.Number(id);
+	w.EndObject();
+
+	out.result = std::move(w.text);
+	out.binary = std::move(job->frame);
+}
+
+struct CaptureJob {
+	u32 frames;
+	int armed = kErrInternal;	// what sgc::Arm returned; kErrInternal while it was not called, and where it threw
+	bool refused = false;		// emu::Resume() refused behind the arm, which was cancelled again
+	bool parked = false;		// a table closure found a stop in force: the exec call is made
+	bool noThread = false;		// a table closure ran on its caller: no emulator thread exists
+};
+
+// How often a request that finds the other state than its call was made for is made again
+const int kCaptureAttempts = 8;
+
+// Armed at a stop by a CC_EXEC call, which arms the capture and the resume behind it; while running by a
+// CC_TABLE call, and nothing stops. The response is deferred: the capture's notice answers it (the core's
+// deferred response, above)
+void MethodRecordSgcFrames(const Request& req, Outcome& out)
+{
+	u64 frames = kDefaultSgcFrames;
+	bool present;
+
+	if (!ParamUnsigned(req, out, "frames", 1, kMaxSgcFrames, &frames, &present))
+		return;
+
+	// the capture before is not answered yet, or its notice has not come
+	if (notices_owed.load() != 0)
+		return Fail(out, kErrNotPaused);
+
+	for (int attempt = 0; attempt < kCaptureAttempts; attempt++)
+	{
+		// by the published lifetime, without a call
+		const Lifetime lifetime = emu::GetRunState().lifetime;
+
+		if (lifetime == Lifetime::NoMachine)
+			return Fail(out, kErrNoGame);
+
+		if (lifetime == Lifetime::Stopped)
+			return Fail(out, kErrHostStopped);
+
+		auto job = std::make_shared<CaptureJob>();
+		int rv;
+
+		job->frames = (u32)frames;
+
+		if (lifetime == Lifetime::Parked)
+		{
+			rv = RunCall(emu::CC_EXEC, [job] {
+				// Nothing leaves a call (dbg_emu.h, Call()): an allocation of the capture's buffer that fails
+				// throws in sgc::Arm, which has armed nothing then, and the resume is not armed either. -32603,
+				// with no notice owed
+				try
+				{
+					if (auto hook = before_arm.load())
+						hook();
+
+					// the capture first: a refused arm leaves no resume armed
+					job->armed = sgc::Arm(job->frames, true);
+
+					if (job->armed != 0)
+						return;
+
+					if (emu::Resume() != 0)
+					{
+						// the notice answers -32003
+						sgc::Cancel(kErrNotPaused);
+						job->refused = true;
+					}
+				}
+				catch (...)
+				{
+					job->armed = kErrInternal;
+				}
+			});
+
+			// the thread runs: made again as a table call
+			if (rv == kErrNotPaused)
+				continue;
+		}
+		else
+		{
+			if (auto hook = before_table_call.load())
+				hook();
+
+			rv = RunCall(emu::CC_TABLE, [job] {
+				// as the exec call: what sgc::Arm throws is -32603, with nothing armed. On the emulator thread this
+				// closure is in a service excursion or in the drain of the thread's exit
+				try
+				{
+					// run on its caller under L: no emulator thread exists, and nothing is armed
+					if (!emu::OnEmuThread())
+					{
+						job->noThread = true;
+						return;
+					}
+
+					// a stop is in force (the park loop runs this call): the exec call arms the capture and the
+					// resume
+					if (emu::GetRunState().lifetime == Lifetime::Parked)
+					{
+						job->parked = true;
+						return;
+					}
+
+					job->armed = sgc::Arm(job->frames, false);
+				}
+				catch (...)
+				{
+					job->armed = kErrInternal;
+				}
+			});
+
+			if (rv == 0 && job->parked)
+				continue;
+
+			if (rv == 0 && job->noThread)
+			{
+				// answered by the lifetime; a thread that started in between takes the request again
+				const Lifetime now = emu::GetRunState().lifetime;
+
+				if (now == Lifetime::NoMachine)
+					return Fail(out, kErrNoGame);
+
+				if (now == Lifetime::Stopped)
+					return Fail(out, kErrHostStopped);
+
+				continue;
+			}
+		}
+
+		if (rv != 0)
+			return Fail(out, rv);
+
+		if (job->armed == kErrNotSupported)
+			return Unsupported(out, "state.recordSgcFrames: this build has no SGC capture");
+
+		// a capture records already (-32003): it goes on; or sgc::Arm threw (-32603): nothing is armed
+		if (job->armed != 0)
+			return Fail(out, job->armed);
+
+		// Armed, also where the resume behind it was refused: the notice of the capture answers, and none may be
+		// armed until it has come
+		notices_owed++;
+
+		capture.pending = true;
+		capture.client = req.client;
+		capture.id = req.id;
+		capture.deadline = Clock::now() + std::chrono::milliseconds(capture_timeout_ms.load());
+		capture.deadlineArmed = true;
+		pending_seen.store(true);
+
+		out.deferred = true;
+		return;
+	}
+
+	// the state changed under every call that was made
+	Fail(out, kErrBusy);
 }
 
 /*
@@ -2569,6 +3069,10 @@ void Step(const Request& req, Outcome& out, StepKind kind)
 		return Fail(out, kErrCannotStep, std::string("cannot step: ") + (job->why != nullptr ? job->why : "a precondition failed"));
 
 	case kErrNotSupported:
+		// the DSP steps into only, on every backend (M3-ROUND, M3-D30)
+		if (t == Target::Dsp && kind != StepKind::Into)
+			return Unsupported(out, std::string("step over and step out of target ") + target->id);
+
 		return Unsupported(out, std::string("stepping target ") + target->id + " on this backend");
 
 	default:
@@ -2615,17 +3119,18 @@ const Method kMethods[] = {
 	{ "state.setRegister",             true,  MethodSetRegister },
 	{ "control.reset",                 true,  MethodReset },
 	// milestone M3
-	{ "state.recordSgcFrames",         true,  nullptr },
-	{ "state.getSgcFrameData",         false, nullptr },
-	{ "state.getMemoryBinary",         false, nullptr },
+	{ "state.recordSgcFrames",         true,  MethodRecordSgcFrames },
+	{ "state.getSgcFrameData",         false, MethodGetSgcFrameData },
+	{ "state.getMemoryBinary",         false, MethodGetMemoryBinary },
 	// milestone M4
 	{ "state.getTable",                false, nullptr },
 	{ "state.captureHolly",            false, nullptr },
 };
 
 struct Reply {
-	std::string text;		// empty: no answer (a notification)
+	std::string text;		// empty: no answer (a notification, or a response the method defers)
 	bool sent = false;		// the method handed it to the server itself
+	std::string binary;		// a binary frame that goes directly behind the response
 };
 
 // One message of a client. Runs on (C); in a selftest on the thread that plays it, or in place on (E)
@@ -2735,9 +3240,16 @@ Reply Dispatch(u32 client, const std::string& text)
 		reply.text = std::move(out.response);
 		reply.sent = true;
 	}
+	else if (out.deferred)
+	{
+		// answered when the capture's notice comes
+	}
 	else if (out.code == 0)
 	{
 		reply.text = ResultResponse(id, out.result);
+
+		// the frame of a result, and of nothing else
+		reply.binary = std::move(out.binary);
 	}
 	else if (method->inBand)
 	{
@@ -2755,9 +3267,10 @@ Reply Dispatch(u32 client, const std::string& text)
 	The core thread
 */
 struct Message {
-	enum Kind { Open, Close, Text } kind;
+	enum Kind { Open, Close, Text, Notice, Expire } kind;
 	u32 client;
 	std::string text;
+	int answer = 0;			// Notice: what the capture's notice hands on (dbg_sgc.h)
 };
 
 struct Queue {
@@ -2803,6 +3316,13 @@ void Enqueue(Message&& message)
 	}
 
 	queue.wake.notify_one();
+}
+
+// The notice of dbg::sgc (dbg_sgc.h, SetCompletionNotice): on (E), or under L while no emulator thread exists. It
+// only queues, for (C), which pairs it with its request (the capture's deferred response)
+void CaptureNotice(int answer)
+{
+	Enqueue({ Message::Notice, 0, std::string(), answer });
 }
 
 // The handler of the transport: on the network thread, it only queues
@@ -2994,12 +3514,21 @@ void PeriodicTick()
 	});
 }
 
+// What a request is answered with, to the client that made it: the response, then the binary frame behind it
+void Deliver(u32 client, Reply& reply)
+{
+	if (!reply.text.empty() && !reply.sent)
+		SendTo(client, reply.text);
+
+	if (!reply.binary.empty())
+		SendBinaryTo(client, std::move(reply.binary));
+}
+
 void HandleText(u32 client, const std::string& text)
 {
 	Reply reply = Dispatch(client, text);
 
-	if (!reply.text.empty() && !reply.sent)
-		SendTo(client, reply.text);
+	Deliver(client, reply);
 }
 
 // The "client" text of a describe, once per connection: one line on stdout
@@ -3061,6 +3590,10 @@ void ThreadMain()
 				until = c.syncAt;
 			if (c.releaseOwed && c.releaseAt < until)
 				until = c.releaseAt;
+			if (capture.deadlineArmed && capture.deadline < until)
+				until = capture.deadline;
+			if (capture.cancelOwed && capture.cancelAt < until)
+				until = capture.cancelAt;
 
 			queue.wake.wait_until(lock, until, [] { return queue.quit || !queue.messages.empty(); });
 
@@ -3100,6 +3633,16 @@ void ThreadMain()
 
 				HandleText(message.client, message.text);
 				break;
+
+			case Message::Notice:
+				TakeNotice(message.answer);
+				break;
+
+			case Message::Expire:
+				// the selftest's: the deadline of the pending record is now
+				if (capture.deadlineArmed)
+					capture.deadline = Clock::now();
+				break;
 			}
 		}
 
@@ -3124,7 +3667,52 @@ void ThreadMain()
 
 		if (c.releaseOwed && Clock::now() >= c.releaseAt)
 			ReleaseAgain();
+
+		if (capture.deadlineArmed && Clock::now() >= capture.deadline)
+			CaptureDeadline();
+
+		if (capture.cancelOwed && Clock::now() >= capture.cancelAt)
+			CancelAgain();
 	}
+}
+
+// The core thread, with the server or (s null) without one, for the selftest
+bool StartThread(net::Server* s)
+{
+	{
+		std::lock_guard<std::mutex> lock(queue.lock);
+
+		queue.messages.clear();
+		queue.quit = false;
+		queue.accepting = true;
+	}
+
+	c = Own();
+	capture = CaptureRequests();
+	notices_owed.store(0);
+	pending_seen.store(false);
+	server.store(s);
+
+	try
+	{
+		thread = new std::thread(ThreadMain);
+	}
+	catch (...)
+	{
+		std::lock_guard<std::mutex> lock(queue.lock);
+
+		queue.accepting = false;
+		server.store(nullptr);
+		return false;
+	}
+
+	started.store(true);
+
+	// the notice of a capture, which (C) takes
+	sgc::SetCompletionNotice(CaptureNotice);
+
+	emu::SetListener(OnRunState);
+	return true;
 }
 
 }
@@ -3149,34 +3737,7 @@ bool Start(net::Server* s)
 	if (started.load() || s == nullptr)
 		return false;
 
-	{
-		std::lock_guard<std::mutex> lock(queue.lock);
-
-		queue.messages.clear();
-		queue.quit = false;
-		queue.accepting = true;
-	}
-
-	c = Own();
-	server.store(s);
-
-	try
-	{
-		thread = new std::thread(ThreadMain);
-	}
-	catch (...)
-	{
-		std::lock_guard<std::mutex> lock(queue.lock);
-
-		queue.accepting = false;
-		server.store(nullptr);
-		return false;
-	}
-
-	started.store(true);
-
-	emu::SetListener(OnRunState);
-	return true;
+	return StartThread(s);
 }
 
 void Stop()
@@ -3184,8 +3745,10 @@ void Stop()
 	if (!started.load())
 		return;
 
-	// no invocation of the listener is in progress when this returns
+	// no invocation of the listener is in progress when this returns. A notice that comes from here on finds the
+	// queue closed
 	emu::SetListener(nullptr);
+	sgc::SetCompletionNotice(nullptr);
 
 	{
 		std::lock_guard<std::mutex> lock(queue.lock);
@@ -3242,7 +3805,13 @@ std::string BuildTickText(bool full)
 
 std::string HandleRequestText(const std::string& text)
 {
-	return Dispatch(0, text).text;
+	Reply reply = Dispatch(0, text);
+	std::string answer = reply.text;
+
+	// to the sink of the selftest, where it has one: the response, then the binary frame
+	Deliver(0, reply);
+
+	return answer;
 }
 
 std::string DescribeText()
@@ -3266,6 +3835,73 @@ u32 ActiveMaskForTest()
 void SetTickSinkForTest(void (*sink)(const std::string& tick))
 {
 	tick_sink.store(sink);
+}
+
+void SetSendSinkForTest(void (*sink)(u32 client, const std::string& message, bool binary))
+{
+	send_sink.store(sink);
+}
+
+bool StartForTest()
+{
+	if (started.load())
+		return false;
+
+	return StartThread(nullptr);
+}
+
+void TextForTest(u32 client, const std::string& text)
+{
+	// a connection of its own, for its binaryIds; it counts as no client (client_count)
+	{
+		std::lock_guard<std::mutex> lock(clients_lock);
+		bool known = false;
+
+		for (const ClientEntry& entry : clients)
+			known = known || entry.id == client;
+
+		if (!known)
+			clients.push_back({ client, false, 0 });
+	}
+
+	Enqueue({ Message::Text, client, text });
+}
+
+void SetCaptureTimeoutForTest(u32 ms)
+{
+	capture_timeout_ms.store(ms != 0 ? ms : kCaptureTimeoutMs);
+}
+
+void ExpireCaptureDeadlineForTest()
+{
+	Enqueue({ Message::Expire, 0, std::string() });
+}
+
+void SetBeforeArmForTest(void (*hook)())
+{
+	before_arm.store(hook);
+}
+
+void SetBeforeTableCallForTest(void (*hook)())
+{
+	before_table_call.store(hook);
+}
+
+CaptureCounts CaptureCountsForTest()
+{
+	CaptureCounts counts;
+
+	counts.pending = pending_seen.load();
+	counts.owed = notices_owed.load();
+	counts.notices = notices_taken.load();
+	counts.unpaired = notices_unpaired.load();
+	counts.deadlinesMade = deadlines_made.load();
+	counts.deadlinesTaken = deadlines_taken.load();
+	counts.deadlinesUntaken = deadlines_untaken.load();
+	counts.answeredByCore = answered_by_core.load();
+	counts.cancelsAgain = cancels_again.load();
+
+	return counts;
 }
 
 std::string PrintableAscii(const char* text, size_t length)

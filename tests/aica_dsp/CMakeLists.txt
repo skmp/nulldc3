@@ -12,7 +12,17 @@
 #	                      core in step and on the core alone, against the console's files
 #	aica_dsp_wasm_trace   aica.dsp.capi: the C interface of the core against the core called itself, on random
 #	                      programs and on the known-answer programs. And what aica.dsp.wasm replays on
-#	                      aica_dsp_core.wasm: wasm_test.mjs, with node
+#	                      aica_dsp_core.wasm: wasm_test.mjs, with node; and aica.dsp.wasm.devtools on the module
+#	                      the UI commits (devtools_test.mjs)
+#	aica_dsp_emu <mode>   aica.dsp.emu.<mode>: the core as the emulator's own sound chip drives it (emu_aica.h),
+#	                      against a core of the test's own (lockstep) and in the mix, the reset and the save
+#	                      state of the DSP device (state). No data needed
+#	aica_dsp_cases <case>.emu
+#	                      aica.dsp.case.<case>.emu: the cases anchored directly on the console's files on the
+#	                      emulator's sound chip, against those files
+#	aica_dsp_guest_oracle debugger.sound.oracle.dsptest.<jit|interp>: the DSP program of the sounding guest
+#	                      (tests/debugger/guest/dsptest) on the core and the caique model in lockstep, on the
+#	                      guest's schedule, against the field dsp of the emulator's line (below)
 #	aica_dsp_bench        samples a second, not a test
 #
 #	The model, the programs and the console's files are caique-rtl's and stay there: the tests are compiled with
@@ -38,7 +48,7 @@ if(NOT MSVC)
   target_compile_options(nulldc_aica_dsp_core PRIVATE -Wall -Wextra -Wconversion -Wsign-conversion -Werror)
 endif()
 
-add_library(nulldc_aica_dsp_test STATIC dsp_suite.cpp dsp_suite.h dsp_known.cpp dsp_known.h)
+add_library(nulldc_aica_dsp_test STATIC dsp_suite.cpp dsp_suite.h dsp_known.cpp dsp_known.h dsp_gen.cpp dsp_gen.h)
 target_include_directories(nulldc_aica_dsp_test PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(nulldc_aica_dsp_test PUBLIC nulldc_aica_dsp_core)
 
@@ -63,6 +73,34 @@ add_executable(aica_dsp_bench bench_main.cpp)
 target_link_libraries(aica_dsp_bench PRIVATE nulldc_aica_dsp_core)
 
 
+## The core in the emulator's sound chip ##
+#
+#	The emulator's hw/aica/aica_mmio.cpp, sgc_if.cpp and dsp.cpp, with the definitions and flags of the emulator
+#	build (tests/common/libswirl.cmake; the permissive mode this directory leaves out for the core is the
+#	emulator's), and emu_aica.cpp, what they reference of the rest of the emulator. The core is the one above
+#
+
+nulldc_add_libswirl_library(nulldc_aica_dsp_emu_units
+  SOURCES hw/aica/aica_mmio.cpp hw/aica/sgc_if.cpp hw/aica/dsp.cpp
+)
+target_sources(nulldc_aica_dsp_emu_units PRIVATE emu_aica.cpp emu_aica.h)
+target_include_directories(nulldc_aica_dsp_emu_units PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(nulldc_aica_dsp_emu_units PUBLIC nulldc_aica_dsp_core)
+
+if(NOT MSVC)
+  target_compile_options(nulldc_aica_dsp_emu_units PRIVATE -fpermissive)
+endif()
+
+add_executable(aica_dsp_emu emu_main.cpp)
+target_link_libraries(aica_dsp_emu PRIVATE nulldc_aica_dsp_emu_units nulldc_aica_dsp_test)
+target_compile_definitions(aica_dsp_emu PRIVATE NULLDC_BASELINE="${nulldc_dsp_baseline}")
+
+foreach(mode lockstep state)
+  add_test(NAME aica.dsp.emu.${mode} COMMAND aica_dsp_emu ${mode} --strict)
+  set_tests_properties(aica.dsp.emu.${mode} PROPERTIES TIMEOUT 300)
+endforeach()
+
+
 ## Against the caique model and its console captures ##
 
 set(nulldc_dsp_diff_sets random sparse directed)
@@ -72,6 +110,9 @@ set(nulldc_dsp_cases dsp_basic dsp_mem dsp_mem2 dsp_mem3 dsp_wslot dsp_unpack ds
 set(nulldc_dsp_cases_model_only dsp_coll sh4_latch mdec_hold)
 set(nulldc_dsp_cases_core_only dsp_pack)
 
+# The cases anchored directly on the console's files, which also run on the emulator's sound chip
+set(nulldc_dsp_cases_emu dsp_basic dsp_mem dsp_mem2 dsp_mem3 dsp_wslot dsp_unpack dsp_pack)
+
 if(NOT NULLDC_HAVE_CAIQUE)
   foreach(set ${nulldc_dsp_diff_sets})
     nulldc_add_missing_data_test(aica.dsp.diff.${set} "${NULLDC_CAIQUE_MISSING}")
@@ -79,6 +120,10 @@ if(NOT NULLDC_HAVE_CAIQUE)
 
   foreach(case ${nulldc_dsp_cases})
     nulldc_add_missing_data_test(aica.dsp.case.${case} "${NULLDC_CAIQUE_MISSING}")
+  endforeach()
+
+  foreach(case ${nulldc_dsp_cases_emu})
+    nulldc_add_missing_data_test(aica.dsp.case.${case}.emu "${NULLDC_CAIQUE_MISSING}")
   endforeach()
 else()
   # The model as it is in the checkout. Its warnings are its own
@@ -105,7 +150,7 @@ else()
   # Every case is a C program with a test_main and static data of its own: one object per machine it runs on, with
   # its entry point under a name of its own
   add_executable(aica_dsp_cases cases_main.cpp)
-  target_link_libraries(aica_dsp_cases PRIVATE nulldc_aica_dsp_caique)
+  target_link_libraries(aica_dsp_cases PRIVATE nulldc_aica_dsp_caique nulldc_aica_dsp_emu_units)
   target_compile_definitions(aica_dsp_cases PRIVATE
     NULLDC_BASELINE="${nulldc_dsp_baseline}"
     NULLDC_CAIQUE_DIR="${NULLDC_CAIQUE_DIR}"
@@ -118,6 +163,10 @@ else()
       set(machines model)
     elseif(case IN_LIST nulldc_dsp_cases_core_only)
       set(machines core)
+    endif()
+
+    if(case IN_LIST nulldc_dsp_cases_emu)
+      list(APPEND machines emu)
     endif()
 
     foreach(machine ${machines})
@@ -135,6 +184,11 @@ else()
 
     add_test(NAME aica.dsp.case.${case} COMMAND aica_dsp_cases ${case} --strict ${nulldc_dsp_require_data})
     set_tests_properties(aica.dsp.case.${case} PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE ${nulldc_dsp_skip_code})
+
+    if(case IN_LIST nulldc_dsp_cases_emu)
+      add_test(NAME aica.dsp.case.${case}.emu COMMAND aica_dsp_cases ${case}.emu --strict ${nulldc_dsp_require_data})
+      set_tests_properties(aica.dsp.case.${case}.emu PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE ${nulldc_dsp_skip_code})
+    endif()
   endforeach()
 
   # mdec_hold ends with the measurement that caique's harness runs in front of every case
@@ -146,7 +200,57 @@ else()
   endif()
 
   target_sources(aica_dsp_cases PRIVATE $<TARGET_OBJECTS:nulldc_caique_replay>)
+
+  # What the sounding guest's DSP program computes on the model, for the mode oracle of its runner
+  add_executable(aica_dsp_guest_oracle guest_oracle_main.cpp)
+  target_link_libraries(aica_dsp_guest_oracle PRIVATE nulldc_aica_dsp_caique)
 endif()
+
+
+## The sounding guest's DSP on the caique model ##
+#
+#	debugger.sound.oracle.dsptest.<jit|interp>: the mode oracle of tests/debugger/guest/dsptest/soundlines.py on the
+#	guest, N = 2000, on the emulator the system tests build (<build dir>/system/emulator, or NULLDC_EMULATOR), with
+#	aica_dsp_guest_oracle: the field dsp of the line of a copy of the guest whose sends to the DSP are 0 is what
+#	the core and the caique model compute in lockstep on the guest's writes and schedule. They need the caique
+#	checkout, as the other tests of the model, and the emulator, as the tests of tests/debugger/guest
+#
+
+find_package(Python3 COMPONENTS Interpreter)
+
+set(nulldc_oracle_skip "")
+if(NOT NULLDC_SYSTEM_TESTS AND NOT NULLDC_EMULATOR)
+  set(nulldc_oracle_skip "NULLDC_SYSTEM_TESTS is OFF and no NULLDC_EMULATOR is given: there is no emulator to run")
+elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX})
+  set(nulldc_oracle_skip "headless mode is there on Linux hosts only")
+elseif(NOT Python3_Interpreter_FOUND)
+  set(nulldc_oracle_skip "no python3 to run tests/debugger/guest/dsptest/soundlines.py with")
+endif()
+
+if(NULLDC_EMULATOR)
+  set(nulldc_oracle_emulator "${NULLDC_EMULATOR}")
+else()
+  set(nulldc_oracle_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
+endif()
+
+foreach(engine jit interp)
+  set(test debugger.sound.oracle.dsptest.${engine})
+
+  if(nulldc_oracle_skip)
+    nulldc_add_skipped_test(${test} "${nulldc_oracle_skip}")
+  elseif(NOT NULLDC_HAVE_CAIQUE)
+    nulldc_add_missing_data_test(${test} "${NULLDC_CAIQUE_MISSING}")
+  else()
+    add_test(NAME ${test}
+             COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/guest/dsptest/soundlines.py"
+                     --emulator "${nulldc_oracle_emulator}" --work "${CMAKE_BINARY_DIR}/debugger/guest/work/${test}"
+                     --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf" --ticks 2000
+                     --mode oracle --engine ${engine} --oracle $<TARGET_FILE:aica_dsp_guest_oracle>)
+    # soundlines.py has a watchdog per run of the emulator and of the tool, this is the one behind it. Python
+    # writes no bytecode into the source tree
+    set_tests_properties(${test} PROPERTIES TIMEOUT 900 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+  endif()
+endforeach()
 
 
 ## The C interface and the WebAssembly build ##
@@ -156,6 +260,10 @@ endif()
 #	aica.dsp.wasm.
 #	aica.dsp.wasm needs emcc and node. emcc: on the PATH, or the emsdk in the environment's EMSDK or in ~/emsdk.
 #	aica.dsp.wasm.emsdk and aica.dsp.wasm.noemcc are build.sh finding its emcc, and need the emcc to be an emsdk's.
+#	aica.dsp.wasm.devtools holds the module of the UI (NULLDC_DEVTOOLS_DIR, src/wasm/aica-dsp-core/) to this
+#	tree: its provenance, the trace replayed on it, and, where build.sh finds an emcc of the version the
+#	provenance names, its bytes against a fresh build.sh. It needs node and the UI checkout, not emcc; without the
+#	checkout it is a test whose data is missing.
 #
 
 add_executable(aica_dsp_wasm_trace
@@ -172,6 +280,37 @@ set_tests_properties(aica.dsp.capi PROPERTIES TIMEOUT 120)
 find_program(NULLDC_NODE node)
 find_program(NULLDC_EMCC emcc HINTS "$ENV{EMSDK}/upstream/emscripten" "$ENV{HOME}/emsdk/upstream/emscripten")
 
+set(nulldc_dsp_wasm_trace "${CMAKE_CURRENT_BINARY_DIR}/wasm_trace.bin")
+
+# The trace of the native core, which the tests with node replay
+if(NULLDC_NODE)
+  add_custom_command(
+    OUTPUT "${nulldc_dsp_wasm_trace}"
+    COMMAND aica_dsp_wasm_trace "${nulldc_dsp_wasm_trace}"
+    DEPENDS aica_dsp_wasm_trace
+    COMMENT "Trace of the AICA DSP core for aica.dsp.wasm"
+    VERBATIM
+  )
+
+  add_custom_target(aica_dsp_wasm_trace_file ALL DEPENDS "${nulldc_dsp_wasm_trace}")
+endif()
+
+# The module of the UI against this tree
+set(nulldc_dsp_devtools_module "${NULLDC_DEVTOOLS_DIR}/src/wasm/aica-dsp-core")
+
+if(NOT NULLDC_NODE)
+  nulldc_add_skipped_test(aica.dsp.wasm.devtools "no node on the PATH")
+elseif(NOT NULLDC_DEVTOOLS_DIR OR NOT EXISTS "${NULLDC_DEVTOOLS_DIR}/package.json")
+  nulldc_add_missing_data_test(aica.dsp.wasm.devtools
+    "no checkout of the UI (NULLDC_DEVTOOLS_DIR is \"${NULLDC_DEVTOOLS_DIR}\"), configure with -DNULLDC_DEVTOOLS_DIR=<dreamcast-devtools checkout>")
+else()
+  add_test(NAME aica.dsp.wasm.devtools
+    COMMAND "${NULLDC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/devtools_test.mjs" "${nulldc_dsp_devtools_module}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wasm_test.mjs" "${nulldc_dsp_wasm_trace}" "${nulldc_dsp_core_path}/wasm/build.sh"
+            "${CMAKE_CURRENT_BINARY_DIR}/wasm_devtools")
+  set_tests_properties(aica.dsp.wasm.devtools PROPERTIES TIMEOUT 300)
+endif()
+
 if(NOT NULLDC_EMCC)
   foreach(test aica.dsp.wasm aica.dsp.wasm.emsdk aica.dsp.wasm.noemcc)
     nulldc_add_skipped_test(${test} "no emcc: not on the PATH, and no emsdk in EMSDK or ~/emsdk")
@@ -185,7 +324,6 @@ else()
   get_filename_component(nulldc_emsdk_dir "${nulldc_emcc_dir}/../.." ABSOLUTE)
 
   set(nulldc_dsp_wasm_dir "${CMAKE_CURRENT_BINARY_DIR}/wasm")
-  set(nulldc_dsp_wasm_trace "${CMAKE_CURRENT_BINARY_DIR}/wasm_trace.bin")
 
   # build.sh --check builds twice and fails when the two builds differ or have a path of this machine in them
   add_custom_command(
@@ -199,16 +337,7 @@ else()
     VERBATIM
   )
 
-  add_custom_command(
-    OUTPUT "${nulldc_dsp_wasm_trace}"
-    COMMAND aica_dsp_wasm_trace "${nulldc_dsp_wasm_trace}"
-    DEPENDS aica_dsp_wasm_trace
-    COMMENT "Trace of the AICA DSP core for aica.dsp.wasm"
-    VERBATIM
-  )
-
-  add_custom_target(aica_dsp_wasm ALL
-    DEPENDS "${nulldc_dsp_wasm_dir}/aica_dsp_core.wasm" "${nulldc_dsp_wasm_trace}")
+  add_custom_target(aica_dsp_wasm ALL DEPENDS "${nulldc_dsp_wasm_dir}/aica_dsp_core.wasm")
 
   add_test(NAME aica.dsp.wasm
     COMMAND "${NULLDC_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/wasm_test.mjs"

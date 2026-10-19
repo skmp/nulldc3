@@ -14,7 +14,7 @@
 #include "hw/aica/aica.h"
 #include "hw/aica/aica_mmio.h"
 #include "hw/aica/dsp.h"
-#include "hw/aica/dsp_backend.h"
+#include "hw/aica/dsp_core/aica_dsp_core.h"
 #include "hw/arm7/SoundCPU.h"
 #include "hw/arm7/arm7.h"
 #include "hw/arm7/arm7_context.h"
@@ -533,16 +533,16 @@ const u32 arm7_loads[] = {
 
 	The sound CPU is given a state that executes the loop above out of the wave memory: one LDRB for every byte,
 	stored in the wave memory behind the loop. Then the bytes of the wave memory, the sound CPU, the AICA and the
-	interrupt line of the AICA to the SH4 are put back as they were.
+	interrupt line of the AICA to the SH4 are put back as they were; the DSP, which nothing here may reach, has to
+	be as it was.
 
-	SoundCPU::Update() is what executes code of the ARM7. It runs the core in 32 slices and steps the AICA by a
-	sample behind each of them: the timers count, the sample interval is raised, the interrupt lines follow. A
-	slice is 64 cycles for every instruction of the loop, of which the core charges 10 at most, so the loop ends
-	within the first slice: every load finds the registers as they were when this was called. The state it runs
-	on masks FIQ, so that a request in front of nFIQ does not take the core out of the loop. What the 32 steps
-	and the loads themselves change (the status of the selected channel and its loop flag, the acknowledge of a
-	request) is in the two save states that are put back; the sound generator is kept from producing samples in
-	the steps, which no save state of the two would undo.
+	The ARM7 executes it in one ARM phase, SoundCPU::RunSample with checks false: the backend runs for 64 ticks for
+	every instruction of the loop, of which the core charges 10 at most, so the loop ends within the phase, and no
+	time step of the AICA follows it. No timer counts, no sample is made, the DSP does not step and nothing goes to
+	the audio stream (none of that is in the two save states that are put back), and every load finds the
+	registers as they were when this was called. The state it runs on masks FIQ, so that a request in front of
+	nFIQ does not take the core out of the loop. What the loads themselves change (the status of the selected
+	channel and its loop flag, the acknowledge of a request) is in the two save states that are put back.
 
 	*loads are the bytes. Returns false when the loop did not come to its end or something is not as it was.
 */
@@ -550,6 +550,7 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 {
 	SoundCPU* scpu = sh4_cpu->GetA0H<SoundCPU>(A0H_SCPU);
 	AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
+	DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
 	ASIC* asic = sh4_cpu->GetA0H<ASIC>(A0H_ASIC);
 	SystemBus* sb = sh4_cpu->GetA0H<SystemBus>(A0H_SB);
 	u8* ram = sh4_cpu->aica_ram.data;
@@ -560,6 +561,7 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 
 	std::vector<u8> cpu = DeviceState(scpu);
 	std::vector<u8> device = DeviceState(aica);
+	const std::vector<u8> dsp_state = DeviceState(dsp);
 
 	if (count == 0 || count > 0x8000 || cpu.size() != scpu_state_size)
 		return false;
@@ -567,7 +569,6 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 	std::vector<u8> wave(ram + loop_at, ram + store_at + count);
 	const u32 line_bit = 1 << (u8)holly_SPU_IRQ;
 	u32 line = SB_ISTEXT & line_bit;
-	bool no_batch = settings.aica.NoBatch;
 
 	std::vector<u8> made = cpu;
 	auto set = [&](u32 reg, u32 value) { memcpy(&made[scpu_regs_at + reg * 4], &value, 4); };
@@ -586,9 +587,8 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 	RestoreDevice(scpu, made);
 	scpu->InvalidateJitCache();
 
-	settings.aica.NoBatch = false;
-	scpu->Update(count * 4 * 64 * 32 * arm_sh4_bias);
-	settings.aica.NoBatch = no_batch;
+	u32 done = 0;
+	scpu->RunSample(count * 4 * 64, &done, false);
 
 	// where the core stands, and how far it came
 	std::vector<u8> behind = DeviceState(scpu);
@@ -603,7 +603,7 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 	RestoreDevice(scpu, cpu);
 	scpu->InvalidateJitCache();
 
-	// a timer that ran out in the steps has raised the interrupt of the AICA
+	// the interrupt line of the AICA to the SH4 as it was in front of the loop
 	if ((SB_ISTEXT & line_bit) != line)
 	{
 		if (line)
@@ -612,7 +612,7 @@ bool Arm7Loads(u32 first, u32 count, std::vector<u8>* loads)
 			asic->CancelInterrupt(holly_SPU_IRQ);
 	}
 
-	return r0 == first + count && next == loop_at + 16 && DeviceState(scpu) == cpu && DeviceState(aica) == device;
+	return r0 == first + count && next == loop_at + 16 && DeviceState(scpu) == cpu && DeviceState(aica) == device && DeviceState(dsp) == dsp_state;
 }
 
 }
@@ -1314,65 +1314,187 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 	{
 		DSP* dsp = sh4_cpu->GetA0H<DSP>(A0H_DSP);
 		AICA* aica = sh4_cpu->GetA0H<AICA>(A0H_AICA);
-		DspDebugState state = { 99, 99 };
+		DspDebugState state;
 		u64 step = 99, mdec_ct = 99;
+
+		memset(&state, 0xEE, sizeof(state));
+
+		// The accessor gives the core's fields (hw/aica/dsp_core/aica_dsp_core.h), between two samples step 0
 		bool ok = dsp->DebugGetState(&state);
+		const AicaDsp* core = dsp->Core();
 
-		Check(ok && state.step == 0 && state.mdecCt == dsp->GetDspContext()->regs.MDEC_CT, "DSP: step %u, MDEC_CT %u", state.step, state.mdecCt);
+		Check(ok && state.step == 0 && core->step == 0 && state.mdecCt == core->MDEC_CT && state.mdecCt <= 0xFFFF, "DSP: step %u, MDEC_CT %u, the core has %u and %u",
+			state.step, state.mdecCt, core->step, core->MDEC_CT);
+		Check(ok && state.rbpl == core->RBPL && state.acc == core->ACC && state.yReg == core->Y_REG && state.frcReg == core->FRC_REG && state.adrsReg == core->ADRS_REG
+			&& state.latch == core->latch && state.latchCopy == core->latch_copy && state.memval == core->memval && state.noflPipe == core->nofl_pipe
+			&& state.mixsBank == core->mixs_dsp,
+			"DSP: rbpl %04X, ACC %X, Y_REG %X, FRC_REG %X, ADRS_REG %X, the latch %X and its copy %X, MEMVAL %X, NOFL %X, the MIXS bank %X: the core's fields "
+			"(RBPL %04X, ACC %X, Y_REG %X, FRC_REG %X, ADRS_REG %X, %X, %X, %X, %X, %X)", state.rbpl, state.acc, state.yReg, state.frcReg, state.adrsReg, state.latch,
+			state.latchCopy, state.memval, state.noflPipe, state.mixsBank, core->RBPL, core->ACC, core->Y_REG, core->FRC_REG, core->ADRS_REG, core->latch,
+			core->latch_copy, core->memval, core->nofl_pipe, core->mixs_dsp);
 
-		// MDEC_CT has the 16 bits of the register; the emulator keeps the counter in 32
+		// MDEC_CT is the 16 bits of the register, a counter that runs down once a sample and is never reloaded
 		ok = ReadRegister("dc.aica.dsp", "MDEC_CT", &mdec_ct) && ReadRegister("dc.aica.dsp", "STEP", &step);
-		Check(ok && mdec_ct == (state.mdecCt & 0xFFFF) && step == 0, "dc.aica.dsp shows them");
+		Check(ok && mdec_ct == state.mdecCt && step == 0, "dc.aica.dsp shows them: STEP %llu, MDEC_CT %llX", (unsigned long long)step, (unsigned long long)mdec_ct);
 
-		// the widths of the node: those of the registers on the hardware
+		// the widths of the node: those of the registers on the hardware, and of the datapath of the core behind them
+		// (M3-D25), in this order
 		{
 			const regs::Node* node = regs::Find("dc.aica.dsp");
-			const struct { const char* name; u32 width; } widths[] = { { "STEP", 8 }, { "MDEC_CT", 16 }, { "RBP", 16 }, { "RBL", 8 } };
+			const struct { const char* name; u32 width; } widths[] = { { "STEP", 8 }, { "MDEC_CT", 16 }, { "RBP", 16 }, { "RBL", 8 }, { "ACC", 26 },
+				{ "Y_REG", 24 }, { "FRC_REG", 13 }, { "ADRS_REG", 12 }, { "LATCH", 16 }, { "LATCH_COPY", 16 }, { "MEMVAL", 16 }, { "NOFL_PIPE", 2 },
+				{ "MIXS_BANK", 1 } };
+			const u32 count = sizeof(widths) / sizeof(widths[0]);
 			Tally tally;
 
-			for (const auto& want : widths)
+			for (u32 i = 0; i < count; i++)
 			{
-				int index = node ? regs::FindRegister(*node, want.name) : -1;
+				int index = node ? regs::FindRegister(*node, widths[i].name) : -1;
 
-				tally.Add(index >= 0 && node->registers[index].width == want.width, "dc.aica.dsp.%s: width %u, expected %u", want.name,
-					index >= 0 ? node->registers[index].width : 0, want.width);
+				tally.Add(index == (int)i && node->registers[index].width == widths[i].width && !(node->registers[index].flags & regs::kRegWritable),
+					"dc.aica.dsp.%s: row %d, width %u, flags %X, expected row %u, width %u, read-only", widths[i].name, index,
+					index >= 0 ? node->registers[index].width : 0, index >= 0 ? node->registers[index].flags : 0, i, widths[i].width);
 			}
 
-			tally.Add(node != nullptr && node->registerCount == 4, "dc.aica.dsp has other registers than these four");
-			tally.Report("the widths of dc.aica.dsp");
+			tally.Add(node != nullptr && node->registerCount == count, "dc.aica.dsp has %u registers, these %u", node ? node->registerCount : 0, count);
+			tally.Report("the widths of dc.aica.dsp, thirteen rows");
 		}
 
-		// The counter is reloaded with the ring buffer length, which is 0x10000 for the longest ring: the register
-		// shows the counter modulo 2^16, so 0x0000 for that sample, and its text has four digits
+		// The row of MDEC_CT is the core's counter at every value of its 16 bits, and its text has four digits
 		{
-			u32 kept = dsp->GetDspContext()->regs.MDEC_CT;
-			const u32 counters[] = { 0x10000, 0xFFFF, 0x2000, 1 };
+			AicaDsp* counted = dsp->Core();
+			const u16 kept = counted->MDEC_CT;
+			const u16 counters[] = { 0xFFFF, 0x8000, 0x2000, 1, 0 };
 			Tally tally;
 
-			for (u32 counter : counters)
+			for (u16 counter : counters)
 			{
 				u64 shown = 99;
 				char text[24];
 
-				dsp->GetDspContext()->regs.MDEC_CT = counter;
+				counted->MDEC_CT = counter;
 				bool read = ReadRegister("dc.aica.dsp", "MDEC_CT", &shown);
-				regs::FormatValue(16, counter, text);
+				regs::FormatValue(16, shown, text);
 
-				tally.Add(read && shown == (counter & 0xFFFF), "MDEC_CT %X shows as %llX", counter, (unsigned long long)shown);
-				tally.Add(strlen(text) == 6 && strtoul(text, nullptr, 16) == (counter & 0xFFFF), "MDEC_CT %X has the text %s", counter, text);
+				tally.Add(read && shown == counter, "MDEC_CT %X shows as %llX", counter, (unsigned long long)shown);
+				tally.Add(strlen(text) == 6 && strtoul(text, nullptr, 16) == counter, "MDEC_CT %X has the text %s", counter, text);
 			}
 
-			dsp->GetDspContext()->regs.MDEC_CT = kept;
-			tally.Report("MDEC_CT modulo 2^16");
+			counted->MDEC_CT = kept;
+			tally.Report("MDEC_CT: the core's 16-bit counter");
 		}
 
-		// RBP and RBL are fields of the common register 0x2804, whose read has no side effect
-		u32 common = aica->ReadReg(0x2804, 2);
-		u64 rbp = 0, rbl = 0;
+		// RBP and RBL are fields of the word of 0x2804 as the DSP has it, the core's RBPL
+		{
+			u64 rbp = 99, rbl = 99;
+			const u32 rbpl = dsp->Core()->RBPL;
 
-		ok = ReadRegister("dc.aica.dsp", "RBP", &rbp) && ReadRegister("dc.aica.dsp", "RBL", &rbl);
-		Check(ok && rbp == (common & 0xFFF) && rbl == ((common >> 13) & 3), "dc.aica.dsp.RBP %04llX and RBL %02llX are the fields of %04X",
-			(unsigned long long)rbp, (unsigned long long)rbl, common);
+			ok = ReadRegister("dc.aica.dsp", "RBP", &rbp) && ReadRegister("dc.aica.dsp", "RBL", &rbl);
+			Check(ok && rbp == (rbpl & 0xFFF) && rbl == ((rbpl >> 13) & 3), "dc.aica.dsp.RBP %04llX and RBL %02llX are the fields of the core's RBPL %04X",
+				(unsigned long long)rbp, (unsigned long long)rbl, rbpl);
+		}
+
+		// A word the SH4 writes to 0x2804, with every field not 0, RBP bit 11 set and bit 12, which is in no field, set
+		// too, and a COEF word with bits 2:0 set, each through AICA::WriteReg, and the upper halves of both slots with
+		// words not 0, which the file keeps and the DSP does not take. The five rows of 0x2804, of dc.aica.dsp and of
+		// dc.aica.common, read the word as the DSP has it (the core's RBPL, read here); a CPU read and the accessor
+		// give 0 for 0x2804, which the DSP does not answer, the COEF word with bits 2:0 clear, which it does not keep,
+		// and 0 for the upper half of both slots. Then the datapath, written into the core: the accessor gives each of
+		// its fields. The AICA and the DSP are put back as they were
+		{
+			std::vector<u8> aica_kept = DeviceState(aica), dsp_kept = DeviceState(dsp);
+			const u32 made = 0xDDA3;	// TESTB0 1, RBL 2, RBP 0xDA3, bit 12 in no field
+			const u32 coef_at = 0x3000 + 4 * 37, coef = 0x9A5F;
+			const u32 made_upper = 0x5AA5, coef_upper = 0xBEEF;
+			DspDebugState written;
+			u64 d_rbp = 99, d_rbl = 99, c_rbp = 99, c_rbl = 99, c_test = 99;
+
+			aica->WriteReg(0x2804, made, 2);
+			aica->WriteReg(coef_at, coef, 2);
+			aica->WriteReg(0x2806, made_upper, 2);
+			aica->WriteReg(coef_at + 2, coef_upper, 2);
+
+			const bool read = dsp->DebugGetState(&written) && ReadRegister("dc.aica.dsp", "RBP", &d_rbp) && ReadRegister("dc.aica.dsp", "RBL", &d_rbl)
+				&& ReadRegister("dc.aica.common", "RBP", &c_rbp) && ReadRegister("dc.aica.common", "RBL", &c_rbl) && ReadRegister("dc.aica.common", "TESTB0", &c_test);
+			const u32 rbpl = dsp->Core()->RBPL;
+
+			Check(read && rbpl == made && written.rbpl == made && d_rbp == 0xDA3 && d_rbl == 2 && c_rbp == 0xDA3 && c_rbl == 2 && c_test == 1,
+				"0x2804 written with %04X: the core's RBPL %04X, rbpl %04X; dc.aica.dsp.RBP %llX and RBL %llX, dc.aica.common.RBP %llX, RBL %llX and TESTB0 %llX", made,
+				rbpl, written.rbpl, (unsigned long long)d_rbp, (unsigned long long)d_rbl, (unsigned long long)c_rbp, (unsigned long long)c_rbl,
+				(unsigned long long)c_test);
+
+			u8 common[4] = { 0xEE, 0xEE, 0xEE, 0xEE }, slot[4] = { 0xEE, 0xEE, 0xEE, 0xEE };
+			const bool given = aica->DebugReadRegs(0x2804, 4, common) && aica->DebugReadRegs(coef_at, 4, slot);
+			const u32 cpu_common = aica->ReadReg(0x2804, 2), cpu_coef = aica->ReadReg(coef_at, 2);
+			const u32 cpu_byte = aica->ReadReg(coef_at, 1) | (aica->ReadReg(coef_at + 1, 1) << 8);
+			const u32 cpu_common_upper = aica->ReadReg(0x2806, 2), cpu_coef_upper = aica->ReadReg(coef_at + 2, 2);
+
+			Check(given && cpu_common == 0 && cpu_common_upper == 0 && common[0] == 0 && common[1] == 0 && common[2] == 0 && common[3] == 0,
+				"0x2804 written with %04X and 0x2806 with %04X: a CPU read gives %04X and %04X, the accessor %02X%02X and %02X%02X: 0, as the console", made,
+				made_upper, cpu_common, cpu_common_upper, common[1], common[0], common[3], common[2]);
+			Check(given && cpu_coef == (coef & ~7u) && cpu_byte == (coef & ~7u) && (slot[0] | (slot[1] << 8)) == (coef & ~7u) && cpu_coef_upper == 0 && slot[2] == 0
+				&& slot[3] == 0 && dsp->Core()->COEF[37] == (coef & ~7u),
+				"COEF37 written with %04X and its upper half with %04X: a CPU read gives %04X (%04X byte by byte) and %04X, the accessor %02X%02X and %02X%02X, the "
+				"core %04X: bits 2:0 and the upper half read 0", coef, coef_upper, cpu_coef, cpu_byte, cpu_coef_upper, slot[1], slot[0], slot[3], slot[2],
+				dsp->Core()->COEF[37]);
+
+			// The datapath as the accessor gives it: the core's fields, written here with values inside their bits, none
+			// 0 and no two alike, ACC with bit 25 set and Y_REG with bit 23 set, both negative, the step with bit 6 set
+			// (a step of 64 or more: an accessor that gave step & 63 would fail). And the rows of dc.aica.dsp: each
+			// field under the width of its row, the signed ones as their bits
+			{
+				AicaDsp* datapath = dsp->Core();
+				const s32 acc = (s32)0xFE5A5A5A, y_reg = (s32)0xFF9ABCDE;
+				DspDebugState shown;
+				u64 row_step = 99, row_mdec_ct = 99;
+
+				memset(&shown, 0xEE, sizeof(shown));
+				datapath->step = 101;
+				datapath->MDEC_CT = 0x9B3D;
+				datapath->ACC = acc;
+				datapath->Y_REG = y_reg;
+				datapath->FRC_REG = 0x1ABC;
+				datapath->ADRS_REG = 0xA5C;
+				datapath->latch = 0xC0DE;
+				datapath->latch_copy = 0x7A31;
+				datapath->memval = 0x4E95;
+				datapath->nofl_pipe = 2;
+				datapath->mixs_dsp = 1;
+				datapath->mixs_fill = 0;
+
+				const bool got = dsp->DebugGetState(&shown) && ReadRegister("dc.aica.dsp", "STEP", &row_step) && ReadRegister("dc.aica.dsp", "MDEC_CT", &row_mdec_ct);
+
+				Check(got && shown.step == 101 && shown.mdecCt == 0x9B3D && shown.rbpl == made && shown.acc == acc && shown.yReg == y_reg && shown.frcReg == 0x1ABC
+					&& shown.adrsReg == 0xA5C && shown.latch == 0xC0DE && shown.latchCopy == 0x7A31 && shown.memval == 0x4E95 && shown.noflPipe == 2
+					&& shown.mixsBank == 1 && row_step == 101 && row_mdec_ct == 0x9B3D,
+					"DSP written with step 101, MDEC_CT 9B3D, ACC %X, Y_REG %X, FRC_REG 1ABC, ADRS_REG A5C, the latch C0DE and its copy 7A31, MEMVAL 4E95, NOFL 2, the "
+					"MIXS bank 1: the accessor gives step %u, MDEC_CT %X, rbpl %04X (written %04X), ACC %X, Y_REG %X, FRC_REG %X, ADRS_REG %X, the latch %X and "
+					"its copy %X, MEMVAL %X, NOFL %X, the MIXS bank %X; the rows STEP %llu, MDEC_CT %llX", (u32)acc, (u32)y_reg, shown.step, shown.mdecCt,
+					shown.rbpl, made, (u32)shown.acc, (u32)shown.yReg, shown.frcReg, shown.adrsReg, shown.latch, shown.latchCopy, shown.memval, shown.noflPipe,
+					shown.mixsBank, (unsigned long long)row_step, (unsigned long long)row_mdec_ct);
+
+				// the nine rows of the datapath, each read twice
+				const struct { const char* name; u64 want; } rows[] = { { "ACC", (u32)acc & 0x3FFFFFFu }, { "Y_REG", (u32)y_reg & 0xFFFFFFu },
+					{ "FRC_REG", 0x1ABC }, { "ADRS_REG", 0xA5C }, { "LATCH", 0xC0DE }, { "LATCH_COPY", 0x7A31 }, { "MEMVAL", 0x4E95 }, { "NOFL_PIPE", 2 },
+					{ "MIXS_BANK", 1 } };
+				Tally tally;
+
+				for (const auto& row : rows)
+				{
+					u64 a = 99, b = 98;
+					const bool read = ReadRegister("dc.aica.dsp", row.name, &a) && ReadRegister("dc.aica.dsp", row.name, &b);
+
+					tally.Add(read && a == row.want && b == a, "dc.aica.dsp.%s reads %llX and %llX, the core's field under its width is %llX", row.name,
+						(unsigned long long)a, (unsigned long long)b, (unsigned long long)row.want);
+				}
+
+				tally.Report("the nine datapath rows of dc.aica.dsp are the core's fields under their widths, ACC and Y_REG as their bits");
+			}
+
+			RestoreDevice(aica, aica_kept);
+			RestoreDevice(dsp, dsp_kept);
+			Check(DeviceState(aica) == aica_kept && DeviceState(dsp) == dsp_kept, "the AICA and the DSP are as they were");
+		}
 
 		Tally program;
 
@@ -1385,7 +1507,8 @@ DBG_SELFTEST(regs_devices, "regs.devices")
 			{
 				u32 guest = aica->ReadReg(0x3400 + n * 16 + i * 4, 2);
 
-				program.Add(given && words[i] == guest, "program step %u word %u: %04X, the register reads %04X", n, i, words[i], guest);
+				program.Add(given && words[i] == guest && words[i] == core->MPRO[n][i], "program step %u word %u: %04X, the register reads %04X, the core has %04X",
+					n, i, words[i], guest, core->MPRO[n][i]);
 			}
 		}
 
@@ -2380,14 +2503,15 @@ const size_t aica_armrst_at = aica_vreg_at + 4;
 const size_t aica_file_at = aica_armrst_at + 4;
 
 // The words of the register file that a row reads and that the accessor delivers as the file has them: the 18
-// of every channel, and the common block without the three status words, the three level registers and the
-// word of ARMRST and VREG
+// of every channel, and the common block without the three status words, the three level registers, the word of
+// ARMRST and VREG and the word of 0x2804, which is the DSP's (RBP, RBL, TESTB0: AicaDsp::RBPL, which a read gives
+// as 0; a made-up state restored into the AICA writes the file, not the DSP)
 bool StoredWord(u32 offset)
 {
 	if (offset < 0x2000)
 		return (offset & 0x7F) < 0x48;
 
-	if (offset == 0x2808 || offset == 0x2810 || offset == 0x2814 || offset == 0x2C00)
+	if (offset == 0x2804 || offset == 0x2808 || offset == 0x2810 || offset == 0x2814 || offset == 0x2C00)
 		return false;
 	if (offset >= SCILV0_addr && offset < SCILV2_addr + 4)
 		return false;
@@ -2432,7 +2556,7 @@ bool MakeAicaState(AICA* aica, const std::vector<u8>& real, u32 salt, AicaMade* 
 
 	for (u32 offset = 0; offset < 0x2D08; offset += 4)
 	{
-		if (StoredWord(offset) || offset == 0x2808 || offset == 0x2810 || offset == 0x2814 || (offset >= SCILV0_addr && offset < SCILV2_addr + 4)
+		if (StoredWord(offset) || offset == 0x2804 || offset == 0x2808 || offset == 0x2810 || offset == 0x2814 || (offset >= SCILV0_addr && offset < SCILV2_addr + 4)
 			|| offset == 0x2C00 || offset == 0x2D00 || offset == 0x2D04)
 			set(offset, Word16(salt, offset / 4));
 	}
@@ -2805,7 +2929,8 @@ DBG_SELFTEST(regs_rows_pvr, "regs.rows.pvr")
 	against the file as the accessor delivers it, and against the word a guest read gives where that read changes
 	nothing; in two made-up states, where every word has a value of its own: a row with another shift, another
 	width, another word or another channel reads another value. The rows that the accessor works out, the five
-	without a reader, and L and M, which are the sound CPU's.
+	without a reader, and L and M, which are the sound CPU's. The three rows of 0x2804 against the DSP's word, which
+	the made-up states do not reach (they write the file, not the DSP).
 */
 DBG_SELFTEST(regs_rows_aica, "regs.rows.aica")
 {
@@ -2938,14 +3063,30 @@ DBG_SELFTEST(regs_rows_aica, "regs.rows.aica")
 				made.selected, status, in_file);
 		}
 
-		Tally fields, guest, refused;
+		Tally fields, guest, refused, dsp_word;
 		std::vector<u32> unlike_next(64, 0);
+
+		// RBP, RBL and TESTB0 are the bits of the DSP's word of 0x2804 (the core's RBPL, read as the rows are read),
+		// which neither the made-up file nor the accessor has: the file has a word of its own there, a read gives 0
+		std::vector<u8> rbpl_image(0x8000, 0);
+		const u32 rbpl = sh4_cpu->GetA0H<DSP>(A0H_DSP)->Core()->RBPL;
+
+		rbpl_image[0x2804] = (u8)rbpl;
+		rbpl_image[0x2805] = (u8)(rbpl >> 8);
 
 		ForEachAicaRow([&](const regs::Node& node, u32 r) {
 			const regs::Register& reg = node.registers[r];
 			const u32 offset = regs::AicaFieldOffset(regs::KeySelector(reg.key));
 			u64 value = ~(u64)0;
 			const bool ok = regs::Read(node, r, &value, nullptr, 0);
+
+			if (offset == 0x2804)
+			{
+				dsp_word.Add(ok && value == FieldOf(reg, rbpl_image.data()), "%s.%s: %llX, the DSP's word of 0x2804 (%04X) has %llX in those bits, the made-up file %llX",
+					node.path, reg.name, (unsigned long long)value, rbpl, (unsigned long long)FieldOf(reg, rbpl_image.data()),
+					(unsigned long long)FieldOf(reg, made.file));
+				return;
+			}
 
 			if (reg.flags & regs::kRegNoReader)
 			{
@@ -3002,6 +3143,21 @@ DBG_SELFTEST(regs_rows_aica, "regs.rows.aica")
 		});
 
 		fields.Report("fields of the register file in a made-up state: as the accessor delivers them, and as the state was made");
+
+		// the two rows of dc.aica.dsp that are bits of the same word
+		{
+			u64 rbp = 99, rbl = 99;
+			const bool ok = ReadRegister("dc.aica.dsp", "RBP", &rbp) && ReadRegister("dc.aica.dsp", "RBL", &rbl);
+			const u32 file_word = made.file[0x2804] | (made.file[0x2805] << 8);
+
+			dsp_word.Add(ok && rbp == (rbpl & 0xFFF) && rbl == ((rbpl >> 13) & 3), "dc.aica.dsp.RBP %llX and RBL %llX, the DSP's word of 0x2804 is %04X", (unsigned long long)rbp,
+				(unsigned long long)rbl, rbpl);
+			dsp_word.Add(file_word != rbpl && delivered[0x2804] == 0 && delivered[0x2805] == 0,
+				"the made-up file has %04X at 0x2804, which the test meant to differ from the DSP's word %04X; the accessor delivers %02X%02X there", file_word, rbpl,
+				delivered[0x2805], delivered[0x2804]);
+		}
+
+		dsp_word.Report("RBP, RBL and TESTB0 of dc.aica.common and RBP and RBL of dc.aica.dsp: the DSP's word of 0x2804, not the made-up file's");
 		guest.Report("fields of the channels against guest reads of their words");
 		refused.Report("the five fields without a reader read as n/a whatever the file holds");
 		{

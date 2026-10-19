@@ -19,7 +19,6 @@ struct SoundCPU : MMIODevice {
 	virtual bool setBackend(Arm7Backends backend) = 0;
 
 	virtual void SetResetState(u32 State) = 0;
-	virtual void Update(u32 cycles) = 0;
 
 	// The ARM phase of one sample of a sound burst: the ARM7 executes until `ticks` are used up. Emulator
 	// thread. *done is how many ticks were used when the call returned: the caller passes 0 for a new phase and
