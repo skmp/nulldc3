@@ -400,16 +400,16 @@ struct maple_sega_vmu: maple_base
 
 	virtual bool maple_serialize(void **data, unsigned int *total_size)
 	{
-		REICAST_SA(flash_data,128*1024);
-		REICAST_SA(lcd_data,192);
-		REICAST_SA(lcd_data_decoded,48*32);
+		NULLDC_SA(flash_data,128*1024);
+		NULLDC_SA(lcd_data,192);
+		NULLDC_SA(lcd_data_decoded,48*32);
 		return true ;
 	}
 	virtual bool maple_unserialize(void **data, unsigned int *total_size)
 	{
-		REICAST_USA(flash_data,128*1024);
-		REICAST_USA(lcd_data,192);
-		REICAST_USA(lcd_data_decoded,48*32);
+		NULLDC_USA(flash_data,128*1024);
+		NULLDC_USA(lcd_data,192);
+		NULLDC_USA(lcd_data_decoded,48*32);
 		return true ;
 	}
 	virtual void OnSetup()
@@ -843,12 +843,12 @@ struct maple_microphone: maple_base
 
 	virtual bool maple_serialize(void **data, unsigned int *total_size)
 	{
-		REICAST_SA(micdata,SIZE_OF_MIC_DATA);
+		NULLDC_SA(micdata,SIZE_OF_MIC_DATA);
 		return true ;
 	}
 	virtual bool maple_unserialize(void **data, unsigned int *total_size)
 	{
-		REICAST_USA(micdata,SIZE_OF_MIC_DATA);
+		NULLDC_USA(micdata,SIZE_OF_MIC_DATA);
 		return true ;
 	}
 	virtual void OnSetup()
@@ -1038,16 +1038,16 @@ struct maple_sega_purupuru : maple_base
 
    virtual bool maple_serialize(void **data, unsigned int *total_size)
    {
-      REICAST_S(AST);
-      REICAST_S(AST_ms);
-      REICAST_S(VIBSET);
+      NULLDC_S(AST);
+      NULLDC_S(AST_ms);
+      NULLDC_S(VIBSET);
       return true ;
    }
    virtual bool maple_unserialize(void **data, unsigned int *total_size)
    {
-      REICAST_US(AST);
-      REICAST_US(AST_ms);
-      REICAST_US(VIBSET);
+      NULLDC_US(AST);
+      NULLDC_US(AST_ms);
+      NULLDC_US(VIBSET);
       return true ;
    }
 	virtual u32 dma(u32 cmd)
@@ -2224,12 +2224,12 @@ struct maple_naomi_jamma : maple_sega_controller
 
 	virtual bool maple_serialize(void **data, unsigned int *total_size)
 	{
-		REICAST_S(crazy_mode);
-		REICAST_S(jvs_repeat_request);
-		REICAST_S(jvs_receive_length);
-		REICAST_S(jvs_receive_buffer);
+		NULLDC_S(crazy_mode);
+		NULLDC_S(jvs_repeat_request);
+		NULLDC_S(jvs_receive_length);
+		NULLDC_S(jvs_receive_buffer);
 		size_t board_count = io_boards.size();
-		REICAST_S(board_count);
+		NULLDC_S(board_count);
 		for (int i = 0; i < io_boards.size(); i++)
 			io_boards[i]->maple_serialize(data, total_size);
 
@@ -2238,12 +2238,12 @@ struct maple_naomi_jamma : maple_sega_controller
 
 	virtual bool maple_unserialize(void **data, unsigned int *total_size)
 	{
-		REICAST_US(crazy_mode);
-		REICAST_US(jvs_repeat_request);
-		REICAST_US(jvs_receive_length);
-		REICAST_US(jvs_receive_buffer);
+		NULLDC_US(crazy_mode);
+		NULLDC_US(jvs_repeat_request);
+		NULLDC_US(jvs_receive_length);
+		NULLDC_US(jvs_receive_buffer);
 		size_t board_count;
-		REICAST_US(board_count);
+		NULLDC_US(board_count);
 		for (int i = 0; i < board_count; i++)
 			io_boards[i]->maple_unserialize(data, total_size);
 
@@ -2594,16 +2594,16 @@ u32 jvs_io_board::handle_jvs_message(u8 *buffer_in, u32 length_in, u8 *buffer_ou
 
 bool jvs_io_board::maple_serialize(void **data, unsigned int *total_size)
 {
-	REICAST_S(node_id);
-	REICAST_S(lightgun_as_analog);
+	NULLDC_S(node_id);
+	NULLDC_S(lightgun_as_analog);
 
 	return true ;
 }
 
 bool jvs_io_board::maple_unserialize(void **data, unsigned int *total_size)
 {
-	REICAST_US(node_id);
-	REICAST_US(lightgun_as_analog);
+	NULLDC_US(node_id);
+	NULLDC_US(lightgun_as_analog);
 
 	return true ;
 }

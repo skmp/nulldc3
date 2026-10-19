@@ -131,11 +131,11 @@ struct AICARTC_impl : MMIODevice
 
 
 	void serialize(void** data, unsigned int* total_size) {
-		REICAST_S(rtc_EN);
+		NULLDC_S(rtc_EN);
 	}
 
 	void unserialize(void** data, unsigned int* total_size) {
-		REICAST_US(rtc_EN);
+		NULLDC_US(rtc_EN);
 	}
 };
 
@@ -904,14 +904,14 @@ struct AicaDevice final : AICA {
 	void serialize(void** data, unsigned int* total_size) {
 		for (int i = 0; i < 3; i++)
 		{
-			REICAST_S(timers[i].c_step);
-			REICAST_S(timers[i].m_step);
+			NULLDC_S(timers[i].c_step);
+			NULLDC_S(timers[i].m_step);
 		}
 
-		REICAST_S(VREG);
-		REICAST_S(ARMRST);
+		NULLDC_S(VREG);
+		NULLDC_S(ARMRST);
 
-		REICAST_SA(aica_reg, 0x8000);
+		NULLDC_SA(aica_reg, 0x8000);
 
 		sgc->channel_serialize(data, total_size);
 	}
@@ -919,14 +919,14 @@ struct AicaDevice final : AICA {
 	void unserialize(void** data, unsigned int* total_size) {
 		for (int i = 0; i < 3; i++)
 		{
-			REICAST_US(timers[i].c_step);
-			REICAST_US(timers[i].m_step);
+			NULLDC_US(timers[i].c_step);
+			NULLDC_US(timers[i].m_step);
 		}
 
-		REICAST_US(VREG);
-		REICAST_US(ARMRST);
+		NULLDC_US(VREG);
+		NULLDC_US(ARMRST);
 
-		REICAST_USA(aica_reg, 0x8000);
+		NULLDC_USA(aica_reg, 0x8000);
 
 		sgc->channel_unserialize(data, total_size);
 	}

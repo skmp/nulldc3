@@ -660,8 +660,8 @@ bool register_serialize(RegisterStruct* regs, size_t size, void **data, unsigned
 
 	for ( i = 0 ; i < size ; i++ )
 	{
-		REICAST_S(regs[i].flags) ;
-		REICAST_S(regs[i].data32) ;
+		NULLDC_S(regs[i].flags) ;
+		NULLDC_S(regs[i].data32) ;
 	}
 
 	return true ;
@@ -674,11 +674,11 @@ bool register_unserialize(RegisterStruct* regs, size_t size,void **data, unsigne
 
 	for ( i = 0 ; i < size; i++ )
 	{
-		REICAST_US(regs[i].flags) ;
+		NULLDC_US(regs[i].flags) ;
 		if ( ! (regs[i].flags & REG_RF) )
-			REICAST_US(regs[i].data32) ;
+			NULLDC_US(regs[i].data32) ;
 		else
-			REICAST_US(dummy) ;
+			NULLDC_US(dummy) ;
 	}
 	return true ;
 }
@@ -694,29 +694,29 @@ bool dc_serialize(void **data, unsigned int *total_size)
 	if ( p_sh4rcb == NULL )
 		return false ;
 
-	REICAST_S(version) ;
+	NULLDC_S(version) ;
 
 	sh4_cpu->serialize(data, total_size);
 
-	REICAST_SA(sh4_cpu->aica_ram.data, sh4_cpu->aica_ram.size);
+	NULLDC_SA(sh4_cpu->aica_ram.data, sh4_cpu->aica_ram.size);
 
 
 
-	REICAST_SA(volume_lut,16);
-	REICAST_SA(tl_lut,256 + 768);
-	REICAST_SA(AEG_ATT_SPS,64);
-	REICAST_SA(AEG_DSR_SPS,64);
-	REICAST_S(pl);
-	REICAST_S(pr);
+	NULLDC_SA(volume_lut,16);
+	NULLDC_SA(tl_lut,256 + 768);
+	NULLDC_SA(AEG_ATT_SPS,64);
+	NULLDC_SA(AEG_DSR_SPS,64);
+	NULLDC_S(pl);
+	NULLDC_S(pr);
 
 	//this is one-time init, no updates - don't need to serialize
 	//extern RomChip sys_rom;
-	REICAST_S(sys_nvmem.size);
-	REICAST_S(sys_nvmem.mask);
+	NULLDC_S(sys_nvmem.size);
+	NULLDC_S(sys_nvmem.mask);
 #ifdef FLASH_SIZE
-	REICAST_S(sys_nvmem.state);
+	NULLDC_S(sys_nvmem.state);
 #endif
-	REICAST_SA(sys_nvmem.data,sys_nvmem.size);
+	NULLDC_SA(sys_nvmem.data,sys_nvmem.size);
 
 	//this is one-time init, no updates - don't need to serialize
 	//extern _vmem_handler area0_handler;
@@ -724,68 +724,68 @@ bool dc_serialize(void **data, unsigned int *total_size)
 
 
 
-	REICAST_SA(reply_11,16) ;
+	NULLDC_SA(reply_11,16) ;
 
 
-	REICAST_SA(EEPROM,0x100);
-	REICAST_S(EEPROM_loaded);
+	NULLDC_SA(EEPROM,0x100);
+	NULLDC_S(EEPROM_loaded);
 
 
-	REICAST_S(maple_ddt_pending_reset);
+	NULLDC_S(maple_ddt_pending_reset);
 
 	mcfg_SerializeDevices(data, total_size);
 
-	REICAST_S(FrameCount);
+	NULLDC_S(FrameCount);
 	
 
-	REICAST_SA(YUV_tempdata,512/4);
-	REICAST_S(YUV_dest);
-	REICAST_S(YUV_blockcount);
-	REICAST_S(YUV_x_curr);
-	REICAST_S(YUV_y_curr);
-	REICAST_S(YUV_x_size);
-	REICAST_S(YUV_y_size);
+	NULLDC_SA(YUV_tempdata,512/4);
+	NULLDC_S(YUV_dest);
+	NULLDC_S(YUV_blockcount);
+	NULLDC_S(YUV_x_curr);
+	NULLDC_S(YUV_y_curr);
+	NULLDC_S(YUV_x_size);
+	NULLDC_S(YUV_y_size);
 
-	REICAST_SA(pvr_regs,pvr_RegSize);
+	NULLDC_SA(pvr_regs,pvr_RegSize);
 
-	REICAST_S(in_vblank);
-	REICAST_S(clc_pvr_scanline);
-	REICAST_S(pvr_numscanlines);
-	REICAST_S(prv_cur_scanline);
-	REICAST_S(vblk_cnt);
-	REICAST_S(Line_Cycles);
-	REICAST_S(Frame_Cycles);
-	REICAST_S(speed_load_mspdf);
-	REICAST_S(mips_counter);
-	REICAST_S(full_rps);
-	REICAST_S(fskip);
-
-
-
-	REICAST_SA(ta_type_lut,256);
-	REICAST_SA(ta_fsm,2049);
-	REICAST_S(ta_fsm_cl);
-
-	REICAST_S(tileclip_val);
-	REICAST_SA(f32_su8_tbl,65536);
-	REICAST_SA(FaceBaseColor,4);
-	REICAST_SA(FaceOffsColor,4);
-	REICAST_S(SFaceBaseColor);
-	REICAST_S(SFaceOffsColor);
-
-	REICAST_SA(sh4_cpu->vram.data, sh4_cpu->vram.size);
-
-	REICAST_SA(sh4_cpu->mram.data, sh4_cpu->mram.size);
+	NULLDC_S(in_vblank);
+	NULLDC_S(clc_pvr_scanline);
+	NULLDC_S(pvr_numscanlines);
+	NULLDC_S(prv_cur_scanline);
+	NULLDC_S(vblk_cnt);
+	NULLDC_S(Line_Cycles);
+	NULLDC_S(Frame_Cycles);
+	NULLDC_S(speed_load_mspdf);
+	NULLDC_S(mips_counter);
+	NULLDC_S(full_rps);
+	NULLDC_S(fskip);
 
 
 
-	REICAST_S(IRLPriority);
-	REICAST_SA(InterruptEnvId,32);
-	REICAST_SA(InterruptBit,32);
-	REICAST_SA(InterruptLevelBit,16);
-	REICAST_S(interrupt_vpend);
-	REICAST_S(interrupt_vmask);
-	REICAST_S(decoded_srimask);
+	NULLDC_SA(ta_type_lut,256);
+	NULLDC_SA(ta_fsm,2049);
+	NULLDC_S(ta_fsm_cl);
+
+	NULLDC_S(tileclip_val);
+	NULLDC_SA(f32_su8_tbl,65536);
+	NULLDC_SA(FaceBaseColor,4);
+	NULLDC_SA(FaceOffsColor,4);
+	NULLDC_S(SFaceBaseColor);
+	NULLDC_S(SFaceOffsColor);
+
+	NULLDC_SA(sh4_cpu->vram.data, sh4_cpu->vram.size);
+
+	NULLDC_SA(sh4_cpu->mram.data, sh4_cpu->mram.size);
+
+
+
+	NULLDC_S(IRLPriority);
+	NULLDC_SA(InterruptEnvId,32);
+	NULLDC_SA(InterruptBit,32);
+	NULLDC_SA(InterruptLevelBit,16);
+	NULLDC_S(interrupt_vpend);
+	NULLDC_S(interrupt_vmask);
+	NULLDC_S(decoded_srimask);
 
 
 	//default to nommu_full
@@ -799,89 +799,89 @@ bool dc_serialize(void **data, unsigned int *total_size)
 	else if (do_sqw_nommu==&do_sqw_nommu_full)
 		i = 3 ;
 
-	REICAST_S(i) ;
+	NULLDC_S(i) ;
 
-	REICAST_SA((*p_sh4rcb).sq_buffer,64/8);
+	NULLDC_SA((*p_sh4rcb).sq_buffer,64/8);
 
 	//store these before unserializing and then restore after
 	//void *getptr = &((*p_sh4rcb).cntx.sr.GetFull) ;
 	//void *setptr = &((*p_sh4rcb).cntx.sr.SetFull) ;
-	REICAST_S((*p_sh4rcb).cntx);
+	NULLDC_S((*p_sh4rcb).cntx);
 
-	REICAST_S(old_rm);
-	REICAST_S(old_dn);
+	NULLDC_S(old_rm);
+	NULLDC_S(old_dn);
 
 
 	sh4_sched_serialize(data, total_size);
 
-	REICAST_S(SCIF_SCFSR2);
-	REICAST_S(SCIF_SCFRDR2);
-	REICAST_S(SCIF_SCFDR2);
+	NULLDC_S(SCIF_SCFSR2);
+	NULLDC_S(SCIF_SCFRDR2);
+	NULLDC_S(SCIF_SCFDR2);
 
-	REICAST_SA(tmu_shift,3);
-	REICAST_SA(tmu_mask,3);
-	REICAST_SA(tmu_mask64,3);
-	REICAST_SA(old_mode,3);
-	REICAST_SA(tmu_ch_base,3);
-	REICAST_SA(tmu_ch_base64,3);
+	NULLDC_SA(tmu_shift,3);
+	NULLDC_SA(tmu_mask,3);
+	NULLDC_SA(tmu_mask64,3);
+	NULLDC_SA(old_mode,3);
+	NULLDC_SA(tmu_ch_base,3);
+	NULLDC_SA(tmu_ch_base64,3);
 
-	REICAST_SA(CCN_QACR_TR,2);
+	NULLDC_SA(CCN_QACR_TR,2);
 
-	REICAST_SA(UTLB,64);
-	REICAST_SA(ITLB,4);
+	NULLDC_SA(UTLB,64);
+	NULLDC_SA(ITLB,4);
 #if defined(NO_MMU)
-	REICAST_SA(sq_remap,64);
+	NULLDC_SA(sq_remap,64);
 #else
-	REICAST_SA(ITLB_LRU_USE,64);
-	REICAST_S(mmu_error_TT);
+	NULLDC_SA(ITLB_LRU_USE,64);
+	NULLDC_S(mmu_error_TT);
 #endif
 
-	REICAST_S(NullDriveDiscType);
-	REICAST_SA(q_subchannel,96);
+	NULLDC_S(NullDriveDiscType);
+	NULLDC_SA(q_subchannel,96);
 
-	REICAST_S(naomi_updates);
-	REICAST_S(i);	//BoardID
-	REICAST_S(GSerialBuffer);
-	REICAST_S(BSerialBuffer);
-	REICAST_S(GBufPos);
-	REICAST_S(BBufPos);
-	REICAST_S(GState);
-	REICAST_S(BState);
-	REICAST_S(GOldClk);
-	REICAST_S(BOldClk);
-	REICAST_S(BControl);
-	REICAST_S(BCmd);
-	REICAST_S(BLastCmd);
-	REICAST_S(GControl);
-	REICAST_S(GCmd);
-	REICAST_S(GLastCmd);
-	REICAST_S(SerStep);
-	REICAST_S(SerStep2);
-	REICAST_SA(BSerial,69);
-	REICAST_SA(GSerial,69);
-	REICAST_S(reg_dimm_3c);
-	REICAST_S(reg_dimm_40);
-	REICAST_S(reg_dimm_44);
-	REICAST_S(reg_dimm_48);
-	REICAST_S(reg_dimm_4c);
-	REICAST_S(NaomiDataRead);
+	NULLDC_S(naomi_updates);
+	NULLDC_S(i);	//BoardID
+	NULLDC_S(GSerialBuffer);
+	NULLDC_S(BSerialBuffer);
+	NULLDC_S(GBufPos);
+	NULLDC_S(BBufPos);
+	NULLDC_S(GState);
+	NULLDC_S(BState);
+	NULLDC_S(GOldClk);
+	NULLDC_S(BOldClk);
+	NULLDC_S(BControl);
+	NULLDC_S(BCmd);
+	NULLDC_S(BLastCmd);
+	NULLDC_S(GControl);
+	NULLDC_S(GCmd);
+	NULLDC_S(GLastCmd);
+	NULLDC_S(SerStep);
+	NULLDC_S(SerStep2);
+	NULLDC_SA(BSerial,69);
+	NULLDC_SA(GSerial,69);
+	NULLDC_S(reg_dimm_3c);
+	NULLDC_S(reg_dimm_40);
+	NULLDC_S(reg_dimm_44);
+	NULLDC_S(reg_dimm_48);
+	NULLDC_S(reg_dimm_4c);
+	NULLDC_S(NaomiDataRead);
 
-	REICAST_SA(RegisterWrite,sh4_reg_count);
-	REICAST_SA(RegisterRead,sh4_reg_count);
-	REICAST_S(fallback_blocks);
-	REICAST_S(total_blocks);
-	REICAST_S(REMOVED_OPS);
+	NULLDC_SA(RegisterWrite,sh4_reg_count);
+	NULLDC_SA(RegisterRead,sh4_reg_count);
+	NULLDC_S(fallback_blocks);
+	NULLDC_S(total_blocks);
+	NULLDC_S(REMOVED_OPS);
 
-	REICAST_SA(kcode,4);
-	REICAST_SA(rt,4);
-	REICAST_SA(lt,4);
-	REICAST_SA(vks,4);
-	REICAST_SA(joyx,4);
-	REICAST_SA(joyy,4);
+	NULLDC_SA(kcode,4);
+	NULLDC_SA(rt,4);
+	NULLDC_SA(lt,4);
+	NULLDC_SA(vks,4);
+	NULLDC_SA(joyx,4);
+	NULLDC_SA(joyy,4);
 
-	REICAST_S(settings.dreamcast.broadcast);
-	REICAST_S(settings.dreamcast.cable);
-	REICAST_S(settings.dreamcast.region);
+	NULLDC_S(settings.dreamcast.broadcast);
+	NULLDC_S(settings.dreamcast.cable);
+	NULLDC_S(settings.dreamcast.region);
 
 	if (CurrentCartridge != NULL)
 	   CurrentCartridge->Serialize(data, total_size);
@@ -896,7 +896,7 @@ bool dc_unserialize(void **data, unsigned int *total_size)
 
 	*total_size = 0 ;
 
-	REICAST_US(version) ;
+	NULLDC_US(version) ;
 
 	if (version != V6)
 	{
@@ -906,23 +906,23 @@ bool dc_unserialize(void **data, unsigned int *total_size)
 
 	sh4_cpu->unserialize(data, total_size);
 
-	REICAST_USA(sh4_cpu->aica_ram.data, sh4_cpu->aica_ram.size);
+	NULLDC_USA(sh4_cpu->aica_ram.data, sh4_cpu->aica_ram.size);
 	
-	REICAST_USA(volume_lut,16);
-	REICAST_USA(tl_lut,256 + 768);
-	REICAST_USA(AEG_ATT_SPS,64);
-	REICAST_USA(AEG_DSR_SPS,64);
-	REICAST_US(pl);
-	REICAST_US(pr);
+	NULLDC_USA(volume_lut,16);
+	NULLDC_USA(tl_lut,256 + 768);
+	NULLDC_USA(AEG_ATT_SPS,64);
+	NULLDC_USA(AEG_DSR_SPS,64);
+	NULLDC_US(pl);
+	NULLDC_US(pr);
 
 	//this is one-time init, no updates - don't need to serialize
 	//extern RomChip sys_rom;
-	REICAST_US(sys_nvmem.size);
-	REICAST_US(sys_nvmem.mask);
+	NULLDC_US(sys_nvmem.size);
+	NULLDC_US(sys_nvmem.mask);
 #ifdef FLASH_SIZE
-	REICAST_US(sys_nvmem.state);
+	NULLDC_US(sys_nvmem.state);
 #endif
-	REICAST_USA(sys_nvmem.data,sys_nvmem.size);
+	NULLDC_USA(sys_nvmem.data,sys_nvmem.size);
 
 
 	//this is one-time init, no updates - don't need to serialize
@@ -931,68 +931,68 @@ bool dc_unserialize(void **data, unsigned int *total_size)
 
 
 
-	REICAST_USA(reply_11,16) ;
+	NULLDC_USA(reply_11,16) ;
 
 
-	REICAST_USA(EEPROM,0x100);
-	REICAST_US(EEPROM_loaded);
+	NULLDC_USA(EEPROM,0x100);
+	NULLDC_US(EEPROM_loaded);
 
 
-	REICAST_US(maple_ddt_pending_reset);
+	NULLDC_US(maple_ddt_pending_reset);
 
 	mcfg_UnserializeDevices(data, total_size);
 
-	REICAST_US(FrameCount);
+	NULLDC_US(FrameCount);
 
-	REICAST_USA(YUV_tempdata,512/4);
-	REICAST_US(YUV_dest);
-	REICAST_US(YUV_blockcount);
-	REICAST_US(YUV_x_curr);
-	REICAST_US(YUV_y_curr);
-	REICAST_US(YUV_x_size);
-	REICAST_US(YUV_y_size);
+	NULLDC_USA(YUV_tempdata,512/4);
+	NULLDC_US(YUV_dest);
+	NULLDC_US(YUV_blockcount);
+	NULLDC_US(YUV_x_curr);
+	NULLDC_US(YUV_y_curr);
+	NULLDC_US(YUV_x_size);
+	NULLDC_US(YUV_y_size);
 
-	REICAST_USA(pvr_regs,pvr_RegSize);
+	NULLDC_USA(pvr_regs,pvr_RegSize);
 	fog_needs_update = true ;
 
-	REICAST_US(in_vblank);
-	REICAST_US(clc_pvr_scanline);
-	REICAST_US(pvr_numscanlines);
-	REICAST_US(prv_cur_scanline);
-	REICAST_US(vblk_cnt);
-	REICAST_US(Line_Cycles);
-	REICAST_US(Frame_Cycles);
-	REICAST_US(speed_load_mspdf);
-	REICAST_US(mips_counter);
-	REICAST_US(full_rps);
-	REICAST_US(fskip);
+	NULLDC_US(in_vblank);
+	NULLDC_US(clc_pvr_scanline);
+	NULLDC_US(pvr_numscanlines);
+	NULLDC_US(prv_cur_scanline);
+	NULLDC_US(vblk_cnt);
+	NULLDC_US(Line_Cycles);
+	NULLDC_US(Frame_Cycles);
+	NULLDC_US(speed_load_mspdf);
+	NULLDC_US(mips_counter);
+	NULLDC_US(full_rps);
+	NULLDC_US(fskip);
 
-	REICAST_USA(ta_type_lut,256);
-	REICAST_USA(ta_fsm,2049);
-	REICAST_US(ta_fsm_cl);
+	NULLDC_USA(ta_type_lut,256);
+	NULLDC_USA(ta_fsm,2049);
+	NULLDC_US(ta_fsm_cl);
 
-	REICAST_US(tileclip_val);
-	REICAST_USA(f32_su8_tbl,65536);
-	REICAST_USA(FaceBaseColor,4);
-	REICAST_USA(FaceOffsColor,4);
-	REICAST_US(SFaceBaseColor);
-	REICAST_US(SFaceOffsColor);
+	NULLDC_US(tileclip_val);
+	NULLDC_USA(f32_su8_tbl,65536);
+	NULLDC_USA(FaceBaseColor,4);
+	NULLDC_USA(FaceOffsColor,4);
+	NULLDC_US(SFaceBaseColor);
+	NULLDC_US(SFaceOffsColor);
 
 	pal_needs_update = true;
 
-	REICAST_USA(sh4_cpu->vram.data, sh4_cpu->vram.size);
+	NULLDC_USA(sh4_cpu->vram.data, sh4_cpu->vram.size);
 
-	REICAST_USA(sh4_cpu->mram.data, sh4_cpu->mram.size);
+	NULLDC_USA(sh4_cpu->mram.data, sh4_cpu->mram.size);
 
-	REICAST_US(IRLPriority);
-	REICAST_USA(InterruptEnvId,32);
-	REICAST_USA(InterruptBit,32);
-	REICAST_USA(InterruptLevelBit,16);
-	REICAST_US(interrupt_vpend);
-	REICAST_US(interrupt_vmask);
-	REICAST_US(decoded_srimask);
+	NULLDC_US(IRLPriority);
+	NULLDC_USA(InterruptEnvId,32);
+	NULLDC_USA(InterruptBit,32);
+	NULLDC_USA(InterruptLevelBit,16);
+	NULLDC_US(interrupt_vpend);
+	NULLDC_US(interrupt_vmask);
+	NULLDC_US(decoded_srimask);
 
-	REICAST_US(i) ;
+	NULLDC_US(i) ;
 	if ( i == 0 )
 		do_sqw_nommu = &do_sqw_nommu_area_3 ;
 	else if ( i == 1 )
@@ -1004,112 +1004,112 @@ bool dc_unserialize(void **data, unsigned int *total_size)
 
 
 
-	REICAST_USA((*p_sh4rcb).sq_buffer,64/8);
+	NULLDC_USA((*p_sh4rcb).sq_buffer,64/8);
 
 	//store these before unserializing and then restore after
 	//void *getptr = &((*p_sh4rcb).cntx.sr.GetFull) ;
 	//void *setptr = &((*p_sh4rcb).cntx.sr.SetFull) ;
-	REICAST_US((*p_sh4rcb).cntx);
+	NULLDC_US((*p_sh4rcb).cntx);
 	//(*p_sh4rcb).cntx.sr.GetFull = getptr ;
 	//(*p_sh4rcb).cntx.sr.SetFull = setptr ;
 
-	REICAST_US(old_rm);
-	REICAST_US(old_dn);
+	NULLDC_US(old_rm);
+	NULLDC_US(old_dn);
 
 	sh4_sched_unserialize(data, total_size);
 	
-	REICAST_US(SCIF_SCFSR2);
-	REICAST_US(SCIF_SCFRDR2);
-	REICAST_US(SCIF_SCFDR2);
+	NULLDC_US(SCIF_SCFSR2);
+	NULLDC_US(SCIF_SCFRDR2);
+	NULLDC_US(SCIF_SCFDR2);
 
 
-	REICAST_USA(tmu_shift,3);
-	REICAST_USA(tmu_mask,3);
-	REICAST_USA(tmu_mask64,3);
-	REICAST_USA(old_mode,3);
-	REICAST_USA(tmu_ch_base,3);
-	REICAST_USA(tmu_ch_base64,3);
-
-
-
-
-	REICAST_USA(CCN_QACR_TR,2);
+	NULLDC_USA(tmu_shift,3);
+	NULLDC_USA(tmu_mask,3);
+	NULLDC_USA(tmu_mask64,3);
+	NULLDC_USA(old_mode,3);
+	NULLDC_USA(tmu_ch_base,3);
+	NULLDC_USA(tmu_ch_base64,3);
 
 
 
 
-	REICAST_USA(UTLB,64);
-	REICAST_USA(ITLB,4);
+	NULLDC_USA(CCN_QACR_TR,2);
+
+
+
+
+	NULLDC_USA(UTLB,64);
+	NULLDC_USA(ITLB,4);
 #if defined(NO_MMU)
-	REICAST_USA(sq_remap,64);
+	NULLDC_USA(sq_remap,64);
 #else
-	REICAST_USA(ITLB_LRU_USE,64);
-	REICAST_US(mmu_error_TT);
+	NULLDC_USA(ITLB_LRU_USE,64);
+	NULLDC_US(mmu_error_TT);
 #endif
 
 
-	REICAST_US(NullDriveDiscType);
-	REICAST_USA(q_subchannel,96);
+	NULLDC_US(NullDriveDiscType);
+	NULLDC_USA(q_subchannel,96);
 
 // FIXME
-//	REICAST_US(i);	// FLASH_SIZE
-//	REICAST_US(i);	// BBSRAM_SIZE
-//	REICAST_US(i);	// BIOS_SIZE
-//	REICAST_US(i);	// RAM_SIZE
-//	REICAST_US(i);	// ARAM_SIZE
-//	REICAST_US(i);	// VRAM_SIZE
-//	REICAST_US(i);	// RAM_MASK
-//	REICAST_US(i);	// ARAM_MASK
-//	REICAST_US(i);	// VRAM_MASK
+//	NULLDC_US(i);	// FLASH_SIZE
+//	NULLDC_US(i);	// BBSRAM_SIZE
+//	NULLDC_US(i);	// BIOS_SIZE
+//	NULLDC_US(i);	// RAM_SIZE
+//	NULLDC_US(i);	// ARAM_SIZE
+//	NULLDC_US(i);	// VRAM_SIZE
+//	NULLDC_US(i);	// RAM_MASK
+//	NULLDC_US(i);	// ARAM_MASK
+//	NULLDC_US(i);	// VRAM_MASK
 
 
-	REICAST_US(naomi_updates);
-	REICAST_US(i); // BoardID
-	REICAST_US(GSerialBuffer);
-	REICAST_US(BSerialBuffer);
-	REICAST_US(GBufPos);
-	REICAST_US(BBufPos);
-	REICAST_US(GState);
-	REICAST_US(BState);
-	REICAST_US(GOldClk);
-	REICAST_US(BOldClk);
-	REICAST_US(BControl);
-	REICAST_US(BCmd);
-	REICAST_US(BLastCmd);
-	REICAST_US(GControl);
-	REICAST_US(GCmd);
-	REICAST_US(GLastCmd);
-	REICAST_US(SerStep);
-	REICAST_US(SerStep2);
-	REICAST_USA(BSerial,69);
-	REICAST_USA(GSerial,69);
-	REICAST_US(reg_dimm_3c);
-	REICAST_US(reg_dimm_40);
-	REICAST_US(reg_dimm_44);
-	REICAST_US(reg_dimm_48);
-	REICAST_US(reg_dimm_4c);
-	REICAST_US(NaomiDataRead);
+	NULLDC_US(naomi_updates);
+	NULLDC_US(i); // BoardID
+	NULLDC_US(GSerialBuffer);
+	NULLDC_US(BSerialBuffer);
+	NULLDC_US(GBufPos);
+	NULLDC_US(BBufPos);
+	NULLDC_US(GState);
+	NULLDC_US(BState);
+	NULLDC_US(GOldClk);
+	NULLDC_US(BOldClk);
+	NULLDC_US(BControl);
+	NULLDC_US(BCmd);
+	NULLDC_US(BLastCmd);
+	NULLDC_US(GControl);
+	NULLDC_US(GCmd);
+	NULLDC_US(GLastCmd);
+	NULLDC_US(SerStep);
+	NULLDC_US(SerStep2);
+	NULLDC_USA(BSerial,69);
+	NULLDC_USA(GSerial,69);
+	NULLDC_US(reg_dimm_3c);
+	NULLDC_US(reg_dimm_40);
+	NULLDC_US(reg_dimm_44);
+	NULLDC_US(reg_dimm_48);
+	NULLDC_US(reg_dimm_4c);
+	NULLDC_US(NaomiDataRead);
 
-	//REICAST_USA(CodeCache,CODE_SIZE) ;
-	//REICAST_USA(SH4_TCB,CODE_SIZE+4096);
+	//NULLDC_USA(CodeCache,CODE_SIZE) ;
+	//NULLDC_USA(SH4_TCB,CODE_SIZE+4096);
 
-	REICAST_USA(RegisterWrite,sh4_reg_count);
-	REICAST_USA(RegisterRead,sh4_reg_count);
-	REICAST_US(fallback_blocks);
-	REICAST_US(total_blocks);
-	REICAST_US(REMOVED_OPS);
+	NULLDC_USA(RegisterWrite,sh4_reg_count);
+	NULLDC_USA(RegisterRead,sh4_reg_count);
+	NULLDC_US(fallback_blocks);
+	NULLDC_US(total_blocks);
+	NULLDC_US(REMOVED_OPS);
 
-	REICAST_USA(kcode,4);
-	REICAST_USA(rt,4);
-	REICAST_USA(lt,4);
-	REICAST_USA(vks,4);
-	REICAST_USA(joyx,4);
-	REICAST_USA(joyy,4);
+	NULLDC_USA(kcode,4);
+	NULLDC_USA(rt,4);
+	NULLDC_USA(lt,4);
+	NULLDC_USA(vks,4);
+	NULLDC_USA(joyx,4);
+	NULLDC_USA(joyy,4);
 
 
-	REICAST_US(settings.dreamcast.broadcast);
-	REICAST_US(settings.dreamcast.cable);
-	REICAST_US(settings.dreamcast.region);
+	NULLDC_US(settings.dreamcast.broadcast);
+	NULLDC_US(settings.dreamcast.cable);
+	NULLDC_US(settings.dreamcast.region);
 
 	if (CurrentCartridge != NULL)
 		CurrentCartridge->Unserialize(data, total_size);
