@@ -4110,21 +4110,24 @@ Built in round 1 (E3, `hw/aica/aica_hash.h/.cpp`), before the sound burst is tou
   seconds, by CPU time, ten rounds in which B0 (R7's merge `b921699b`, the round's start) in its default setting (the
   batch render, what users ran before the round), B0 with `config:aica.NoBatch=yes` (the old per-sample path with the
   old DSP; `perf.py --config`) and the end of the round (`9fbc988a`) ran in turn, on a quiet machine. The JIT: medians
-  1419.7 % (B0 default), 1260.7 % (B0 per-sample) and 1129.2 % (tip): the tip **0.795 of B0's default** (-20.5 %; per
-  round 0.785 to 0.804) and 0.896 of B0's per-sample path (-10.4 %); the ratios make 1160.5 % and 1306.8 % of M2G's
-  1459.1 %, for the record. The interpreter: medians 553.5 %, 528.0 % and 507.0 %: the tip **0.916 of B0's default**
-  (-8.4 %; per round 0.903 to 0.928) and 0.960 of the per-sample path (-4.0 %); 518.5 % and 543.6 % of M2G's 566.1 %.
-  The spread of each column is 2.0 to 3.3 %. **Host instructions a sample** (user mode, `perf_event_open`, three runs
-  each, medians): W1, W2 and W3 together against B0's default on runs the harness does not fold (B0's exit runs; the
-  guest of R7's merge, without a DSP program, for 90 vblanks, and 2ndmix for 4000; samples from the exit line's `sched`
-  / 145124 x 32): +4019.5 a sample on the guest and +3977.6 / +3978.4 on 2ndmix (JIT / interpreter), the per-sample
-  path with the core and its sweep in place of a batch render of 32 samples without a DSP; for the record the guest
-  with its DSP program +5302.2 (the program's 18 steps among it) and hello for 300 vblanks +4198 / +4201. E8a and E8b
-  together against G's merge, on harness runs (both fold `dsp`): +940.0 on the guest and +939.7 on 2ndmix, on both
-  engines (the burst in its phase calls, the DSP's and the capture's flag tests). W1, W2 and W3 measured their own
-  steps: W1 0.82 (JIT) and 0.91 (interpreter) of B0's default, W2 0.85 and 0.94, W3 0.99 to 1.01 of B2 (the cut's Appendix I).
-  Nothing was changed for speed in M3; the logs are under `agents/nulldc3/m3g/logs/` (`perf.txt`, `perf/`,
-  `icount-report.txt`).
+  1431.7 % (B0 default), 1266.3 % (B0 per-sample) and 1142.9 % (tip): the tip **0.798 of B0's default** (-20.2 %; per
+  round 0.789 to 0.805) and 0.902 of B0's per-sample path (-9.8 %); the ratios make 1164.7 % and 1316.9 % of M2G's
+  1459.1 %, for the record. The interpreter: medians 557.2 %, 533.1 % and 512.0 %: the tip **0.919 of B0's default**
+  (-8.1 %; per round 0.914 to 0.934) and 0.960 of the per-sample path (-4.0 %); 520.1 % and 543.7 % of M2G's 566.1 %.
+  The spread of each column is 1.3 to 4.3 %. **Host instructions a sample** (user mode, `perf_event_open`, three runs
+  each, medians), on runs the harness does not fold (exit runs; the guest of R7's merge, without a DSP program, for 90
+  vblanks, and 2ndmix for 4000; samples from the exit line's `sched` / 145124 x 32): W1, W2 and W3 together, G's merge
+  (B4, `fe90f9f1`: their product code and nothing after it, since G changed only tests, documents and the gitlink)
+  against B0's default, +3079.6 a sample on the guest and +3037.9 / +3038.8 on 2ndmix (JIT / interpreter), the
+  per-sample path with the core and its sweep in place of a batch render of 32 samples without a DSP; for the record
+  the guest with its DSP program +4362.2 (the program's 18 steps among it) and hello for 300 vblanks +3258 / +3262.
+  The round's total (W1 to W3, E8a and E8b: the end of the round against B0's default, the same runs): +4019.4 /
+  +4019.6 on the guest and +3977.6 / +3978.4 on 2ndmix; the guest with its DSP program +5302.2, hello +4198 / +4201.
+  E8a and E8b together against G's merge, on harness runs (both fold `dsp`): +939.9 on the guest and +939.7 on 2ndmix,
+  on both engines (the burst in its phase calls, the DSP's and the capture's flag tests); on the exit runs they are
+  the difference of the two counts above, the same +940. W1, W2 and W3 measured their own steps: W1 0.82 (JIT) and
+  0.91 (interpreter) of B0's default, W2 0.85 and 0.94, W3 0.99 to 1.01 of B2 (the cut's Appendix I). Nothing was
+  changed for speed in M3; the logs are under `agents/nulldc3/m3g/logs/` (`perf.txt`, `perf/`, `icount-report.txt`).
 - Speed: emulation speed with the server on and no client is within 2 % of the server off, 2ndmix, three runs each,
   measured in the `-DHAS_TA_LLE=OFF` build with the `none` renderer (or GL with `GALLIUM_DRIVER=d3d12`); the figure states
   its renderer. No figure is taken with the reference software renderers (D3). On a loaded machine wall time is not
