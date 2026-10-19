@@ -278,7 +278,7 @@ def ask_yes_no(question, default=True):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(
-      description='Reicast evdev controller mapping editor')
+      description='nullDC evdev controller mapping editor')
     parser.add_argument('-d', '--device-id', action='store', type=int,
                         default=-1, help='device-id to map.')
     parser.add_argument('-f', '--file', action='store', default=None,
