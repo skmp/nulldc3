@@ -1,0 +1,5 @@
+# Every file is checked out byte for byte as it is committed, whatever core.autocrlf says: the tests compare
+# committed files byte for byte (the hashed DSP module files, dsptest/SHA256SUMS, the baselines, generated headers)
+# on every system. The files committed with CRLF (docs/neil_corlett_aica_notes.txt, libswirl/hw/pvr/Renderer_if.cpp,
+# reidbg/reidbg.csproj, reidbg/reidbg.sln) keep it.
+* -text
