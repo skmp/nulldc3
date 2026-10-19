@@ -17,6 +17,10 @@ emulator does not read and the system tests prove it does not. The test holds th
   finds more lines than the list has rows for it (`count: ...`);
 - an entry that is not in the format below fails it (`malformed: allowed.txt:<n>: ...`).
 
+Submodules (`tests/vendor/*`, `devtools/`) are other repositories and are not searched, whatever the git config says:
+the script calls git with `-c submodule.recurse=false`, and the ctest target runs it with `submodule.recurse=true` in
+git's environment so that a host whose git config sets it is covered.
+
 A tree that is not a git checkout (an archive, a copy; `git rev-parse --show-prefix` at the tree's top) has nothing
 to compare: the test is skipped (exit 77), and with `NULLDC_TESTS_REQUIRE_DATA` it fails. It needs python3 (3.9 or
 later, the standard library) and git. It reads the working tree, so an uncommitted change counts.

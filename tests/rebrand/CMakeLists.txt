@@ -27,5 +27,9 @@ else()
            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/rebrand_names.py"
                    --tree "${nulldc_root_path}" --allowed "${CMAKE_CURRENT_SOURCE_DIR}/allowed.txt"
                    --git "${GIT_EXECUTABLE}" ${nulldc_rebrand_require})
-  set_tests_properties(rebrand.names PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+  # The test runs with submodule.recurse=true in git's environment (GIT_CONFIG_COUNT, git 2.31 or later), the
+  # setting that makes git grep search the initialised submodules too: the script has to keep them out itself, as
+  # it must on a host whose git config sets it.
+  set_tests_properties(rebrand.names PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+                       ENVIRONMENT "GIT_CONFIG_COUNT=1;GIT_CONFIG_KEY_0=submodule.recurse;GIT_CONFIG_VALUE_0=true")
 endif()

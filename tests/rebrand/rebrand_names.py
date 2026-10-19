@@ -6,8 +6,9 @@
 Every line of a tracked text file that has "reicast" in it, in any case (git -C <tree> grep -I -i -n reicast), has
 to be allowed by an entry of allowed.txt, and every row of allowed.txt has to find the lines it allows: an
 occurrence that no entry allows fails the test, and so does a row whose line is gone (the output names both). No
-tracked file may have "reicast" in its name either, unless a whole-path entry allows it. The format of allowed.txt
-is described at its top and in tests/rebrand/README.md.
+tracked file may have "reicast" in its name either, unless a whole-path entry allows it. Submodules are other
+repositories and are not searched, whatever the git config says (submodule.recurse). The format of allowed.txt is
+described at its top and in tests/rebrand/README.md.
 
 A tree that is not a git checkout (the top of one) has nothing to compare: the test is skipped (exit 77), or with
 --require-data it fails.
@@ -33,8 +34,11 @@ def git(gitexe, tree, args):
     for name in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES'):
         env.pop(name, None)
     env['GIT_OPTIONAL_LOCKS'] = '0'
+    # The settings that change what git grep prints are pinned, submodule.recurse among them: with it set to true in
+    # a user's or the system's git config, git grep also searches the initialised submodules (other repositories:
+    # tests/vendor/*, devtools/), whose lines are not the tree's.
     cmd = [gitexe, '-C', tree, '-c', 'core.quotePath=false', '-c', 'color.ui=never', '-c', 'color.grep=never',
-           '-c', 'grep.column=false', '-c', 'grep.patternType=fixed'] + args
+           '-c', 'grep.column=false', '-c', 'grep.patternType=fixed', '-c', 'submodule.recurse=false'] + args
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     return p.returncode, p.stdout, p.stderr.decode('utf-8', 'replace').strip()
 
