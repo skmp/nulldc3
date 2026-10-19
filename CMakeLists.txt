@@ -268,9 +268,6 @@ include_directories ("${reicast_core_path}")
 set(reicast_SRCS ${core_SRCS} ${deps_SRCS} ${osd_SRCS})
 
   add_executable(${TNAME}${binSuffix} ${reicast_SRCS}) 
-set_target_properties(${TNAME}${binSuffix} PROPERTIES
-    XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS
-    "${CMAKE_CURRENT_LIST_DIR}/reicast.entitlements")
 
 target_compile_features(${TNAME}${binSuffix} PRIVATE cxx_std_20)
 
