@@ -10,7 +10,7 @@
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-IDI_ICON1               ICON                    "reicast.ico"
+IDI_ICON1               ICON                    "nulldc3.ico"
 
 /////////////////////////////////////////////////////////////////////////////
 
@@ -22,11 +22,11 @@ BEGIN
   BEGIN
     BLOCK "040904E4"
     BEGIN
-      VALUE "CompanyName", "Reicast Team"
+      VALUE "CompanyName", "nullDC Team"
       VALUE "FileDescription", "nullDC"
       VALUE "FileVersion", NULLDC_VERSION
       VALUE "InternalName", "nulldc3"
-      VALUE "LegalCopyright", "Copyright (c) Reicast Team. All rights reserved."
+      VALUE "LegalCopyright", "Copyright (c) 2026 nullDC Team"
       VALUE "OriginalFilename", "nulldc3.exe"
       VALUE "ProductName", "nullDC"
       VALUE "ProductVersion", NULLDC_VERSION
