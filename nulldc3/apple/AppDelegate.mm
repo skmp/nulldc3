@@ -368,7 +368,7 @@ static bool _isInitializing = true;
     exit(1);
 }
 
-#pragma mark - Reicast OS Functions -
+#pragma mark - OS functions -
 
 void os_LaunchFromURL(const string& url) {
     NSString *urlString = [NSString stringWithUTF8String:url.c_str()];

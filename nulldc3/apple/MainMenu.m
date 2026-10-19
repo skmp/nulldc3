@@ -104,11 +104,11 @@ static NSMenuItem *_toggleConsoleMenuItem;
     // Submenu
     NSMenu *helpMenu = [[NSMenu alloc] initWithTitle:@"Help"];
     [helpMenuItem setSubmenu:helpMenu];
-    // Reicast Help
-    NSString *reicastHelpTitle = [NSString stringWithFormat:@"%@ Help", appName];
-    NSMenuItem *reicastHelpMenuItem = [[NSMenuItem alloc] initWithTitle:reicastHelpTitle action:@selector(showHelp:) keyEquivalent:@"?"];
-    [reicastHelpMenuItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
-    [helpMenu addItem:reicastHelpMenuItem];
+    // nullDC Help
+    NSString *helpTitle = [NSString stringWithFormat:@"%@ Help", appName];
+    NSMenuItem *helpItem = [[NSMenuItem alloc] initWithTitle:helpTitle action:@selector(showHelp:) keyEquivalent:@"?"];
+    [helpItem setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
+    [helpMenu addItem:helpItem];
 }
 
 + (NSMenuItem *)toggleConsoleMenuItem {
