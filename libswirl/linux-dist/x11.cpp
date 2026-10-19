@@ -9,6 +9,7 @@
 
 #include <map>
 #include <memory>
+#include <vector>
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
@@ -17,6 +18,7 @@
 #include "libswirl.h"
 #include "cfg/cfg.h"
 #include "linux-dist/x11.h"
+#include "linux-dist/x11_icon.h"
 #include "linux-dist/main.h"
 #include "gui/gui.h"
 #include "gui/gui_renderer.h"
@@ -460,6 +462,22 @@ void x11_window_create()
 		// Capture the close window event
 		wmDeleteMessage = XInternAtom(x11Display, "WM_DELETE_WINDOW", False);
 		XSetWMProtocols(x11Display, x11Window, &wmDeleteMessage, 1);
+
+		// The window's class and icon, set before the window is mapped, which is when the window manager reads
+		// them: WM_CLASS ties the window to the desktop file (StartupWMClass=nulldc3), _NET_WM_ICON is the icon of
+		// the title bar, the task bar and the window switcher (x11_icon.h, made from nulldc3/icon/png/). Xlib takes
+		// a format 32 property as C longs, which x11_icon_cardinals() gives.
+		char classHintName[] = "nulldc3";
+		char classHintClass[] = "nulldc3";
+		XClassHint classHint;
+		classHint.res_name = classHintName;
+		classHint.res_class = classHintClass;
+		XSetClassHint(x11Display, x11Window, &classHint);
+
+		std::vector<unsigned long> icon = x11_icon_cardinals();
+		Atom wmIcon = XInternAtom(x11Display, "_NET_WM_ICON", False);
+		XChangeProperty(x11Display, x11Window, wmIcon, XA_CARDINAL, 32, PropModeReplace,
+			(const unsigned char*)icon.data(), (int)icon.size());
 
 		if(x11_fullscreen)
 		{
