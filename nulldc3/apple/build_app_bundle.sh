@@ -27,7 +27,6 @@ cp ${MACOS_SOURCE_ROOT}/Info.plist ${INFO_PLIST}
 echo "Copying the bundle MacOS directory files"
 cp ${BUILD_ROOT}/${APP_NAME} ${BUNDLE_MACOS_ROOT}/${APP_NAME}
 echo "Copying the bundle Resources directory files"
-cp ${MACOS_SOURCE_ROOT}/AppIcon.icns ${BUNDLE_RESOURCES_ROOT}
 cp ${LICENSE_ROOT}/bsd ${BUNDLE_RESOURCES_ROOT}
 cp ${LICENSE_ROOT}/dep_gpl ${BUNDLE_RESOURCES_ROOT}
 cp ${LICENSE_ROOT}/gpl ${BUNDLE_RESOURCES_ROOT}
