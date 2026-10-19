@@ -1,10 +1,10 @@
 # M3 round — the cut
 
 > **This copy.** `docs/nulldc3/devtools-integration-m3-round.md` is the repository's copy of the working document
-> `M3-ROUND.md` as it stood when header revision 7 was made (package R7, 2026-10-17): the cut with the project
-> owner's answers (7.2) and the reviews of the cut (Appendix R); the integrator's notes (Appendix I) are still empty.
-> Package M3G replaces it by the file as it stands at the end of the round. The text below names its companion
-> documents by their working names; in `docs/nulldc3/` they are:
+> `M3-ROUND.md` as it stands at the end of the M3 round (package M3G, 2026-10-19): the cut with the project owner's
+> answers (7.2), the reviews of the cut (Appendix R) and the integrator's notes on the packages of the round (Appendix
+> I, I.1 to I.11). It replaces the copy that package R7 committed with header revision 7. The text below names its
+> companion documents by their working names; in `docs/nulldc3/` they are:
 >
 > | Named below | In `docs/nulldc3/` |
 > | --- | --- |
@@ -17,8 +17,9 @@
 >
 > "Beside this file" is the working area: the reader reports of `understand-m3/`, the briefs of `m3-briefs/` and
 > every path of the form `agents/nulldc3/...` point outside this repository (`docs/nulldc3/README.md`), and so do the
-> paths of the caique checkout (`model/...`). The design in `docs/nulldc3/` is not at this cut yet: section 8 lists
-> where the two differ and is applied at the end of the round, and until then this file is the contract (M3-D1).
+> paths of the caique checkout (`model/...`). The design in `docs/nulldc3/` is at this cut: section 8 was applied at
+> the end of the round (package M3G). The design, the decisions and the frozen headers cite this file for header
+> revision 7 (section 2), for the M3 tree and for the guest's DSP program (section 6).
 
 Status: cut, 2026-10-16; revised the same day after the adversarial review of round 1 (44 findings of three readers),
 again after its round 2 (4 findings), and a third time (round 3) with the project owner's answers to M3-Q1 to M3-Q4: a
@@ -2862,6 +2863,207 @@ What every brief carries (in its "What is known"):
 Empty at the cut. As each package is verified and merged, the integrator adds a section here (as `M2-ROUND.md` Appendix I
 has one for each package of M2): the commit verified and merged, the counts where they differ from the cut, what the
 verifiers left for later packages, the departures accepted, and the known limits. A later brief is read with these.
+
+### I.1 F4a (verified 2026-10-17, three verifications)
+
+devtools `skmp/nulldc3` = `f13444e` (13 commits on `18435de`; UI packages commit on the branch itself). The last fix
+round put the 16 MiB timing test of the mock on a monotonic clock taken at module load: on this machine the wall clock
+steps forward 3 to 3.6 s about every 35 s, which made a bound timed with `Date.now` red on a correct mock. **For every
+later brief: a timing bound in a test is measured on a monotonic clock that fake timers do not replace.** Integrator
+afterwards: the main UI checkout's `dist-native` rebuilt at `f13444e`, `wt/ui-pin` moved there, devcast `a1149fad`
+moves the submodule `devtools/` to `f13444e` (278 of 278 with that UI). The held-ARM7 rules of the mock, S17 and S21
+first meet the emulator in E8a's and E8b's contract modes. F4d can set `TESTB0` through the mock's option (`testb0`).
+
+### I.2 R7 (verified 2026-10-17, two verifications)
+
+Merged as `b921699b` (head `d2d144d7`, 6 commits). 278 targets; describe, the state hashes, the sound lines and the
+contract gates byte for byte the base's; header texts equal section 2 (86 items, ASCII). Departure accepted: the fix
+round rewrote the comments of the rows of 0x2804 in `dbg_regs_tables.cpp` (the AICA register-file comment, the
+`dc.aica.common` list, the `dc.aica.dsp` comment), which describe item 6's rows: R7's Owns should have named them. Left
+for later: the test word of the 0x2804 check in `regs.devices` (`0xC5A3`, RBP bit 11 clear) goes to W1 (its brief has
+it); `docs/nulldc3/devtools-integration-design.md` still says the `dc.aica.common` rows are read "as
+`AICA::DebugReadRegs` gives them", wrong from W1 on for RBP / RBL / TESTB0: a row of section 8 for M3G.
+
+### I.3 W1 (verified 2026-10-17, two verifications)
+
+Merged as `ed385ee2` (head `15c682b3`, 12 commits; 47 files). 287 targets (278 + 9). Against B0, in both `aica.NoBatch`
+settings, both engines and both builds: the six old fields of every sound line identical, the exit lines identical
+whole, 76 of 76 state hashes equal; the M1 and M2 contract lines the base's; aica-dsp-asm's output the same. `dsp` is
+equal between the builds (guest: batch `c1df75daa7916125`, per-sample `51a4826143d3da67`, the same on both engines).
+Counts that differ from the cut: `dsp_mem3.emu` misses 5 lines, not 1; the channel keeps a bus number (in the save
+state V5). Speed, a report (hle build, `none` renderer, 5 rounds): batch about 1.00 of B0; per-sample 0.92 (JIT) and
+0.96 (interpreter) of B0 per-sample, 0.82 and 0.91 of B0's default. Integrator afterwards: `33f7835d` applies the
+verifier's patch removing the four deleted files from the macOS Xcode project. That project lists none of the files
+added since the debugger came in (the DSP core, `aica_hash.cpp`, `libswirl/debugger/`), is not built here, and stays a
+follow-up for one macOS pass. No UI pin change. Left for later: the `save-bus` check's bus (bit 3 clear) and the
+`debugger.sound.engines` comment go to W2; the regs session's step value (bit 6 clear) to E8a (their briefs have them).
+Two mutations survive and are accepted: the `dsp` fold leaving out the blob's last byte, and the CD-DA pair given to
+EXTS under the dead `CDDAMute`.
+
+### I.4 F4b (verified 2026-10-17, two verifications)
+
+devtools `skmp/nulldc3` = `8db2795` (8 commits on `f13444e`). The playground's module is the emulator's core built by
+`build.sh --check` from devcast `33f7835d` with emscripten 6.0.8 (wasm 43941 bytes, sha256 `610da9d5...`; mjs 9458
+bytes, `ac041e17...`); `known-answers.json` (872 answers) is the native core's trace of `dsp_known.cpp`; the files W2's
+`aica.dsp.wasm.devtools` reads are unchanged since `dbf154c`. Unit suite 683 passed, 1 skipped (three runs); e2e 376
+passed, 1 skipped; `debugger.disasm.dsp_playground` green at the head. Departure accepted: "Start DSP" sets STEP and
+SAMPLES to 0 and does not call the core's `reset()` (the README's mapping of the old `resetCounters`). Other choices
+recorded: inputs written only when a sample starts; "not on the starting step" applies per run, so a breakpoint on step
+0 stops a continuous run at the sample boundary; the register view shows MADRS unsigned and adds a MIXS_BANK row; the
+fixture binds the wasm's sha256. `experiments/aica_dsp_playground_rust/` is untouched and built by nothing. The new e2e
+file test needs a Chromium whose `decodeAudioData` does not clip floats past 1.0 (the bundled one). Integrator
+afterwards: the main UI checkout's `dist-native` rebuilt at `8db2795`, `wt/ui-pin` moved there, devcast `ddcce498` moves
+the submodule `devtools/`. Left for F4d (its brief has them): Start's reset and the snapshot load, the documentation's
+name for the playground, the lower half of the file input's clamp.
+
+### I.5 W2 (verified 2026-10-18, two verifications)
+
+Merged as `dd74f348` (head `e2eb4112`, 11 commits). 275 targets (287 - 17 + 5). Every tip line equal whole to B1's
+`aica.NoBatch=yes` line (the key absent, `no` or `yes`; both engines; default and `-DNULLDC_DEBUGGER=OFF`), 114 state
+hash rows equal to B1's `yes` rows in the five builds, contract lines the base's. Speed, a report (hle build, 10 rounds):
+JIT 1195.2 % of real time, 1.04 of B1 per-sample, 0.85 of B0; interpreter 519.5 %, 1.02 and 0.94. Departure accepted:
+the fix round edited W1's `.emu` machine (`emu_aica.h` / `.cpp`: `EmuNoSound`, `EmuHarnessOn`, `EmuHarnessSamples`),
+added `aica.dsp.emu.state` check 5 `nosound` (195/195) and its baseline row: the stand-in stream there is the only place
+the stream half of M3-D16 can be observed. Cut feedback recorded: where a guarantee lives on a path the headless gate
+cannot see (the audio stream), a brief names the stand-in that observes it. W1's save-bus leftover is done (`52b232c1`,
+a bus with bit 3 set). Left for W3 (its brief has them): the burst state's "batch render" comment, the `muted` texts
+once a held burst sounds, `perf.py`'s `--config` example. Left for later, no package: `libswirl/profiler/profiler.cpp` still
+declares and prints `samples_gen` inside `#if defined(HAS_PROFILE)` (no build defines it; one that did would not link) and the unused `bool` return of `ChannelEx::Step`.
+
+### I.6 W3 (verified 2026-10-18, one verification)
+
+Merged as `0222385f` (head `a667fced`, 7 commits); `6fe198d7` after it (the integrator's text fixes: PauseAfter's
+comment and the README's pause note said "no timer overflows in every burst", now "not every burst has a timer
+overflow"; two paragraphs rewrapped; the runner's comment row names the mode `held`). 277 targets (275 + 2). B2's h:
+the guest 0; 2ndmix 18 (JIT; bursts 1-12, 474-479) and 362 (interpreter; 1-308, 924-977); hello at 300 vblanks 6461 and
+6547 of 6917. The guest's lines and exit hash identical to B2. 2ndmix: `ticks`, `cycles`, `arm7`, `sh4` identical;
+`samples` the silence of 40000 ticks (`386b438fa36ca325`, both engines; B2's of 39982 and 39638); `dsp`
+`2ac453da894bfdc6`, now the same on both engines; `regs` moved, accepted under 5.1: only TIMA / TIMB / TIMC, SCIPD bit
+10 and the timer bits of SCIPD and MCIPD, from tick 1 (the first held burst) on, shown by dumps. All 38 state hash rows
+identical to B2 in the five builds. Departures accepted: the `muted` texts and `perf.py`'s example (W2's leftovers,
+not in Owns); three more stand-in kinds; gate (d) read as "the tip equal to B2 in each of the five builds" (the
+`-DHAS_TA_LLE=OFF` build's 2ndmix 600 differs from the LLE builds' already in B2). hello is held to its state hash
+only, which has no AICA part, so it says nothing of W3; G's 2ndmix check (below) is the regression witness. Speed, a
+report: tip / B2 0.99 to 1.01 on both engines (noise); about 3500 host instructions per sample made in a held burst.
+Left for G (its brief has them): a k = N silence check on `debugger.sound.lines.2ndmix.*`, and stand-ins for the other
+fields of the mode `held`. Left for E8a (its brief has them): held bursts get every phase but the ARM phase when the
+burst is cut into phase calls, `SampleMix` stays one call (stream and fold together), and a witness of the SH4's
+interrupt line in held bursts (in `arm7.held.clocked`). Cut feedback recorded: an Owns lists the texts a previous
+package's notes hand over; where a field list is compared, the runner's test asks for one variant per field.
+
+### I.7 F4c (verified 2026-10-18, two verifications)
+
+devtools `skmp/nulldc3` = `b35728f` (8 commits on `8db2795`). Unit suite 702 passed, 1 skipped (three runs); e2e 384
+passed, 1 skipped; the 4096-frame capture shown about 150 ms after its frame reached the page (bound 1000 ms; the scan's
+own bound, 250 ms, is a unit test, which a copy per frame broke at 3102 ms). Departures accepted: ten spec files outside
+Owns lost only their `KNOWN.sgcNoData` allowances (item 5 asks for it; Owns should have named them);
+`SgcWaveformRenderer.test.ts` added; Record asks for `{frames: 1024}`; a "Capture length" label in the panel's top bar;
+cursors one pixel to either side of their frame; `SgcFrameData.getBuffer()` removed (unused). Integrator afterwards: the
+main UI checkout's `dist-native` rebuilt at `b35728f`, `wt/ui-pin` moved there, devcast `075d92f0` moves the submodule.
+Left for F4d (its brief has it): a `-32011` behind a successful Record, which a mutation can swallow unseen. Cut
+feedback recorded: a brief with a rule "this error is expected" names both sides in its Verifier list.
+
+### I.8 G (verified 2026-10-18, two verifications)
+
+Merged as `dfbad7dd` (head `bdbbcb8b`, 7 commits); `fe90f9f1` after it (the integrator's text fixes: the guest's
+README gives the first tick to the second as 144704 cycles, names the empty end of the DSP part in the row `release`
+and says no step reads `MEMS[6]`; the cut's J3 says what the oracle's copy holds and its 6.3 list has one TABLE 1 word,
+written and read back, in this document and in its copy). 282 targets (277 + 2 oracle + 2 heard + 1
+`debugger.disasm.dsptest`), green twice. The first verification failed: two of the program's writes (the TABLE 1 word
+and the sum) were never read back, so a sign extension of ADREB left out passed the oracle; the fix round's program
+has 18 steps, reads back every word it writes and taps the ring with ADREB, and an ADREB, a `Y_REG` slice (`ylow`), a
+YSEL 2 / 3 swap and an IWT one step late (`iwtlate`), each passing the first program, are red on both engines. Against
+B3: the guest's `arm7`, `ticks`, `cycles` (290248420) equal; its `samples` `7f5e196ea8d164a6`, `regs`, `sh4` and `dsp`
+`d26e9e100def99cc` moved, and the exit hash's `hash`, `sh4`, `ram` and `aram` (sched and vram equal); 2ndmix's lines
+and the 38 state-hash rows identical. The EFSDL-0 copy's `samples` are B3's (`460979cc3dcfe047`); the oracle's copy
+(IMXL 0) and the tool both `e463ca3599ba7824` over 8,192,000 compared steps. Soak 50 runs per engine, one line each;
+valgrind memcheck: no invalid access, the one leak `reios_loadElf`'s (before G). Departures accepted: 18 steps and a
+TABLE 1 write with its read-back where the cut's 6.3 said "one TABLE 1 access"; the oracle holds the send's half of the
+program at 0 only (documented, covered by `aica.dsp.diff.*` and `aica.dsp.emu.lockstep`; the cut's J3 now says so).
+No UI pin change. Left for E8a (its brief has them): B4 on G's merge; `dsp.regs.move` from the second sample of tick 2
+on, with the STEP 0 stop. Left for M3G's backlog (its brief has them): the `reios_loadElf` leak, the oracle tool's ELF
+reads without bounds checks, no target checking 6.3's rules on the program's text. Cut feedback recorded: a mutation
+list in a brief names what the program must witness (ADREB, the `Y_REG` slices, the latch's timing), not only the
+float format and the schedule.
+
+### I.9 E8a (verified 2026-10-18, two verifications)
+
+Merged as `005a9507` (head `32abee18`, 12 commits); `fbf47ecd` after it (the integrator's comment fixes: the tree's
+2949 registers in `dbg_core.cpp` and the contract tests' M2 comment; `arm7.held.clocked` says the guest's SH4 takes the
+AICA's interrupt again and again while the line is high, since `g_irq` resets only bit 5; the burst's `DspStep` says it
+reads between two steps from inside the burst). 295 targets (282 + 13), green twice; the session `dsp` 31 tests on
+three registrations; ThreadSanitizer (interpreter) on the session and the contract mode `dsp`, no report. The first
+verification failed: `dsp.bp.resume` could not fail for the exemption ended by a change of `dbg_dsp_armed` (at its stop
+nothing was listed, so the leave armed nothing), and nothing held `dsp::OnStop` at a thread's exit; the fix round added
+a block that arms the exemption at the leave and takes `dbg_dsp_armed` to 0 and back in one served call (breakpoint
+removed and listed again; category muted and active again), and `dsp.step.wait.hoststop`, `.wait.exit` and
+`dsp.hoststop.owed`, each red on its own half of `OnStop` at the exit. Every mutation of the brief's list caught by the
+named test; stress (round 1's verifier): 10,000 DSP stops with a resume and 10,000 DSP steps with the line equal, 1,000
+resets suspended in the DSP phase and 1,000 exit runs with DSP breakpoints hit, 3,000 mixed actions per engine, four
+emulators at a time. Against B4 (`agents/nulldc3/e8a/b4/`, taken on `fe90f9f1`): the guest's and 2ndmix's lines whole,
+the 38 state-hash rows, default equal to `-DNULLDC_DEBUGGER=OFF` at base and tip. Departures accepted: `arm7.held.clocked`
+writes MCIEB / MCIRE through `AICA::WriteReg` (no debugger writer of the AICA's registers in M3); `dsp.sameslice.*`
+cover the DSP phase only (a scheduler burst never stops at a sample's end before E8b); the run-on rule as one function,
+`RunSuspendedBurst`; `Settle` through the boot; the session on the tree's guest; the neutrality targets named
+`debugger.sound.neutral.dsp.<x>.<engine>`. Equivalent mutants recorded: `PrepareResume`'s `dbg_dsp_armed == 0` guard
+(`Rearm`'s clear ends the exemption first) and, on this x86-64 host, `NoteArm7Fallback` behind any suspension (no ARM7
+recompiler here). No UI pin change. Left for E8b (its brief has them): a mutant of `RunBurstOn`'s own path, the
+same-slice cases at a sample's end. Left for M3G (its brief has them): the documents' counts and DSP section, the known
+limits above. Cut feedback recorded: where two places of the code make one rule and only one can be watched, the cut
+names the one a test can see as the contract.
+
+### I.10 E8b (verified 2026-10-18, two verifications)
+
+Merged as `c0d39a91` (head `e0d3dca3`, 19 commits); `91c678a5` after it (the integrator's comment fixes: `dbg_core.cpp`'s
+"Order" says a tick may come between a response and its binary frame, which a client pairs by `binaryId`; `dbg_sgc.cpp`
+says the core's notice is set and cleared when the core's thread starts and stops). 307 targets (295 + 12), green twice;
+the contract gate M3: `m3`, `.interp`, `.fallback` 20 passed, 0 partial, 0 not applicable each; `m3dsp.guest` and
+`.interp` 3 passed with the note `sgc: captured with the arm7 held`; `m3dsp21.*` 2 passed with its note; M1 18 and M2 19
+on three engines, the M2 guest run unchanged. The session `sgc` 25 tests on two engines; ThreadSanitizer (interpreter)
+on the session and the guest's contract runs, no report; the UI's own client from the pin, three running rounds of
+4096 frames and a 16 MiB memory binary each, on 2ndmix (JIT) and the guest (interpreter): the connection kept, ticks
+flowing behind them. Against B4: the lines whole and the 38 state-hash rows, with no capture and in
+`debugger.sound.neutral.sgc.*`. The first verification failed on three test gaps, a defect and a rule: the `checks == false`
+half of `dbg_sgc_Frame` (a capture whose last frame comes in the burst `dc_run` ends), `binaryId` per connection,
+`outDsp`'s value (it was compared with its own source), a `std::bad_alloc` of `sgc::Arm` escaping both closures of
+`recordSgcFrames`, and a sentence added to the frozen `DebugGetChannel` comment; the fix round added `sgc.runtoend`,
+`sgc.nomemory` (with an allocation-failure hook), the new-connection case of `mem.binary.ids`, a check of each frame's
+sends against MIXS, try/catch in both closures, and put the frozen text back. E8a's two leftovers are held:
+`sgc.stop` catches `RunBurstOn`'s own path (E8a's `runonnostop2`, the `Leave` and the `DoStep` case), and
+`sgc.sameslice.*` reach the `SOUND_BURST_SAMPLE` suspension. Departures accepted: the notice installed in
+`core::Start` / `StartForTest` and removed in `core::Stop` (which `dbg::Init` / `dbg::Term` call); `sgc::Arm` also
+refuses a frame count outside 1 to 4096; with no capture the sweep tests the flag and stores one value a sample. A note
+recorded, not fixed: a table call of `recordSgcFrames` that the park loop takes at a stop (the mutant without its
+`Parked` test survives; it needs a race nothing reaches). No UI pin change. Left for F4d (its brief has them): pairing
+by `binaryId`, ticks paused behind large frames, the count rule, the MIXS bank in front of step 0. Left for M3G's
+backlog (its brief has them): the deadline taken behind the arming call, two possible flakes (`sgc.drain`'s nap,
+`test_bounds`' margin), a failure in the session `sgc` cascading, `std::bad_alloc` on the server's send path, three
+untested paths, `contract.py` not asserting 20 and 3. Cut feedback recorded: a rule that uses MIXS as an oracle names
+the bank (in front of step 0 the CPU reads the bank the same sample's sweep filled); a Verifier list names both halves
+of a function with a `checks` argument and a per-connection counter's new connection; an Owns that names a hw/ header
+says "outside its debug block".
+
+### I.11 F4d (verified 2026-10-19, two verifications)
+
+devtools `skmp/nulldc3` = `066fcbc` (11 commits on `b35728f`). `npm run check` (unit suite 735 passed, 1 skipped; four
+contract runs OK; both builds) and the unit suite three times; e2e 401 passed, 1 skipped (the smoke spec, which needs an
+emulator); the smoke spec against an emulator built from a detached worktree of devcast at `91c678a5` with the bundle
+embedded, twice, about 25 s each: a DSP breakpoint and steps from the toolbar, the DSP stepped at the guest's anchor
+with `ENABLED` 0 from the toolbar and from its view, a capture with a sounding channel, and "Load from emulator" at a
+DSP breakpoint: 17 steps in the playground equal to the emulator's in the 10 rows and 336 words of TEMP, MEMS and EFREG;
+by hand (S = 5, K = 100) 1072 words, 0 differences. The first verification failed on three things: a load into a
+playground whose DSP runs was not held by a test, the banner was not checked at a later stop than its load (a banner
+naming the current stop passed), and the banner stayed when the program it described was replaced; the fix round added
+the tests and clears the banner in the core's write paths. Departures accepted: the Load Regs source generator shared
+from `emulatorSnapshot.ts`; F4c's leftover test in `e2e/dsp-snapshot.spec.ts`; the help's sentence also in the README's "Breakpoints"; on the tool page the button shown
+off with its reason; the two held DSP steps of the smoke spec at two entry stops (`_start` releases the ARM7 in front
+of the first tick); the capture's waveform read in Post-VolPan (bytes 76 to 83 are 0 in the fast tier); the smoke
+spec's timeout 420 s. Equivalent mutant: `banner-kept`. Integrator afterwards: the main UI checkout's `dist-native`
+rebuilt at `066fcbc` (31 files), `wt/ui-pin` moved there, devcast `9fbc988a` moves the submodule. Left for M3G (its
+brief has them): the known limits (the SGC panel's default view flat against the emulator; the playground without a
+sound generator; what the smoke spec's held steps show) and the UI's backlog (an unhandled rejection, audio started by
+a load whose panel closed, Start DSP's clear of the banner untested, the smoke spec's capture by text). Cut feedback
+recorded: a brief with a "loaded from" banner says when the banner goes.
 
 ---
 
