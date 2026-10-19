@@ -221,7 +221,7 @@ public partial class MainWindow
 		// Container child hbox3.Gtk.Box+BoxChild
 		this.label8 = new global::Gtk.Label();
 		this.label8.Name = "label8";
-		this.label8.LabelProp = global::Mono.Unix.Catalog.GetString("Reicast Host");
+		this.label8.LabelProp = global::Mono.Unix.Catalog.GetString("nullDC host");
 		this.hbox3.Add(this.label8);
 		global::Gtk.Box.BoxChild w1 = ((global::Gtk.Box.BoxChild)(this.hbox3[this.label8]));
 		w1.Position = 0;

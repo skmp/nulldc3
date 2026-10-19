@@ -22,7 +22,7 @@
             <child>
               <widget class="Gtk.Label" id="label8">
                 <property name="MemberName" />
-                <property name="LabelProp" translatable="yes">Reicast Host</property>
+                <property name="LabelProp" translatable="yes">nullDC host</property>
               </widget>
               <packing>
                 <property name="Position">0</property>
