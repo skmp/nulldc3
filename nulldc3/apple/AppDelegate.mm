@@ -158,7 +158,7 @@ static bool _isInitializing = true;
         args.push_back(_argv[i]);
     }
     args.push_back(nullptr);
-    int result = reicast_init((int)args.size() - 1, args.data());
+    int result = nulldc_init((int)args.size() - 1, args.data());
     if (result == 0) {
         _isInitializing = false;
         [self captureConsoleOutput];
@@ -312,7 +312,7 @@ static bool _isInitializing = true;
     // Run the rendering in a dedicated thread
     _uiThread = [[NSThread alloc] initWithBlock:^{
         NSLog(@"Starting UI Loop");
-        reicast_ui_loop();
+        nulldc_ui_loop();
         NSLog(@"UI Loop ended");
         
         // Terminate emulator (must be done after UI Loop ends or it may crash, must be run on main thread or it will crash)
@@ -331,7 +331,7 @@ static bool _isInitializing = true;
     [_glView.openGLContext makeCurrentContext];
     
     // Terminate the emulator
-    reicast_term();
+    nulldc_term();
     
     // Notify the app that it can safely exit now
     [NSApp replyToApplicationShouldTerminate:YES];

@@ -555,7 +555,7 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 	{
 		CoInitialize(nullptr);
 
-		int init_rv = reicast_init(argc, argv);
+		int init_rv = nulldc_init(argc, argv);
 		if (init_rv == rv_cli_finish || init_rv == rv_cli_error)
 		{
 			// --help (the usage text is on stdout, and is all that was asked for) or a command line that was refused
@@ -572,9 +572,9 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 
 		setup_seh();
 
-        reicast_ui_loop();
+        nulldc_ui_loop();
 
-        reicast_term();
+        nulldc_term();
 	}
 #ifndef __GNUC__
 	__except( ExeptionHandler(GetExceptionInformation()) )
