@@ -816,10 +816,13 @@ def mode_files(args, lines):
     print('the %d files of SHA256SUMS are the files of the manifest' % len(listed))
 
     # where the assemblers are: the committed files are what the sources give. gen.sh is a bash script, and on
-    # Windows bash is WSL's launcher: nothing there looks for a shell
+    # Windows bash is WSL's launcher: nothing there looks for a shell. With --no-posix-shell (the tests project on
+    # Windows, which requires the line printed here) the mode ends here whatever else it finds
     why = emurun.no_shell()
-    check(why is not None or not args.no_posix_shell, 'the host has no POSIX shell (--no-posix-shell), and the mode looks for one '
-          'to run gen.sh with')
+    if args.no_posix_shell:
+        check(why is not None, 'the host has no POSIX shell (--no-posix-shell), and the mode looks for one to run gen.sh with')
+        print('gen.sh --check was not run: ' + why)
+        return
     if why is not None:
         print('gen.sh --check was not run: ' + why)
         return

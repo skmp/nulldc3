@@ -116,7 +116,9 @@ set(nulldc_sound_runner "${CMAKE_CURRENT_SOURCE_DIR}/soundlines.py")
 
 # The manifest needs python and nothing else; gen.sh --check runs where bash and the assemblers are. On Windows
 # bash is WSL's launcher, which would run gen.sh inside a Linux of the computer: there the mode looks for no shell,
-# says so, and fails when it looks for one
+# says so, and fails when it looks for one; and the test passes only with that line, right in front of the PASS of
+# the script (the exit code is not read then: a FAIL line fails it), so that a mode that looks for a shell after all
+# and does not run it is no pass either
 if(Python3_Interpreter_FOUND)
   set(nulldc_files_host "")
   if(${HOST_OS} EQUAL ${OS_WINDOWS})
@@ -125,6 +127,11 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME debugger.guest.dsptest.files
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_sound_runner}" --mode files --dir "${CMAKE_CURRENT_SOURCE_DIR}" ${nulldc_files_host})
   set_tests_properties(debugger.guest.dsptest.files PROPERTIES TIMEOUT 120 ENVIRONMENT "${nulldc_guest_env}")
+  if(${HOST_OS} EQUAL ${OS_WINDOWS})
+    set_tests_properties(debugger.guest.dsptest.files PROPERTIES
+      PASS_REGULAR_EXPRESSION "gen.sh --check was not run: no POSIX shell on Windows\r?\nPASS"
+      FAIL_REGULAR_EXPRESSION "FAIL;Traceback")
+  endif()
 else()
   nulldc_add_skipped_test(debugger.guest.dsptest.files "no python3 to run tests/debugger/guest/dsptest/soundlines.py with")
 endif()
