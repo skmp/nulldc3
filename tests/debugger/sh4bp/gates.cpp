@@ -3546,6 +3546,47 @@ static void gate_threads()
 }
 
 
+#if defined(_WIN32)
+/*
+	unwind (Windows): a stop that a check of the recompiler made, walked by the system's unwinder from the debugger's
+	latch through dbg_sh4_Check, the check stub, the block and the main loop back to the machine (machine.cpp,
+	walk_from_stop). The stub calls dbg_sh4_Check with the callee's home space below the refund, so that its frame at
+	the call is 40 bytes below the return address into the block: the frame of a block, which is what the unwind
+	data of the code region describes for every pc that is not the main loop's or RunBlock's
+	(libswirl/windows/win_jit_unwind.cpp, jit/backend/x64/rec_x64.cpp). sh4bp_test holds the walks of every stop of
+	every gate as well; this gate makes sure that some of them came from checks
+*/
+static void gate_unwind()
+{
+	struct Case { const char* what; u32 bp; };
+	static const Case cases[] = {
+		{ "the first instruction of a block", G_line },
+		{ "the middle of a block", G_line_mid },
+		{ "the slot of a bra", G_line_slot },
+	};
+
+	for (const Case& c : cases)
+	{
+		machine_reset(ENGINE_JIT);
+		machine_set_pc(G_line);
+		bps({ c.bp });
+
+		const MachineWalks before = walks;
+		MachineStop s = machine_resume();
+
+		check(s.debugger && s.cause == StopCause::Breakpoint && s.id == 1, "jit: %s: the check stops there (at %08X)", c.what, s.pc);
+		check(walks.made > before.made && walks.through_region > before.through_region && walks.failed == before.failed,
+			"jit: %s: the system's unwinder walked the stop from the debugger's latch through the check stub, the block and the main "
+			"loop back to the machine (%u walks, %u of them through 3 frames of the code region or more, %u went wrong%s%s)",
+			c.what, walks.made - before.made, walks.through_region - before.through_region, walks.failed - before.failed,
+			walks.failed != before.failed ? ": " : "", walks.failed != before.failed ? walks.first_failure : "");
+	}
+
+	note("the most frames of the code region one walk came through: %d", walks.region_frames);
+}
+#endif
+
+
 const Gate gates[] = {
 	{ "b1", "B1 exact pc and registers at a hit: block start, mid-block, delay slot", gate_b1 },
 	{ "b2", "B2 resume exempts once; hit counts in a loop; time at the loop exit", gate_b2 },
@@ -3569,6 +3610,9 @@ const Gate gates[] = {
 	{ "arm", "page discards on arming, blocks over two pages, category mask, breakpoints added in a stop", gate_arm },
 	{ "event", "an event breakpoint on the vblank of the machine: at a slice end, in a SLEEP wait, with an interrupt request", gate_event },
 	{ "threads", "the recompiler of a new emulator thread: the code region of the process, prepared once, and an empty code cache in it", gate_threads },
+#if defined(_WIN32)
+	{ "unwind", "Windows: a stop of a check walked by the system's unwinder through the check stub, the block and the main loop", gate_unwind },
+#endif
 };
 
 const u32 gate_count = sizeof(gates) / sizeof(gates[0]);
