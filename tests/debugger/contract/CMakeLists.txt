@@ -67,6 +67,8 @@ find_program(NULLDC_NPM NAMES npm DOC "npm, to run the contract runner of the de
 set(nulldc_contract_skip "")
 if(NOT NULLDC_SYSTEM_TESTS AND NOT NULLDC_EMULATOR)
   set(nulldc_contract_skip "NULLDC_SYSTEM_TESTS is OFF and no NULLDC_EMULATOR is given: there is no emulator to run")
+elseif(${HOST_OS} EQUAL ${OS_WINDOWS})
+  set(nulldc_contract_skip "W64b")
 elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX})
   set(nulldc_contract_skip "headless mode is there on Linux hosts only")
 elseif(NOT Python3_Interpreter_FOUND)

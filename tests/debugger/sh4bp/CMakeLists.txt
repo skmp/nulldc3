@@ -37,15 +37,21 @@ set(sh4bp_gates b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b12 switch ownslot dense b13 b14 
 # the configurations that the gates on the booted guest are made in: engine, and "off" for idleskip off
 set(sh4bp_boots jit interpreter fallback jit-idleskip-off fallback-idleskip-off)
 
-# The tests run the blocks of the x64 backend through its main loop
-if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})))
+# The tests run the blocks of the x64 backend through its main loop. On Windows the x64 backend has no native
+# debugger checks yet (DebugChecks, jit/backend/x64/rec_x64.cpp), which the gates need: skipped there until W64b
+if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})) OR (${HOST_OS} EQUAL ${OS_WINDOWS}))
+  if(${HOST_OS} EQUAL ${OS_WINDOWS})
+    set(sh4bp_skip "W64b")
+  else()
+    set(sh4bp_skip "the sh4bp gates need an x86-64 build with the SH4 recompiler")
+  endif()
   set(sh4bp_boot_tests "")
   foreach(boot ${sh4bp_boots})
     list(APPEND sh4bp_boot_tests boot.${boot})
   endforeach()
   foreach(gate ${sh4bp_gates} selftest ${sh4bp_boot_tests} b11)
     add_test(NAME debugger.sh4bp.${gate}
-      COMMAND ${CMAKE_COMMAND} -E echo "SKIPPED: the sh4bp gates need an x86-64 build with the SH4 recompiler")
+      COMMAND ${CMAKE_COMMAND} -E echo "SKIPPED: ${sh4bp_skip}")
     set_tests_properties(debugger.sh4bp.${gate} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
   endforeach()
   return()

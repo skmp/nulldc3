@@ -69,17 +69,29 @@ function(disasm_oracle_test name available reason)
   endif()
 endfunction()
 
+# An objdump oracle on a host that is not Linux (the Windows host, the Mac), where the tool is missing: a skip of
+# the platform, also with NULLDC_TESTS_REQUIRE_DATA (which keeps a missing tool a failure on Linux)
+function(disasm_objdump_test name tool_var tool_name)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ${tool_var})
+    set(name "${NULLDC_TEST_PREFIX}${name}")
+    add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -E echo "SKIP: no ${tool_name} on this host")
+    set_tests_properties(${name} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP: ")
+  else()
+    disasm_oracle_test(${name} ${ARGN})
+  endif()
+endfunction()
+
 find_program(SH_OBJDUMP
   NAMES sh-elf-objdump sh4-elf-objdump sh-none-elf-objdump sh4-linux-gnu-objdump
   HINTS /opt/toolchains/dc/sh-elf/bin)
 
-disasm_oracle_test(sh4_objdump "${Python3_Interpreter_FOUND}" "python3 not found"
+disasm_objdump_test(sh4_objdump SH_OBJDUMP sh-elf-objdump "${Python3_Interpreter_FOUND}" "python3 not found"
   "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/sh4_objdump.py"
   --objdump "${SH_OBJDUMP}" --test-bin $<TARGET_FILE:disasm_test> --workdir "${CMAKE_CURRENT_BINARY_DIR}/oracle")
 
 # The comparison itself: a wrong flag, target or literal in the dump has to come back as a difference.
 # Own workdir: the image file must not be shared with sh4_objdump under ctest -j.
-disasm_oracle_test(sh4_objdump_selftest "${Python3_Interpreter_FOUND}" "python3 not found"
+disasm_objdump_test(sh4_objdump_selftest SH_OBJDUMP sh-elf-objdump "${Python3_Interpreter_FOUND}" "python3 not found"
   "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/sh4_objdump.py" --self-test
   --objdump "${SH_OBJDUMP}" --test-bin $<TARGET_FILE:disasm_test>
   --workdir "${CMAKE_CURRENT_BINARY_DIR}/oracle/selftest")
@@ -92,13 +104,13 @@ find_program(ARM_OBJDUMP
   NAMES arm-eabi-objdump arm-none-eabi-objdump
   HINTS /opt/toolchains/dc/arm-eabi/bin /opt/toolchains/dc-dca3/arm-eabi/bin)
 
-disasm_oracle_test(arm7_objdump "${Python3_Interpreter_FOUND}" "python3 not found"
+disasm_objdump_test(arm7_objdump ARM_OBJDUMP arm-eabi-objdump "${Python3_Interpreter_FOUND}" "python3 not found"
   "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/arm7_objdump.py"
   --objdump "${ARM_OBJDUMP}" --test-bin $<TARGET_FILE:disasm_test> --workdir "${CMAKE_CURRENT_BINARY_DIR}/oracle")
 
 # The comparison itself, as for SH4: a wrong info field, one that is missing and one that should not be there
 # have to come back as a difference. Own workdir: the image file must not be shared with arm7_objdump under ctest -j.
-disasm_oracle_test(arm7_objdump_selftest "${Python3_Interpreter_FOUND}" "python3 not found"
+disasm_objdump_test(arm7_objdump_selftest ARM_OBJDUMP arm-eabi-objdump "${Python3_Interpreter_FOUND}" "python3 not found"
   "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/arm7_objdump.py" --self-test
   --objdump "${ARM_OBJDUMP}" --test-bin $<TARGET_FILE:disasm_test>
   --workdir "${CMAKE_CURRENT_BINARY_DIR}/oracle/selftest")
