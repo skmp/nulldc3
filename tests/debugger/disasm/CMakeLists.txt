@@ -150,18 +150,29 @@ if(devtools_dir AND EXISTS "${TSX}" AND EXISTS "${DSP_UTILS}")
 else()
   set(DSP_ORACLE_FOUND FALSE)
 endif()
+# On Windows disasm_test writes its stdout in binary mode, each line ending in \n as on Linux, which is how
+# dsp_playground.mts takes its lines apart (a line that ends in \r is a mismatch it names). There the script runs
+# inside an nulldc3-winrun of its own, as dsptest below does (tsx.cmd is cmd.exe, which starts node, which starts
+# node), with TEMP, TMP (where tsx keeps its cache) and npm's cache in the build directory
+set(disasm_winrun "")
 if(WIN32)
-  # disasm_test writes its stdout in text mode there, every line ending in \r\n, and dsp_playground.mts takes its
-  # lines apart at \n: every line it compares ends in a \r. A skip of the platform until one of the two is changed
-  # (neither is a file of the Windows round's tests package), also with NULLDC_TESTS_REQUIRE_DATA
-  add_test(NAME ${NULLDC_TEST_PREFIX}dsp_playground COMMAND ${CMAKE_COMMAND} -E echo
-    "SKIP: on Windows disasm_test writes its lines in text mode, ending in CR LF, and dsp_playground.mts splits them at LF")
-  set_tests_properties(${NULLDC_TEST_PREFIX}dsp_playground PROPERTIES SKIP_REGULAR_EXPRESSION "SKIP: ")
-else()
-  disasm_oracle_test(dsp_playground "${DSP_ORACLE_FOUND}"
-    "no tsx / dspUtils.ts under \"${devtools_dir}\"; set -D${devtools_option}=<dreamcast-devtools checkout with node_modules>"
-    "${TSX}" "${CMAKE_CURRENT_SOURCE_DIR}/dsp_playground.mts"
-    --dsp-utils "${DSP_UTILS}" --test-bin $<TARGET_FILE:disasm_test>)
+  if(NULLDC_WINRUN)
+    set(disasm_winrun "${NULLDC_WINRUN}" --timeout 420 --)
+  elseif(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(disasm_winrun "$<TARGET_FILE:nulldc3_winrun>" --timeout 420 --)
+  endif()
+endif()
+disasm_oracle_test(dsp_playground "${DSP_ORACLE_FOUND}"
+  "no tsx / dspUtils.ts under \"${devtools_dir}\"; set -D${devtools_option}=<dreamcast-devtools checkout with node_modules>"
+  ${disasm_winrun} "${TSX}" "${CMAKE_CURRENT_SOURCE_DIR}/dsp_playground.mts"
+  --dsp-utils "${DSP_UTILS}" --test-bin $<TARGET_FILE:disasm_test>)
+if(disasm_winrun AND DSP_ORACLE_FOUND)
+  # passes only with the line of an exit status 0 (the . stand for the ; of the line)
+  set(playground_temp "${CMAKE_CURRENT_BINARY_DIR}/oracle/playground-tmp")
+  file(MAKE_DIRECTORY "${playground_temp}")
+  set_tests_properties(${NULLDC_TEST_PREFIX}dsp_playground PROPERTIES PASS_REGULAR_EXPRESSION
+    "winrun: desktop [^\n]*winrun-[0-9]+: [0-9]+ window[^\n]*, 0 visible, 0 of the emulator's class. the program's exit status 0. winrun exits with 0"
+    ENVIRONMENT "TEMP=${playground_temp};TMP=${playground_temp};npm_config_cache=${CMAKE_CURRENT_BINARY_DIR}/oracle/playground-npm-cache")
 endif()
 
 # The DSP program of the sounding guest (tests/debugger/guest/dsptest): its text, dsptest_dsp.txt, is the
@@ -178,14 +189,7 @@ endif()
 # all of them, at its timeout too (420 s; the script's own is 300 s). The test passes only with its line of an exit
 # status 0 (and without a "SKIP: " where NULLDC_TESTS_REQUIRE_DATA is set). Without NULLDC_WINRUN a build of this
 # directory by itself runs the script as it is
-set(dsptest_winrun "")
-if(WIN32)
-  if(NULLDC_WINRUN)
-    set(dsptest_winrun "${NULLDC_WINRUN}" --timeout 420 --)
-  elseif(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    set(dsptest_winrun "$<TARGET_FILE:nulldc3_winrun>" --timeout 420 --)
-  endif()
-endif()
+set(dsptest_winrun ${disasm_winrun})
 disasm_oracle_test(dsptest "${Python3_Interpreter_FOUND}" "python3 not found"
   ${dsptest_winrun} "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/dsptest_text.py"
   --test-bin $<TARGET_FILE:disasm_test> --guest "${nulldc_root_path}/tests/debugger/guest/dsptest" ${dsptest_playground})

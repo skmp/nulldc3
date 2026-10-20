@@ -86,6 +86,14 @@ if (lines.length !== samples.length) {
   mismatches++;
 }
 
+// every line ends in \n alone, as on Linux (on Windows disasm_test puts its stdout in binary mode): lines that end in
+// \r\n are the stdout of a text mode, and are not taken apart at \r\n here
+const crlf = lines.filter((line) => line.endsWith("\r")).length;
+if (crlf) {
+  console.log(`  MISMATCH line ends: ${crlf} lines of disasm_test end in \\r\\n, not in \\n (its stdout in text mode)`);
+  mismatches++;
+}
+
 for (let i = 0; i < Math.min(lines.length, samples.length); i++) {
   const sample = samples[i];
   const desc = decodeInst(sample.words);
