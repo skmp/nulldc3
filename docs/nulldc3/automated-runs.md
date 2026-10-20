@@ -234,15 +234,20 @@ config:Dreamcast.RTC=946684800` with the run's `Exit.*` keys.
 `tests/debugger/guest/dsptest/soundlines.py` and `tests/debugger/sh4bp/sessions.py` start every program through
 `tests/common/emurun.py`, the run helper they share (Python 3.9 and the standard library; `harness.emurun` tests it).
 It gives an emulator run its environment, which on Windows is `SystemRoot` (without it Winsock does not start:
-`WSAStartup` fails with 10106) and `TEMP` and `TMP` in the run's own directory, nothing of the profile; it starts
-the emulator, the contract runner (`npm.cmd`, and the `cmd.exe` and `node` behind it) and the tools of the tests
-inside `nulldc3-winrun`, whose path the tests project passes in `NULLDC_WINRUN`, so that ending a run (Windows has no
-SIGTERM) ends its whole job; it finds `nulldc3.exe` for `nulldc3`, reads the output without the `\r` of a `\r\n`,
-and resolves no POSIX shell: `bash` on the PATH of Windows is WSL's launcher, so the check of the sounding guest's
-generated files (`gen.sh --check`) is not run there and says so. The emulator's own keys are those above. On a POSIX
-host the helper starts the program itself, with an environment of the sanitizers' options alone and a core size limit
-of 1 byte. `tests/system` builds no emulator on Windows: the tests project takes `-DNULLDC_EMULATOR=<nulldc3.exe>`
-(`tests/README.md`, "On Windows").
+`WSAStartup` fails with 10106) and `TEMP` and `TMP` in the run's own directory, nothing of the profile; a program
+that is not the emulator (the contract runner, the tools of the tests) gets the caller's environment with `TEMP`,
+`TMP` and npm's cache (`npm_config_cache`, where npm writes a log of every command) in its run's directory, so that
+`node`, `tsx` and npm write nothing into the profile; it starts the emulator, the contract runner (`npm.cmd`, and the
+`cmd.exe` and `node` behind it) and the tools of the tests inside `nulldc3-winrun`, whose path the tests project passes
+in `NULLDC_WINRUN`, so that ending a run (Windows has no SIGTERM) ends its whole job; it finds `nulldc3.exe` for
+`nulldc3`, reads the output without the `\r` of a `\r\n`, and resolves no POSIX shell: `bash` on the PATH of
+Windows is WSL's launcher, so the check of the sounding guest's generated files (`gen.sh --check`) is not run there
+and says so. The emulator's own keys are those above. On a POSIX host the helper starts the program itself, with an
+environment of the sanitizers' options alone (a tool: the caller's) and a core size limit of 1 byte. `tests/system`
+builds no emulator on Windows: the tests project takes `-DNULLDC_EMULATOR=<nulldc3.exe>` (`tests/README.md`, "On
+Windows"). The programs of the tests project that the tests run on Windows have the emulator's policy for a program
+that dies (`tests/common/win_policy.cpp`: no box, no crash report, one line and 128 + the signal's number), which
+`common.guard.windows` holds; `nulldc3-winrun` does not stop crash reports.
 
 ## Faults
 

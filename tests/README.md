@@ -73,8 +73,8 @@ The build includes two builds of the emulator for the system tests, about a minu
 | test | what it runs | data |
 |---|---|---|
 | `common.selftest` | the harness on itself, and the properties of `hw/mem/_vmem` the suites lean on (unaligned accesses end in the handler, constant address lookups return the handlers that are mapped and their context) | none |
-| `harness.emurun` | `common/emurun.py`, how the harnesses of the tests start the emulator and node on every host (`common/emurun_test.py`): the environment of a run (POSIX: the sanitizers' options alone; Windows: `SystemRoot`, `TEMP` and `TMP` in the run's directory, nothing of the profile), `nulldc3.exe` for `nulldc3`, output read without the `\r` of a `\r\n`, every program inside `nulldc3-winrun` on Windows and none without it, `npm.cmd`, no POSIX shell on Windows; that the four harnesses start no program but through it; and a program started through it on this host: on Windows inside `nulldc3-winrun` on a desktop of its own, the program it left running ended with the job | python3 |
-| `common.guard.windows` | Windows only: the policy that `common/test_guard.cpp` gives every suite that links it (no box, no crash report, the line and 128 + the signal's number): `common_selftest` made to fault four ways outside a guarded call, through `nulldc3-winrun` (139, 134, 136, 134, no window), and no new entry of it in the crash-report places of the profile, listed by name before and after (`common/guard_windows.cmake`) | none |
+| `harness.emurun` | `common/emurun.py`, how the harnesses of the tests start the emulator and node on every host (`common/emurun_test.py`): the environment of a run (POSIX: the sanitizers' options alone; Windows: `SystemRoot`, `TEMP` and `TMP` in the run's directory, nothing of the profile) and of a program that is not the emulator (the caller's; on Windows with `TEMP`, `TMP` and npm's cache in the run's directory), `nulldc3.exe` for `nulldc3`, output read without the `\r` of a `\r\n`, every program inside `nulldc3-winrun` on Windows and none without it, `npm.cmd`, no POSIX shell on Windows; that the four harnesses start no program but through it, each with an environment of it; a program started through it on this host, as the emulator and as a tool: on Windows inside `nulldc3-winrun` on a desktop of its own, the program it left running ended with the job; and `selftest.py --mode log-rule` writing under its `--work` alone | python3 |
+| `common.guard.windows` | Windows only: the policy of the tests project for a program that dies (`common/win_policy.cpp`: no box, no crash report, one line and 128 + the signal's number), which every suite that links `common/test_guard.cpp` has, and `disasm_test`, the programs of `debugger/sh4bp` and `aica_dsp_guest_oracle`: `common_selftest`, `disasm_test`, `sh4bp_test` and `aica_dsp_guest_oracle` each made to fault eight ways before `main`, through `nulldc3-winrun`, each way taken by one handler of the policy, which its line names (an access violation and a divide by zero: the vectored handler; `abort()`: the SIGABRT handler; a C++ exception and a breakpoint: the filter; an invalid parameter and a pure virtual call: their handlers; a fault on a stack that cannot be searched: the vectored handler, as nothing else can; 139, 134, 136, 134, 133, 134, 134, 139, no window), and no new entry of them in the crash-report places of the profile, listed by name before and after (`common/guard_windows.cmake`) | none |
 | `sh4.singlestep.interp` | every single-step vector through the SH4 interpreter, gated on `sh4_singlestep/baseline.txt` | `vendor/sh4-tests` |
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
@@ -227,12 +227,18 @@ Linux, RelWithDebInfo by default, with the static C runtime. Every program it ru
 `nulldc3-winrun` (`winrun/README.md`): ctest itself runs inside one, the tests of `windows/` start the emulator
 through it, and the harnesses of the emulator-driven tests (`debugger/selftest`, `debugger/contract`,
 `debugger/guest`, the oracle of `aica_dsp`, `debugger/sh4bp/sessions.py`) start the emulator, the contract runner
-and their tools through another, inner one (`common/emurun.py`), so that no window or box of a test reaches the
-desktop and ending a run ends all of it. It does not stop crash reports; the programs' own policies do: the
-emulator's (`docs/nulldc3/automated-runs.md`), and the same for every suite that links `common/test_guard.cpp` and
-for the programs of `debugger/sh4bp` (no box, no crash report, one line and 128 + the signal's number;
-`common.guard.windows` holds it).
+and their tools through another, inner one (`common/emurun.py`), and `debugger.disasm.dsptest` runs its script
+(and the `tsx.cmd`, `cmd.exe` and `node` behind it) inside one of its own, so that no window or box of a test reaches
+the desktop and ending a run ends all of it. It does not stop crash reports; the programs' own policies do: the
+emulator's (`docs/nulldc3/automated-runs.md`), and the same for every program of the tests project that the tests
+run there, `common/win_policy.cpp`: every suite that links `common/test_guard.cpp`, the programs of
+`debugger/sh4bp`, `disasm_test` and `aica_dsp_guest_oracle` (no box, no crash report, one line and 128 + the
+signal's number; `common.guard.windows` holds it). The harnesses give the programs that are not the emulator (the
+contract runner, the tools) `TEMP`, `TMP` and npm's cache in their run's directory; set `TEMP`, `TMP` and
+`npm_config_cache` to a directory of your own for the rest of a run as well (ctest, the scripts, `npm ci`), or they
+are the profile's.
 
+    set TEMP=<scratch dir>& set TMP=<scratch dir>& set npm_config_cache=<npm cache dir>
     cmake -S tests -B <build dir> -G Ninja -DNULLDC_EMULATOR=<build>\nulldc3.exe -DNULLDC_ELF_DIR=<dir> ^
           -DNULLDC_WREN7_DIR=<dir> -DNULLDC_CAIQUE_DIR=<dir> -DNULLDC_SHRIKE4_DIR=<dir> ^
           -DNULLDC_DEVTOOLS_DIR=<UI checkout with node_modules> -DPython3_EXECUTABLE=<python.exe> ^
@@ -253,18 +259,27 @@ for the programs of `debugger/sh4bp` (no box, no crash report, one line and 128 
   programs of `build/hw`) and 12 of shrike4-rtl (the three headers of `sh4_fpu`, `tools/hw/fpdn/*.bin` and the console
   records the vector suite reads), about 12 MB; and `2ndmix.elf` and `hello.elf` in `NULLDC_ELF_DIR`.
 
-What is skipped on Windows, with its reason (78 of the 335 tests; every other one runs):
+What is skipped on Windows, with its reason (74 of the 335 tests; every other one runs but the four open defects
+below the table):
 
 | tests | reason |
 |---|---|
 | `system.*`, `system.hle.*` (63) | the Linux-only system-test harness |
-| `debugger.selftest.emu` `.emu.interp`, `debugger.selftest.emurun.pauses` `.emurun.pauses.interp` (4) | the session naps for fractions of a millisecond (a slice in a SLEEP wait made slow by 300 us, sleeps of 100 to 600 us between pauses), and Windows' timer makes each nap a tick of 15.6 ms unless the process asks for a 1 ms timer (`timeBeginPeriod`), which the emulator does not: `emu` outlasts its watchdog, `emurun.pauses` its run. Open: with `timeBeginPeriod(1)` at the start of a session both pass |
 | `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` (3) | no emcc |
 | `debugger.disasm.sh4_objdump` `.sh4_objdump_selftest`, `.arm7_objdump` `.arm7_objdump_selftest` (4) | no sh-elf-objdump / arm-eabi-objdump on this host (a skip of the platform also with `NULLDC_TESTS_REQUIRE_DATA`; on Linux a missing tool fails) |
 | `debugger.disasm.dsp_playground` (1) | `disasm_test` writes its stdout in text mode there, every line ending in CR LF, and `dsp_playground.mts` splits its output at LF (a skip of the platform also with `NULLDC_TESTS_REQUIRE_DATA`). Open: binary mode in `disasm_test`, or a split at CR LF in the script |
 | `debugger.sh4bp.b11` (1) | it counts host instructions with the performance counters of Linux (`perf_event_open`) and says `SKIPPED` elsewhere |
 | `cfg.log_file` (1) | the test forks: POSIX hosts only |
 | `debugger.sound.runner` (1) | its stand-ins for the emulator are scripts that the host runs by their first line (`#!`): a Linux host |
+
+**Open defects of the Windows gate** (not skips of the platform; not run there, and they say `OPEN DEFECT, NOT RUN`):
+`debugger.selftest.emu` `.emu.interp`, `debugger.selftest.emurun.pauses` `.emurun.pauses.interp` (4). The session
+naps for fractions of a millisecond with `std::this_thread::sleep_for` (300 us for every slice inside a SLEEP wait in
+`libswirl/debugger/dbg_selftest_emu.cpp`, sleeps of 100 to 600 us between pauses), and on Windows every nap lasts a
+tick of the system timer: 15.6 ms, and 1 to 2 ms where the process asks for a 1 ms timer (`timeBeginPeriod`), which the
+emulator does not. `emu` outlasts its watchdog, `emurun.pauses` its run; with `timeBeginPeriod(1)` at the start of a
+session `emurun.pauses` passes and `emu` still outlasts its watchdog (the SLEEP bound of `emu.step` waits 15 s). The fix
+belongs to the selftest of the emulator: naps that the timer tick does not round up.
 
 ## Layout
 
