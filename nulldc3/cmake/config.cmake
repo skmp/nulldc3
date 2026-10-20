@@ -2,7 +2,6 @@
 #
 #	get luserx0 to doc this shit or something, vars in all caps are to be exported as defs if they aren't in build.h already
 #		handle options for FEAT per platform, so rec isn't built for targets w.o one...
-#		*TODO* setup git version like it's done in VS/make and configure header so --version works still
 #		*TODO* lots of other shit to improve build, add enabling/disabling libs/features, setting 3rd party libs as either built in  static, dynamic  or shared/system
 #
 #

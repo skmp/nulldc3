@@ -22,10 +22,6 @@ set(nulldc_shell_path "${nulldc_root_path}/nulldc3")
 
 list(APPEND CMAKE_MODULE_PATH "${nulldc_shell_path}/cmake")
 
-include(GetGitRevisionDescription)
-git_describe(GIT_VERSION --tags)
-configure_file(${nulldc_core_path}/version.h.in ${nulldc_core_path}/version.h @ONLY)
-
 ## nulldc3 build modules #
 #
 

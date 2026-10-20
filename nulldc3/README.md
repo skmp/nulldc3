@@ -6,8 +6,7 @@ names this directory `nulldc_shell_path`.
 
 - `cmake/`: the CMake modules. `config.cmake` holds the build settings (the host system and processor, the
   compiler, the recompilers, the definitions and flags); the tests project takes it too, so that a test compiles
-  libswirl as the emulator does. `GetGitRevisionDescription.cmake` and its `.in` give the build its version from
-  `git describe`.
+  libswirl as the emulator does. `version.cmake` makes the version at every build.
 - `windows/`: the Windows resources, `nulldc3.rc` (the icon and the version information) and `resource.h`.
 - `linux/`: the Linux desktop files: `nulldc3.desktop`, the man pages `man/nulldc3.1` and
   `man/nulldc3-joyconfig.1`, the controller mappings of `mappings/` and `tools/nulldc3-joyconfig.py`, which
