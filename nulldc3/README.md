@@ -44,7 +44,8 @@ the rule the UI (`scripts/version.ts` of dreamcast-devtools) follows as well:
 --long --match v[0-9]*`, read from the right; no other tag counts. A tracked file changed means that `git status
 --porcelain --untracked-files=no` says something (a submodule at another commit included); untracked and ignored
 files never count. A clone, a worktree and a submodule are checkouts. The comment at the top of `version.cmake` has
-the rule in full; `tests/version` tests it (`version.derive`) and the emulator's `--version` (`version.binary`).
+the rule in full; `tests/version` tests it (`version.derive`), that the version is made at the build and not at the
+configure (`version.build_time`), and the emulator's `--version` (`version.binary`).
 
 The emulator's build runs it at every build (the target `nulldc3_version`, which `nulldc3` depends on; some 30 ms)
 and it writes these three files into the build directory, never into the tree, each only when its text changes:

@@ -4,8 +4,14 @@
 #
 # nulldc3/cmake/version.cmake is run on the tree into WORK, as a build runs it, and the emulator is asked with
 # --version (behind P0's keys of a headless run, which --version leaves unread): it has to exit with 0 and its last
-# line on stdout has to be "nullDC <version>" exactly. An emulator built from another commit, or one whose version
-# was made at configure time and not at the build after a commit, says another version.
+# line on stdout has to be "nullDC <version>" exactly.
+#
+# An emulator of another commit says another version: NULLDC_EMULATOR built before a commit, or the system tests'
+# emulator when the tests project was not built again after one. The system tests' emulator is configured again at
+# every build of the tests project (tests/system/build_emulator.cmake), so after a commit and a build it says the
+# new version also when the version is made at configure time: with it this test cannot tell, version.build_time
+# (build_time.cmake) is the test of that. With NULLDC_EMULATOR an emulator built again after a commit without a
+# configure, this test sees a version made at configure time too.
 
 if(NOT EMULATOR OR NOT TREE OR NOT WORK)
   message(FATAL_ERROR "version.binary: needs -DEMULATOR=<nulldc3> -DTREE=<the top of the tree> -DWORK=<scratch directory>")
