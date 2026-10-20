@@ -33,3 +33,11 @@ bool vmem_platform_prepare_jit_block(void* code_area, unsigned size, void** code
 	*code_area_rwx = code_area;
 	return true;
 }
+
+#if defined(_WIN32)
+// The unwind data of the frames of the main loop (libswirl/windows/win_vmem.cpp keeps it for the emulator's code
+// region, jit/backend/x64/rec_x64.cpp hands it over): this code region has none
+void win_jit_unwind_frame(int which, const void* begin, size_t size, const u8* prolog, u32 frame)
+{
+}
+#endif

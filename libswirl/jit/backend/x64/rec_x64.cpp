@@ -160,19 +160,41 @@ public:
 		emit_Skip((u32)getSize());
 	}
 
+	// The frame of the main loop and of RunBlock: the eight general registers a caller expects back, and on Windows
+	// xmm6-xmm15 as well, in which the blocks keep guest registers there (x64_regalloc.h). On Windows the xmm
+	// registers lie in the frame right above the 32 bytes of the callee's home space (as tests/sh4_dynarec's
+	// entry has them), and the unwind data of the code region describes the frame (libswirl/windows/win_vmem.cpp:
+	// win_jit_unwind_frame, which reads the end of every instruction of the prologue from prolog).
+#ifdef _WIN32
+#define MAINLOOP_FRAME (STACK_ALIGN + 10 * 16)
+#else
+#define MAINLOOP_FRAME STACK_ALIGN
+#endif
+	void mainloop_prologue(u8* prolog) {
+		// Store callee saved registers (64 bytes) + align stack
+		push(rbx);   WIN32_ONLY(prolog[0] = (u8)getSize());
+		push(rbp);   WIN32_ONLY(prolog[1] = (u8)getSize());
+		push(rdi);   WIN32_ONLY(prolog[2] = (u8)getSize());
+		push(rsi);   WIN32_ONLY(prolog[3] = (u8)getSize());
+		push(r12);   WIN32_ONLY(prolog[4] = (u8)getSize());
+		push(r13);   WIN32_ONLY(prolog[5] = (u8)getSize());
+		push(r14);   WIN32_ONLY(prolog[6] = (u8)getSize());
+		push(r15);   WIN32_ONLY(prolog[7] = (u8)getSize());
+		sub(rsp, MAINLOOP_FRAME);   WIN32_ONLY(prolog[8] = (u8)getSize());
+#ifdef _WIN32
+		for (int i = 0; i < 10; i++)
+		{
+			movaps(xword[rsp + STACK_ALIGN - 8 + i * 16], Xbyak::Xmm(6 + i));
+			prolog[9 + i] = (u8)getSize();
+		}
+#endif
+	}
+
 	//TODO: FIXME THIS DOES NOT CONFORM TO NGEN SPEC AROUND INTERRUPT HANDLING
 	void build_mainloop() {
 		Xbyak::Label run_loop, slice_loop, slice_end, end_loop;
-		// Store callee saved registers (64 bytes) + align stack
-		push(rbx);
-		push(rbp);
-		push(rdi);
-		push(rsi);
-		push(r12);
-		push(r13);
-		push(r14);
-		push(r15);
-		sub(rsp, STACK_ALIGN);
+		u8 prolog[19];
+		mainloop_prologue(prolog);
 
 		// The loop can have been left behind the block that used the slice up, in front of the test of the
 		// counter (a flow report of the debugger stopped there): the end-of-slice work comes first then
@@ -214,7 +236,11 @@ public:
 
 		L(end_loop);  // -- end_loop
 		mainloop_exit = getCurr();
-		add(rsp, STACK_ALIGN); // Restore to previous state
+#ifdef _WIN32
+		for (int i = 0; i < 10; i++)
+			movaps(Xbyak::Xmm(6 + i), xword[rsp + STACK_ALIGN - 8 + i * 16]);
+#endif
+		add(rsp, MAINLOOP_FRAME); // Restore to previous state
 		pop(r15);
 		pop(r14);
 		pop(r13);
@@ -229,6 +255,13 @@ public:
 		while (getSize() & 15)
 			nop();
 
+#ifdef _WIN32
+		{
+			extern void win_jit_unwind_frame(int which, const void* begin, size_t size, const u8* prolog, u32 frame);
+			win_jit_unwind_frame(0, CC_RW2RX(getCode()), getSize(), prolog, MAINLOOP_FRAME);
+		}
+#endif
+
 		ready();
 		emit_Skip((u32)getSize());
 	}
@@ -238,16 +271,8 @@ public:
 	// through mainloop_exit as any other.
 	void build_runblock() {
 		Xbyak::Label slice_left;
-
-		push(rbx);
-		push(rbp);
-		push(rdi);
-		push(rsi);
-		push(r12);
-		push(r13);
-		push(r14);
-		push(r15);
-		sub(rsp, STACK_ALIGN);
+		u8 prolog[19];
+		mainloop_prologue(prolog);
 
 		call(call_regs[0].cvt64());          // The block
 		mov(ecx, dword[rip + &cycle_counter]);
@@ -264,6 +289,13 @@ public:
 		// Align end for perf
 		while (getSize() & 15)
 			nop();
+
+#ifdef _WIN32
+		{
+			extern void win_jit_unwind_frame(int which, const void* begin, size_t size, const u8* prolog, u32 frame);
+			win_jit_unwind_frame(1, CC_RW2RX(getCode()), getSize(), prolog, MAINLOOP_FRAME);
+		}
+#endif
 
 		ready();
 		emit_Skip((u32)getSize());

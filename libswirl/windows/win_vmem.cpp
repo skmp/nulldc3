@@ -7,7 +7,12 @@
 
 #include <windows.h>
 
+#include <algorithm>
+#include <vector>
+
 #include "hw/mem/_vmem.h"
+#include "hw/sh4/dyna/ngen.h"
+#include "win_fatal.h"
 
 // Implementation of the vmem related function for Windows platforms.
 // For now this probably does some assumptions on the CPU/platform.
@@ -31,8 +36,45 @@ void VLockedMemory::UnLockRegion(unsigned offset, unsigned size) {
 	#endif
 }
 
+/*
+	The guest address space is one range of the process's address space: the SH4 context and the block table
+	(Sh4RCB) in front, the 512 MB of the guest behind it, the ARAM's room at its end. It is reserved as a single
+	placeholder (VirtualAlloc2, MEM_RESERVE_PLACEHOLDER) and then cut into the pieces of the guest's map, front to
+	back, each split off the placeholder that is left (VirtualFree, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) and put in
+	its place: a view of the memory file (MapViewOfFile3, MEM_REPLACE_PLACEHOLDER) or plain reserved memory
+	(VirtualAlloc2, MEM_REPLACE_PLACEHOLDER). No part of the range is ever free, so no allocation of another thread
+	(the debugger's are running by then) can land in it while the map is made. Windows 10 1803 or later: both
+	functions are looked up at run time, and without them nvmem is off (the fallback of _vmem.cpp).
+*/
+typedef PVOID(WINAPI* VirtualAlloc2Fn)(HANDLE, PVOID, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
+typedef PVOID(WINAPI* MapViewOfFile3Fn)(HANDLE, HANDLE, PVOID, ULONG64, SIZE_T, ULONG, ULONG, MEM_EXTENDED_PARAMETER*, ULONG);
+
+static VirtualAlloc2Fn virtual_alloc2;
+static MapViewOfFile3Fn map_view_of_file3;
+
 static HANDLE mem_handle = INVALID_HANDLE_VALUE, mem_handle2 = INVALID_HANDLE_VALUE;
 static char * base_alloc = NULL;
+static size_t base_size = 0;
+
+// What the range is made of once the map is made: views and reservations, for vmem_platform_destroy
+struct VmemPiece
+{
+	char* start;
+	size_t size;
+	bool view;
+};
+static std::vector<VmemPiece> pieces;
+static bool mapped = false;
+
+static bool find_placeholder_functions()
+{
+	HMODULE kernelbase = GetModuleHandleW(L"kernelbase.dll");
+	if (!kernelbase)
+		return false;
+	virtual_alloc2 = (VirtualAlloc2Fn)GetProcAddress(kernelbase, "VirtualAlloc2");
+	map_view_of_file3 = (MapViewOfFile3Fn)GetProcAddress(kernelbase, "MapViewOfFile3");
+	return virtual_alloc2 && map_view_of_file3;
+}
 
 // Implement vmem initialization for RAM, ARAM, VRAM and SH4 context, fpcb etc.
 // The function supports allocating 512MB or 4GB addr spaces.
@@ -40,17 +82,29 @@ static char * base_alloc = NULL;
 // Plase read the POSIX implementation for more information. On Windows this is
 // rather straightforward.
 VMemType vmem_platform_init(void **vmem_base_addr, void **sh4rcb_addr) {
-	// Firt allocate the actual address space (it will be 64KB aligned on windows).
-	unsigned memsize = 512 * 1024 * 1024 + sizeof(Sh4RCB) + ARAM_SIZE_MAX;
-	base_alloc = (char*)VirtualAlloc(0, memsize, MEM_RESERVE, PAGE_NOACCESS);
-	if (base_alloc == NULL) {
+	if (!find_placeholder_functions()) {
+		printf("Info: VirtualAlloc2 / MapViewOfFile3 not found (Windows 10 1803 or later has them)\n");
 		return MemTypeError;
 	}
 
-	// Now let's try to allocate the in-memory file
+	// The memory file first
 	mem_handle = CreateFileMapping(INVALID_HANDLE_VALUE, 0, PAGE_READWRITE, 0, RAM_SIZE_MAX + VRAM_SIZE_MAX + ARAM_SIZE_MAX, 0);
-	verify(mem_handle != INVALID_HANDLE_VALUE);
+	if (mem_handle == NULL) {
+		mem_handle = INVALID_HANDLE_VALUE;
+		return MemTypeError;
+	}
 
+	// Then the address space, one placeholder (it will be 64KB aligned on windows)
+	base_size = 512 * 1024 * 1024 + sizeof(Sh4RCB) + ARAM_SIZE_MAX;
+	base_alloc = (char*)virtual_alloc2(GetCurrentProcess(), NULL, base_size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
+	                                   PAGE_NOACCESS, NULL, 0);
+	if (base_alloc == NULL) {
+		CloseHandle(mem_handle);
+		mem_handle = INVALID_HANDLE_VALUE;
+		return MemTypeError;
+	}
+	mapped = false;
+	pieces.clear();
 
 	// Calculate pointers now
 	*sh4rcb_addr = &base_alloc[0];
@@ -61,8 +115,24 @@ VMemType vmem_platform_init(void **vmem_base_addr, void **sh4rcb_addr) {
 
 // Just tries to wipe as much as possible in the relevant area.
 void vmem_platform_destroy() {
-	VirtualFree(base_alloc, 0, MEM_RELEASE);
-	CloseHandle(mem_handle);
+	if (!mapped) {
+		if (base_alloc)
+			VirtualFree(base_alloc, 0, MEM_RELEASE);
+	}
+	else {
+		for (const VmemPiece& p : pieces) {
+			if (p.view)
+				UnmapViewOfFile(p.start);
+			else
+				VirtualFree(p.start, 0, MEM_RELEASE);
+		}
+	}
+	pieces.clear();
+	mapped = false;
+	base_alloc = NULL;
+	if (mem_handle != INVALID_HANDLE_VALUE)
+		CloseHandle(mem_handle);
+	mem_handle = INVALID_HANDLE_VALUE;
 }
 
 // Resets a chunk of memory by deleting its data and setting its protection back.
@@ -77,43 +147,192 @@ void vmem_platform_ondemand_page(void *address, unsigned size_bytes) {
 
 /// Creates mappings to the underlying file including mirroring sections
 void vmem_platform_create_mappings(const vmem_mapping *vmem_maps, unsigned nummaps) {
-	// Since this is tricky to get right in Windows (in posix one can just unmap sections and remap later)
-	// we unmap the whole thing only to remap it later.
+	verify(!mapped && base_alloc != NULL);
 
-	// Unmap the whole section
-	VirtualFree(base_alloc, 0, MEM_RELEASE);
+	// What each piece of the range becomes: a view of the file at an offset, or reserved memory
+	struct Want
+	{
+		char* start;
+		size_t size;
+		bool view;
+		u64 offset;
+		bool writes;
+	};
+	std::vector<Want> want;
 
-	// Map the SH4CB block too
-	void *base_ptr = VirtualAlloc(base_alloc, sizeof(Sh4RCB), MEM_RESERVE, PAGE_NOACCESS);
-	verify(base_ptr == base_alloc);
-	void *cntx_ptr = VirtualAlloc((u8*)p_sh4rcb + sizeof(p_sh4rcb->fpcb), sizeof(Sh4RCB) - sizeof(p_sh4rcb->fpcb), MEM_COMMIT, PAGE_READWRITE);
-	verify(cntx_ptr == (u8*)p_sh4rcb + sizeof(p_sh4rcb->fpcb));
+	// The SH4 context block: reserved, the context part committed (the block table is paged in on demand)
+	want.push_back({ base_alloc, sizeof(Sh4RCB), false, 0, false });
 
 	for (unsigned i = 0; i < nummaps; i++) {
 		unsigned address_range_size = vmem_maps[i].end_address - vmem_maps[i].start_address;
-		DWORD protection = vmem_maps[i].allow_writes ? (FILE_MAP_READ | FILE_MAP_WRITE) : FILE_MAP_READ;
 
 		if (!vmem_maps[i].memsize) {
 			// Unmapped stuff goes with a protected area or memory. Prevent anything from allocating here
-			void *ptr = VirtualAlloc(&virt_ram_base[vmem_maps[i].start_address], address_range_size, MEM_RESERVE, PAGE_NOACCESS);
-			verify(ptr == &virt_ram_base[vmem_maps[i].start_address]);
+			want.push_back({ (char*)&virt_ram_base[vmem_maps[i].start_address], address_range_size, false, 0, false });
 		}
 		else {
 			// Calculate the number of mirrors
 			unsigned num_mirrors = (address_range_size) / vmem_maps[i].memsize;
 			verify((address_range_size % vmem_maps[i].memsize) == 0 && num_mirrors >= 1);
 
-			// Remap the views one by one
+			// The views one by one
 			for (unsigned j = 0; j < num_mirrors; j++) {
 				unsigned offset = vmem_maps[i].start_address + j * vmem_maps[i].memsize;
-
-				void *ptr = MapViewOfFileEx(mem_handle, protection, 0, vmem_maps[i].memoffset,
-				                    vmem_maps[i].memsize, &virt_ram_base[offset]);
-				verify(ptr == &virt_ram_base[offset]);
+				want.push_back({ (char*)&virt_ram_base[offset], vmem_maps[i].memsize, true, vmem_maps[i].memoffset,
+				                 vmem_maps[i].allow_writes });
 			}
 		}
 	}
+
+	// Front to back; what the map leaves out (the room of the ARAM behind its size) stays reserved
+	std::sort(want.begin(), want.end(), [](const Want& a, const Want& b) { return a.start < b.start; });
+	std::vector<Want> all;
+	char* at = base_alloc;
+	for (const Want& w : want) {
+		verify(w.start >= at);
+		if (w.start > at)
+			all.push_back({ at, (size_t)(w.start - at), false, 0, false });
+		all.push_back(w);
+		at = w.start + w.size;
+	}
+	verify(at <= base_alloc + base_size);
+	if (at < base_alloc + base_size)
+		all.push_back({ at, (size_t)(base_alloc + base_size - at), false, 0, false });
+
+	for (size_t k = 0; k < all.size(); k++) {
+		const Want& w = all[k];
+		// split the piece off the front of the placeholder that is left, unless it is all of it
+		if (k + 1 < all.size())
+			verify(VirtualFree(w.start, w.size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER));
+
+		void* ptr;
+		if (w.view) {
+			ptr = map_view_of_file3(mem_handle, GetCurrentProcess(), w.start, w.offset, w.size, MEM_REPLACE_PLACEHOLDER,
+			                        w.writes ? PAGE_READWRITE : PAGE_READONLY, NULL, 0);
+		}
+		else {
+			ptr = virtual_alloc2(GetCurrentProcess(), w.start, w.size, MEM_RESERVE | MEM_REPLACE_PLACEHOLDER, PAGE_NOACCESS,
+			                     NULL, 0);
+		}
+		verify(ptr == w.start);
+		pieces.push_back({ w.start, w.size, w.view });
+	}
+	mapped = true;
+
+	void *cntx_ptr = VirtualAlloc((u8*)p_sh4rcb + sizeof(p_sh4rcb->fpcb), sizeof(Sh4RCB) - sizeof(p_sh4rcb->fpcb), MEM_COMMIT, PAGE_READWRITE);
+	verify(cntx_ptr == (u8*)p_sh4rcb + sizeof(p_sh4rcb->fpcb));
 }
+
+/*
+	The code region of the recompiler and its unwind data. The region is found near the program, so that generated
+	code can address the program's data relative to rip. One page behind it holds the unwind data of the frames of
+	generated code (UNWIND_INFO, at offsets from the start of the region as the system wants them), and a function
+	table callback over the region (RtlInstallFunctionTableCallback, installed as soon as the region is there) hands
+	the system the frame of the code at a pc when it walks a stack through generated code:
+	- the main loop and RunBlock (jit/backend/x64/rec_x64.cpp, mainloop_prologue): eight pushes, the frame, ten xmm
+	  registers stored in it; published by win_jit_unwind_frame when the recompiler writes them;
+	- everything else, the blocks and the memory trampolines: the 40 bytes of a block's frame (STACK_ALIGN of
+	  rec_x64.cpp) below the return address.
+	The fatal handler (win_fatal.cpp) also asks whether a fault is in this region.
+*/
+static u8* code_region = NULL;
+static size_t code_region_size = 0;
+
+#define UWOP_PUSH_NONVOL     0
+#define UWOP_ALLOC_LARGE     1
+#define UWOP_ALLOC_SMALL     2
+#define UWOP_SAVE_XMM128     8
+
+#pragma pack(push, 1)
+struct WinUnwindInfo
+{
+	u8 version_flags;	// Version 1, Flags 0
+	u8 size_of_prolog;
+	u8 count_of_codes;
+	u8 frame_register;	// none
+	u16 codes[32];
+};
+#pragma pack(pop)
+
+static_assert(sizeof(WinUnwindInfo) % 4 == 0, "UNWIND_INFO is DWORD aligned");
+
+// In the page behind the region: [0] a block's frame, [1] the main loop's, [2] RunBlock's
+static WinUnwindInfo* unwind_infos;
+static RUNTIME_FUNCTION unwind_functions[3];
+
+static u16 unwind_code(u8 offset, u8 op, u8 info)
+{
+	return (u16)(offset | (op << 8) | (info << 12));
+}
+
+void win_jit_unwind_frame(int which, const void* begin, size_t size, const u8* prolog, u32 frame)
+{
+	if (!code_region || (u8*)begin < code_region || (u8*)begin + size > code_region + code_region_size)
+		return;
+	verify(which == 0 || which == 1);
+	verify(frame == 32 + 10 * 16 + 8 && prolog[18] != 0);
+
+	WinUnwindInfo& u = unwind_infos[1 + which];
+	memset(&u, 0, sizeof(u));
+	u.version_flags = 1;
+	u.size_of_prolog = prolog[18];
+	int n = 0;
+	// the codes in the reverse order of the prologue
+	for (int i = 9; i >= 0; i--) {
+		// movaps [rsp + 32 + 16 * i], xmm(6 + i)
+		u.codes[n++] = unwind_code(prolog[9 + i], UWOP_SAVE_XMM128, (u8)(6 + i));
+		u.codes[n++] = (u16)((32 + 16 * i) / 16);
+	}
+	// sub rsp, frame
+	u.codes[n++] = unwind_code(prolog[8], UWOP_ALLOC_LARGE, 0);
+	u.codes[n++] = (u16)(frame / 8);
+	// push rbx, rbp, rdi, rsi, r12, r13, r14, r15
+	static const u8 pushed[8] = { 3, 5, 7, 6, 12, 13, 14, 15 };
+	for (int i = 7; i >= 0; i--)
+		u.codes[n++] = unwind_code(prolog[i], UWOP_PUSH_NONVOL, pushed[i]);
+	u.count_of_codes = (u8)n;
+
+	RUNTIME_FUNCTION& f = unwind_functions[1 + which];
+	f.BeginAddress = (DWORD)((u8*)begin - code_region);
+	f.EndAddress = (DWORD)((u8*)begin + size - code_region);
+	f.UnwindData = (DWORD)((u8*)&u - code_region);
+}
+
+static PRUNTIME_FUNCTION CALLBACK code_region_function(DWORD64 pc, PVOID)
+{
+	DWORD offset = (DWORD)(pc - (DWORD64)code_region);
+	for (int i = 1; i <= 2; i++)
+		if (unwind_functions[i].EndAddress && offset >= unwind_functions[i].BeginAddress && offset < unwind_functions[i].EndAddress)
+			return &unwind_functions[i];
+	return &unwind_functions[0];
+}
+
+static void code_region_prepared(void* region, size_t size)
+{
+	code_region = (u8*)region;
+	code_region_size = size;
+
+	// a block: sub rsp, 40 in front of what the frame holds
+	unwind_infos = (WinUnwindInfo*)(code_region + size);
+	memset(unwind_infos, 0, 3 * sizeof(WinUnwindInfo));
+	unwind_infos[0].version_flags = 1;
+	unwind_infos[0].count_of_codes = 1;
+	unwind_infos[0].codes[0] = unwind_code(0, UWOP_ALLOC_SMALL, (40 - 8) / 8);
+	unwind_functions[0].BeginAddress = 0;
+	unwind_functions[0].EndAddress = (DWORD)size;
+	unwind_functions[0].UnwindData = (DWORD)size;
+
+	verify(RtlInstallFunctionTableCallback((DWORD64)code_region | 3, (DWORD64)code_region, (DWORD)size,
+	                                       code_region_function, NULL, NULL));
+}
+
+bool win_in_code_region(const void* address)
+{
+	return code_region && (const u8*)address >= code_region && (const u8*)address < code_region + code_region_size;
+}
+
+// The page behind the code region that holds its unwind data
+#define UNWIND_PAGE 4096
 
 typedef void* (*mapper_fn) (void *addr, unsigned size);
 
@@ -151,7 +370,7 @@ static void* vmem_platform_prepare_jit_block_template(void *code_area, unsigned 
 }
 
 static void* mem_alloc(void *addr, unsigned size) {
-	return VirtualAlloc(addr, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	return VirtualAlloc(addr, size + UNWIND_PAGE, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 }
 
 // Prepares the code region for JIT operations, thus marking it as RWX
@@ -163,6 +382,7 @@ bool vmem_platform_prepare_jit_block(void *code_area, unsigned size, void **code
 
 	*code_area_rwx = ptr;
 	printf("Found code area at %p, not too far away from %p\n", *code_area_rwx, &vmem_platform_init);
+	code_region_prepared(ptr, size);
 
 	// We should have found some area in the addrspace, after all size is ~tens of megabytes.
 	// Pages are already RWX, all done
@@ -200,4 +420,3 @@ bool vmem_platform_prepare_jit_block(void *code_area, unsigned size, void **code
 
 	return (ptr_rw != NULL);
 }
-
