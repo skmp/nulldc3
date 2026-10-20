@@ -42,7 +42,8 @@ which starts every program of this script and reads what it prints). README.md h
                    breakpoint stops the target within the new grace period
     config         the configuration errors: three runs that end by themselves with exit code 2; and a server
                    that was enabled and cannot be started (its port is taken): exit code 2 with
-                   Debugger:Required or Debugger:StartPaused, one line and a run without the server otherwise
+                   Debugger:Required or Debugger:StartPaused, one line and a run without the server otherwise;
+                   and the server of such a run starts where the port is free
     slow           the slow-client rule: a client that has stopped reading is queued no periodic tick behind
                    a megabyte of ticks, but every tick that a request caused, and a full tick next
     hash-off       the state hash of a run with no Debugger: key and of one with Debugger:Enabled=no; no port
@@ -654,6 +655,16 @@ def mode_config(args):
         print('%s, with the port taken: runs without the server, reason=%s; %s' % (' , '.join(keys), line['reason'], lines[0]))
     finally:
         taken.close()
+
+    # And the server of the same runs starts on a port that is free: what failed above is the port, not the server
+    # (on Windows a run whose environment has no SystemRoot has no Winsock, and no server on any port)
+    keys = ['Debugger:Enabled=yes', 'Debugger:Port=0', 'Debugger:Required=yes', 'config:Exit.AfterVblanks=5']
+    run = Run(args, 'free').run(keys)
+    what = ' , '.join(keys) + ': '
+    check(run.code == 0, what + 'exit code %s, not 0' % run.code, run)
+    check(PORT_LINE.search(run.out) is not None, what + 'no "Debugger: http://127.0.0.1:<port>/" line on stdout: the server did not start', run)
+    check(not [line for line in run.err.splitlines() if line.startswith('Debugger: ')], what + 'a "Debugger: " line on stderr', run)
+    print('%s: the server starts on a port of the system\'s choice (%s), and the run ends at its exit key' % (' , '.join(keys), PORT_LINE.search(run.out).group(0)))
 
 
 # What a client that reads nothing is left behind by: more than the megabyte of the rule also when the buffers
