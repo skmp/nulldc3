@@ -92,6 +92,22 @@ struct MachineCounters
 
 extern MachineCounters counters;
 
+#if defined(_WIN32)
+//The stack walks of the system's unwinder from every stop (machine.cpp, walk_from_stop): made, those that came
+//through at least three frames of the recompiler's code region (the check stub, a block, the main loop or RunBlock),
+//the most frames of the region one walk came through, and those that went wrong, with the first of them
+struct MachineWalks
+{
+	u32 made;
+	u32 through_region;
+	int region_frames;
+	u32 failed;
+	char first_failure[200];
+};
+
+extern MachineWalks walks;
+#endif
+
 //Once
 void machine_init();
 

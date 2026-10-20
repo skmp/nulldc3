@@ -9,7 +9,8 @@
 #
 #	    debugger.guest.dsptest.files                        the committed files are those of the manifest, and
 #	                                                        what gen.sh makes of the sources (where the assemblers
-#	                                                        are)
+#	                                                        are; on Windows gen.sh, a bash script, is not run, and
+#	                                                        the test has to say so)
 #	    debugger.sound.lines.dsptest.<jit|interp>           two runs of 2000 ticks print one line, with ticks=2000,
 #	                                                        and it is not a line of silence
 #	    debugger.sound.engines.dsptest                      the recompiler and the interpreter agree in samples,
@@ -72,8 +73,8 @@ set(nulldc_sound_ticks 2000)
 set(nulldc_sound_ticks_2ndmix 40000)
 
 # The function runs in the scope of its caller, a sibling of this directory: it uses what
-# tests/debugger/guest/CMakeLists.txt sets (Python3_EXECUTABLE, nulldc_guest_emulator, nulldc_guest_skip),
-# nulldc_tests_path and nothing this file sets
+# tests/debugger/guest/CMakeLists.txt sets (Python3_EXECUTABLE, nulldc_guest_emulator, nulldc_guest_skip,
+# nulldc_guest_env), nulldc_tests_path and nothing this file sets
 function(nulldc_sound_neutral name)
   cmake_parse_arguments(ARG "" "SELFTEST;TIMEOUT" "EXPECT;CONFIG" ${ARGN})
 
@@ -105,20 +106,32 @@ function(nulldc_sound_neutral name)
     endforeach()
 
     add_test(NAME ${test} COMMAND ${command})
-    # soundlines.py has a watchdog per run of the emulator, this is the one behind it. Python writes no bytecode
-    # into the source tree
-    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+    # soundlines.py has a watchdog per run of the emulator, this is the one behind it
+    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT "${nulldc_guest_env}")
   endforeach()
 endfunction()
 
 
 set(nulldc_sound_runner "${CMAKE_CURRENT_SOURCE_DIR}/soundlines.py")
 
-# The manifest needs python and nothing else; gen.sh --check runs where bash and the assemblers are
+# The manifest needs python and nothing else; gen.sh --check runs where bash and the assemblers are. On Windows
+# bash is WSL's launcher, which would run gen.sh inside a Linux of the computer: there the mode looks for no shell,
+# says so, and fails when it looks for one; and the test passes only with that line, right in front of the PASS of
+# the script (the exit code is not read then: a FAIL line fails it), so that a mode that looks for a shell after all
+# and does not run it is no pass either
 if(Python3_Interpreter_FOUND)
+  set(nulldc_files_host "")
+  if(${HOST_OS} EQUAL ${OS_WINDOWS})
+    set(nulldc_files_host --no-posix-shell)
+  endif()
   add_test(NAME debugger.guest.dsptest.files
-           COMMAND "${Python3_EXECUTABLE}" "${nulldc_sound_runner}" --mode files --dir "${CMAKE_CURRENT_SOURCE_DIR}")
-  set_tests_properties(debugger.guest.dsptest.files PROPERTIES TIMEOUT 120 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_sound_runner}" --mode files --dir "${CMAKE_CURRENT_SOURCE_DIR}" ${nulldc_files_host})
+  set_tests_properties(debugger.guest.dsptest.files PROPERTIES TIMEOUT 120 ENVIRONMENT "${nulldc_guest_env}")
+  if(${HOST_OS} EQUAL ${OS_WINDOWS})
+    set_tests_properties(debugger.guest.dsptest.files PROPERTIES
+      PASS_REGULAR_EXPRESSION "gen.sh --check was not run: no POSIX shell on Windows\r?\nPASS"
+      FAIL_REGULAR_EXPRESSION "FAIL;Traceback")
+  endif()
 else()
   nulldc_add_skipped_test(debugger.guest.dsptest.files "no python3 to run tests/debugger/guest/dsptest/soundlines.py with")
 endif()
@@ -129,8 +142,11 @@ if(Python3_Interpreter_FOUND AND ${HOST_OS} EQUAL ${OS_LINUX})
            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/soundlines_test.py"
                    --work "${CMAKE_BINARY_DIR}/debugger/guest/work/debugger.sound.runner")
   set_tests_properties(debugger.sound.runner PROPERTIES TIMEOUT 300 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+elseif(NOT Python3_Interpreter_FOUND)
+  nulldc_add_skipped_test(debugger.sound.runner "no python3 to run tests/debugger/guest/dsptest/soundlines_test.py with")
 else()
-  nulldc_add_skipped_test(debugger.sound.runner "tests/debugger/guest/dsptest/soundlines_test.py needs python3 on a Linux host")
+  nulldc_add_skipped_test(debugger.sound.runner
+    "the stand-ins of tests/debugger/guest/dsptest/soundlines_test.py for the emulator are scripts that the host runs by their first line (#!): a Linux host")
 endif()
 
 # nulldc_sound_test(<test> <program> <ticks> <arguments of soundlines.py>...)
@@ -143,7 +159,7 @@ function(nulldc_sound_test test program ticks)
   add_test(NAME ${test}
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_sound_runner}" --emulator "${nulldc_guest_emulator}"
                    --work "${CMAKE_BINARY_DIR}/debugger/guest/work/${test}" --guest "${program}" --ticks ${ticks} ${ARGN})
-  set_tests_properties(${test} PROPERTIES TIMEOUT 900 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+  set_tests_properties(${test} PROPERTIES TIMEOUT 900 ENVIRONMENT "${nulldc_guest_env}")
 endfunction()
 
 set(nulldc_sound_no_2ndmix "")
@@ -204,7 +220,7 @@ nulldc_sound_test(debugger.sound.ignored.dsptest "${CMAKE_CURRENT_SOURCE_DIR}/ds
 if(Python3_Interpreter_FOUND)
   add_test(NAME debugger.sound.names
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_sound_runner}" --mode names --build "${CMAKE_BINARY_DIR}")
-  set_tests_properties(debugger.sound.names PROPERTIES TIMEOUT 120 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+  set_tests_properties(debugger.sound.names PROPERTIES TIMEOUT 120 ENVIRONMENT "${nulldc_guest_env}")
 else()
   nulldc_add_skipped_test(debugger.sound.names "no python3 to run tests/debugger/guest/dsptest/soundlines.py with")
 endif()

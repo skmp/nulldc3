@@ -152,6 +152,13 @@ static void on_watchdog(int)
 }
 #endif
 
+#if !TEST_GUARD_POSIX
+// Windows: the policy of the tests project for a program that dies (no box, no crash report, one line and 128 + the
+// signal's number) is win_policy.cpp of this library, from before main; naming its symbol takes its object into every
+// program that links test_guard. common.guard.windows holds it (guard_windows.cmake)
+#pragma comment(linker, "/include:nulldc_win_policy")
+#endif
+
 void test_guard_init(u32 watchdog)
 {
 	watchdog_ms = watchdog;

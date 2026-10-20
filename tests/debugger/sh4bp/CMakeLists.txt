@@ -33,18 +33,20 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 set(sh4bp_gates b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b12 switch ownslot dense b13 b14 slot midpair vector arm event threads)
+if(WIN32)
+  # the stack walks of the system's unwinder through the code region (gates.cpp, gate_unwind)
+  list(APPEND sh4bp_gates unwind)
+endif()
 
 # the configurations that the gates on the booted guest are made in: engine, and "off" for idleskip off
 set(sh4bp_boots jit interpreter fallback jit-idleskip-off fallback-idleskip-off)
 
-# The tests run the blocks of the x64 backend through its main loop. On Windows the x64 backend has no native
-# debugger checks yet (DebugChecks, jit/backend/x64/rec_x64.cpp), which the gates need: skipped there until W64b
-if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})) OR (${HOST_OS} EQUAL ${OS_WINDOWS}))
-  if(${HOST_OS} EQUAL ${OS_WINDOWS})
-    set(sh4bp_skip "W64b")
-  else()
-    set(sh4bp_skip "the sh4bp gates need an x86-64 build with the SH4 recompiler")
-  endif()
+# The tests run the blocks of the x64 backend through its main loop, with its native debugger checks (DebugChecks,
+# jit/backend/x64/rec_x64.cpp), on Linux and on Windows (its check stub with the home space of the Windows calling
+# convention, and its own budget of checks). b11 counts host instructions with the performance counters of Linux and
+# says SKIPPED on another host
+if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})))
+  set(sh4bp_skip "the sh4bp gates need an x86-64 build with the SH4 recompiler")
   set(sh4bp_boot_tests "")
   foreach(boot ${sh4bp_boots})
     list(APPEND sh4bp_boot_tests boot.${boot})
@@ -217,6 +219,13 @@ sh4bp_callsites(sh4bp_opcodes_src "hw/sh4/interpr/sh4_opcodes.cpp" "DBG_SH4_FLOW
 set(sh4bp_sources ${NULLDC_SH4_INTERP_SOURCES})
 list(REMOVE_ITEM sh4bp_sources hw/sh4/sh4_interrupts.cpp hw/sh4/interpr/sh4_opcodes.cpp)
 
+# On Windows the emulator's unwind data of the code region (stubs.cpp hands the region to it, machine.cpp walks the
+# stack through it at every stop)
+set(sh4bp_host_sources "")
+if(WIN32)
+  set(sh4bp_host_sources windows/win_jit_unwind.cpp)
+endif()
+
 nulldc_add_libswirl_library(nulldc_sh4bp
   SOURCES
     ${sh4bp_sources}
@@ -227,6 +236,7 @@ nulldc_add_libswirl_library(nulldc_sh4bp
     jit/backend/x64/rec_x64.cpp
     deps/crypto/sha1.cpp
     debugger/dbg_sh4.cpp
+    ${sh4bp_host_sources}
 )
 target_sources(nulldc_sh4bp PRIVATE "${sh4bp_interrupts_src}" "${sh4bp_opcodes_src}")
 target_compile_definitions(nulldc_sh4bp PUBLIC NULLDC_DEBUGGER=1)
@@ -296,6 +306,7 @@ nulldc_add_libswirl_library(nulldc_sh4bp_off
     hw/sh4/dyna/blockmanager.cpp
     jit/backend/x64/rec_x64.cpp
     deps/crypto/sha1.cpp
+    ${sh4bp_host_sources}
 )
 
 add_executable(sh4bp_cost_on cost.cpp stubs.cpp "${nulldc_core_path}/debugger/dbg_selftest_sh4bp_guest.inc")
@@ -308,3 +319,18 @@ add_test(NAME debugger.sh4bp.b11
   COMMAND ${CMAKE_COMMAND} -DCOST_ON=$<TARGET_FILE:sh4bp_cost_on> -DCOST_OFF=$<TARGET_FILE:sh4bp_cost_off>
     -P "${CMAKE_CURRENT_SOURCE_DIR}/b11_compare.cmake")
 set_tests_properties(debugger.sh4bp.b11 PROPERTIES TIMEOUT 600 SKIP_REGULAR_EXPRESSION "SKIPPED:")
+
+
+## Windows: the policy for a program that dies ##
+#
+#	No box, no crash report, one line and 128 + the signal's number (tests/common/win_policy.cpp, the tests
+#	project's, which common.guard.windows holds on sh4bp_test): a gate that crashes ends its program as a fault ends
+#	one on Linux. The vectored handler of the policy takes a fault in the code region, whose stack the filter of the
+#	process would never see when the fault broke it
+#
+
+if(WIN32)
+  foreach(program sh4bp_test sh4bp_selftest sh4bp_cost_on sh4bp_cost_off)
+    target_sources(${program} PRIVATE "${nulldc_tests_path}/common/win_policy.cpp")
+  endforeach()
+endif()

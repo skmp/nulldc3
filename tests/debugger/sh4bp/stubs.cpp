@@ -2,6 +2,12 @@
 	What the SH4 core and the recompiler reference from the parts of the emulator that are not in this machine:
 	no reios, no TA, no store queue targets, no MMU, no host mapping of guest memory. machine.cpp has the parts
 	that do something here (time, memory, the page locks).
+
+	On Windows also what the emulator has there: its code region near the program with the unwind data of the
+	emulator (libswirl/windows/win_jit_unwind.cpp), so that the system's unwinder walks the stack through the code
+	of the recompiler as it does in the emulator (machine.cpp walks it at every stop). The policy for a program that
+	dies (no box, no crash report, one line and 128 + the signal's number) is the one of the tests project,
+	tests/common/win_policy.cpp, which the programs of this directory link on Windows.
 */
 #include "types.h"
 
@@ -18,7 +24,11 @@
 #include <cstdlib>
 
 #if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
+#include "windows/win_jit_unwind.h"
 #else
 #include <sys/mman.h>
 #endif
@@ -53,8 +63,10 @@ void vmem_platform_create_mappings(const vmem_mapping* vmem_maps, unsigned numma
 void vmem_platform_destroy() { }
 
 //How often the recompiler had the host prepare a code region (the gate threads). Here a call makes the pages
-//of the region executable where they are, as the emulator does on Linux; the emulator on Windows maps a new
-//region near the program for every call and frees none
+//of the region executable where they are, as the emulator does on Linux. On Windows it maps a region near the
+//program with a page behind it for the unwind data, as the emulator does (libswirl/windows/win_vmem.cpp), and
+//hands it to the emulator's unwind data (inside the program's image the system would never ask for it: it takes
+//the unwind data of a pc in an image from the image)
 u32 jit_block_prepares;
 
 bool vmem_platform_prepare_jit_block(void* code_area, unsigned size, void** code_area_rwx)
@@ -62,16 +74,29 @@ bool vmem_platform_prepare_jit_block(void* code_area, unsigned size, void** code
 	jit_block_prepares++;
 
 #if defined(_WIN32)
-	DWORD old;
-	if (!VirtualProtect(code_area, size, PAGE_EXECUTE_READWRITE, &old))
-		return false;
+	//within 2 GB of the program, as the code addresses the program's data relative to rip
+	uintptr_t base = (uintptr_t)GetModuleHandleW(nullptr) & ~(uintptr_t)0xFFFFF;
+	for (uintptr_t step = 8 * 1024 * 1024; step < 1800u * 1024 * 1024; step += 8 * 1024 * 1024)
+	{
+		for (uintptr_t at : { base + step, base - step })
+		{
+			void* region = VirtualAlloc((void*)at, size + 4096, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+			if (region)
+			{
+				win_jit_code_region_prepared(region, size);
+				*code_area_rwx = region;
+				return true;
+			}
+		}
+	}
+	return false;
 #else
 	if (mprotect(code_area, size, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
 		return false;
-#endif
 
 	*code_area_rwx = code_area;
 	return true;
+#endif
 }
 
 string get_writable_data_path(const string& filename) { return filename; }

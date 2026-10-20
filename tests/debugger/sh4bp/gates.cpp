@@ -21,6 +21,14 @@
 #include <malloc.h>
 #endif
 
+//<windows.h> (behind the headers of the tree on Windows) still defines far and near, empty, for 16-bit code
+#ifdef far
+#undef far
+#endif
+#ifdef near
+#undef near
+#endif
+
 using dbg::StopCause;
 
 //hw/sh4/dyna/blockmanager.cpp: every cached block
@@ -1848,6 +1856,43 @@ static Dense dense_start(Engine e, u32 top, u32 n, bool fp, u32 passes)
 	return d;
 }
 
+//A line whose 36 instructions write r0 to r7 and fr0 to fr9, every one of them twice, 18 instructions apart, with
+//the tail of dense_write behind it: a check on the 19th instruction is a check in front of which every host register
+//holds a guest register it has written, and behind which every one is read again
+static Dense flush_line_write(u32 top)
+{
+	static const u16 group[18] = {
+		0x7001, 0x7101, 0x7201, 0x7301, 0x7401, 0x7501, 0x7601, 0x7701,	//add #1, r0 ... add #1, r7
+		0xF000, 0xF110, 0xF220, 0xF330, 0xF440, 0xF550, 0xF660, 0xF770,	//fadd fr0, fr0 ... fadd fr7, fr7
+		0xF880, 0xF990,													//fadd fr8, fr8, fadd fr9, fr9
+	};
+	static const u16 tail[] = {
+		0x4C0B,		//jsr @r12
+		0x0009,
+		0xE103,		//mov #3, r1
+		0x62D2,		//mov.l @r13, r2
+		0x4110,		//dt r1
+		0x8BFC,		//bf poll
+		0x4810,		//dt r8
+		0x8901,		//bt end
+		0x4E2B,		//jmp @r14
+		0x0009,
+		0xAFFE,		//end: bra end
+		0x0009,
+	};
+	const u32 n = 36;
+
+	for (u32 i = 0; i < n; i++)
+		machine_write16(top + i * 2, group[i % 18]);
+
+	for (u32 i = 0; i < 12; i++)
+		machine_write16(top + n * 2 + i * 2, tail[i]);
+
+	Dense d = { top, n, top + n * 2, top + n * 2 + 20 };
+
+	return d;
+}
+
 //The first armed instructions of the line, and the end
 static void dense_arm(const Dense& d, u32 armed)
 {
@@ -1918,23 +1963,26 @@ static MachineState dense_timed(Engine e, u32 top, u32 n, bool fp, u32 armed, bo
 	return s;
 }
 
-//The heap of the process: the bytes in use, and the bytes the C library holds for them
-struct HeapSize
+//The heap of the process: the bytes in use, and the bytes the C library holds for them (not HeapSize, a function
+//of Windows)
+struct HeapUse
 {
 	s64 in_use;
 	s64 held;
 };
 
 //false: this C library does not tell (nor does it under a sanitizer that has its own allocator)
-static bool heap_size(HeapSize* h)
+static bool heap_size(HeapUse* h)
 {
 	h->in_use = h->held = 0;
 
-#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
+#if defined(__GLIBC__)
+#if __GLIBC_PREREQ(2, 33)
 	struct mallinfo2 m = mallinfo2();
 
 	h->in_use = (s64)m.uordblks;
 	h->held = (s64)m.arena + (s64)m.hblkhd;
+#endif
 #endif
 
 	return h->held != 0;
@@ -1981,6 +2029,59 @@ static void gate_dense()
 			check(bytes[2] > bytes[0] && (bytes[2] - bytes[0]) <= 16 * 1024, "%s line: %u checks add %u bytes of host code to their block, within the 16 KiB that the backend states",
 				fp ? "fp" : "integer", budget, bytes[2] - bytes[0]);
 		}
+	}
+
+	//The flush of a check at its most: every host register written to the context in front of it and loaded again
+	//behind it (flush_line_write). One such check adds the call, both halves of the flush and the tail of the
+	//checks to its block; the budget's worth of them, with one tail, has to stay within the 16 KiB that the backend
+	//states. The register set is the calling convention's: 6 general and 4 xmm registers with System V, 8 and 10
+	//with Windows' (x64_regalloc.h), so the budget of one is no bound for the other
+	{
+		u32 bytes[2];
+
+		for (u32 i = 0; i < 2; i++)
+		{
+			machine_reset(ENGINE_JIT);
+
+			Dense d = flush_line_write(0x8C020000);
+
+			R(8) = 1;
+			R(12) = G_leaf;
+			R(13) = G_data;
+			R(14) = d.top;
+			machine_set_pc(d.top);
+
+			std::vector<u32> ids, at;
+			if (i)
+				at.push_back(d.top + 18 * 2);
+			at.push_back(d.end);
+			for (u32 k = 0; k < at.size(); k++)
+				ids.push_back(k + 1);
+			machine_breakpoints(ids.data(), at.data(), (u32)at.size());
+
+			dbg::sh4::SetActiveMask(0);
+			knobs.host_stop_slice = 3;
+			machine_resume();
+
+			RuntimeBlockInfo* blk = bm_GetBlock(d.top);
+
+			bytes[i] = blk ? blk->host_code_size : 0;
+
+			check(blk != nullptr && blk->dbg_rest_pc == 0 && block_checks(d.top) == (int)i, "a line that writes every register twice: the block with %u armed instructions is whole and has %u checks",
+				i, i);
+		}
+
+		const u32 one = bytes[1] - bytes[0];
+#if defined(_WIN32)
+		const u32 tail = 11;	//the third argument is in r8d: its mov has a REX prefix
+#else
+		const u32 tail = 10;
+#endif
+
+		note("a check between two writes of every register adds %u bytes to its block: the call, the flush both ways and the tail of %u bytes", one, tail);
+
+		check(one > tail && budget * (one - tail) + tail <= 16 * 1024, "%u such checks add %u bytes of host code to their block, within the 16 KiB that the backend states",
+			budget, budget * (one - tail) + tail);
 	}
 
 	struct Layout { const char* what; u32 top; bool fp; };
@@ -2082,7 +2183,7 @@ static void gate_dense()
 	{
 		const u64 slices = 45;
 		u64 stops;
-		HeapSize before, after;
+		HeapUse before, after;
 
 		settings.dynarec.idleskip = false;
 
@@ -2189,7 +2290,9 @@ static void gate_dense()
 	//The code cache. A block is compiled when 16 KiB of the cache are free, and its code can be more than
 	//that: the backend gives it up, the cache is emptied and the block compiled again
 	{
-		//a line of double precision arithmetic: every instruction is a call
+		//a line of double precision arithmetic: every instruction is a call, around which the System V backend
+		//saves xmm8-xmm11. On Windows the callee keeps xmm6-xmm15 and such a call is a few bytes: there the line is
+		//of ftrv, about a hundred bytes of code each
 		const u32 top = 0x8C020000;
 		const u32 n = 500;
 		const u64 slices = 12;
@@ -2198,7 +2301,13 @@ static void gate_dense()
 		{
 			machine_reset(ENGINE_JIT);
 
+#if defined(_WIN32)
+			static const u16 ops[] = { 0xF1FD /*ftrv xmtrx, fv0*/, 0xF5FD /*ftrv xmtrx, fv4*/, 0xF9FD /*ftrv xmtrx, fv8*/, 0xFDFD /*ftrv xmtrx, fv12*/ };
+			const u32 fpscr = 0x00040001;	//single precision
+#else
 			static const u16 ops[] = { 0xF200 /*fadd dr0, dr2*/, 0xF422 /*fmul dr2, dr4*/, 0xF601 /*fsub dr0, dr6*/, 0xF843 /*fdiv dr4, dr8*/ };
+			const u32 fpscr = 0x000C0001;	//double precision, pairs
+#endif
 
 			for (u32 i = 0; i < n; i++)
 				machine_write16(top + i * 2, ops[i % 4]);
@@ -2212,7 +2321,7 @@ static void gate_dense()
 			R(13) = G_data;
 			R(14) = top;
 
-			Sh4cntx.fpscr.full = 0x000C0001;
+			Sh4cntx.fpscr.full = fpscr;
 			Sh4cntx.old_fpscr = Sh4cntx.fpscr;
 			UpdateFPSCR();
 
@@ -2245,7 +2354,13 @@ static void gate_dense()
 
 		MachineState base = doubles(0, 0, &bytes);
 
-		check(bytes > 16 * 1024 + 2048, "a block of %u double precision instructions has %u bytes of host code, more than the 16 KiB that a compile waits for", n, bytes);
+		check(bytes > 16 * 1024 + 2048, "a block of %u %s instructions has %u bytes of host code, more than the 16 KiB that a compile waits for", n,
+#if defined(_WIN32)
+			"ftrv",
+#else
+			"double precision",
+#endif
+			bytes);
 
 		//room for the compile to begin, not for the code
 		MachineState s = doubles(16 * 1024 + 2048, 0, &bytes_left);
@@ -3460,6 +3575,47 @@ static void gate_threads()
 }
 
 
+#if defined(_WIN32)
+/*
+	unwind (Windows): a stop that a check of the recompiler made, walked by the system's unwinder from the debugger's
+	latch through dbg_sh4_Check, the check stub, the block and the main loop back to the machine (machine.cpp,
+	walk_from_stop). The stub calls dbg_sh4_Check with the callee's home space below the refund, so that its frame at
+	the call is 40 bytes below the return address into the block: the frame of a block, which is what the unwind
+	data of the code region describes for every pc that is not the main loop's or RunBlock's
+	(libswirl/windows/win_jit_unwind.cpp, jit/backend/x64/rec_x64.cpp). sh4bp_test holds the walks of every stop of
+	every gate as well; this gate makes sure that some of them came from checks
+*/
+static void gate_unwind()
+{
+	struct Case { const char* what; u32 bp; };
+	static const Case cases[] = {
+		{ "the first instruction of a block", G_line },
+		{ "the middle of a block", G_line_mid },
+		{ "the slot of a bra", G_line_slot },
+	};
+
+	for (const Case& c : cases)
+	{
+		machine_reset(ENGINE_JIT);
+		machine_set_pc(G_line);
+		bps({ c.bp });
+
+		const MachineWalks before = walks;
+		MachineStop s = machine_resume();
+
+		check(s.debugger && s.cause == StopCause::Breakpoint && s.id == 1, "jit: %s: the check stops there (at %08X)", c.what, s.pc);
+		check(walks.made > before.made && walks.through_region > before.through_region && walks.failed == before.failed,
+			"jit: %s: the system's unwinder walked the stop from the debugger's latch through the check stub, the block and the main "
+			"loop back to the machine (%u walks, %u of them through 3 frames of the code region or more, %u went wrong%s%s)",
+			c.what, walks.made - before.made, walks.through_region - before.through_region, walks.failed - before.failed,
+			walks.failed != before.failed ? ": " : "", walks.failed != before.failed ? walks.first_failure : "");
+	}
+
+	note("the most frames of the code region one walk came through: %d", walks.region_frames);
+}
+#endif
+
+
 const Gate gates[] = {
 	{ "b1", "B1 exact pc and registers at a hit: block start, mid-block, delay slot", gate_b1 },
 	{ "b2", "B2 resume exempts once; hit counts in a loop; time at the loop exit", gate_b2 },
@@ -3483,6 +3639,9 @@ const Gate gates[] = {
 	{ "arm", "page discards on arming, blocks over two pages, category mask, breakpoints added in a stop", gate_arm },
 	{ "event", "an event breakpoint on the vblank of the machine: at a slice end, in a SLEEP wait, with an interrupt request", gate_event },
 	{ "threads", "the recompiler of a new emulator thread: the code region of the process, prepared once, and an empty code cache in it", gate_threads },
+#if defined(_WIN32)
+	{ "unwind", "Windows: a stop of a check walked by the system's unwinder through the check stub, the block and the main loop", gate_unwind },
+#endif
 };
 
 const u32 gate_count = sizeof(gates) / sizeof(gates[0]);

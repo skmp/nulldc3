@@ -8,7 +8,11 @@
 
 Every emulator is run as tests/system runs one: headless, its files in a directory of its own under the work
 directory (--portable), an empty environment (no display), the real-time clock pinned, a core file size limit
-of 1 byte, and a watchdog. A process this script starts is ended by its pid. README.md has the modes:
+of 1 byte, and a watchdog. A process this script starts is ended by its pid. On Windows the environment has
+SystemRoot and TEMP and TMP of the run's directory, the contract runner's (the caller's environment) has TEMP, TMP
+and npm's cache in the work directory, and the emulator and the contract runner (npm.cmd and the node it starts) run
+inside nulldc3-winrun, whose job ends all of it when the process is ended (tests/common/emurun.py, which starts
+every program of this script and reads what it prints). README.md has the modes:
 
     m1             the gate of milestone M1: the emulator at its StartPaused stop, and the contract runner of the
                    devtools UI against it (npm run contract -- --url ... --profile emulator --elf ... --milestone M1)
@@ -39,7 +43,8 @@ of 1 byte, and a watchdog. A process this script starts is ended by its pid. REA
                    breakpoint stops the target within the new grace period
     config         the configuration errors: three runs that end by themselves with exit code 2; and a server
                    that was enabled and cannot be started (its port is taken): exit code 2 with
-                   Debugger:Required or Debugger:StartPaused, one line and a run without the server otherwise
+                   Debugger:Required or Debugger:StartPaused, one line and a run without the server otherwise;
+                   and the server of such a run starts where the port is free
     slow           the slow-client rule: a client that has stopped reading is queued no periodic tick behind
                    a megabyte of ticks, but every tick that a request caused, and a full tick next
     hash-off       the state hash of a run with no Debugger: key and of one with Debugger:Enabled=no; no port
@@ -73,19 +78,19 @@ import argparse
 import os
 import platform
 import re
-import resource
 import shutil
-import signal
 import socket
 import struct
 import subprocess
 import sys
 import time
 
-# the client of this directory; nothing is written into the source tree for it
+# the client of this directory and the run helper of the harnesses; nothing is written into the source tree for them
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'common'))
 
+import emurun  # noqa: E402
 import wsclient  # noqa: E402
 
 RTC_PIN = 946684800
@@ -159,29 +164,19 @@ class Run:
         return command
 
     def start(self, keys):
-        # nothing of the environment but the options of the sanitizers: the directory is the one of --portable
-        env = {}
-        for name in ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'TSAN_OPTIONS', 'LSAN_OPTIONS'):
-            if name in os.environ:
-                env[name] = os.environ[name]
-
-        def limits():
-            # a crash is not piped to a core handler (WSL2 runs it for any other limit)
-            resource.setrlimit(resource.RLIMIT_CORE, (1, resource.getrlimit(resource.RLIMIT_CORE)[1]))
-
+        # nothing of the environment but the options of the sanitizers (on Windows also what Windows needs, in the
+        # directory of the run): the directory is the one of --portable
         self.cmdline = self.command(keys)
         self.out_file = open(self.out_path, 'wb')
         self.err_file = open(self.err_path, 'wb')
-        self.process = subprocess.Popen(self.cmdline, cwd=self.dir, env=env, stdin=subprocess.DEVNULL,
-                                        stdout=self.out_file, stderr=self.err_file, preexec_fn=limits)
+        self.process = emurun.start(self.cmdline, self.args.watchdog, cwd=self.dir, env=emurun.environment(self.dir),
+                                    stdout=self.out_file, stderr=self.err_file)
         self.started = time.monotonic()
         return self
 
     def read(self):
-        with open(self.out_path, 'rb') as f:
-            self.out = f.read().decode('utf-8', 'replace')
-        with open(self.err_path, 'rb') as f:
-            self.err = f.read().decode('utf-8', 'replace')
+        self.out = emurun.read_text(self.out_path)
+        self.err = emurun.read_text(self.err_path)
         return self.out
 
     def alive(self):
@@ -204,18 +199,16 @@ class Run:
                 f.close()
 
     def kill(self):
-        """Ends the process by its pid, whatever it is doing."""
-        if self.process is not None and self.process.poll() is None:
-            self.process.kill()
+        """Ends the process by its pid, whatever it is doing (on Windows nulldc3-winrun, and its job with it)."""
         if self.process is not None:
-            self.code = self.process.wait()
+            self.code = emurun.kill(self.process)
         self.close_files()
         self.read()
 
     def terminate(self, seconds=20):
-        """SIGTERM, as a harness ends an emulator that is parked; SIGKILL when that does not end it."""
-        if self.process.poll() is None:
-            self.process.send_signal(signal.SIGTERM)
+        """SIGTERM, as a harness ends an emulator that is parked; SIGKILL when that does not end it. Windows has no
+        SIGTERM: there nulldc3-winrun is ended, and the job with it (emurun.terminate)."""
+        emurun.terminate(self.process)
         if not self.wait(seconds):
             self.kill()
             return False
@@ -360,7 +353,9 @@ def runner_command(args, port, more):
 
 
 def runner_env(args):
-    env = dict(os.environ)
+    # the caller's environment; on Windows TEMP, TMP and npm's cache in the work directory (tsx keeps its cache in
+    # TEMP, npm a log of every command in its cache), not in the profile (tests/common/emurun.py)
+    env = emurun.tool_environment(args.work)
     # npm starts node, which is where npm is
     env['PATH'] = os.path.dirname(os.path.abspath(args.npm)) + os.pathsep + env.get('PATH', '')
     env.pop('DISPLAY', None)
@@ -380,13 +375,14 @@ def run_runner(args, selection, what):
         log_path = os.path.join(args.work, 'runner.txt')
         command = runner_command(args, port, selection + ['--json-file', os.path.join(args.work, 'summary.json')])
         with open(log_path, 'wb') as log:
+            runner = emurun.start(command, args.watchdog, cwd=args.devtools, env=runner_env(args), stdout=log,
+                                  stderr=subprocess.STDOUT, emulator=False)
             try:
-                code = subprocess.call(command, cwd=args.devtools, env=runner_env(args), stdin=subprocess.DEVNULL, stdout=log,
-                                       stderr=subprocess.STDOUT, timeout=args.watchdog)
+                code = runner.wait(timeout=args.watchdog)
             except subprocess.TimeoutExpired:
+                emurun.kill(runner)
                 code = None
-        with open(log_path, 'rb') as log:
-            text = log.read().decode('utf-8', 'replace')
+        text = emurun.read_text(log_path)
 
         # the report of the runner is the report of this test
         print(text)
@@ -663,6 +659,16 @@ def mode_config(args):
     finally:
         taken.close()
 
+    # And the server of the same runs starts on a port that is free: what failed above is the port, not the server
+    # (on Windows a run whose environment has no SystemRoot has no Winsock, and no server on any port)
+    keys = ['Debugger:Enabled=yes', 'Debugger:Port=0', 'Debugger:Required=yes', 'config:Exit.AfterVblanks=5']
+    run = Run(args, 'free').run(keys)
+    what = ' , '.join(keys) + ': '
+    check(run.code == 0, what + 'exit code %s, not 0' % run.code, run)
+    check(PORT_LINE.search(run.out) is not None, what + 'no "Debugger: http://127.0.0.1:<port>/" line on stdout: the server did not start', run)
+    check(not [line for line in run.err.splitlines() if line.startswith('Debugger: ')], what + 'a "Debugger: " line on stderr', run)
+    print('%s: the server starts on a port of the system\'s choice (%s), and the run ends at its exit key' % (' , '.join(keys), PORT_LINE.search(run.out).group(0)))
+
 
 # What a client that reads nothing is left behind by: more than the megabyte of the rule also when the buffers
 # of the kernel have taken their part (a few megabytes at most, the receive buffer of that client is made
@@ -823,7 +829,8 @@ def mode_hash_idlebp(args):
         # connects at the StartPaused stop, mutes sh4, adds the breakpoint, resumes, and stays until the emulator ends
         command = runner_command(args, port, ['--idle-breakpoint', args.idle_symbol])
         with open(log_path, 'wb') as log:
-            runner = subprocess.Popen(command, cwd=args.devtools, env=runner_env(args), stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+            runner = emurun.start(command, args.watchdog, cwd=args.devtools, env=runner_env(args), stdout=log,
+                                  stderr=subprocess.STDOUT, emulator=False)
             try:
                 ended = run.wait(args.watchdog)
                 try:
@@ -831,11 +838,8 @@ def mode_hash_idlebp(args):
                 except subprocess.TimeoutExpired:
                     code = None
             finally:
-                if runner.poll() is None:
-                    runner.kill()
-                    runner.wait()
-        with open(log_path, 'rb') as log:
-            text = log.read().decode('utf-8', 'replace')
+                emurun.kill(runner)
+        text = emurun.read_text(log_path)
         print(text)
         check(ended, 'the run with the idle breakpoint did not end within %d s' % args.watchdog, run)
     finally:
@@ -1028,7 +1032,8 @@ def main():
     if missing:
         parser.error('the following arguments are required: ' + ', '.join(missing))
 
-    args.emulator = os.path.abspath(args.emulator)
+    # nulldc3 is nulldc3.exe on Windows
+    args.emulator = emurun.executable(os.path.abspath(args.emulator))
     args.work = os.path.abspath(args.work)
     args.guest = os.path.abspath(args.guest)
 
@@ -1042,7 +1047,8 @@ def main():
         if not os.path.isdir(os.path.join(args.devtools, 'node_modules')):
             print('FAIL: no node_modules in the devtools checkout ' + args.devtools)
             return 1
-        npm = shutil.which(args.npm)
+        # on Windows npm.cmd: the npm without a suffix beside it is a shell script
+        npm = emurun.npm(args.npm)
         if npm is None:
             print('FAIL: no npm to run the contract runner with (%s)' % args.npm)
             return 1

@@ -21,6 +21,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include "windows/win_jit_unwind.h"
 #else
 #include <sys/mman.h>
 #endif
@@ -343,6 +344,88 @@ extern "C" int UpdateSystem_INTC()
 		return 0;
 }
 
+#if defined(_WIN32)
+/*
+	Windows: at every stop the stack is walked with the system's unwinder (RtlLookupFunctionEntry, RtlVirtualUnwind)
+	from here to the frame of run() or single_step() of this file, as a debugger, a crash dump or an exception that
+	nobody takes would walk it. A stop that a check of the recompiler made comes here from dbg_sh4_Check, which the
+	check stub called from a block, which the main loop or RunBlock called (jit/backend/x64/rec_x64.cpp): the walk
+	has to come through those frames of the code region, whose unwind data is the emulator's
+	(libswirl/windows/win_jit_unwind.cpp; stubs.cpp hands the region to it), to the C++ frames behind them. Every
+	frame of the walk is of this program or of the code region. sh4bp_test checks the walks of every gate.
+*/
+MachineWalks walks;
+
+static const char* walk_mark;		//a local of run() or single_step(): the walk is done when it is behind it
+
+//That local, for as long as run() or single_step() runs
+struct WalkMark
+{
+	WalkMark() { walk_mark = (const char*)this; }
+	~WalkMark() { walk_mark = nullptr; }
+};
+
+static void walk_fail(const char* what, DWORD64 rip, int frames)
+{
+	walks.failed++;
+	if (walks.failed == 1)
+		snprintf(walks.first_failure, sizeof(walks.first_failure), "%s at frame %d (rip %p)", what, frames, (void*)rip);
+}
+
+// No C++ object in here: a frame that the walk gets wrong can fault, and __try takes that
+static void walk_from_stop()
+{
+	if (walk_mark == nullptr)
+		return;
+
+	CONTEXT ctx;
+	RtlCaptureContext(&ctx);
+	const DWORD64 image = (DWORD64)GetModuleHandleW(nullptr);
+	ULONG_PTR low = 0, high = 0;
+	GetCurrentThreadStackLimits(&low, &high);
+	int frames = 0, region = 0;
+
+	walks.made++;
+	__try
+	{
+		for (; frames < 32; frames++)
+		{
+			if (ctx.Rsp > (DWORD64)walk_mark)
+			{
+				// behind run() or single_step(): every frame on the way was one this program or the region has
+				if (region >= 3)
+					walks.through_region++;
+				walks.region_frames = region > walks.region_frames ? region : walks.region_frames;
+				return;
+			}
+			if (ctx.Rsp < low || ctx.Rsp >= high)
+			{
+				walk_fail("rsp off the stack", ctx.Rip, frames);
+				return;
+			}
+			DWORD64 base = 0;
+			PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
+			const bool in_region = win_in_code_region((const void*)ctx.Rip);
+			if (!in_region && !(f && base == image))
+			{
+				walk_fail(in_region ? "no unwind data in the code region" : "a return address that is neither in the program nor in the code region",
+				          ctx.Rip, frames);
+				return;
+			}
+			region += in_region ? 1 : 0;
+			void* handler_data = nullptr;
+			DWORD64 establisher = 0;
+			RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, f, &ctx, &handler_data, &establisher, nullptr);
+		}
+		walk_fail("no end within 32 frames", ctx.Rip, frames);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		walk_fail("the walk faulted", ctx.Rip, frames);
+	}
+}
+#endif
+
 namespace dbg {
 
 std::atomic<u32> g_attn(0);
@@ -392,6 +475,10 @@ static int rank(StopCause cause)
 
 void LatchStop(StopCause cause, u32 breakpointId)
 {
+#if defined(_WIN32)
+	walk_from_stop();
+#endif
+
 	if (!latch_has_cause || rank(cause) > rank(latch_cause) || (cause == latch_cause && breakpointId < latch_id))
 	{
 		latch_has_cause = true;
@@ -534,6 +621,10 @@ SuperH4Backend* machine_backend()
 //SuperH4_impl::Run(), called again after every service excursion, until a stop
 static MachineStop run()
 {
+#if defined(_WIN32)
+	WalkMark mark;
+#endif
+
 	//a call that arrived while the machine was parked
 	run_ext_call();
 
@@ -588,6 +679,9 @@ static MachineStop run()
 
 static MachineStop single_step()
 {
+#if defined(_WIN32)
+	WalkMark mark;
+#endif
 	in_step = true;
 
 	if (engine == ENGINE_FALLBACK)
