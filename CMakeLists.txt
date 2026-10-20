@@ -98,6 +98,8 @@ set(core_SRCS
   ${wgl_SRCS}
   ${d_core}/archive/archive.cpp ${d_core}/archive/archive.h
   ${d_core}/libswirl.cpp
+  ${d_core}/version.cpp
+  ${d_core}/version_title.cpp
   ${d_core}/stdclass.cpp
   ${d_core}/dispframe.cpp
   ${d_core}/serialize.cpp
@@ -271,6 +273,20 @@ set(nulldc_SRCS ${core_SRCS} ${deps_SRCS} ${osd_SRCS})
   add_executable(${TNAME}${binSuffix} ${nulldc_SRCS}) 
 
 target_compile_features(${TNAME}${binSuffix} PRIVATE cxx_std_20)
+
+# The version (nulldc3/README.md): nulldc3/cmake/version.cmake runs at every build and writes, when their text
+# changes, generated/nulldc3_version.h, nulldc3-version.txt and nulldc3-version.cmake into this build directory.
+# libswirl/version.cpp is the one translation unit that includes the header, and the only one with the directory
+# on its include path: a new commit compiles it again, and nothing else.
+add_custom_target(nulldc3_version
+  COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${nulldc_root_path}" "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+          -P "${nulldc_shell_path}/cmake/version.cmake"
+  BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/generated/nulldc3_version.h" "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.txt"
+             "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.cmake"
+  COMMENT "The version of nullDC"
+  VERBATIM)
+add_dependencies(${TNAME}${binSuffix} nulldc3_version)
+set_source_files_properties("${d_core}/version.cpp" PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 if(${HOST_OS} EQUAL ${OS_LINUX})
   # needed for opentty
