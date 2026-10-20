@@ -129,7 +129,12 @@ else()
   set(devtools_option DEVTOOLS_DIR)
 endif()
 set(devtools_dir "${${devtools_option}}")
-set(TSX "${devtools_dir}/node_modules/.bin/tsx")
+if(WIN32)
+  # node_modules/.bin/tsx is a shell script there, which CreateProcess cannot start; npm writes tsx.cmd beside it
+  set(TSX "${devtools_dir}/node_modules/.bin/tsx.cmd")
+else()
+  set(TSX "${devtools_dir}/node_modules/.bin/tsx")
+endif()
 set(DSP_UTILS "${devtools_dir}/src/app/dsp/dspUtils.ts")
 
 if(devtools_dir AND EXISTS "${TSX}" AND EXISTS "${DSP_UTILS}")
