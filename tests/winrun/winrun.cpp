@@ -18,6 +18,8 @@
 	  detached run): never with a console window of its own. --own-console gives it a pseudo console instead
 	  (CreatePseudoConsole), a console that has the program alone, whose output nulldc3-winrun copies to its own
 	  standard output.
+	- The program inherits nulldc3-winrun's standard handles and no other handle of it
+	  (PROC_THREAD_ATTRIBUTE_HANDLE_LIST): whatever else the caller left inheritable stays out of the program.
 	- While the program runs, nulldc3-winrun lists the top-level windows of its desktop every 100 ms, and once more
 	  when the program has ended (EnumDesktopWindows): the class, whether the window is visible, and the process it
 	  belongs to (its id and the name of its executable). It prints them on stderr at the end.
@@ -28,7 +30,11 @@
 	- --detach --log <file> --rc <file>: starts a copy of itself with DETACHED_PROCESS that does all of the above
 	  with <file> (--log) as the program's standard output and error, prints that copy's process id and returns at
 	  once with 0; the copy writes the exit status into the --rc file when it is done (written as <file>.tmp, then
-	  renamed). For a long step: its log and its rc file are polled.
+	  renamed). For a long step: its log and its rc file are polled. The copy inherits the log and NUL and nothing
+	  else (PROC_THREAD_ATTRIBUTE_HANDLE_LIST): a caller that reads nulldc3-winrun's output through a pipe (WSL's
+	  interop, CMake's execute_process, Python's subprocess) has its end of file when nulldc3-winrun returns, not
+	  when the copy ends. The copy leaves the caller's job (CREATE_BREAKAWAY_FROM_JOB); when that job does not allow
+	  it, nulldc3-winrun says so on stderr: the copy then stays in the caller's job and ends when that job is ended.
 	- --probe: what nulldc3-winrun runs first on a host: it prints the name of the desktop its thread is on. When
 	  that is not winrun-<number> it exits with 3 without making any window (a broken nulldc3-winrun must not put
 	  the probe's window on the desktop of the person who uses the computer); otherwise it makes a visible window
@@ -62,6 +68,7 @@
 #include <string.h>
 #include <wchar.h>
 
+#include <algorithm>
 #include <set>
 #include <string>
 #include <tuple>
@@ -333,6 +340,65 @@ static DWORD WINAPI copy_output(void* param)
 	return 0;
 }
 
+// The distinct handles of `candidates` that a process started with them may inherit, made inheritable. Left out:
+// no handle, and a console pseudo handle of a system before Windows 8 (its two low bits set, a character device),
+// which a handle list does not take and which the program reaches through the console it shares anyway.
+static std::vector<HANDLE> inheritable_handles(const HANDLE* candidates, size_t n)
+{
+	std::vector<HANDLE> out;
+	for (size_t i = 0; i < n; i++)
+	{
+		HANDLE h = candidates[i];
+		if (!h || h == INVALID_HANDLE_VALUE || std::find(out.begin(), out.end(), h) != out.end())
+			continue;
+		if ((((ULONG_PTR)h) & 3) == 3 && GetFileType(h) == FILE_TYPE_CHAR)
+			continue;
+		if (!SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT))
+			continue;
+		out.push_back(h);
+	}
+	return out;
+}
+
+// A process attribute list of one attribute (STARTUPINFOEX), deleted with the object. The value has to stay where
+// it is until CreateProcess has returned.
+struct AttributeList
+{
+	std::vector<char> storage;
+
+	LPPROC_THREAD_ATTRIBUTE_LIST get()
+	{
+		return storage.empty() ? nullptr : (LPPROC_THREAD_ATTRIBUTE_LIST)storage.data();
+	}
+
+	bool set(DWORD_PTR attribute, void* value, size_t size)
+	{
+		SIZE_T bytes = 0;
+		InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
+		storage.resize(bytes);
+		if (!InitializeProcThreadAttributeList(get(), 1, 0, &bytes))
+		{
+			storage.clear();
+			return false;
+		}
+		if (!UpdateProcThreadAttribute(get(), 0, attribute, value, size, nullptr, nullptr))
+		{
+			DWORD error = GetLastError();
+			DeleteProcThreadAttributeList(get());
+			storage.clear();
+			SetLastError(error);
+			return false;
+		}
+		return true;
+	}
+
+	~AttributeList()
+	{
+		if (!storage.empty())
+			DeleteProcThreadAttributeList(get());
+	}
+};
+
 typedef HRESULT(WINAPI* CreatePseudoConsoleFn)(COORD, HANDLE, HANDLE, DWORD, void**);
 typedef void(WINAPI* ClosePseudoConsoleFn)(void*);
 
@@ -391,7 +457,8 @@ static int run(const Options& opt)
 	void* pseudo = nullptr;
 	ClosePseudoConsoleFn close_pseudo = nullptr;
 	HANDLE pc_in_read = nullptr, pc_in_write = nullptr, pc_out_read = nullptr, pc_out_write = nullptr;
-	std::vector<char> attributes;
+	AttributeList attributes;
+	std::vector<HANDLE> inherited;	// what the program inherits: in the attribute list until CreateProcess returns
 	HANDLE copier_thread = nullptr;
 	Copier copier = {};
 
@@ -428,13 +495,7 @@ static int run(const Options& opt)
 		CloseHandle(pc_out_write);
 		pc_in_read = pc_out_write = nullptr;
 
-		SIZE_T bytes = 0;
-		InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
-		attributes.resize(bytes);
-		si.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)attributes.data();
-		if (!InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &bytes) ||
-		    !UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, pseudo, sizeof(pseudo),
-		                               nullptr, nullptr))
+		if (!attributes.set(PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, pseudo, sizeof(pseudo)))
 		{
 			say(L"winrun: the pseudo console cannot be given to the program: %ls; the program is not started",
 			    last_error_text(GetLastError()).c_str());
@@ -443,6 +504,7 @@ static int run(const Options& opt)
 			CloseDesktop(desktop);
 			return kExitSetup;
 		}
+		si.lpAttributeList = attributes.get();
 		// The program's standard handles are those of its pseudo console: none of this process's (a redirected
 		// standard handle of nulldc3-winrun would otherwise be handed down in their place)
 		si.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
@@ -458,18 +520,30 @@ static int run(const Options& opt)
 	else
 	{
 		// The program shares this process's console and standard handles; with no console it gets none, never a
-		// console window of its own
+		// console window of its own. It inherits the standard handles and no other handle of this process: the
+		// list keeps out what the caller of nulldc3-winrun left inheritable here.
 		if (!GetConsoleWindow())
 			flags |= CREATE_NO_WINDOW;
 		HANDLE handles[3] = { GetStdHandle(STD_INPUT_HANDLE), GetStdHandle(STD_OUTPUT_HANDLE), GetStdHandle(STD_ERROR_HANDLE) };
-		for (HANDLE h : handles)
-			if (h && h != INVALID_HANDLE_VALUE)
-				SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
 		si.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
 		si.StartupInfo.hStdInput = handles[0];
 		si.StartupInfo.hStdOutput = handles[1];
 		si.StartupInfo.hStdError = handles[2];
-		inherit = TRUE;
+		inherited = inheritable_handles(handles, 3);
+		if (!inherited.empty())
+		{
+			if (!attributes.set(PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited.data(), inherited.size() * sizeof(HANDLE)))
+			{
+				say(L"winrun: the list of the handles the program inherits cannot be made: %ls; the program is not started",
+				    last_error_text(GetLastError()).c_str());
+				CloseHandle(job);
+				CloseDesktop(desktop);
+				return kExitSetup;
+			}
+			si.lpAttributeList = attributes.get();
+			flags |= EXTENDED_STARTUPINFO_PRESENT;
+			inherit = TRUE;
+		}
 	}
 
 	PROCESS_INFORMATION pi = {};
@@ -604,6 +678,21 @@ static int detach(const Options& opt, int argc, wchar_t** argv)
 	DeleteFileW(opt.rc.c_str());	// a stale rc file would read as the result of this run
 	HANDLE nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
 
+	// The copy inherits the log and NUL, and nothing else of this process: not the standard handles the caller gave
+	// it (a pipe whose reader would otherwise wait for the copy's end, not this process's)
+	HANDLE pass[2] = { log, nul };
+	std::vector<HANDLE> inherited = inheritable_handles(pass, 2);
+	AttributeList attributes;
+	if (!attributes.set(PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited.data(), inherited.size() * sizeof(HANDLE)))
+	{
+		say(L"winrun: the list of the handles the detached copy inherits cannot be made: %ls",
+		    last_error_text(GetLastError()).c_str());
+		CloseHandle(log);
+		if (nul != INVALID_HANDLE_VALUE)
+			CloseHandle(nul);
+		return kExitSetup;
+	}
+
 	wchar_t self[MAX_PATH * 2];
 	GetModuleFileNameW(nullptr, self, _countof(self));
 	wstring cmdline = quote(self) + L" --worker";
@@ -623,27 +712,37 @@ static int detach(const Options& opt, int argc, wchar_t** argv)
 	std::vector<wchar_t> cmdbuf(cmdline.begin(), cmdline.end());
 	cmdbuf.push_back(0);
 
-	STARTUPINFOW si = {};
-	si.cb = sizeof(si);
-	si.dwFlags = STARTF_USESTDHANDLES;
-	si.hStdInput = nul;
-	si.hStdOutput = log;
-	si.hStdError = log;
+	STARTUPINFOEXW si = {};
+	si.StartupInfo.cb = sizeof(si);
+	si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+	si.StartupInfo.hStdInput = nul != INVALID_HANDLE_VALUE ? nul : nullptr;
+	si.StartupInfo.hStdOutput = log;
+	si.StartupInfo.hStdError = log;
+	si.lpAttributeList = attributes.get();
 	PROCESS_INFORMATION pi = {};
 	// out of a job the caller may be in, when that job allows it: the copy outlives this process
-	DWORD flags = DETACHED_PROCESS | CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_PROCESS_GROUP;
+	DWORD flags = DETACHED_PROCESS | CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_PROCESS_GROUP | EXTENDED_STARTUPINFO_PRESENT;
 	BOOL ok = CreateProcessW(nullptr, cmdbuf.data(), nullptr, nullptr, TRUE, flags | CREATE_BREAKAWAY_FROM_JOB, nullptr,
-	                         nullptr, &si, &pi);
-	if (!ok)
-		ok = CreateProcessW(nullptr, cmdbuf.data(), nullptr, nullptr, TRUE, flags, nullptr, nullptr, &si, &pi);
+	                         nullptr, &si.StartupInfo, &pi);
+	bool in_callers_job = false;
+	if (!ok && GetLastError() == ERROR_ACCESS_DENIED)
+	{
+		// the caller's job does not let a process leave it
+		ok = CreateProcessW(nullptr, cmdbuf.data(), nullptr, nullptr, TRUE, flags, nullptr, nullptr, &si.StartupInfo, &pi);
+		in_callers_job = ok != FALSE;
+	}
+	DWORD error = GetLastError();
 	CloseHandle(log);
 	if (nul != INVALID_HANDLE_VALUE)
 		CloseHandle(nul);
 	if (!ok)
 	{
-		say(L"winrun: cannot start the detached copy: %ls", last_error_text(GetLastError()).c_str());
+		say(L"winrun: cannot start the detached copy: %ls", last_error_text(error).c_str());
 		return kExitSetup;
 	}
+	if (in_callers_job)
+		say(L"winrun: the caller's job does not let the detached copy (pid %lu) leave it: the copy stays in that job "
+		    L"and ends when that job is ended", (unsigned long)pi.dwProcessId);
 	printf("%lu\n", (unsigned long)pi.dwProcessId);
 	fflush(stdout);
 	CloseHandle(pi.hThread);

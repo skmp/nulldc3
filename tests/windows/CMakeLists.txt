@@ -8,6 +8,8 @@
 #
 #	windows.winrun.probe        nulldc3-winrun --timeout 10 -- nulldc3-winrun --probe: the probe says the private
 #	                            desktop's name, its window is in nulldc3-winrun's list, the verdict is 125
+#	windows.winrun.detach       nulldc3-winrun --detach, read through a pipe, returns at once; the copy runs the
+#	                            program (15 s) to its end and writes 0 into its rc file
 #	windows.headless.nowindow   the guest headless with NULLDC_TEST_UI_REPORT=1: windows=0, no COM apartment
 #	                            window, the policy read back (wer, invparam, purecall, sigabrt, abort), exit 0, the
 #	                            exit line, no window seen
@@ -63,6 +65,7 @@ function(windows_case test case)
 endfunction()
 
 windows_case(windows.winrun.probe probe TIMEOUT 60)
+windows_case(windows.winrun.detach detach TIMEOUT 150)
 windows_case(windows.headless.nowindow headless EMULATOR)
 foreach(kind segv ill trap abort div stack invparam purecall)
   windows_case(windows.fatal.${kind} fatal.${kind} EMULATOR)

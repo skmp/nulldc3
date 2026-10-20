@@ -24,9 +24,15 @@ desktop of the person who uses the computer. `winrun.cpp` has the whole descript
 - **The exit status**: 126 a set-up that failed; 125 a visible window, or a window of the emulator's class
   (`WINDOW_CLASS` of `libswirl/windows/win_common.h`), seen at all; 124 `--timeout` ran out (the job is ended);
   otherwise the program's.
+- **Its handles**: the program inherits nulldc3-winrun's standard handles and no other handle of it
+  (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`).
 - **`--detach --log <file> --rc <file>`** starts a copy of itself with `DETACHED_PROCESS`, which runs the program as
   above with the log as its output and writes the exit status into the rc file at the end, prints its id and
-  returns at once: a long step (a build, a ctest run) runs that way and is polled.
+  returns at once: a long step (a build, a ctest run) runs that way and is polled. The copy inherits the log and
+  `NUL` and nothing else, so that a caller reading nulldc3-winrun's output through a pipe (WSL's interop, CMake's
+  `execute_process`, Python's `subprocess`) has its end of file when nulldc3-winrun returns, not when the copy ends
+  (the test `windows.winrun.detach`). The copy leaves the caller's job (`CREATE_BREAKAWAY_FROM_JOB`); where that
+  job does not allow it, nulldc3-winrun says so on stderr, and the copy stays in that job and ends with it.
 - **`--probe`** prints the name of the desktop its thread is on, exits with 3 without making a window when that is
   not `winrun-<n>`, and otherwise makes a visible window and waits: the first program nulldc3-winrun starts on a
   host is `nulldc3-winrun --timeout 10 -- nulldc3-winrun --probe`, which has to print the private desktop's name and
