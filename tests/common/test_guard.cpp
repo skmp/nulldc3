@@ -172,9 +172,14 @@ static void on_watchdog(int)
 	handled ended, also under nulldc3-winrun). Its error mode, no report UI, abort() without its box and its report
 	and with a SIGABRT handler, the C runtime's invalid-parameter and pure-call handlers (without them the runtime
 	ends with __fastfail, past every handler, straight to Windows Error Reporting), the debug runtime's reports to
-	stderr, and an unhandled-exception filter: each prints the line of Linux's fault handler on stderr and ends the
+	stderr, a vectored handler and an unhandled-exception filter: each prints one line on stderr and ends the
 	process with 128 + the signal's number, as a fatal signal ends one on Linux (SIGSEGV 139, SIGILL 132, SIGTRAP
-	133, SIGABRT 134, SIGFPE 136). No exception reaches Windows Error Reporting through it.
+	133, SIGABRT 134, SIGFPE 136). No exception reaches Windows Error Reporting through it. The vectored handler,
+	which runs before any frame is searched, takes an access violation, an in-page error and a misaligned access
+	where the pc is in the program's image or in no module at all (generated code, or a pc that a broken stack
+	returned to: the frames of such a stack cannot be searched, and the filter would never run), an illegal or
+	privileged instruction, an integer divide and a stack overflow wherever they are; a fault inside a module of the
+	system goes on to that module's own handlers (a stack walk of a test that guards its reads, windows.abi.xmm).
 */
 static void policy_fatal(const char* sig, int number, const void* address)
 {
@@ -185,6 +190,35 @@ static void policy_fatal(const char* sig, int number, const void* address)
 	TerminateProcess(GetCurrentProcess(), 128 + number);
 	for (;;)
 		Sleep(1000);
+}
+
+static const char* image_start;
+static const char* image_end;
+
+static LONG CALLBACK policy_vectored(EXCEPTION_POINTERS* ep)
+{
+	const EXCEPTION_RECORD* r = ep->ExceptionRecord;
+	const char* pc = (const char*)r->ExceptionAddress;
+	PVOID base = nullptr;
+	switch (r->ExceptionCode)
+	{
+	case EXCEPTION_ACCESS_VIOLATION:
+	case EXCEPTION_IN_PAGE_ERROR:
+	case EXCEPTION_DATATYPE_MISALIGNMENT:
+		if ((pc < image_start || pc >= image_end) && RtlPcToFileHeader((PVOID)pc, &base) != nullptr)
+			return EXCEPTION_CONTINUE_SEARCH;
+		policy_fatal("SIGSEGV", 11, r->ExceptionAddress);
+	case EXCEPTION_STACK_OVERFLOW:
+		policy_fatal("SIGSEGV", 11, r->ExceptionAddress);
+	case EXCEPTION_ILLEGAL_INSTRUCTION:
+	case EXCEPTION_PRIV_INSTRUCTION:
+		policy_fatal("SIGILL", 4, r->ExceptionAddress);
+	case EXCEPTION_INT_DIVIDE_BY_ZERO:
+	case EXCEPTION_INT_OVERFLOW:
+		policy_fatal("SIGFPE", 8, r->ExceptionAddress);
+	default:
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
 }
 
 static LONG WINAPI policy_unhandled(EXCEPTION_POINTERS* ep)
@@ -246,10 +280,17 @@ static struct WindowsPolicy
 		_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
 		_CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 
-		// room for the filter on a thread whose stack has run out
+		// room for the handlers on a thread whose stack has run out
 		ULONG guarantee = 64 * 1024;
 		SetThreadStackGuarantee(&guarantee);
 
+		// the program's image, from its headers
+		const char* self = (const char*)GetModuleHandleW(NULL);
+		const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(self + ((const IMAGE_DOS_HEADER*)self)->e_lfanew);
+		image_start = self;
+		image_end = self + nt->OptionalHeader.SizeOfImage;
+
+		AddVectoredExceptionHandler(0, policy_vectored);
 		SetUnhandledExceptionFilter(policy_unhandled);
 	}
 } windows_policy;

@@ -142,6 +142,40 @@ static void policy_fatal(const char* sig, int number, const void* address, const
 		Sleep(1000);
 }
 
+//First, before any frame is searched (a stack that a fault broke cannot be searched, and the filter below would
+//never run): an access violation, an in-page error or a misaligned access where the pc is in the program's image or
+//in no module at all (the code region, or a pc that a broken stack returned to), an illegal instruction, an integer
+//divide, a stack overflow. A fault inside a module of the system goes on to its own handlers: the stack walk of
+//machine.cpp takes a fault of the unwinder itself
+static const char* image_start;
+static const char* image_end;
+
+static LONG CALLBACK policy_vectored(EXCEPTION_POINTERS* ep)
+{
+	const EXCEPTION_RECORD* r = ep->ExceptionRecord;
+	const char* pc = (const char*)r->ExceptionAddress;
+	PVOID base = nullptr;
+	switch (r->ExceptionCode)
+	{
+	case EXCEPTION_ACCESS_VIOLATION:
+	case EXCEPTION_IN_PAGE_ERROR:
+	case EXCEPTION_DATATYPE_MISALIGNMENT:
+		if ((pc < image_start || pc >= image_end) && RtlPcToFileHeader((PVOID)pc, &base) != nullptr)
+			return EXCEPTION_CONTINUE_SEARCH;
+		policy_fatal("SIGSEGV", 11, r->NumberParameters >= 2 ? (const void*)r->ExceptionInformation[1] : r->ExceptionAddress, pc);
+	case EXCEPTION_STACK_OVERFLOW:
+		policy_fatal("SIGSEGV", 11, r->ExceptionAddress, pc);
+	case EXCEPTION_ILLEGAL_INSTRUCTION:
+	case EXCEPTION_PRIV_INSTRUCTION:
+		policy_fatal("SIGILL", 4, r->ExceptionAddress, pc);
+	case EXCEPTION_INT_DIVIDE_BY_ZERO:
+	case EXCEPTION_INT_OVERFLOW:
+		policy_fatal("SIGFPE", 8, r->ExceptionAddress, pc);
+	default:
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
+}
+
 static LONG WINAPI policy_unhandled(EXCEPTION_POINTERS* ep)
 {
 	const EXCEPTION_RECORD* r = ep->ExceptionRecord;
@@ -201,6 +235,11 @@ static struct WindowsPolicy
 		_CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 		ULONG guarantee = 64 * 1024;
 		SetThreadStackGuarantee(&guarantee);
+		const char* self = (const char*)GetModuleHandleW(NULL);
+		const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(self + ((const IMAGE_DOS_HEADER*)self)->e_lfanew);
+		image_start = self;
+		image_end = self + nt->OptionalHeader.SizeOfImage;
+		AddVectoredExceptionHandler(0, policy_vectored);
 		SetUnhandledExceptionFilter(policy_unhandled);
 	}
 } windows_policy;
