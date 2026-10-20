@@ -55,6 +55,10 @@ endif()
 
 add_executable(version_cl cl_test.cpp)
 target_link_libraries(version_cl PRIVATE nulldc_cfg)
+if(WIN32)
+  # the policy of the tests project for a program that dies (../common/win_policy.cpp: no box, no crash report, one line and 128 + the signal's number)
+  target_sources(version_cl PRIVATE "${nulldc_tests_path}/common/win_policy.cpp")
+endif()
 add_test(NAME version.cl COMMAND version_cl "${CMAKE_CURRENT_BINARY_DIR}/cl_work")
 set_tests_properties(version.cl PROPERTIES TIMEOUT 60)
 

@@ -14,6 +14,8 @@ target_compile_features(aica_test PRIVATE cxx_std_20)	# as the emulator target
 
 if(${HOST_OS} EQUAL ${OS_WINDOWS})
   target_include_directories(aica_test PRIVATE "${LIBSWIRL_DIR}/deps/dirent")
+  # the policy of the tests project for a program that dies (tests/common/win_policy.cpp: no box, no crash report, one line and 128 + the signal's number)
+  target_sources(aica_test PRIVATE "${nulldc_root_path}/tests/common/win_policy.cpp")
 endif()
 
 if(REGS_SANITIZE AND NOT MSVC)

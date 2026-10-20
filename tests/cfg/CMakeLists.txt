@@ -18,6 +18,10 @@ nulldc_add_version_sources(nulldc_cfg)
 
 add_executable(cfg_overrides cfg_test.cpp)
 target_link_libraries(cfg_overrides PRIVATE nulldc_cfg)
+if(WIN32)
+  # the policy of the tests project for a program that dies (../common/win_policy.cpp: no box, no crash report, one line and 128 + the signal's number)
+  target_sources(cfg_overrides PRIVATE "${nulldc_tests_path}/common/win_policy.cpp")
+endif()
 
 add_test(NAME cfg.overrides COMMAND cfg_overrides "${CMAKE_CURRENT_BINARY_DIR}/work")
 set_tests_properties(cfg.overrides PROPERTIES TIMEOUT 60)

@@ -31,6 +31,10 @@ set(LIBSWIRL_DIR "${nulldc_root_path}/libswirl")
 
 add_executable(regs_test regs_test.cpp "${LIBSWIRL_DIR}/debugger/dbg_regs_tables.cpp")
 target_include_directories(regs_test PRIVATE "${LIBSWIRL_DIR}" "${LIBSWIRL_DIR}/debugger")
+if(WIN32)
+  # the policy of the tests project for a program that dies (tests/common/win_policy.cpp: no box, no crash report, one line and 128 + the signal's number)
+  target_sources(regs_test PRIVATE "${nulldc_root_path}/tests/common/win_policy.cpp")
+endif()
 
 if(MSVC)
   target_compile_options(regs_test PRIVATE /W4 /permissive-)

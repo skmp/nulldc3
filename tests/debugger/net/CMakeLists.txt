@@ -120,6 +120,13 @@ foreach(name test_ws test_http test_fuzz test_e2e test_bounds test_webui)
   set_tests_properties(${NULLDC_TEST_PREFIX}${name} PROPERTIES TIMEOUT 300)
 endforeach()
 
+# On Windows every program of this directory has the policy of the tests project for a program that dies (tests/common/win_policy.cpp: no box, no crash report, one line and 128 + the signal's number)
+if(WIN32)
+  foreach(name test_ws test_http test_fuzz test_e2e test_bounds test_webui dbg_net_demo)
+    target_sources(${name} PRIVATE "${tree}/tests/common/win_policy.cpp")
+  endforeach()
+endif()
+
 # Interoperability with the "ws" package of the devtools tree. Skipped without node or without the package:
 # the script prints "SKIP: <reason>" and returns 77 for the latter. With NULLDC_TESTS_REQUIRE_DATA either one
 # is a failed test.

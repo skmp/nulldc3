@@ -398,3 +398,19 @@ else()
     endforeach()
   endif()
 endif()
+
+
+## On Windows ##
+#
+#	Every program of this directory has the policy of the tests project for a program that dies
+#	(../common/win_policy.cpp: no box, no crash report, one line and 128 + the signal's number); the guest oracle
+#	has it where it is made, above
+#
+
+if(WIN32)
+  foreach(program aica_dsp_api aica_dsp_bench aica_dsp_emu aica_dsp_wasm_trace aica_dsp_diff aica_dsp_cases)
+    if(TARGET ${program})
+      target_sources(${program} PRIVATE "${nulldc_tests_path}/common/win_policy.cpp")
+    endif()
+  endforeach()
+endif()
