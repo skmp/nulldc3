@@ -27,6 +27,7 @@
 #include "dbg_symbols.h"
 
 #include "libswirl.h"
+#include "nulldc_version.h"
 #include "cfg/cfg.h"
 #include "oslib/oslib.h"
 #include "hw/sh4/sh4_if.h"
@@ -41,6 +42,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 
 // hw/pvr/spg.cpp: when the running machine last wrote its frame rate into the title of the window. Written on
@@ -84,7 +86,12 @@ namespace {
 
 typedef std::chrono::steady_clock Clock;
 
-const char* const kPausedTitle = "nullDC 3.0.0 [paused by debugger]";
+// The window title while a debugger stop is in force: "nullDC <version> [paused by debugger]" (debugger.h, Park())
+const char* PausedTitle()
+{
+	static const std::string title = std::string("nullDC ") + nulldc_version() + " [paused by debugger]";
+	return title.c_str();
+}
 
 /*
 	A call. The caller and the queue share it; everything but fn is guarded by Q. fn is run, and destroyed, by
@@ -556,7 +563,7 @@ void EnterStop()
 		e.titled = true;
 		e.titledAt = last_fps;
 
-		os_SetWindowText(kPausedTitle);
+		os_SetWindowText(PausedTitle());
 		test::pausedTitles++;
 	}
 

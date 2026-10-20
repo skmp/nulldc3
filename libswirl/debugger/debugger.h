@@ -332,11 +332,12 @@ enum : u32 {
 //   the threads that the selftest of dbg::emu starts itself.
 //   Entering a stop: g_parked is set, CpuRunning cleared, the breakpoint state of the SH4, of the ARM7 and of
 //   the DSP drop their temporary breakpoints, a pending step-out and a step that is armed, the listener is
-//   invoked, the window title becomes "nullDC 3.0.0 [paused by debugger]" (it is put where it is not on the
-//   window already and stays until the running machine writes its frame rate; the emulator thread makes no
-//   window call behind its stop callback). The park loop then waits, without limit, for a call, for a
-//   run-control action that a call armed, or for Kick(). Armed steps are executed by the loop itself, with
-//   one exception: a step of the ARM7 or of the DSP asked for while no sound burst is suspended (below).
+//   invoked, the window title becomes "nullDC <version> [paused by debugger]", <version> being the build's
+//   version string (NULLDC_VERSION) (it is put where it is not on the window already and stays until the
+//   running machine writes its frame rate; the emulator thread makes no window call behind its stop
+//   callback). The park loop then waits, without limit, for a call, for a run-control action that a call
+//   armed, or for Kick(). Armed steps are executed by the loop itself, with one exception: a step of the ARM7
+//   or of the DSP asked for while no sound burst is suspended (below).
 // - Leaves the park context for a resume and at the end of a service excursion, in this order: for a
 //   resume decides the resume exemptions of the ARM7 and of the DSP (dbg::arm7::PrepareResume,
 //   dbg::dsp::PrepareResume); runs a suspended sound burst on, with the checks of the ARM7 and of the DSP
