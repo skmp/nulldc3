@@ -21,6 +21,14 @@
 #include <malloc.h>
 #endif
 
+//<windows.h> (behind the headers of the tree on Windows) still defines far and near, empty, for 16-bit code
+#ifdef far
+#undef far
+#endif
+#ifdef near
+#undef near
+#endif
+
 using dbg::StopCause;
 
 //hw/sh4/dyna/blockmanager.cpp: every cached block
@@ -1955,23 +1963,26 @@ static MachineState dense_timed(Engine e, u32 top, u32 n, bool fp, u32 armed, bo
 	return s;
 }
 
-//The heap of the process: the bytes in use, and the bytes the C library holds for them
-struct HeapSize
+//The heap of the process: the bytes in use, and the bytes the C library holds for them (not HeapSize, a function
+//of Windows)
+struct HeapUse
 {
 	s64 in_use;
 	s64 held;
 };
 
 //false: this C library does not tell (nor does it under a sanitizer that has its own allocator)
-static bool heap_size(HeapSize* h)
+static bool heap_size(HeapUse* h)
 {
 	h->in_use = h->held = 0;
 
-#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
+#if defined(__GLIBC__)
+#if __GLIBC_PREREQ(2, 33)
 	struct mallinfo2 m = mallinfo2();
 
 	h->in_use = (s64)m.uordblks;
 	h->held = (s64)m.arena + (s64)m.hblkhd;
+#endif
 #endif
 
 	return h->held != 0;
@@ -2168,7 +2179,7 @@ static void gate_dense()
 	{
 		const u64 slices = 45;
 		u64 stops;
-		HeapSize before, after;
+		HeapUse before, after;
 
 		settings.dynarec.idleskip = false;
 
