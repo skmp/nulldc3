@@ -40,3 +40,24 @@ add_executable(common_selftest selftest.cpp)
 target_link_libraries(common_selftest PRIVATE nulldc_sh4_interp nulldc_test_common)
 add_test(NAME common.selftest COMMAND common_selftest)
 set_tests_properties(common.selftest PROPERTIES TIMEOUT 60)
+
+# How the harnesses of the tests start the emulator and node, on every host (emurun.py): its test, with python and
+# nothing else. On Windows it starts a program through nulldc3-winrun, as the harnesses do: NULLDC_WINRUN, or the one
+# tests/windows builds
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  set(nulldc_emurun_env PYTHONDONTWRITEBYTECODE=1)
+  if(${HOST_OS} EQUAL ${OS_WINDOWS})
+    if(NULLDC_WINRUN)
+      list(APPEND nulldc_emurun_env "NULLDC_WINRUN=${NULLDC_WINRUN}")
+    else()
+      list(APPEND nulldc_emurun_env "NULLDC_WINRUN=$<TARGET_FILE:nulldc3_winrun>")
+    endif()
+  endif()
+  add_test(NAME harness.emurun
+           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/emurun_test.py" --work "${CMAKE_BINARY_DIR}/common/work/harness.emurun")
+  set_tests_properties(harness.emurun PROPERTIES TIMEOUT 300 ENVIRONMENT "${nulldc_emurun_env}")
+else()
+  nulldc_add_skipped_test(harness.emurun "no python3 to run tests/common/emurun_test.py with")
+endif()
+
