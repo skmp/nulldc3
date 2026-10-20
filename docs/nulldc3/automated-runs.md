@@ -230,6 +230,20 @@ the program's, or 124 (a timeout), 125 (a window was seen) or 126 (its set-up fa
 of an automated run: `--portable <dir>` and `--config config:Headless=yes , audio:backend=none ,
 config:Dreamcast.RTC=946684800` with the run's `Exit.*` keys.
 
+**The harnesses of the tests on Windows.** `tests/debugger/selftest/selftest.py`, `tests/debugger/contract/contract.py`,
+`tests/debugger/guest/dsptest/soundlines.py` and `tests/debugger/sh4bp/sessions.py` start every program through
+`tests/common/emurun.py`, the run helper they share (Python 3.9 and the standard library; `harness.emurun` tests it).
+It gives an emulator run its environment, which on Windows is `SystemRoot` (without it Winsock does not start:
+`WSAStartup` fails with 10106) and `TEMP` and `TMP` in the run's own directory, nothing of the profile; it starts
+the emulator, the contract runner (`npm.cmd`, and the `cmd.exe` and `node` behind it) and the tools of the tests
+inside `nulldc3-winrun`, whose path the tests project passes in `NULLDC_WINRUN`, so that ending a run (Windows has no
+SIGTERM) ends its whole job; it finds `nulldc3.exe` for `nulldc3`, reads the output without the `\r` of a `\r\n`,
+and resolves no POSIX shell: `bash` on the PATH of Windows is WSL's launcher, so the check of the sounding guest's
+generated files (`gen.sh --check`) is not run there and says so. The emulator's own keys are those above. On a POSIX
+host the helper starts the program itself, with an environment of the sanitizers' options alone and a core size limit
+of 1 byte. `tests/system` builds no emulator on Windows: the tests project takes `-DNULLDC_EMULATOR=<nulldc3.exe>`
+(`tests/README.md`, "On Windows").
+
 ## Faults
 
 On Linux a SIGSEGV that is not a guest memory fault (VRAM write protection, a locked JIT page, a fast memory

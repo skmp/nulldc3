@@ -18,6 +18,12 @@ program of `NULLDC_ELF_DIR` instead of the guest of this directory.
 
 Every run keeps its files in a directory of its own under the work directory (`--portable <dir>`) and has an empty
 environment (no display), the real-time clock pinned, a core size limit of 1 byte and a watchdog, as in `tests/system`.
+The script starts every program through `tests/common/emurun.py`, the run helper of the harnesses, and reads the
+output through it (a `\r` in front of a `\n` is not part of a line). On Windows the environment of a run is
+`SystemRoot` (Winsock does not start without it) and `TEMP` and `TMP` in the run's directory, and the emulator runs
+inside `nulldc3-winrun` (its path in `NULLDC_WINRUN`, which the tests project passes): there `-DNULLDC_EMULATOR=` is
+`nulldc3.exe` of an emulator build, since `tests/system` builds none, and the tests are skipped without it.
+`debugger.selftest.log.rule` holds the checks of the script on made-up output whose lines end in `\n` and in `\r\n`.
 
 **Every run is made on the engine it asks for.** `--engine jit` is `config:Dynarec.Enabled=yes`, `--engine interp`
 is `=no`; the emulator takes the first for a wish and says `Using MCPU Recompiler` or `Using MCPU Interpreter`, and
@@ -41,8 +47,9 @@ recompiler without breakpoints of its own, `sh4-debug-native` otherwise. It says
 `SelfTest: engine.asked: note: the engine of the session is the one its configuration asks for: ...`, or fails a
 check, and then the session (`SelfTest: engine.asked: FAILED: the configuration asks for ...; the session runs ...`);
 the summary counts it only when it fails. `selftest.py` requires the note. That is what holds the sessions of
-`debugger.selftest.sh4bp.sessions` to their engines: their runner, `tests/debugger/sh4bp/selftest.sh`, asks for
-the engines by configuration and looks at the exit code of a session, not at what it says.
+`debugger.selftest.sh4bp.sessions` to their engines: their runner, `tests/debugger/sh4bp/sessions.py` (the port of
+`selftest.sh` of that directory), asks for the engines by configuration and looks at the exit code of a session, not
+at what it says.
 
 **No wait without a bound.** The sessions `arm7`, `dsp`, `writes` and `core`, and the tests `arm7n.*`, `dspn.*` and
 `writesrun.neutral`, give every wait for a stop a bound, one constant of their file (`kBoundMs`: 30 s in
@@ -410,7 +417,8 @@ mechanism on the park loop of the emulator. They boot `2ndmix.elf` of `NULLDC_EL
 | `debugger.selftest.sh4bp` `.interp` | the session `sh4bp`: the gates B1 to B14 (none for B11) |
 | `debugger.selftest.sh4bpboot` `.interp` | the session `sh4bpboot`: B3, B6 and B7 on the booted guest, every check of its own |
 | `debugger.selftest.sh4bpbase` `.interp` | the session `sh4bpbase`: the baselines of those runs |
-| `debugger.selftest.sh4bp.sessions` | `tests/debugger/sh4bp/selftest.sh`: the sessions of `sh4bp` on the JIT, on the interpreter and on the JIT with the interpreter fallback forced agree on registers, step traces and time; the runs of the booted guest are in the state of their baselines, on those three and on the JIT and the fallback with idleskip off |
+| `debugger.selftest.sh4bp.sessions` | `tests/debugger/sh4bp/sessions.py`, the port of `selftest.sh` of that directory: the sessions of `sh4bp` on the JIT, on the interpreter and on the JIT with the interpreter fallback forced agree on registers, step traces and time; the runs of the booted guest are in the state of their baselines, on those three and on the JIT and the fallback with idleskip off |
+| `debugger.selftest.sh4bp.sessions.rule` | `sessions.py --rule`, no emulator: its comparisons on made-up sessions; every key they hold, changed in one session, fails the run, a key they do not hold leaves it alone, and the repeats on the booted guest go as their rule says |
 
 ## Host stop / start cycles
 

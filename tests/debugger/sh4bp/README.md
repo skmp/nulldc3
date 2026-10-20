@@ -15,7 +15,13 @@ ctest --test-dir <build dir>            # one test per gate: debugger.sh4bp.b1 .
 ```
 
 The directory also works as a part of the tests project (`add_subdirectory(debugger/sh4bp)` in
-`tests/CMakeLists.txt`). It needs an x86-64 host with the SH4 recompiler; elsewhere the tests are skipped.
+`tests/CMakeLists.txt`). It needs an x86-64 host with the SH4 recompiler, Linux or Windows; elsewhere the tests are
+skipped. On Windows `b11` says `SKIPPED` (it counts host instructions with Linux's performance counters), and the
+suite has the emulator's code region with its unwind data (`libswirl/windows/win_jit_unwind.cpp`, handed the region
+by `stubs.cpp`) and its policy for a program that dies (no box, no crash report, 128 + the signal's number): at every
+stop `machine.cpp` walks the stack with the system's unwinder back to the machine, every gate checks that each of its
+walks came through, and the gate `unwind` (Windows only) that walks from stops of the recompiler's checks came through
+the check stub, the block and the main loop.
 
 The gates run on three engines, each on those it applies to: `jit` (the x64 backend, checks and steps native
 to it), `interpreter`, and `fallback` (the x64 backend with the debugger told to use the interpreter fallback,
@@ -51,6 +57,7 @@ holds the guest programs.
 | `vector` | A step-out of the leaf at every arrival, until one stops behind the block (the interpreter: the instruction) that used its slice up. The instruction of that stop is armed and the interrupt made to arrive with the next slice end, which is the first thing the loop of the resume does: the handler runs, returns to the instruction, and it stops again with nothing of it executed; the resume of that stop runs it. On the three engines, in fast timing and with `idleskip` off |
 | `arm` | What arming discards: a block that starts on the page in front of the address, the block of a branch whose slot is on the next page, nothing on other pages, nothing for a second breakpoint on an armed address. Two breakpoints on one address report the lowest id. The category mask stops and lets pass without a block being compiled. A breakpoint added during a stop, in the stopped block, stops the resume. Breakpoints on two instructions in a row, and on a delayed branch together with its slot |
 | `event` | The machine's vblank event with an event breakpoint on it, which the selftest counts the vblanks of a booted guest with: a stop where the slice of every vblank ends, with the cause and the id, and the state of a run behind them; none with the gate of the event closed or the category muted. A vblank in a SLEEP wait cuts the wait short and leaves the pc on the SLEEP, which is executed again; an interrupt that is accepted on the way out of that stop returns behind the SLEEP |
+| `unwind` | Windows only: a breakpoint at the first instruction of a block, in its middle and on the slot of a `bra`, on the jit: the stop of the check is walked by the system's unwinder from the debugger's latch through `dbg_sh4_Check`, the check stub, the block and the main loop back to the machine. The stub's frame at its call is the callee's home space and the refund, 40 bytes below the return address into the block, which is the frame of a block: what the unwind data of the code region describes for every pc that is not the main loop's or RunBlock's |
 | `threads` | Not of the breakpoint mechanism: what the recompiler of a new emulator thread starts with, on the suite's machine because its stand-in for the host counts what the recompiler asks of it. Every emulator thread makes its backend objects anew, and a process has as many emulator threads as its host stops and starts the machine: 256 objects behind the first. The host is asked to prepare the code region once, for the first of them (asked at every start, Linux gives the same pages again, and Windows a new region of 10 MB near the program every time, with room for some two hundred). Every object has the code cache where the first had it, with the stubs of the code generator at its start, nothing behind them and no block in the tables; and the workload run on it ends in the state of the first object's run, with the same blocks in as many bytes of code |
 
 Not here, because they need the emulator: the park loop itself and its arbitration with the host, a step over
@@ -71,15 +78,21 @@ backend that is configured, in the timing mode that is configured. The tests `sh
 of the same file are B3, B6 and B7 on the booted guest ([below](#the-booted-guest)).
 
 ```
-tests/debugger/sh4bp/selftest.sh <nulldc3> <elf> [work dir] [config item ...]
+tests/debugger/sh4bp/sessions.py <nulldc3> <elf> [work dir] [config item ...]
 ```
 
 runs three sessions of `sh4bp` (JIT, interpreter, JIT with `Debugger:ForceFallback=yes`) and compares what
 they have to agree on: registers and step traces of the JIT and of the fallback with the interpreter's, time
 and the state of the integer workload of the fallback with the JIT's. Then it makes the gates on the booted
 guest, for those three and for the JIT and the fallback with `config:Dynarec.idleskip=no`. Every session is
-headless (`config:Headless=yes`, and no display in its environment: no window is opened) and has the real-time
-clock pinned (`config:Debug.FixedRtc`).
+headless (`config:Headless=yes`, `audio:backend=none`, and an environment of its own: no window is opened) and has
+the real-time clock pinned (`config:Dreamcast.RTC`), and runs as the harnesses run the emulator
+(`tests/common/emurun.py`; on Windows inside `nulldc3-winrun`). The test `debugger.selftest.sh4bp.sessions` runs it,
+on every host. It is the port to Python of `selftest.sh`, which this directory keeps as the bash script it was
+ported from: the same sessions, keys, comparisons and repeats, and the same lines (it pinned the clock with
+`config:Debug.FixedRtc`, the same second). `sessions.py --rule` (`debugger.selftest.sh4bp.sessions.rule`) makes
+its comparisons on sessions that are made up: every key they hold, changed in one session, fails the run, a key
+they do not hold leaves it alone, and the repeats on the booted guest go as their rule says.
 
 The same tests also run here, so that they are known to be right before the emulator's park loop runs them:
 `sh4bp_selftest <jit|interpreter|fallback> [filter] [idleskip=off]` is the selftest file and its driver on the
@@ -126,7 +139,7 @@ the command line in the emulator, the boot program of `guest.s` here. *State* is
   interrupt vector counts.
 - **Forced fallback**: from the stop of vblank 300 on every run has a breakpoint on the entry point of the
   guest, where the guest does not come back to, so that the fallback loop runs the rest of it, in the
-  baselines too. `selftest.sh` prints how many of them differ from the JIT's (B12 on the booted guest: the
+  baselines too. `sessions.py` prints how many of them differ from the JIT's (B12 on the booted guest: the
   FPU arithmetic of the two differs).
 - A run whose other thread came too late to do anything is made again in its session. In the emulator that
   moves the runs behind it away from their baselines: the session then differs from them and is repeated.
@@ -148,15 +161,20 @@ What a check costs the x64 backend in host code, and why no set of armed address
 for it. `debugger.sh4bp.dense` measures and tests all of it.
 
 - **A check** is 15 bytes in its block: two arguments (the address of the instruction, the cycles a stop gives
-  back) and a call. The call goes to a tail of 10 bytes that the block has once for all its checks, which adds
-  the third argument (the block end) and jumps to a stub that every block shares. The stub calls
-  `dbg_sh4_Check` and returns into the block, or adds the refund to the slice counter and leaves the block
-  and the main loop. The register allocator flushes for a check, so nothing is saved around the call; the
-  flush itself is at most 276 bytes (each of the 6 general and 4 xmm host registers written to the context
-  and loaded again). Measured: one check adds 25 bytes to a block; 56 checks on consecutive instructions add
-  50 bytes each in an integer line and 42 in a floating point line, the flushes included.
+  back) and a call. The call goes to a tail of 10 bytes (11 on Windows, whose third argument register is `r8d`)
+  that the block has once for all its checks, which adds the third argument (the block end) and jumps to a stub
+  that every block shares. The stub calls `dbg_sh4_Check` and returns into the block, or adds the refund to the
+  slice counter and leaves the block and the main loop. On Windows the stub gives `dbg_sh4_Check` the 32 bytes of
+  home space the callee owns, below the refund, so that its frame at the call is the frame of a block, 40 bytes
+  below the return address (the gate `unwind`). The register allocator flushes for a check, so nothing is saved
+  around the call; the flush itself is at most 276 bytes (each of the 6 general and 4 xmm host registers of the
+  System V convention written to the context and loaded again), 508 on Windows (8 general and 10 xmm registers).
+  Measured: one check adds 25 bytes to a block (26 on Windows); 56 checks on consecutive instructions add 50
+  bytes each in an integer line and 42 in a floating point line, the flushes included. A check in front of which
+  every host register was written and behind which every one is read again adds 301 bytes (the call, 276 and the
+  tail), 522 on Windows (the call, 496 and the tail): `dense` holds the budget's worth of those within 16 KiB.
 - **A block holds at most 56 checks** (`ngen_features::DebugCheckBudget`: 16 KiB over the 291 bytes a check
-  can take). The decoder decodes a block to its end whatever is armed: its boundaries and its cost are those
+  can take), 31 on Windows (over 523). The decoder decodes a block to its end whatever is armed: its boundaries and its cost are those
   of the block without a check. When the block has more checks than that, the backend compiles the
   instructions in front of the check that is one too many, and the code ends by handing the rest of the block
   over: it gives the cycles of the rest back to the slice counter and leaves the main loop, and the rest runs
@@ -168,7 +186,9 @@ for it. `debugger.sh4bp.dense` measures and tests all of it.
   compiled on every pass does not make the process grow.
 - **Code that does not fit** into what is left of the code cache is given up by the backend, which writes with
   the free space as its bound. The cache is emptied and the block compiled again; code that an empty cache
-  has no room for is made of fewer instructions, down to one. That last step moves a block end, and time
+  has no room for is made of fewer instructions, down to one. (`dense` makes such a block of 500 double precision
+  instructions, each a call around which the System V backend saves `xmm8`-`xmm11`; on Windows, where the callee
+  keeps `xmm6`-`xmm15` and such a call is a few bytes, of 500 `ftrv`.) That last step moves a block end, and time
   with it: no block of a guest comes near it in a cache of 10 MiB.
 
 ## The cost when nothing is armed
