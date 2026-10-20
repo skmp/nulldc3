@@ -4,6 +4,11 @@
 #	build, <build dir>/system/emulator, or NULLDC_EMULATOR). selftest.py runs a session and says what it has
 #	to end with; README.md has the tests.
 #
+#	On Windows tests/system builds no emulator: NULLDC_EMULATOR is nulldc3.exe of an emulator build, and without it
+#	the tests are skipped with that reason. There every program the scripts start runs inside nulldc3-winrun
+#	(tests/common/emurun.py), whose path the tests have in NULLDC_WINRUN: the one of NULLDC_WINRUN, or the one
+#	tests/windows builds.
+#
 #	A package registers the selftest of its file libswirl/debugger/dbg_selftest_<package>.cpp with one line:
 #
 #	    nulldc_debugger_selftest(<name>)
@@ -26,10 +31,11 @@ find_package(Python3 COMPONENTS Interpreter)
 set(nulldc_selftest_skip "")
 if(NOT NULLDC_SYSTEM_TESTS AND NOT NULLDC_EMULATOR)
   set(nulldc_selftest_skip "NULLDC_SYSTEM_TESTS is OFF and no NULLDC_EMULATOR is given: there is no emulator to run")
-elseif(${HOST_OS} EQUAL ${OS_WINDOWS})
-  set(nulldc_selftest_skip "W64b")
-elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX})
-  set(nulldc_selftest_skip "headless mode is there on Linux hosts only")
+elseif(${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT NULLDC_EMULATOR)
+  set(nulldc_selftest_skip
+      "no NULLDC_EMULATOR is given, and on Windows tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<nulldc3.exe of an emulator build>")
+elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX} AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS})
+  set(nulldc_selftest_skip "headless mode is there on Linux and Windows hosts only")
 elseif(NOT Python3_Interpreter_FOUND)
   set(nulldc_selftest_skip "no python3 to run tests/debugger/selftest/selftest.py with")
 endif()
@@ -38,7 +44,18 @@ if(NULLDC_EMULATOR)
   set(nulldc_selftest_emulator "${NULLDC_EMULATOR}")
 else()
   # what tests/system builds, every time the project is built
-  set(nulldc_selftest_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
+  set(nulldc_selftest_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3${CMAKE_EXECUTABLE_SUFFIX}")
+endif()
+
+# The environment of the tests: Python writes no bytecode into the source tree; on Windows the scripts start every
+# program inside nulldc3-winrun (tests/common/emurun.py)
+set(nulldc_selftest_env PYTHONDONTWRITEBYTECODE=1)
+if(${HOST_OS} EQUAL ${OS_WINDOWS})
+  if(NULLDC_WINRUN)
+    list(APPEND nulldc_selftest_env "NULLDC_WINRUN=${NULLDC_WINRUN}")
+  else()
+    list(APPEND nulldc_selftest_env "NULLDC_WINRUN=$<TARGET_FILE:nulldc3_winrun>")
+  endif()
 endif()
 
 function(nulldc_debugger_selftest name)
@@ -91,9 +108,8 @@ function(nulldc_debugger_selftest name)
     endforeach()
 
     add_test(NAME ${test} COMMAND ${command} ${ARG_ARGS})
-    # selftest.py has a watchdog per run of the emulator, this is the one behind it. Python writes no bytecode
-    # into the source tree
-    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+    # selftest.py has a watchdog per run of the emulator, this is the one behind it
+    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT "${nulldc_selftest_env}")
   endforeach()
 endfunction()
 

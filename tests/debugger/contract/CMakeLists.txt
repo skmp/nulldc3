@@ -4,6 +4,11 @@
 #	environment of its own, the clock pinned, a watchdog), on the emulator the system tests build (the default
 #	build, <build dir>/system/emulator, or NULLDC_EMULATOR). README.md has the tests.
 #
+#	On Windows tests/system builds no emulator: NULLDC_EMULATOR is nulldc3.exe of an emulator build, and without it
+#	the tests are skipped with that reason. There the emulator and the contract runner (npm.cmd, and the node it
+#	starts) run inside nulldc3-winrun (tests/common/emurun.py), whose path the tests have in NULLDC_WINRUN: the one
+#	of NULLDC_WINRUN, or the one tests/windows builds. NULLDC_NPM is npm.cmd there.
+#
 #	    debugger.contract.m1 .m1.interp .m1.fallback    the gate of milestone M1: the contract runner of the devtools
 #	                                                    UI (npm run contract -- --url ... --profile emulator --elf
 #	                                                    ... --milestone M1), on the JIT, on the interpreter and on
@@ -62,15 +67,21 @@
 #
 
 find_package(Python3 COMPONENTS Interpreter)
-find_program(NULLDC_NPM NAMES npm DOC "npm, to run the contract runner of the devtools UI with (npm run contract)")
+if(${HOST_OS} EQUAL ${OS_WINDOWS})
+  # the npm beside npm.cmd is a shell script, which CreateProcess cannot start
+  find_program(NULLDC_NPM NAMES npm.cmd npm DOC "npm, to run the contract runner of the devtools UI with (npm run contract)")
+else()
+  find_program(NULLDC_NPM NAMES npm DOC "npm, to run the contract runner of the devtools UI with (npm run contract)")
+endif()
 
 set(nulldc_contract_skip "")
 if(NOT NULLDC_SYSTEM_TESTS AND NOT NULLDC_EMULATOR)
   set(nulldc_contract_skip "NULLDC_SYSTEM_TESTS is OFF and no NULLDC_EMULATOR is given: there is no emulator to run")
-elseif(${HOST_OS} EQUAL ${OS_WINDOWS})
-  set(nulldc_contract_skip "W64b")
-elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX})
-  set(nulldc_contract_skip "headless mode is there on Linux hosts only")
+elseif(${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT NULLDC_EMULATOR)
+  set(nulldc_contract_skip
+      "no NULLDC_EMULATOR is given, and on Windows tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<nulldc3.exe of an emulator build>")
+elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX} AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS})
+  set(nulldc_contract_skip "headless mode is there on Linux and Windows hosts only")
 elseif(NOT Python3_Interpreter_FOUND)
   set(nulldc_contract_skip "no python3 to run tests/debugger/contract/contract.py with")
 endif()
@@ -79,7 +90,18 @@ if(NULLDC_EMULATOR)
   set(nulldc_contract_emulator "${NULLDC_EMULATOR}")
 else()
   # what tests/system builds, every time the project is built
-  set(nulldc_contract_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
+  set(nulldc_contract_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3${CMAKE_EXECUTABLE_SUFFIX}")
+endif()
+
+# The environment of the tests: Python writes no bytecode into the source tree; on Windows contract.py starts every
+# program inside nulldc3-winrun (tests/common/emurun.py)
+set(nulldc_contract_env PYTHONDONTWRITEBYTECODE=1)
+if(${HOST_OS} EQUAL ${OS_WINDOWS})
+  if(NULLDC_WINRUN)
+    list(APPEND nulldc_contract_env "NULLDC_WINRUN=${NULLDC_WINRUN}")
+  else()
+    list(APPEND nulldc_contract_env "NULLDC_WINRUN=$<TARGET_FILE:nulldc3_winrun>")
+  endif()
 endif()
 
 set(nulldc_contract_no_elf "")
@@ -167,9 +189,8 @@ function(nulldc_debugger_contract name)
     endforeach()
 
     add_test(NAME ${test} COMMAND ${command})
-    # contract.py has a watchdog per run of the emulator and for the runner, this is the one behind them. Python
-    # writes no bytecode into the source tree
-    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+    # contract.py has a watchdog per run of the emulator and for the runner, this is the one behind them
+    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT "${nulldc_contract_env}")
   endforeach()
 endfunction()
 
