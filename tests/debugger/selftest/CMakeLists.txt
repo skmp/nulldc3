@@ -24,7 +24,8 @@
 #	    CONFIG <section:key=value>...   more --config items for every run
 #	    ARGS <argument>...          more arguments for selftest.py
 #	    TIMEOUT <seconds>           of ctest, default 600
-#	    WINDOWS_OPEN                skipped on Windows, with nulldc_selftest_windows_open as the reason
+#	    WINDOWS_OPEN                not run on Windows, an open defect there (nulldc_selftest_windows_open), which
+#	                                the test says when it is run: no skip of the platform
 #
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -48,12 +49,17 @@ else()
   set(nulldc_selftest_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3${CMAKE_EXECUTABLE_SUFFIX}")
 endif()
 
-# What keeps a session from running on Windows, for the tests that say WINDOWS_OPEN: the session naps for fractions
-# of a millisecond (a slice inside a SLEEP wait made slow by 300 us, sleeps of 100 to 600 us between pauses, a call
-# that times out after 2 s while it waits for such slices), and Windows' timer turns every such nap into a tick of
-# 15.6 ms unless the process asks for a finer one (timeBeginPeriod), which the emulator does not
+# What keeps a session from passing on Windows, for the tests that say WINDOWS_OPEN: an open defect of the Windows
+# gate in the selftest of the emulator (libswirl/debugger, not a file of the tests), not a skip of the platform. The
+# session naps for fractions of a millisecond with std::this_thread::sleep_for (300 us for every slice inside a SLEEP
+# wait, dbg_selftest_emu.cpp; sleeps of 100 to 600 us between pauses; a call that times out after 2 s while it waits
+# for such slices), and on Windows every such nap lasts a tick of the system timer: 15.6 ms, and still 1 to 2 ms
+# where the process asks for a 1 ms timer (timeBeginPeriod), which the emulator does not. Measured on the Windows
+# host: emu outlasts its watchdog of 300 s on both engines, emurun.pauses its run; with timeBeginPeriod(1) at the
+# start of a session emurun.pauses passes, and emu still outlasts its watchdog (the SLEEP bound of emu.step waits
+# 15 s). The fix is naps that the timer tick does not round up, in the selftest of the emulator
 set(nulldc_selftest_windows_open
-    "on Windows the naps of a fraction of a millisecond of this session last a tick of the system timer, 15.6 ms: the emulator asks for no 1 ms timer (timeBeginPeriod), and the session outlasts its run or its watchdog")
+    "an open defect of the Windows gate, not a skip of the platform: the session naps for fractions of a millisecond (std::this_thread::sleep_for in libswirl/debugger/dbg_selftest_emu.cpp and dbg_selftest.cpp), and on Windows every nap lasts a tick of the system timer (15.6 ms; 1 to 2 ms with timeBeginPeriod(1)): emu outlasts its watchdog, emurun.pauses its run")
 
 # The environment of the tests: Python writes no bytecode into the source tree; on Windows the scripts start every
 # program inside nulldc3-winrun (tests/common/emurun.py)
@@ -94,7 +100,8 @@ function(nulldc_debugger_selftest name)
       continue()
     endif()
     if(ARG_WINDOWS_OPEN AND ${HOST_OS} EQUAL ${OS_WINDOWS})
-      nulldc_add_skipped_test(${test} "${nulldc_selftest_windows_open}")
+      add_test(NAME ${test} COMMAND ${CMAKE_COMMAND} -E echo "OPEN DEFECT, NOT RUN: ${nulldc_selftest_windows_open}")
+      set_tests_properties(${test} PROPERTIES SKIP_REGULAR_EXPRESSION "OPEN DEFECT, NOT RUN:")
       continue()
     endif()
 
