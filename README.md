@@ -41,6 +41,38 @@ A game is a disc image (`.gdi`, `.chd`, `.cdi`, `.cue`, `.iso`, `.lst`), a progr
 `dc_boot.bin` and `dc_flash.bin`, go into the subdirectory `data/` of the emulator's directory (below); without them
 the emulator boots with reios, its replacement BIOS.
 
+## Quick start (Windows)
+
+You need Windows 10 1803 or newer (x86_64), Visual Studio 2026 with the workload "Desktop development with C++" (it
+brings MSVC, CMake and Ninja; the Windows build is made and tested with it), Git for Windows and Node.js 22.13 or
+newer for the UI. Everything below runs in the "x64 Native Tools Command Prompt" of Visual Studio (or a prompt where
+its `vcvars64.bat` was called).
+
+Get the source and build the UI as on Linux:
+
+    git clone https://github.com/skmp/nulldc3.git
+    cd nulldc3
+    git submodule update --init devtools
+    cd devtools && npm ci && npm run build:native && cd ..
+
+The checkout keeps every file as it is committed (`.gitattributes`), whatever `core.autocrlf` says.
+
+Build the emulator with the CMake and the Ninja of Visual Studio:
+
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+    ninja -C build
+
+`build\nulldc3.exe` is the emulator, one file: it has the static C runtime (no redistributable beside it), its icon
+and its version (Explorer's Properties, Details). It is a console program: started from a terminal it writes there,
+started from Explorer Windows gives it a console beside its window, where the log is. It is portable as on Linux: its
+files are in the directory of `nulldc3.exe` (here `build\`), or in the one of `--portable <dir>`; `--shared` keeps
+them in `%APPDATA%\nulldc3`. Run it as on Linux, and open the UI at `http://127.0.0.1:55543/`:
+
+    build\nulldc3.exe <game>
+
+`config:Headless=yes` works on Windows too (no window, no dialog of any kind), and so does every key of
+`docs/nulldc3/automated-runs.md`, which says how an automated run on Windows goes (`tests/winrun`).
+
 ## Switches
 
 Every switch is written with two dashes. A word that begins with a dash is always a switch: an unknown one, or one
@@ -56,8 +88,8 @@ written with one dash, is an error that says so (exit status 2, nothing is start
     --version           the version, "nullDC <version>": 3.0.0-pre+g<first 10 characters of the commit> until
                         the tag v3.0.0-pre is reachable (nulldc3/README.md has the rule)
     --                  every word after it is a game, also one whose name begins with a dash
-    --console, --log    Windows only: a console window for the output; the output into nulldc3-log.txt in
-                        the emulator's directory
+    --console, --log    Windows only: --console is accepted and does nothing (nulldc3.exe is a console
+                        program); --log puts the output into nulldc3-log.txt in the emulator's directory
 
 The keys for runs without a person (headless, the conditions that end a run, the state hash) are in
 `docs/nulldc3/automated-runs.md`; the debugger's keys (section `Debugger`) are at the top of

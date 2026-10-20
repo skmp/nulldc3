@@ -156,6 +156,12 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | the script that builds it, run by sh on a PATH without emcc: it builds with the emsdk in `EMSDK`, and says that it has no emcc when there is no emsdk | an emcc that is in an emsdk, and node; skipped otherwise |
 | `aica.dsp.wasm.devtools` | the DSP module the UI commits (`src/wasm/aica-dsp-core/` of `NULLDC_DEVTOOLS_DIR`) is this tree's core: its `PROVENANCE.json` has the fixed keys and names the two files beside it, byte for byte; the trace that `aica.dsp.wasm` replays is replayed on the UI's loader and wasm with every answer the native core's; and where the emcc `build.sh` uses (the `PATH`, else the emsdk of `EMSDK`, else `~/emsdk`) has the version `PROVENANCE.json` names, the two files are the bytes of a fresh `build.sh` of the tree | node and the UI checkout (`NULLDC_DEVTOOLS_DIR`); no emcc |
 
+| `windows.winrun.probe` | Windows only (`windows/README.md` has these): the probe of `nulldc3-winrun` (`winrun/README.md`) names its private desktop `winrun-<n>`, its visible window is in the list, the verdict is 125 | none |
+| `windows.headless.nowindow` | Windows only: the guest of the tree headless with `NULLDC_TEST_UI_REPORT=1`, through `nulldc3-winrun`: exit 0, the exit line, no window and no COM apartment window, the no-dialog policy read back (`wer`, `invparam`, `purecall`, `sigabrt`, `abort`) | the emulator |
+| `windows.fatal.segv` `.ill` `.trap` `.abort` `.div` `.stack` `.invparam` `.purecall` | Windows only: `NULLDC_TEST_FATAL=<kind>`: the `fault_handler` line and 128 + the signal (for `trap`, `die()`'s line, no `fault_handler` line, 133), no window, nothing new in the crash-report places | the emulator |
+| `windows.helpbox` | Windows only: the help/error box is shown only where the output cannot be read and the run is not headless: a pipe, `NUL`, a console of its own headless (exit 2, no window), a console of its own not headless (the box, on the private desktop) | the emulator |
+| `windows.abi.xmm` | Windows only: the x64 backend's `Mainloop` and `RunBlock` give `xmm6`-`xmm15` back (an Xbyak canary thunk, a machine of its own) | none |
+| `windows.binary.stdout` `windows.exitcode` | Windows only: no `\r` in the emulator's stdout; headless with nothing to run exits with 1 | the emulator |
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
 and the `debugger.selftest.*`, `debugger.contract.*` and `debugger.sound.*` tests run on Linux hosts with python3;
@@ -208,6 +214,41 @@ More about the suites:
   directly and which through the caique model, and the tests of the core in the emulator's sound chip;
   `aica_dsp/KNOWN_FAILURES.md`: the three lines of a console report that depend on the console's timing, and the
   five of another that need a CPU's read in the DSP's latch, which the emulator does not wire.
+
+## On Windows
+
+The project builds with MSVC (Visual Studio 2026, its CMake and Ninja, from its developer prompt) the way it builds on
+Linux, RelWithDebInfo by default, with the static C runtime. Every program it runs there runs inside
+`nulldc3-winrun` (`winrun/README.md`): the tests of `windows/` start the emulator through it, and ctest itself runs
+inside one, so that nothing a test does can reach the desktop:
+
+    cmake -S tests -B <build dir> -G Ninja -DNULLDC_EMULATOR=<build>\nulldc3.exe -DNULLDC_ELF_DIR=<dir> ^
+          -DNULLDC_WREN7_DIR=<dir> -DNULLDC_CAIQUE_DIR=<dir> -DNULLDC_SHRIKE4_DIR=<dir> ^
+          -DNULLDC_DEVTOOLS_DIR=<UI checkout with node_modules> -DPython3_EXECUTABLE=<python.exe> ^
+          "-DNULLDC_NPM=C:/Program Files/nodejs/npm.cmd" -DNULLDC_TESTS_REQUIRE_DATA=ON
+    ninja -C <build dir>
+    nulldc3-winrun --timeout 5400 -- ctest --test-dir <build dir> -j 4 --output-on-failure
+
+The sibling checkouts need only the files the suites read: 74 of caique-rtl (its sample model, its DSP programs and
+their console captures), 120 of wren7-rtl (the job files of `model/tests`, `vendor/` and the ARM programs of `build/hw`)
+and 12 of shrike4-rtl (the three headers of `sh4_fpu`, `tools/hw/fpdn/*.bin` and the console records the vector
+suite reads), about 12 MB.
+
+What is skipped on Windows, with its reason:
+
+| tests | reason |
+|---|---|
+| `system.*`, `system.hle.*` (63) | the Linux-only system-test harness |
+| `debugger.selftest.*` (43), `debugger.contract.*` but `.hash.listening.rule` (38), `debugger.sound.*` but `.names` and `.runner` (36), `debugger.sh4bp.*` (29) | W64b: the harnesses' run helper on Windows, and the x64 backend's native debugger checks the sh4bp gates need |
+| `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` | no emcc |
+| `debugger.disasm.sh4_objdump` `.sh4_objdump_selftest`, `.arm7_objdump` `.arm7_objdump_selftest` | no sh-elf-objdump / arm-eabi-objdump on this host (a skip of the platform also with `NULLDC_TESTS_REQUIRE_DATA`; on Linux a missing tool fails) |
+| `cfg.log_file` | the test forks: POSIX hosts only |
+| `debugger.sound.runner` | its stand-ins are run by their first line: a Linux host |
+
+Until W64b, five tests that use the harnesses' Python or the UI's `tsx` fail on Windows instead:
+`debugger.contract.hash.listening.rule`, `debugger.guest.dsptest.files`, `debugger.sound.names` (the harnesses
+`import resource`), `debugger.disasm.dsp_playground` and `debugger.disasm.dsptest` (`node_modules/.bin/tsx` is a
+shell script there).
 
 ## Layout
 
