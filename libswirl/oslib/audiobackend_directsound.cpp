@@ -70,15 +70,42 @@ DWORD CALLBACK dsound_thread(PVOID param)
 	return 0;
 }
 
+// A failure of DirectSound is said once on stdout, and the run goes on without sound (never a fatal end)
+static bool directsound_failed(const char* what, HRESULT hr)
+{
+	if (SUCCEEDED(hr))
+		return false;
+	printf("DirectSound: %s failed (0x%08lx): no sound\n", what, (unsigned long)hr);
+	return true;
+}
+
 static void directsound_init(audio_backend_pull_callback_t pull_callback)
 {
 	::pull_callback = pull_callback;
+	dsound = nullptr;
+	buffer = nullptr;
+	thread = nullptr;
+	buffer_events = nullptr;
+	num_buffer_events = 0;
 
 	CoInitializeEx(NULL, COINIT_MULTITHREADED);
 
-	verifyc(DirectSoundCreate8(NULL, &dsound, NULL));
+	if (directsound_failed("DirectSoundCreate8", DirectSoundCreate8(NULL, &dsound, NULL)))
+	{
+		dsound = nullptr;
+		return;
+	}
 
-	verifyc(dsound->SetCooperativeLevel((HWND)libPvr_GetRenderTarget(), DSSCL_PRIORITY));
+	// DirectSound wants a top-level window: the emulator's, or the desktop when there is none (headless)
+	HWND window = (HWND)libPvr_GetRenderTarget();
+	if (window == NULL)
+		window = GetDesktopWindow();
+	if (directsound_failed("SetCooperativeLevel", dsound->SetCooperativeLevel(window, DSSCL_PRIORITY)))
+	{
+		dsound->Release();
+		dsound = nullptr;
+		return;
+	}
 	IDirectSoundBuffer* buffer_;
 
 	WAVEFORMATEX wfx;
@@ -125,9 +152,21 @@ static void directsound_init(audio_backend_pull_callback_t pull_callback)
 	if (settings.aica.GlobalFocus)
 		desc.dwFlags |= DSBCAPS_GLOBALFOCUS;
 
-	verifyc(dsound->CreateSoundBuffer(&desc, &buffer_, 0));
-	verifyc(buffer_->QueryInterface(IID_IDirectSoundBuffer8, (void**)& buffer));
+	if (directsound_failed("CreateSoundBuffer", dsound->CreateSoundBuffer(&desc, &buffer_, 0)))
+	{
+		dsound->Release();
+		dsound = nullptr;
+		return;
+	}
+	HRESULT hr = buffer_->QueryInterface(IID_IDirectSoundBuffer8, (void**)& buffer);
 	buffer_->Release();
+	if (directsound_failed("QueryInterface(IDirectSoundBuffer8)", hr))
+	{
+		buffer = nullptr;
+		dsound->Release();
+		dsound = nullptr;
+		return;
+	}
 
 	int num_buffers = (bufferSize / wfx.nBlockAlign) / 512;
 	chunk_size = 512 * wfx.nBlockAlign;
@@ -142,14 +181,28 @@ static void directsound_init(audio_backend_pull_callback_t pull_callback)
 	buffer_events[0] = CreateEvent(NULL, FALSE, FALSE, NULL);
 
 	IDirectSoundNotify* buffer_notify;
-	verifyc(buffer->QueryInterface(IID_IDirectSoundNotify, (void**)& buffer_notify));
-	buffer_notify->SetNotificationPositions(num_buffers, notfy);
-	buffer_notify->Release();
-
+	hr = buffer->QueryInterface(IID_IDirectSoundNotify, (void**)& buffer_notify);
+	if (SUCCEEDED(hr))
+	{
+		hr = buffer_notify->SetNotificationPositions(num_buffers, notfy);
+		buffer_notify->Release();
+	}
 	delete[] notfy;
 
 	//Play the buffer !
-	verifyc(buffer->Play(0, 0, DSBPLAY_LOOPING));
+	if (directsound_failed("the notification positions", hr) || directsound_failed("Play", buffer->Play(0, 0, DSBPLAY_LOOPING)))
+	{
+		for (int i = 0; i < num_buffer_events; i++)
+			CloseHandle(buffer_events[i]);
+		delete[] buffer_events;
+		buffer_events = nullptr;
+		num_buffer_events = 0;
+		buffer->Release();
+		buffer = nullptr;
+		dsound->Release();
+		dsound = nullptr;
+		return;
+	}
 
 	dsound_running = true;
 	if (thread = ::CreateThread(nullptr, 0, dsound_thread, nullptr, 0, &tid))
@@ -165,19 +218,33 @@ static u32 directsound_push(void* frame, u32 samples, bool wait)
 
 static void directsound_term()
 {
-	SetEvent(buffer_events[0]);
+	if (!dsound)
+		return;	// it never started: nothing to end
+
+	if (buffer_events)
+		SetEvent(buffer_events[0]);
 	dsound_running = false;
-	WaitForSingleObject(thread, INFINITE);
-	CloseHandle(thread);
+	if (thread)
+	{
+		WaitForSingleObject(thread, INFINITE);
+		CloseHandle(thread);
+		thread = nullptr;
+	}
 
-	buffer->Stop();
-
-	buffer->Release();
+	if (buffer)
+	{
+		buffer->Stop();
+		buffer->Release();
+		buffer = nullptr;
+	}
 	dsound->Release();
+	dsound = nullptr;
 
 	for (int i = 0; i < num_buffer_events; i++)
 		CloseHandle(buffer_events[i]);
 	delete[] buffer_events;
+	buffer_events = nullptr;
+	num_buffer_events = 0;
 }
 
 static bool directsound_preferpull()

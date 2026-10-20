@@ -12,6 +12,9 @@
 #include <xinput.h>
 #pragma comment(lib, "XInput9_1_0.lib")
 
+#include "utils/run_control.h"
+#include "../../nulldc3/windows/resource.h"	// IDI_ICON1, the icon of nulldc3.rc
+
 extern void ToggleFullscreen();
 extern s32 mo_x_abs;
 extern s32 mo_y_abs;
@@ -35,6 +38,10 @@ static std::shared_ptr<WinMouseGamepadDevice> mouse_gamepad;
 
 void os_SetupInput()
 {
+	// headless: no host input at all, as Linux (linux-dist/main.cpp)
+	if (runctl_headless())
+		return;
+
 	XInputGamepadDevice::CreateDevices();
 	kb_gamepad = std::make_shared<WinKbGamepadDevice>(0);
 	GamepadDevice::Register(kb_gamepad);
@@ -81,9 +88,21 @@ double os_GetSeconds()
 	return time_now.QuadPart * qpfd;
 }
 
+// What die() and verify() end in, after their "Fatal error : ..." or "Verify Failed" line on stdout: a breakpoint
+// for a debugger that is attached; without one the process ends itself with 133 (128 + SIGTRAP, as Linux ends
+// there), with no fault_handler line and nothing for crash reporting or a just-in-time debugger to take
 void os_DebugBreak()
 {
-	__debugbreak();
+	if (IsDebuggerPresent())
+	{
+		__debugbreak();
+		return;
+	}
+	fflush(stdout);
+	fflush(stderr);
+	TerminateProcess(GetCurrentProcess(), 128 + 5);
+	for (;;)
+		Sleep(1000);
 }
 
 //#include "plugins/plugin_manager.h"
@@ -262,15 +281,32 @@ void os_LaunchFromURL(const string& url)
 	ShellExecuteA((HWND)window_win, "open", url.c_str(), nullptr, nullptr, SW_SHOW);
 }
 
+// A window class was registered by this process (the report of NULLDC_TEST_UI_REPORT, win_fatal.cpp)
+bool window_class_registered = false;
+
 void os_CreateWindow()
 {
-	WNDCLASS sWC;
+	// headless: no window, no window class, no COM apartment (as Linux, linux-dist/main.cpp)
+	if (runctl_headless())
+		return;
+
+	// The thread of the window is a single-threaded apartment, for what COM the windowed run brings along (the
+	// shell's, a driver's). Only here: an apartment has hidden windows of its own (DirectSound and XAudio2 make
+	// their own apartment)
+	CoInitialize(nullptr);
+
+	WNDCLASSEX sWC = {};
+	sWC.cbSize = sizeof(sWC);
 	sWC.style = CS_HREDRAW | CS_VREDRAW;
 	sWC.lpfnWndProc = WndProc2;
 	sWC.cbClsExtra = 0;
 	sWC.cbWndExtra = 0;
 	sWC.hInstance = (HINSTANCE)GetModuleHandle(0);
-	sWC.hIcon = 0;
+	// the icon of the executable (nulldc3/windows/nulldc3.rc), at the sizes of the title bar and Alt+Tab
+	sWC.hIcon = (HICON)LoadImage(sWC.hInstance, MAKEINTRESOURCE(IDI_ICON1), IMAGE_ICON, GetSystemMetrics(SM_CXICON),
+	                             GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+	sWC.hIconSm = (HICON)LoadImage(sWC.hInstance, MAKEINTRESOURCE(IDI_ICON1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+	                               GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
 	sWC.hCursor = LoadCursor(NULL, IDC_ARROW);
 	sWC.lpszMenuName = 0;
 	sWC.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
@@ -279,11 +315,11 @@ void os_CreateWindow()
 	screen_height = cfgLoadInt("windows", "height", DEFAULT_WINDOW_HEIGHT);
 	window_maximized = cfgLoadBool("windows", "maximized", false);
 
-	ATOM registerClass = RegisterClass(&sWC);
+	ATOM registerClass = RegisterClassEx(&sWC);
 	if (!registerClass)
-	{
-		MessageBox(0, ("Failed to register the window class"), ("Error"), MB_OK | MB_ICONEXCLAMATION);
-	}
+		printf("Failed to register the window class: error %lu\n", (unsigned long)GetLastError());
+	else
+		window_class_registered = true;
 
 	// Create the eglWindow
 	RECT sRect;
