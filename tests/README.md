@@ -262,7 +262,7 @@ are not the emulator (the contract runner, the tools) `TEMP`, `TMP` and npm's ca
   programs of `build/hw`) and 12 of shrike4-rtl (the three headers of `sh4_fpu`, `tools/hw/fpdn/*.bin` and the console
   records the vector suite reads), about 12 MB; and `2ndmix.elf` and `hello.elf` in `NULLDC_ELF_DIR`.
 
-What is skipped on Windows, with its reason (73 of the 338 tests; every other one runs, and the gate has no open
+What is skipped on Windows, with its reason (73 of the 340 tests; every other one runs, and the gate has no open
 defect):
 
 | tests | reason |
@@ -280,7 +280,9 @@ and on Windows a high-resolution waitable timer and a spin of the last 500 us of
 the system timer: `std::this_thread::sleep_for` of Windows lasts a tick of that timer, 15.6 ms, whatever it is asked
 for, and `debugger.selftest.emu` outlasted its watchdog there. `debugger.selftest.nap` holds the naps.
 `disasm_test` writes its stdout in binary mode on Windows, each line ending in `\n` as on Linux, which is what
-`debugger.disasm.dsp_playground` takes apart.
+`debugger.disasm.dsp_playground` takes apart. A build of `debugger/disasm` by itself has no `nulldc3-winrun` on
+Windows unless `-DNULLDC_WINRUN=` names one, and there `dsp_playground` is a skip of the platform
+(`debugger.disasm.standalone`).
 
 ## Layout
 
@@ -568,6 +570,7 @@ itself only.
 | `debugger.disasm.sh4_opcode_table` | every SH-4 opcode against `hw/sh4/sh4_opcode_list.cpp` | python3 |
 | `debugger.disasm.arm7_objdump` `debugger.disasm.arm7_objdump_selftest` | 249,364 ARM encodings against GNU objdump, and that comparison on dumps with a changed field | python3, an ARM objdump |
 | `debugger.disasm.dsp_playground` | 100,193 DSP steps against the disassembler and assembler of the devtools playground | a dreamcast-devtools checkout with `node_modules` |
+| `debugger.disasm.standalone.configure` `debugger.disasm.standalone` | Windows only: `debugger/disasm` built by itself, as its `CMakeLists.txt` says, without `NULLDC_WINRUN` (configured only, with the generator, compiler and Python of the tests project and its devtools checkout): its `dsp_playground` is the skip of the platform there, `SKIP: no nulldc3-winrun to run the script inside`, and runs no `tsx.cmd` or `node` outside an `nulldc3-winrun` | none |
 | `debugger.disasm.dsptest` | the DSP program of the sounding guest: the disassembler of the 128 steps as its ELF loads them gives the `MPRO` lines of its text, `dsptest_dsp.txt`, and `TRA:0` behind them; and the playground's assembler gives the ELF's words for those lines, and its `COEF`, `MADRS` and `MEMS_H` | python3; a dreamcast-devtools checkout with `node_modules` for the second half |
 | `debugger.regs.tables` `debugger.regs.sources` | `dbg_regs_tables.cpp`, the device tree behind `debugger.describe`: the tables by themselves (104 nodes; 2940 registers in milestone M2, 2949 from milestone M3 on, with the nine of the DSP's datapath, the fields of the AICA's register file bit for bit), and their on-chip, system bus and PVR rows against `hw/sh4/sh4_mmr.h`, `hw/holly/sb_regs.h` and `hw/pvr/pvr_regs.h` | nothing |
 | `debugger.regs.panels` | the panel ids of the tables against the list of the devtools UI | a dreamcast-devtools checkout |
