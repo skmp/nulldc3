@@ -61,10 +61,11 @@ static const void* check_stub;
 	A check is DBG_CHECK_CALL_BYTES in the block: two arguments and the call of the block's own tail, which adds
 	the third and goes on to check_stub. The register allocator flushes for it: every host register that holds a
 	guest register is written to the context in front of the check and loaded again behind it, 13 bytes each
-	way for one of the general registers and 15 for one of the xmm registers (x64_regalloc.h): 6 and 4 of them
-	with the System V calling convention, 8 and 10 with Windows' (measured by debugger.sh4bp.dense: a check behind
-	which every host register is loaded again, having been written in front of it, adds 291 bytes to its block on
-	Linux and 503 on Windows, the call and its share of the tail included).
+	way for one of the general registers and 15 for one of the xmm registers at most (x64_regalloc.h): 6 and 4 of
+	them with the System V calling convention, 8 and 10 with Windows'. The tail is 10 bytes, 11 on Windows, whose
+	third argument register is r8d. Measured by debugger.sh4bp.dense, a check in front of which every host register
+	was written and behind which every one is read again: it adds 301 bytes to its block on Linux (the call, a flush
+	of 276 bytes and the tail) and 522 on Windows (the call, 496 and the tail).
 
 	A block holds DBG_CHECK_BUDGET of them (ngen_features::DebugCheckBudget), which keeps their code within
 	DBG_CHECKS_BYTES_MAX whatever is armed: 56 on Linux, 31 on Windows.
@@ -72,10 +73,11 @@ static const void* check_stub;
 #define DBG_CHECK_CALL_BYTES   15
 #ifdef _WIN32
 #define DBG_CHECK_FLUSH_BYTES  (2 * (8 * 13 + 10 * 15))
+#define DBG_CHECK_TAIL_BYTES   11		// the third argument is r8d there: mov r8d, imm32 has a REX prefix
 #else
 #define DBG_CHECK_FLUSH_BYTES  (2 * (6 * 13 + 4 * 15))
-#endif
 #define DBG_CHECK_TAIL_BYTES   10
+#endif
 #define DBG_CHECKS_BYTES_MAX   (16 * 1024)
 #define DBG_CHECK_BUDGET       ((DBG_CHECKS_BYTES_MAX - DBG_CHECK_TAIL_BYTES) / (DBG_CHECK_CALL_BYTES + DBG_CHECK_FLUSH_BYTES))
 

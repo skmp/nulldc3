@@ -2072,7 +2072,11 @@ static void gate_dense()
 		}
 
 		const u32 one = bytes[1] - bytes[0];
+#if defined(_WIN32)
+		const u32 tail = 11;	//the third argument is in r8d: its mov has a REX prefix
+#else
 		const u32 tail = 10;
+#endif
 
 		note("a check between two writes of every register adds %u bytes to its block: the call, the flush both ways and the tail of %u bytes", one, tail);
 
@@ -2286,7 +2290,9 @@ static void gate_dense()
 	//The code cache. A block is compiled when 16 KiB of the cache are free, and its code can be more than
 	//that: the backend gives it up, the cache is emptied and the block compiled again
 	{
-		//a line of double precision arithmetic: every instruction is a call
+		//a line of double precision arithmetic: every instruction is a call, around which the System V backend
+		//saves xmm8-xmm11. On Windows the callee keeps xmm6-xmm15 and such a call is a few bytes: there the line is
+		//of ftrv, about a hundred bytes of code each
 		const u32 top = 0x8C020000;
 		const u32 n = 500;
 		const u64 slices = 12;
@@ -2295,7 +2301,13 @@ static void gate_dense()
 		{
 			machine_reset(ENGINE_JIT);
 
+#if defined(_WIN32)
+			static const u16 ops[] = { 0xF1FD /*ftrv xmtrx, fv0*/, 0xF5FD /*ftrv xmtrx, fv4*/, 0xF9FD /*ftrv xmtrx, fv8*/, 0xFDFD /*ftrv xmtrx, fv12*/ };
+			const u32 fpscr = 0x00040001;	//single precision
+#else
 			static const u16 ops[] = { 0xF200 /*fadd dr0, dr2*/, 0xF422 /*fmul dr2, dr4*/, 0xF601 /*fsub dr0, dr6*/, 0xF843 /*fdiv dr4, dr8*/ };
+			const u32 fpscr = 0x000C0001;	//double precision, pairs
+#endif
 
 			for (u32 i = 0; i < n; i++)
 				machine_write16(top + i * 2, ops[i % 4]);
@@ -2309,7 +2321,7 @@ static void gate_dense()
 			R(13) = G_data;
 			R(14) = top;
 
-			Sh4cntx.fpscr.full = 0x000C0001;
+			Sh4cntx.fpscr.full = fpscr;
 			Sh4cntx.old_fpscr = Sh4cntx.fpscr;
 			UpdateFPSCR();
 
@@ -2342,7 +2354,13 @@ static void gate_dense()
 
 		MachineState base = doubles(0, 0, &bytes);
 
-		check(bytes > 16 * 1024 + 2048, "a block of %u double precision instructions has %u bytes of host code, more than the 16 KiB that a compile waits for", n, bytes);
+		check(bytes > 16 * 1024 + 2048, "a block of %u %s instructions has %u bytes of host code, more than the 16 KiB that a compile waits for", n,
+#if defined(_WIN32)
+			"ftrv",
+#else
+			"double precision",
+#endif
+			bytes);
 
 		//room for the compile to begin, not for the code
 		MachineState s = doubles(16 * 1024 + 2048, 0, &bytes_left);
