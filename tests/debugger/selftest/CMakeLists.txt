@@ -172,7 +172,7 @@ nulldc_debugger_selftest(writes.fallback SELFTEST writes ENGINES jit CONFIG Debu
 nulldc_debugger_selftest(writes.smc SELFTEST smcwrites ENGINES jit CONFIG config:Dynarec.SmcCheckLevel=-1
                          ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
 
-# What sessions of those have to agree on, and the forced fallback and idleskip off: the script of that
+# What sessions of those have to agree on, and the forced fallback and idleskip off: sessions.py of that
 # directory, whose sessions are headless too
 set(test debugger.selftest.sh4bp.sessions)
 if(nulldc_selftest_skip)
@@ -182,9 +182,24 @@ elseif(NOT NULLDC_ELF_DIR OR NOT EXISTS "${NULLDC_ELF_DIR}/2ndmix.elf")
     "no 2ndmix.elf in NULLDC_ELF_DIR (\"${NULLDC_ELF_DIR}\"), configure with -DNULLDC_ELF_DIR=<directory with the KallistiOS examples>")
 else()
   add_test(NAME ${test}
-           COMMAND bash "${nulldc_tests_path}/debugger/sh4bp/selftest.sh" "${nulldc_selftest_emulator}" "${NULLDC_ELF_DIR}/2ndmix.elf"
-                   "${CMAKE_BINARY_DIR}/debugger/selftest/work/${test}")
-  set_tests_properties(${test} PROPERTIES TIMEOUT 1800)
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/sh4bp/sessions.py" "${nulldc_selftest_emulator}"
+                   "${NULLDC_ELF_DIR}/2ndmix.elf" "${CMAKE_BINARY_DIR}/debugger/selftest/work/${test}")
+  set_tests_properties(${test} PROPERTIES TIMEOUT 1800 ENVIRONMENT "${nulldc_selftest_env}")
+endif()
+
+# What the scripts make of what they read, on made-up input, no emulator is run: there wherever python3 is.
+# log.rule: selftest.py's checks on the output of a session whose lines end in \n and in \r\n. sessions.rule:
+# the comparisons of sessions.py on made-up sessions, every key it holds and the repeats of its rule
+if(Python3_Interpreter_FOUND)
+  add_test(NAME debugger.selftest.log.rule
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/selftest/selftest.py" --mode log-rule)
+  add_test(NAME debugger.selftest.sh4bp.sessions.rule
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/sh4bp/sessions.py" --rule)
+  set_tests_properties(debugger.selftest.log.rule debugger.selftest.sh4bp.sessions.rule PROPERTIES
+                       TIMEOUT 60 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+else()
+  nulldc_add_skipped_test(debugger.selftest.log.rule "no python3 to run tests/debugger/selftest/selftest.py with")
+  nulldc_add_skipped_test(debugger.selftest.sh4bp.sessions.rule "no python3 to run tests/debugger/sh4bp/sessions.py with")
 endif()
 
 
