@@ -1848,6 +1848,43 @@ static Dense dense_start(Engine e, u32 top, u32 n, bool fp, u32 passes)
 	return d;
 }
 
+//A line whose 36 instructions write r0 to r7 and fr0 to fr9, every one of them twice, 18 instructions apart, with
+//the tail of dense_write behind it: a check on the 19th instruction is a check in front of which every host register
+//holds a guest register it has written, and behind which every one is read again
+static Dense flush_line_write(u32 top)
+{
+	static const u16 group[18] = {
+		0x7001, 0x7101, 0x7201, 0x7301, 0x7401, 0x7501, 0x7601, 0x7701,	//add #1, r0 ... add #1, r7
+		0xF000, 0xF110, 0xF220, 0xF330, 0xF440, 0xF550, 0xF660, 0xF770,	//fadd fr0, fr0 ... fadd fr7, fr7
+		0xF880, 0xF990,													//fadd fr8, fr8, fadd fr9, fr9
+	};
+	static const u16 tail[] = {
+		0x4C0B,		//jsr @r12
+		0x0009,
+		0xE103,		//mov #3, r1
+		0x62D2,		//mov.l @r13, r2
+		0x4110,		//dt r1
+		0x8BFC,		//bf poll
+		0x4810,		//dt r8
+		0x8901,		//bt end
+		0x4E2B,		//jmp @r14
+		0x0009,
+		0xAFFE,		//end: bra end
+		0x0009,
+	};
+	const u32 n = 36;
+
+	for (u32 i = 0; i < n; i++)
+		machine_write16(top + i * 2, group[i % 18]);
+
+	for (u32 i = 0; i < 12; i++)
+		machine_write16(top + n * 2 + i * 2, tail[i]);
+
+	Dense d = { top, n, top + n * 2, top + n * 2 + 20 };
+
+	return d;
+}
+
 //The first armed instructions of the line, and the end
 static void dense_arm(const Dense& d, u32 armed)
 {
@@ -1981,6 +2018,55 @@ static void gate_dense()
 			check(bytes[2] > bytes[0] && (bytes[2] - bytes[0]) <= 16 * 1024, "%s line: %u checks add %u bytes of host code to their block, within the 16 KiB that the backend states",
 				fp ? "fp" : "integer", budget, bytes[2] - bytes[0]);
 		}
+	}
+
+	//The flush of a check at its most: every host register written to the context in front of it and loaded again
+	//behind it (flush_line_write). One such check adds the call, both halves of the flush and the tail of the
+	//checks to its block; the budget's worth of them, with one tail, has to stay within the 16 KiB that the backend
+	//states. The register set is the calling convention's: 6 general and 4 xmm registers with System V, 8 and 10
+	//with Windows' (x64_regalloc.h), so the budget of one is no bound for the other
+	{
+		u32 bytes[2];
+
+		for (u32 i = 0; i < 2; i++)
+		{
+			machine_reset(ENGINE_JIT);
+
+			Dense d = flush_line_write(0x8C020000);
+
+			R(8) = 1;
+			R(12) = G_leaf;
+			R(13) = G_data;
+			R(14) = d.top;
+			machine_set_pc(d.top);
+
+			std::vector<u32> ids, at;
+			if (i)
+				at.push_back(d.top + 18 * 2);
+			at.push_back(d.end);
+			for (u32 k = 0; k < at.size(); k++)
+				ids.push_back(k + 1);
+			machine_breakpoints(ids.data(), at.data(), (u32)at.size());
+
+			dbg::sh4::SetActiveMask(0);
+			knobs.host_stop_slice = 3;
+			machine_resume();
+
+			RuntimeBlockInfo* blk = bm_GetBlock(d.top);
+
+			bytes[i] = blk ? blk->host_code_size : 0;
+
+			check(blk != nullptr && blk->dbg_rest_pc == 0 && block_checks(d.top) == (int)i, "a line that writes every register twice: the block with %u armed instructions is whole and has %u checks",
+				i, i);
+		}
+
+		const u32 one = bytes[1] - bytes[0];
+		const u32 tail = 10;
+
+		note("a check between two writes of every register adds %u bytes to its block: the call, the flush both ways and the tail of %u bytes", one, tail);
+
+		check(one > tail && budget * (one - tail) + tail <= 16 * 1024, "%u such checks add %u bytes of host code to their block, within the 16 KiB that the backend states",
+			budget, budget * (one - tail) + tail);
 	}
 
 	struct Layout { const char* what; u32 top; bool fp; };
