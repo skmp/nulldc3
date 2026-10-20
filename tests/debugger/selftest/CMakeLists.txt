@@ -124,8 +124,9 @@ endfunction()
 nulldc_debugger_selftest(emu)
 
 # The naps of the sessions (libswirl/debugger/dbg_selftest_nap.cpp): naps of 100 us to 50 ms last what they were
-# asked for, never less and at most a little more, and wait without a spin for the nap; on Windows also without the
-# high-resolution timer. A machine test, on one engine
+# asked for, never less and at most a little more, and wait without a spin for the nap; on a POSIX host as long as
+# std::this_thread::sleep_for of the same request, to within 50 us; on Windows also without the high-resolution
+# timer. A machine test, on one engine
 nulldc_debugger_selftest(nap ENGINES jit)
 
 # The device tree's registers, guest memory and the device accessors against the live machine

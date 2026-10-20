@@ -19,6 +19,9 @@
 	  - 40 naps each of 100, 300, 700, 1000 and 1500 us: none shorter than asked for, the median of each request
 	    at most 400 us longer than asked for (std::this_thread::sleep_for of Windows: about 15 ms longer), and naps
 	    of a millisecond or more take at most two thirds of their time on the processor (none is spun whole);
+	  - on a POSIX host, where NapUs is std::this_thread::sleep_for: 40 naps each of 100, 300, 700, 1000 and
+	    1500 us through NapUs and as many through std::this_thread::sleep_for, one after the other, the medians of
+	    each request within 50 us of each other (a nap there lasts what it lasted before NapUs);
 	  - on Windows the same for the way without the high-resolution timer, where Windows refuses its flag: the
 	    nap of 50 ms without a spin, and naps of 300 us to within 400 us.
 */
@@ -276,10 +279,46 @@ void Short(NapFn nap, const char* way, const std::vector<s64>& requests, int n)
 	}
 }
 
+#if HOST_OS != OS_WINDOWS
+// A POSIX host: NapUs is std::this_thread::sleep_for (dbg_selftest_nap.h), and a nap through it lasts what a
+// std::this_thread::sleep_for of the same request lasts. n naps of each request through each, one after the other,
+// so that both see the same host: the medians of the two within 50 us of each other (they agree to a few us). The
+// bounds of Short let a nap through that lasts some 300 us more than asked for; this does not
+void AsSleepFor(const std::vector<s64>& requests, int n)
+{
+	for (s64 us : requests)
+	{
+		Naps naps, sleeps;
+
+		for (int i = 0; i < n; i++)
+		{
+			const Clock::time_point t0 = Clock::now();
+			selftest::NapUs(us);
+			const Clock::time_point t1 = Clock::now();
+			std::this_thread::sleep_for(std::chrono::microseconds(us));
+			const Clock::time_point t2 = Clock::now();
+
+			naps.wall.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
+			sleeps.wall.push_back(std::chrono::duration<double, std::micro>(t2 - t1).count());
+		}
+
+		const double apart = naps.Median() - sleeps.Median();
+
+		Check(apart <= 50 && apart >= -50,
+			"NapUs against std::this_thread::sleep_for: %d naps of %d us through each, one after the other: the medians %.0f and %.0f us, within 50 us of each other",
+			n, (int)us, naps.Median(), sleeps.Median());
+	}
+}
+#endif
+
 DBG_SELFTEST(nap_selftest, "nap")
 {
 	Long([](s64 us) { selftest::NapUs(us); }, "NapUs");
 	Short([](s64 us) { selftest::NapUs(us); }, "NapUs", { 100, 300, 700, 1000, 1500 }, 40);
+
+#if HOST_OS != OS_WINDOWS
+	AsSleepFor({ 100, 300, 700, 1000, 1500 }, 40);
+#endif
 
 #if HOST_OS == OS_WINDOWS
 	Note("the high-resolution waitable timer of this thread: %s", threadTimer.Get() ? "made" : "refused by Windows: every nap without it");
