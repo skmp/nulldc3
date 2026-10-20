@@ -73,6 +73,7 @@ namespace {
 
 HostDirs host_dirs;
 string error_text;
+string finish_text;	// what --help or --version printed on stdout
 
 // What the command line asks for, in its order: a later value of a key wins over an earlier one, and a game sets
 // keys too
@@ -504,6 +505,14 @@ const string& cl_ErrorText()
 	return error_text;
 }
 
+// The text that --help or --version printed on stdout, when ParseCommandLine returned rv_cli_finish: the usage
+// text, or "nullDC <version>" and a line end. Where stdout cannot be read once the process has ended (Windows,
+// without a console of its own), the caller shows this text, the one that was asked for.
+const string& cl_FinishText()
+{
+	return finish_text;
+}
+
 const string& cl_HelpText()
 {
 	static const string text =
@@ -562,6 +571,7 @@ bool cl_LogToFile(const string& path)
 int ParseCommandLine(int argc,wchar* argv[])
 {
 	error_text.clear();
+	finish_text.clear();
 	cfgSetVirtual("config", "image", "");
 
 	CommandLine cl;
@@ -572,13 +582,15 @@ int ParseCommandLine(int argc,wchar* argv[])
 	}
 	if (cl.help)
 	{
-		fputs(cl_HelpText().c_str(), stdout);
+		finish_text = cl_HelpText();
+		fputs(finish_text.c_str(), stdout);
 		return rv_cli_finish;
 	}
 	if (cl.version)
 	{
 		// one line on stdout, before anything is set up: no directory, no config, no display
-		printf("nullDC %s\n", nulldc_version());
+		finish_text = string("nullDC ") + nulldc_version() + "\n";
+		fputs(finish_text.c_str(), stdout);
 		fflush(stdout);
 		return rv_cli_finish;
 	}

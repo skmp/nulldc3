@@ -45,7 +45,7 @@ the rule the UI (`scripts/version.ts` of dreamcast-devtools) follows as well:
 --porcelain --untracked-files=no` says something (a submodule at another commit included); untracked and ignored
 files never count. A clone, a worktree and a submodule are checkouts. The comment at the top of `version.cmake` has
 the rule in full; `tests/version` tests it (`version.derive`), that the version is made at the build and not at the
-configure (`version.build_time`), and the emulator's `--version` (`version.binary`).
+configure (`version.build_time`), and `--version` (`version.cl`, `version.binary`).
 
 The emulator's build runs it at every build (the target `nulldc3_version`, which `nulldc3` depends on; some 30 ms)
 and it writes these three files into the build directory, never into the tree, each only when its text changes:
@@ -64,10 +64,11 @@ One C++ file includes the header: `libswirl/version.cpp`, the only one with the 
 path, which defines `nulldc_version()`, `nulldc_git_hash()` and `nulldc_git_dirty()`; `libswirl/nulldc_version.h`
 declares them and `nulldc_title()` and includes nothing. A new commit, tag or change compiles `version.cpp` again
 and relinks, and nothing else. `libswirl/version_title.cpp` defines `nulldc_title()`, `VER_EMUNAME` and the version
-("nullDC 3.0.0-pre+g<h>"), which `VER_SHORTNAME` and `VER_FULLNAME` of `types.h` are: the window title. What
-reads the version: `--version` (`nullDC <version>`) and `--help`'s list of switches; `debugger.describe`'s
-`emulator.version`; the register `dc.BUILD` (`nullDC <version>`); the window title, and while the debugger holds
-the machine `nullDC <version> [paused by debugger]`; the page the debugger serves without an embedded UI (`nullDC
-<version> debugger`); the imgui About tab (the version, the hash with `-dirty`) and the welcome screen. The tests
-project and the project of `tests/debugger/net` run the same script into their own build directories, under the
-targets `nulldc_tests_version` and `dbg_net_version`.
+("nullDC 3.0.0-pre+g<h>"), which `VER_SHORTNAME` and `VER_FULLNAME` of `types.h` are: the window title. What reads
+the version: `--version` (`nullDC <version>`; `cl_FinishText()` of `cfg/cl.cpp` holds the text `--version` or
+`--help` printed) and `--help`'s list of switches; `debugger.describe`'s `emulator.version`; the register `dc.BUILD`
+(`nullDC <version>`); the window title, and while the debugger holds the machine `nullDC <version> [paused by
+debugger]`; the page the debugger serves without an embedded UI (`nullDC <version> debugger`); the imgui About tab
+(the version, the hash with `-dirty`) and the welcome screen. The tests project and the project of
+`tests/debugger/net` run the same script into their own build directories, under the targets `nulldc_tests_version`
+and `dbg_net_version`.

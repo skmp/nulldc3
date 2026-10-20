@@ -12,6 +12,9 @@
 #	                 as it is now, configured once, its target nulldc3_version built, an empty commit, the target
 #	                 built again: the new <h>, CMake not run again, nothing written into the clone
 #	                 (build_time.cmake; nothing is compiled). Needs git and a tree that is a git checkout.
+#	version.cl       --version of cfg/cl.cpp (in nulldc_cfg of tests/cfg): rv_cli_finish, stdout exactly
+#	                 "nullDC <version>" and a line end, and cl_FinishText() that same text (what the Windows build
+#	                 shows where stdout cannot be read); for --help both the usage text (cl_test.cpp). Needs no data.
 #	version.binary   the emulator under test (NULLDC_EMULATOR, else the one the system tests build) prints
 #	                 "nullDC <version>" for --version, <version> what version.cmake makes of the tree now
 #	                 (binary.cmake): a binary of another commit fails (one not built again since a commit). The
@@ -48,6 +51,11 @@ if(GIT_FOUND)
 else()
   nulldc_add_missing_data_test(version.build_time "no git to make the clone of the test with")
 endif()
+
+add_executable(version_cl cl_test.cpp)
+target_link_libraries(version_cl PRIVATE nulldc_cfg)
+add_test(NAME version.cl COMMAND version_cl "${CMAKE_CURRENT_BINARY_DIR}/cl_work")
+set_tests_properties(version.cl PROPERTIES TIMEOUT 60)
 
 set(nulldc_version_emulator "")
 if(NULLDC_EMULATOR)
