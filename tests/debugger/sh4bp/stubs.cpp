@@ -5,9 +5,9 @@
 
 	On Windows also what the emulator has there: its code region near the program with the unwind data of the
 	emulator (libswirl/windows/win_jit_unwind.cpp), so that the system's unwinder walks the stack through the code
-	of the recompiler as it does in the emulator (machine.cpp walks it at every stop); and the emulator's policy for
-	a program that dies (libswirl/windows/win_fatal.cpp): no box, no crash report, the line of Linux's fault handler
-	and 128 + the signal's number.
+	of the recompiler as it does in the emulator (machine.cpp walks it at every stop). The policy for a program that
+	dies (no box, no crash report, one line and 128 + the signal's number) is the one of the tests project,
+	tests/common/win_policy.cpp, which the programs of this directory link on Windows.
 */
 #include "types.h"
 
@@ -28,11 +28,6 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <crtdbg.h>
-#include <intrin.h>
-#include <signal.h>
-#include <werapi.h>
-#pragma comment(lib, "wer.lib")
 #include "windows/win_jit_unwind.h"
 #else
 #include <sys/mman.h>
@@ -127,120 +122,3 @@ void os_DebugBreak()
 	fflush(stdout);
 	abort();
 }
-
-#if defined(_WIN32)
-//The emulator's policy for a program that dies (libswirl/windows/win_fatal.cpp), from before main: a gate that
-//crashes the program ends it with the line and the code of Linux, with no box and no crash report
-static void policy_fatal(const char* sig, int number, const void* address, const void* pc)
-{
-	char line[200];
-	int n = snprintf(line, sizeof(line), "fault_handler: unhandled %s at address %p, pc %p, not a guest memory fault: terminating\n", sig, address, pc);
-	DWORD written;
-	WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, n > 0 ? (DWORD)n : 0, &written, NULL);
-	TerminateProcess(GetCurrentProcess(), 128 + number);
-	for (;;)
-		Sleep(1000);
-}
-
-//First, before any frame is searched (a stack that a fault broke cannot be searched, and the filter below would
-//never run): an access violation, an in-page error or a misaligned access where the pc is in the program's image or
-//in no module at all (the code region, or a pc that a broken stack returned to), an illegal instruction, an integer
-//divide, a stack overflow. A fault inside a module of the system goes on to its own handlers: the stack walk of
-//machine.cpp takes a fault of the unwinder itself
-static const char* image_start;
-static const char* image_end;
-
-static LONG CALLBACK policy_vectored(EXCEPTION_POINTERS* ep)
-{
-	const EXCEPTION_RECORD* r = ep->ExceptionRecord;
-	const char* pc = (const char*)r->ExceptionAddress;
-	PVOID base = nullptr;
-	switch (r->ExceptionCode)
-	{
-	case EXCEPTION_ACCESS_VIOLATION:
-	case EXCEPTION_IN_PAGE_ERROR:
-	case EXCEPTION_DATATYPE_MISALIGNMENT:
-		if ((pc < image_start || pc >= image_end) && RtlPcToFileHeader((PVOID)pc, &base) != nullptr)
-			return EXCEPTION_CONTINUE_SEARCH;
-		policy_fatal("SIGSEGV", 11, r->NumberParameters >= 2 ? (const void*)r->ExceptionInformation[1] : r->ExceptionAddress, pc);
-	case EXCEPTION_STACK_OVERFLOW:
-		policy_fatal("SIGSEGV", 11, r->ExceptionAddress, pc);
-	case EXCEPTION_ILLEGAL_INSTRUCTION:
-	case EXCEPTION_PRIV_INSTRUCTION:
-		policy_fatal("SIGILL", 4, r->ExceptionAddress, pc);
-	case EXCEPTION_INT_DIVIDE_BY_ZERO:
-	case EXCEPTION_INT_OVERFLOW:
-		policy_fatal("SIGFPE", 8, r->ExceptionAddress, pc);
-	default:
-		return EXCEPTION_CONTINUE_SEARCH;
-	}
-}
-
-static LONG WINAPI policy_unhandled(EXCEPTION_POINTERS* ep)
-{
-	const EXCEPTION_RECORD* r = ep->ExceptionRecord;
-	const void* pc = (const void*)ep->ContextRecord->Rip;
-	switch (r->ExceptionCode)
-	{
-	case EXCEPTION_ACCESS_VIOLATION:
-	case EXCEPTION_IN_PAGE_ERROR:
-		policy_fatal("SIGSEGV", 11, r->NumberParameters >= 2 ? (const void*)r->ExceptionInformation[1] : r->ExceptionAddress, pc);
-	case EXCEPTION_DATATYPE_MISALIGNMENT:
-	case EXCEPTION_STACK_OVERFLOW:
-		policy_fatal("SIGSEGV", 11, r->ExceptionAddress, pc);
-	case EXCEPTION_ILLEGAL_INSTRUCTION:
-	case EXCEPTION_PRIV_INSTRUCTION:
-		policy_fatal("SIGILL", 4, r->ExceptionAddress, pc);
-	case EXCEPTION_INT_DIVIDE_BY_ZERO:
-	case EXCEPTION_INT_OVERFLOW:
-		policy_fatal("SIGFPE", 8, r->ExceptionAddress, pc);
-	case EXCEPTION_BREAKPOINT:
-		policy_fatal("SIGTRAP", 5, r->ExceptionAddress, pc);
-	default:
-		policy_fatal("SIGABRT", 6, r->ExceptionAddress, pc);
-	}
-	return EXCEPTION_CONTINUE_SEARCH;
-}
-
-static void policy_sigabrt(int)
-{
-	policy_fatal("SIGABRT", 6, nullptr, _ReturnAddress());
-}
-
-static void policy_invalid_parameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t)
-{
-	policy_fatal("SIGABRT", 6, nullptr, _ReturnAddress());
-}
-
-static void policy_purecall()
-{
-	policy_fatal("SIGABRT", 6, nullptr, _ReturnAddress());
-}
-
-static struct WindowsPolicy
-{
-	WindowsPolicy()
-	{
-		SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
-		WerSetFlags(WER_FAULT_REPORTING_NO_UI);
-		_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
-		signal(SIGABRT, policy_sigabrt);
-		_set_invalid_parameter_handler(policy_invalid_parameter);
-		_set_purecall_handler(policy_purecall);
-		_CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE);
-		_CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);
-		_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
-		_CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
-		_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
-		_CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
-		ULONG guarantee = 64 * 1024;
-		SetThreadStackGuarantee(&guarantee);
-		const char* self = (const char*)GetModuleHandleW(NULL);
-		const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(self + ((const IMAGE_DOS_HEADER*)self)->e_lfanew);
-		image_start = self;
-		image_end = self + nt->OptionalHeader.SizeOfImage;
-		AddVectoredExceptionHandler(0, policy_vectored);
-		SetUnhandledExceptionFilter(policy_unhandled);
-	}
-} windows_policy;
-#endif

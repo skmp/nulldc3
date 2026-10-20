@@ -32,6 +32,9 @@ set(LIBSWIRL_DIR "${nulldc_root_path}/libswirl")
 
 add_executable(disasm_test disasm_test.cpp "${LIBSWIRL_DIR}/debugger/dbg_disasm.cpp")
 target_include_directories(disasm_test PRIVATE "${LIBSWIRL_DIR}" "${LIBSWIRL_DIR}/debugger")
+if(WIN32)
+  target_sources(disasm_test PRIVATE "${nulldc_root_path}/tests/common/win_policy.cpp")
+endif()
 
 if(MSVC)
   target_compile_options(disasm_test PRIVATE /W4 /permissive-)

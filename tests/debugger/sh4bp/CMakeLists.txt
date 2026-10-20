@@ -319,3 +319,18 @@ add_test(NAME debugger.sh4bp.b11
   COMMAND ${CMAKE_COMMAND} -DCOST_ON=$<TARGET_FILE:sh4bp_cost_on> -DCOST_OFF=$<TARGET_FILE:sh4bp_cost_off>
     -P "${CMAKE_CURRENT_SOURCE_DIR}/b11_compare.cmake")
 set_tests_properties(debugger.sh4bp.b11 PROPERTIES TIMEOUT 600 SKIP_REGULAR_EXPRESSION "SKIPPED:")
+
+
+## Windows: the policy for a program that dies ##
+#
+#	No box, no crash report, one line and 128 + the signal's number (tests/common/win_policy.cpp, the tests
+#	project's, which common.guard.windows holds on sh4bp_test): a gate that crashes ends its program as a fault ends
+#	one on Linux. The vectored handler of the policy takes a fault in the code region, whose stack the filter of the
+#	process would never see when the fault broke it
+#
+
+if(WIN32)
+  foreach(program sh4bp_test sh4bp_selftest sh4bp_cost_on sh4bp_cost_off)
+    target_sources(${program} PRIVATE "${nulldc_tests_path}/common/win_policy.cpp")
+  endforeach()
+endif()

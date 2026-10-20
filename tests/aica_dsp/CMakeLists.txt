@@ -201,9 +201,14 @@ else()
 
   target_sources(aica_dsp_cases PRIVATE $<TARGET_OBJECTS:nulldc_caique_replay>)
 
-  # What the sounding guest's DSP program computes on the model, for the mode oracle of its runner
+  # What the sounding guest's DSP program computes on the model, for the mode oracle of its runner. On Windows with
+  # the policy of the tests project for a program that dies (../common/win_policy.cpp: no box, no crash report;
+  # common.guard.windows holds it on this program)
   add_executable(aica_dsp_guest_oracle guest_oracle_main.cpp)
   target_link_libraries(aica_dsp_guest_oracle PRIVATE nulldc_aica_dsp_caique)
+  if(WIN32)
+    target_sources(aica_dsp_guest_oracle PRIVATE "${nulldc_tests_path}/common/win_policy.cpp")
+  endif()
 endif()
 
 
