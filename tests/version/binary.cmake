@@ -3,8 +3,13 @@
 #   cmake -DEMULATOR=<nulldc3> -DTREE=<the top of the tree> -DWORK=<scratch directory> -P binary.cmake
 #
 # nulldc3/cmake/version.cmake is run on the tree into WORK, as a build runs it, and the emulator is asked with
-# --version (behind P0's keys of a headless run, which --version leaves unread): it has to exit with 0 and its last
-# line on stdout has to be "nullDC <version>" exactly.
+# --version (behind P0's keys of a headless run, which --version leaves unread): it has to exit with 0, and its
+# stdout has to end in the line "nullDC <version>" and a line end, exactly, with nothing in front of it but the lines
+# the Linux and macOS builds print before the command line is read: common_linux_setup() of libswirl/linux/common.cpp
+# prints "Personality: <8 hex digits>", "Updated personality: <8 hex digits>" and "Linux paging: <size> <8 hex
+# digits> <8 hex digits>" on stdout first. Every other line fails, and once those three are gone (to stderr, or
+# --version answered before them), setup_lines below goes and the stdout is the one line alone. (execute_process
+# drops the \r of a \r\n: a carriage return in the emulator's stdout is not seen here.)
 #
 # An emulator of another commit says another version: NULLDC_EMULATOR built before a commit, or the system tests'
 # emulator when the tests project was not built again after one. The system tests' emulator is configured again at
@@ -34,12 +39,55 @@ execute_process(COMMAND "${EMULATOR}" --config config:Headless=yes , audio:backe
                         --version
                 WORKING_DIRECTORY "${WORK}" TIMEOUT 60
                 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
-string(REGEX REPLACE "[\r\n]+$" "" text "${out}")
-string(FIND "${text}" "\n" at REVERSE)
-math(EXPR at "${at} + 1")
-string(SUBSTRING "${text}" ${at} -1 last)
-string(REGEX REPLACE "\r$" "" last "${last}")
-message("version.binary: the tree says ${version}; ${EMULATOR} --version exit status ${rc}, last line \"${last}\"")
-if(NOT rc EQUAL 0 OR NOT last STREQUAL "nullDC ${version}")
-  message(FATAL_ERROR "version.binary: expected exit status 0 and \"nullDC ${version}\"\nstdout:\n${out}\nstderr:\n${err}")
+
+# the setup lines of common_linux_setup(), the only lines that may come before the version's
+string(REPEAT "[0-9A-F]" 8 hex8)
+set(setup_lines
+  "^Personality: ${hex8}$"
+  "^Updated personality: ${hex8}$"
+  "^Linux paging: [0-9]+ ${hex8} ${hex8}$")
+
+set(line "nullDC ${version}\n")
+string(LENGTH "${out}" out_length)
+string(LENGTH "${line}" line_length)
+set(last "")
+set(before "${out}")
+if(NOT out_length LESS line_length)
+  math(EXPR at "${out_length} - ${line_length}")
+  string(SUBSTRING "${out}" ${at} -1 last)
+  string(SUBSTRING "${out}" 0 ${at} before)
+endif()
+
+set(problems "")
+if(NOT rc EQUAL 0)
+  list(APPEND problems "exit status ${rc}, not 0")
+endif()
+if(NOT last STREQUAL line)
+  list(APPEND problems "stdout does not end in the line \"nullDC ${version}\" and a line end")
+elseif(NOT before STREQUAL "")
+  if(NOT before MATCHES "\n$")
+    list(APPEND problems "\"nullDC ${version}\" is not a line of its own")
+  else()
+    string(REGEX MATCHALL "[^\n]*\n" lines "${before}")
+    foreach(text ${lines})
+      string(REGEX REPLACE "\n$" "" text "${text}")
+      set(known FALSE)
+      foreach(pattern ${setup_lines})
+        if(text MATCHES "${pattern}")
+          set(known TRUE)
+        endif()
+      endforeach()
+      if(NOT known)
+        list(APPEND problems "stdout has the line \"${text}\" in front of the version")
+      endif()
+    endforeach()
+  endif()
+endif()
+
+string(REGEX REPLACE "\n$" "" shown "${out}")
+string(REPLACE "\n" " | " shown "${shown}")
+message("version.binary: the tree says ${version}; ${EMULATOR} --version exit status ${rc}, stdout \"${shown}\"")
+if(problems)
+  string(REPLACE ";" "; " problems "${problems}")
+  message(FATAL_ERROR "version.binary: ${problems}\nexpected exit status 0 and \"nullDC ${version}\"\nstdout:\n${out}\nstderr:\n${err}")
 endif()
