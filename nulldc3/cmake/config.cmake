@@ -302,12 +302,25 @@ elseif ((${BUILD_COMPILER} EQUAL ${COMPILER_GCC}) OR
 endif()
 
 
+if(MSVC)
+  # MSVC: CMake's defaults (/DWIN32 /D_WINDOWS /GR /EHsc) are kept and extended, never replaced: without /EHsc
+  # nlohmann's JSON_THROW is std::abort() and unwinding skips destructors (PL-D32; libswirl/windows/winmain.cpp
+  # and tests/common/test_guard.cpp stop a build that has no /EHsc). The static runtime and /Z7 are chosen in
+  # front of project() (CMakeLists.txt, tests/CMakeLists.txt). An 8 MB stack as Linux threads have, and no CET
+  # shadow stack: the recompiler leaves its main loop without ret.
+  string(APPEND CMAKE_C_FLAGS " /W3 /utf-8")
+  string(APPEND CMAKE_CXX_FLAGS " /EHsc /GR /W3 /utf-8 /bigobj /Zc:__cplusplus /permissive-")
+  add_link_options(/STACK:8388608 /CETCOMPAT:NO)
+else()
+
 set(_CXX_FLAGS "${_CXX_FLAGS} ${_C_FLAGS}")
 
 
 
 set(CMAKE_C_FLAGS " ${_C_FLAGS}") # ${CMAKE_C_FLAGS}   -- these hold default VC flags for non VC Build ?
 set(CMAKE_CXX_FLAGS " ${_CXX_FLAGS}") # ${CMAKE_CXX_FLAGS}
+
+endif()
 
 
 

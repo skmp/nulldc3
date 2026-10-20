@@ -9,6 +9,18 @@ endif()
 # The executable: nulldc3 on every system (macOS: nulldc3.app, nulldc3/apple/build_app_bundle.sh)
 set(TNAME nulldc3)
 
+# Windows (MSVC): the static runtime, so that nulldc3.exe needs no redistributable beside it, and the debug
+# information in the objects (/Z7), so that no mspdbsrv.exe outlives a build (PL-D32). Both are read when
+# project() enables the languages.
+if(CMAKE_HOST_WIN32)
+  cmake_policy(SET CMP0091 NEW)
+  if(POLICY CMP0141)	# CMake 3.25
+    cmake_policy(SET CMP0141 NEW)
+  endif()
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+endif()
+
 project(${TNAME})
 
 set(DEBUG_CMAKE ON)
@@ -102,6 +114,9 @@ set(core_SRCS
 )
 
 if(${BUILD_COMPILER} EQUAL ${COMPILER_GCC} OR (${BUILD_COMPILER} EQUAL ${COMPILER_CLANG} AND ${HOST_OS} EQUAL ${OS_DARWIN})) # TODO: Test with Clang on other platforms
+  list(APPEND core_SRCS ${archive_SRCS})
+elseif(${BUILD_COMPILER} EQUAL ${COMPILER_VC})
+  # the 7z and zip archives with MSVC as well (PL-D33)
   list(APPEND core_SRCS ${archive_SRCS})
 endif()
 
@@ -198,6 +213,22 @@ if(${BUILD_COMPILER} EQUAL ${COMPILER_GCC} OR (${BUILD_COMPILER} EQUAL ${COMPILE
 
 	add_definitions(-DPACKAGE_VERSION=\"1.3.2\" -DFLAC__HAS_OGG=0 -DFLAC__NO_DLL -DHAVE_LROUND -DHAVE_STDINT_H -DHAVE_STDLIB_H -DHAVE_SYS_PARAM_H)
   add_definitions(-D_7ZIP_ST -DCHD5_LZMA -DCHD5_FLAC)
+elseif(${BUILD_COMPILER} EQUAL ${COMPILER_VC})
+  # MSVC: CHD's LZMA and FLAC codecs and the 7z / zip archives (PL-D33). picoTCP stays GCC/Clang-only: the modem is
+  # a stub with MSVC (hw/modem/picoppp.cpp). No <sys/param.h> here.
+  list(APPEND deps_SRCS
+    ${lzip_SRCS}
+    ${lzma_SRCS}
+    ${flac_SRCS}
+  )
+
+  include_directories ("${d_deps}/flac/src/libFLAC/include")
+  include_directories ("${d_deps}/flac/include")
+
+  add_definitions(-DPACKAGE_VERSION=\"1.3.2\" -DFLAC__HAS_OGG=0 -DFLAC__NO_DLL -DHAVE_LROUND -DHAVE_STDINT_H -DHAVE_STDLIB_H)
+  add_definitions(-D_7ZIP_ST -DCHD5_LZMA -DCHD5_FLAC)
+  # libzip is compiled into the executable: its functions are neither exported nor imported
+  add_definitions(-DZIP_EXTERN=)
 endif()
 
 ### libosd.cmake ################################################################################
@@ -218,6 +249,8 @@ if (${HOST_OS} EQUAL ${OS_WINDOWS})
   list(APPEND osd_SRCS ${d_core}/windows/win_vmem.cpp)
   list(APPEND osd_SRCS ${d_core}/oslib/windows/threading.cpp)
   list(APPEND osd_SRCS ${d_aout}/audiobackend_directsound.cpp)
+  # the icon and the version resource (nulldc3/windows/nulldc3.rc; its include path below)
+  list(APPEND osd_SRCS ${nulldc_shell_path}/windows/nulldc3.rc)
   link_libraries(dsound.lib winmm.lib xinput.lib wsock32.lib opengl32.lib)
 elseif (${HOST_OS} EQUAL ${OS_LINUX})
 
@@ -283,6 +316,11 @@ add_custom_target(nulldc3_version
   VERBATIM)
 add_dependencies(${TNAME}${binSuffix} nulldc3_version)
 set_source_files_properties("${d_core}/version.cpp" PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/generated")
+if(${HOST_OS} EQUAL ${OS_WINDOWS})
+  # the VERSIONINFO of nulldc3.rc reads the same header: the generated directory is on its include path too, and on
+  # no other but version.cpp's
+  set_source_files_properties("${nulldc_shell_path}/windows/nulldc3.rc" PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/generated")
+endif()
 
 if(${HOST_OS} EQUAL ${OS_LINUX})
   # needed for opentty

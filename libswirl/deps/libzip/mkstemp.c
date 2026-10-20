@@ -42,7 +42,11 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#ifndef _MSC_VER
 #include <unistd.h>
+#else
+#include "config.h"
+#endif
 #include <sys/types.h>
 
 #ifndef O_BINARY
