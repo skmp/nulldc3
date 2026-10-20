@@ -36,7 +36,7 @@
 
 #include "zlib/zlib.h"
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && !defined(ZIP_EXTERN)
 #define ZIP_EXTERN __declspec(dllimport)
 #endif
 

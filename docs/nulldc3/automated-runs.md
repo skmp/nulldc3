@@ -159,8 +159,76 @@ Renderers in headless mode (`config:pvr.backend`):
 `Exit.FrameHash` and `Exit.FramePng` also work with a window, for `refsw2` and `refmister`. The GL renderers
 present nothing that is captured (`frame=none`).
 
-Not headless: Windows and the other platform mains (they still create their window), save states with the GUI's
-notifications, anything that needs the GUI (settings, the game list, disc swaps).
+Not headless: the macOS main (it still creates its window), save states with the GUI's notifications, anything that
+needs the GUI (settings, the game list, disc swaps).
+
+### Windows
+
+`config:Headless=yes` on Windows is the same mode, with these Windows parts (`libswirl/windows/`):
+
+* No window class is registered and no window is made, no XInput device, keyboard or mouse gamepad is set up, no GL
+  context exists (`os_CreateWindow` and `os_SetupInput` return). The main thread makes no COM apartment either: the
+  `CoInitialize` of a windowed run is in the windowed path of `os_CreateWindow`, since an apartment has hidden windows
+  of its own. DirectSound, when `audio:backend` picks it, takes the desktop window for its cooperative level; a
+  DirectSound that fails (a system without a sound device: `DirectSound: <step> failed (<code>): no sound` on stdout)
+  is no sound, and the run goes on as with `audio:backend=none`, its speed limit (`aica.LimitFPS`) waiting for no
+  sound device. Automated runs pass `audio:backend=none` anyway.
+* `nulldc3.exe` is a console program: run by a harness it writes into the handles it was given and never opens a
+  console of its own. stdout and stderr are in binary mode (no `\r` in front of a `\n`, the bytes Linux writes) and
+  unbuffered. `main` returns the exit code of run control: 0, 1 (`runctl_fail`, a failed selftest session), 2 for a
+  refused command line and a bad configuration of the debugger, as on Linux.
+* `--help`, `--version` and a refused command line show their text in a message box as well only where nobody can
+  read the output once the process has ended (no console, or a console the process has alone) and when no
+  `--config` item of the command line sets `config:Headless`: a headless run never shows one.
+
+**No dialog of any kind, in every run.** `main` installs, before anything else: the error mode
+`SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX` (no "no disk" box, no fault box),
+`WerSetFlags(WER_FAULT_REPORTING_NO_UI)`, no message box and no report of `abort()` (`_set_abort_behavior`) and a
+`SIGABRT` handler, the C runtime's invalid-parameter and pure-call handlers (without them an invalid parameter ends in
+`__fastfail`, straight to Windows Error Reporting), the debug runtime's reports to stderr, a vectored fatal handler
+behind the handler of guest memory faults, and the unhandled-exception filter. `die()` and `verify()` break into a
+debugger only when one is attached (`IsDebuggerPresent()`).
+
+**The fatal line and the exit codes** are Linux's: one line on stderr, written with `WriteFile`,
+
+    fault_handler: unhandled SIGSEGV at address 0x10, pc 0x7ff6a1b2c3d4, not a guest memory fault: terminating
+
+and the process ends with 128 + the signal's number:
+
+| what | signal | exit |
+|---|---|---|
+| an access violation, an in-page error, a misaligned access, a stack overflow | `SIGSEGV` | 139 |
+| an illegal or a privileged instruction | `SIGILL` | 132 |
+| a breakpoint instruction, no debugger attached | `SIGTRAP` | 133 |
+| `abort()`, `std::terminate`, an invalid parameter, a pure call, an exception nobody took | `SIGABRT` | 134 |
+| an integer divide by zero, or the overflow of a divide | `SIGFPE` | 136 |
+
+`die()` and `verify()` print their own `Fatal error : ...` / `Verify Failed` line on stdout and end with 133 without
+a `fault_handler` line, so that a test tells them from a breakpoint instruction. The vectored handler takes an access
+violation, an in-page error and a misaligned access only when they happen in `nulldc3.exe`'s image (the static C
+runtime is part of it) or in the recompiler's code region: another module's (a graphics driver's) first fault goes on
+to that module's own handlers, and one that nobody takes reaches the unhandled-exception filter, which prints the same
+line and ends the same way. Nothing reaches Windows Error Reporting or a just-in-time debugger.
+
+**Test hooks** (Windows builds): `NULLDC_TEST_FATAL=<kind>` raises a fault right after the emulator has started,
+`segv`, `ill`, `trap` (`die()`), `abort`, `div`, `stack`, `invparam` (a C runtime call with an invalid parameter) or
+`purecall`; `NULLDC_TEST_DSOUND=fail` makes DirectSound fail as on a system without a sound device (its first step
+answers `DSERR_NODRIVER`, and nothing of DirectSound is called); `NULLDC_TEST_UI_REPORT=1` prints one line at the end
+of `main`,
+
+    nulldc-ui: app=0 windows=0 errmode=8003 wer=20 invparam=1 purecall=1 sigabrt=1 abort=0 classes=
+
+`app` 1 when a window class was registered, `windows` the process's top-level windows that are visible or of the
+emulator's class, `errmode` `GetErrorMode()`, `wer` `WerGetFlags()`, `invparam`, `purecall` and `sigabrt` 1 when the
+handler in force is the policy's own, `abort` the flags of `_set_abort_behavior` (read without a change), `classes`
+the class of every top-level and message-only window of the process. `tests/windows` holds these.
+
+**Automated runs on Windows go through `nulldc3-winrun`** (`tests/winrun/README.md`): every program an automated run
+starts there, the emulator, a test, ctest itself, runs inside it, on a desktop of its own, in a job, with the error
+mode above inherited by everything below it; a long step runs detached with a log and an rc file. Its exit status is
+the program's, or 124 (a timeout), 125 (a window was seen) or 126 (its set-up failed). Every run also carries the keys
+of an automated run: `--portable <dir>` and `--config config:Headless=yes , audio:backend=none ,
+config:Dreamcast.RTC=946684800` with the run's `Exit.*` keys.
 
 ## Faults
 

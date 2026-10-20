@@ -1,7 +1,10 @@
-// Microsoft Visual C++ generated resource script.
+// The resources of nulldc3.exe: its icon and its version (compiled by CMakeLists.txt on Windows).
 //
+// nulldc3_version.h is made at every build into <build>/generated (nulldc3/cmake/version.cmake), which is on the
+// include path of this file alone (and of libswirl/version.cpp): NULLDC_VERSION, the version string, and
+// NULLDC_VERSION_NUMBERS, its four numbers X,Y,Z,N (nulldc3/README.md).
 #include "resource.h"
-#include "../../libswirl/version.h"
+#include "nulldc3_version.h"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -15,8 +18,8 @@ IDI_ICON1               ICON                    "nulldc3.ico"
 /////////////////////////////////////////////////////////////////////////////
 
 1 VERSIONINFO
-FILEVERSION     1,0,0,0
-PRODUCTVERSION  1,0,0,0
+FILEVERSION     NULLDC_VERSION_NUMBERS
+PRODUCTVERSION  NULLDC_VERSION_NUMBERS
 BEGIN
   BLOCK "StringFileInfo"
   BEGIN

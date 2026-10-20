@@ -6,6 +6,22 @@ if (CCACHE_FOUND AND NOT CMAKE_HOST_WIN32)
   set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
 endif()
 
+# Windows (MSVC): the static runtime and the debug information in the objects (/Z7), as the emulator has them
+# (CMakeLists.txt of the tree); also for the suites that are projects of their own, through the policy default.
+# The default build type is RelWithDebInfo there too: CMake's MSVC platform makes it Debug in project(), where the
+# test behind project() below no longer sees an empty one.
+if(CMAKE_HOST_WIN32)
+  if(NOT DEFINED CMAKE_BUILD_TYPE AND NOT DEFINED CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type")
+  endif()
+  if(POLICY CMP0141)	# CMake 3.25
+    cmake_policy(SET CMP0141 NEW)
+    set(CMAKE_POLICY_DEFAULT_CMP0141 NEW)
+  endif()
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+endif()
+
 project(nulldc-tests CXX)
 
 # Standalone test project: cmake -S tests -B <build dir> -G Ninja && ninja -C <build dir> && ctest --test-dir <build dir>
@@ -191,4 +207,5 @@ add_subdirectory(aica_dsp)
 add_subdirectory(devtools)
 add_subdirectory(rebrand)
 add_subdirectory(icons)
+add_subdirectory(windows)
 add_subdirectory(version)

@@ -49,12 +49,15 @@ struct HostDirs
 };
 void cl_SetHostDirs(const HostDirs& dirs);
 
-// rv_ok: the run goes on. rv_cli_finish: --help was answered. rv_cli_error: the command line, or the directory it
-// chose, cannot be used; the message is on stderr and in cl_ErrorText(), nothing else was done.
+// rv_ok: the run goes on. rv_cli_finish: --help or --version was answered. rv_cli_error: the command line, or the
+// directory it chose, cannot be used; the message is on stderr and in cl_ErrorText(), nothing else was done.
 int ParseCommandLine(int argc,wchar* argv[]);
 const string& cl_ErrorText();
 // the usage text that --help prints
 const string& cl_HelpText();
+// what --help or --version printed on stdout, after rv_cli_finish (the Windows build shows it where stdout cannot
+// be read once the process has ended)
+const string& cl_FinishText();
 
 // Windows' --log: stdout and stderr into the file path, made empty first. Both streams write at the end of the
 // file and without a buffer, so the lines are there in the order they were written and none is lost when the

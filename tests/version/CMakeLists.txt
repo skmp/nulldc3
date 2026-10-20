@@ -66,9 +66,15 @@ elseif(TARGET nulldc_emulator)
   set(nulldc_version_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
 endif()
 if(nulldc_version_emulator)
+  # on Windows the emulator runs through nulldc3-winrun (tests/windows), as every program the tests start there
+  set(nulldc_version_winrun "")
+  if(WIN32)
+    set(nulldc_version_winrun "-DWINRUN=${nulldc_winrun}")
+  endif()
   add_test(NAME version.binary
            COMMAND "${CMAKE_COMMAND}" "-DEMULATOR=${nulldc_version_emulator}" "-DTREE=${nulldc_root_path}"
-                   "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/binary" -P "${CMAKE_CURRENT_SOURCE_DIR}/binary.cmake")
+                   "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/binary" ${nulldc_version_winrun}
+                   -P "${CMAKE_CURRENT_SOURCE_DIR}/binary.cmake")
   set_tests_properties(version.binary PROPERTIES TIMEOUT 120)
 else()
   nulldc_add_skipped_test(version.binary "no emulator to ask: NULLDC_EMULATOR is empty and the system tests build none")
