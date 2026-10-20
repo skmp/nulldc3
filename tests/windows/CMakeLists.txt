@@ -20,7 +20,7 @@
 #	                            with a console of its own and config:Headless=yes (exit 2, no window, within 10 s);
 #	                            with a console of its own and not headless (the box on the private desktop: 125)
 #	windows.abi.xmm             Mainloop and RunBlock give xmm6-xmm15 back (abi_xmm.cpp)
-#	windows.binary.stdout       no \r in the emulator's stdout
+#	windows.binary.stdout       no \r in the emulator's stdout or stderr
 #	windows.dsound.failed       DirectSound that fails (NULLDC_TEST_DSOUND=fail) with the speed limit on: no sound,
 #	                            and the guest headless still reaches its 90 vblanks and its exit line
 #	windows.exitcode            a run that cannot go on (headless, nothing to run) exits with 1
