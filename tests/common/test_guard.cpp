@@ -194,6 +194,12 @@ TestGuardResult test_guard_run(TestGuardFP* fn, void* arg)
 
 	if (rv == 0)
 	{
+#if defined(_MSC_VER) && defined(_M_X64)
+		// MSVC's longjmp unwinds the stack it leaves (RtlUnwindEx) when the buffer names a frame, and the code of
+		// a recompiler on that stack has no unwind data: the unwind ends the process (STATUS_BAD_FUNCTION_TABLE).
+		// Without the frame it restores the registers alone, as siglongjmp does
+		((_JUMP_BUFFER*)&guard_jb)->Frame = 0;
+#endif
 		guard_active = 1;
 		fn(arg);
 	}
