@@ -5,14 +5,16 @@
                   [--engine jit|interp] [--fields <field,...>] [--file <path>] [--vblanks <V>]
                   [--selftest <filter>] [--expect <text>]... [--ignored <section:key=value>]...
                   [--config <section:key=value>]... [--oracle <aica_dsp_guest_oracle>]
-    soundlines.py --mode files [--dir <the directory of the guest>]
+    soundlines.py --mode files [--dir <the directory of the guest>] [--no-posix-shell]
     soundlines.py --mode names --build <the build directory of the tests>
 
 A run is the emulator on the program, headless, with no audio device (audio:backend=none), the real-time clock
 pinned and the SH4 on the recompiler or on the interpreter (--engine), with its files in a directory of its own
 under the work directory (--portable), an empty environment (no display), a core file size limit of 1 byte, and a
-watchdog. A process this script starts is ended by its pid. The sound is made sample by sample, with the DSP, in
-every time step of the AICA: the emulator has no other way to make it.
+watchdog. A process this script starts is ended by its pid. On Windows the environment has SystemRoot and TEMP and
+TMP of the run's directory, and the emulator and the tool of the mode oracle run inside nulldc3-winrun
+(tests/common/emurun.py, which starts every program of this script and reads what it prints). The sound is made
+sample by sample, with the DSP, in every time step of the AICA: the emulator has no other way to make it.
 
 Every run has to be made on the engine it was asked for. The emulator takes config:Dynarec.Enabled=yes for a wish:
 a build without a recompiler, or one whose recompiler cannot be set up, goes on with the interpreter and says
@@ -65,7 +67,9 @@ README.md has the modes:
               channel at IMXL 0) is what --oracle, aica_dsp_guest_oracle of tests/aica_dsp, computes for that copy
               on the caique model (see mode_oracle)
     files     the committed files of the guest are those of its manifest, SHA256SUMS; and where the assemblers
-              are, gen.sh --check: they are what the sources give
+              are, gen.sh --check: they are what the sources give. gen.sh is a bash script: on Windows it is not
+              run (bash there is WSL's launcher, which would run it inside a Linux of the computer), and the mode
+              says so: "gen.sh --check was not run: no POSIX shell on Windows"
     names     the tests of a build (the CTestTestfile.cmake files of --build): no test of the sound
               (debugger.sound.*) or of the session arm7 of the selftests (debugger.selftest.arm7*) has a part
               batch or persample. The sound was made in batches of 32 samples by default and sample by sample with
@@ -77,11 +81,17 @@ import argparse
 import hashlib
 import os
 import re
-import resource
 import shutil
 import struct
 import subprocess
 import sys
+import tempfile
+
+# the run helper of the harnesses; nothing is written into the source tree for it
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'common'))
+
+import emurun  # noqa: E402
 
 RTC_PIN = 946684800
 
@@ -149,27 +159,17 @@ class Run:
         return command
 
     def run(self, keys):
-        # nothing of the environment but the options of the sanitizers: the directory is the one of --portable
-        env = {}
-        for name in ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'TSAN_OPTIONS', 'LSAN_OPTIONS'):
-            if name in os.environ:
-                env[name] = os.environ[name]
-
-        def limits():
-            # a crash is not piped to a core handler (WSL2 runs it for any other limit)
-            resource.setrlimit(resource.RLIMIT_CORE, (1, resource.getrlimit(resource.RLIMIT_CORE)[1]))
-
+        # nothing of the environment but the options of the sanitizers (on Windows also what Windows needs, in the
+        # directory of the run): the directory is the one of --portable
         self.cmdline = self.command(keys)
         with open(self.log_path, 'wb') as out:
-            process = subprocess.Popen(self.cmdline, cwd=self.dir, env=env, stdin=subprocess.DEVNULL, stdout=out,
-                                       stderr=subprocess.STDOUT, preexec_fn=limits)
+            process = emurun.start(self.cmdline, self.args.watchdog, cwd=self.dir, env=emurun.environment(self.dir),
+                                   stdout=out, stderr=subprocess.STDOUT)
             try:
                 self.code = process.wait(timeout=self.args.watchdog)
             except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-        with open(self.log_path, 'rb') as f:
-            self.log = f.read().decode('utf-8', 'replace')
+                emurun.kill(process)
+        self.log = emurun.read_text(self.log_path)
         check(self.code is not None, 'the run did not end within %d s: %s' % (self.args.watchdog, ' '.join(self.cmdline)), self.log)
         for bad in BAD:
             check(bad not in self.log, 'the output has "%s"' % bad, self.log)
@@ -224,6 +224,20 @@ def hash_run(args, name, engine, more=()):
     check(line.get('reason') == 'vblanks' and line.get('vblanks') == str(args.vblanks),
           'the run %s ended with reason=%s after %s vblanks, not at vblank %d' % (name, line.get('reason'), line.get('vblanks'), args.vblanks), run.log)
     return run, line
+
+
+def tool_run(args, command, log_path):
+    """A program that is not the emulator (aica_dsp_guest_oracle, gen.sh), run to its end through emurun with the
+    caller's environment: what it printed, and its exit code (None when the watchdog ended it)."""
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    with open(log_path, 'wb') as out:
+        process = emurun.start(command, args.watchdog, stdout=out, stderr=subprocess.STDOUT, emulator=False)
+        try:
+            code = process.wait(timeout=args.watchdog)
+        except subprocess.TimeoutExpired:
+            emurun.kill(process)
+            code = None
+    return emurun.read_text(log_path), code
 
 
 def different(a, b, fields):
@@ -763,12 +777,9 @@ def mode_oracle(args, lines):
     copy, text, fields = line_run(args, 'oracle', args.engine, guest=path)
 
     command = [args.oracle, '--elf', path, '--ticks', str(args.ticks)]
-    try:
-        done = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=args.watchdog)
-    except subprocess.TimeoutExpired:
-        raise Failed('aica_dsp_guest_oracle did not end within %d s: %s' % (args.watchdog, ' '.join(command)))
-    said = done.stdout.decode('utf-8', 'replace')
-    check(done.returncode == 0, 'aica_dsp_guest_oracle ended with exit code %d: %s\n%s' % (done.returncode, ' '.join(command), said))
+    said, code = tool_run(args, command, os.path.join(args.work, 'oracle-tool.txt'))
+    check(code is not None, 'aica_dsp_guest_oracle did not end within %d s: %s' % (args.watchdog, ' '.join(command)))
+    check(code == 0, 'aica_dsp_guest_oracle ended with exit code %d: %s\n%s' % (code, ' '.join(command), said))
     found = [line[len('dsp='):] for line in said.splitlines() if re.match(r'^dsp=[0-9a-f]{16}$', line)]
     check(len(found) == 1, 'aica_dsp_guest_oracle printed no line dsp=<hex>, or more than one:\n' + said)
 
@@ -800,18 +811,31 @@ def mode_files(args, lines):
         check(now == digest, '%s is not the file of the manifest: its SHA-256 is %s, SHA256SUMS has %s' % (name, now, digest))
     print('the %d files of SHA256SUMS are the files of the manifest' % len(listed))
 
-    # where the assemblers are: the committed files are what the sources give
+    # where the assemblers are: the committed files are what the sources give. gen.sh is a bash script, and on
+    # Windows bash is WSL's launcher: nothing there looks for a shell
+    why = emurun.no_shell()
+    check(why is not None or not args.no_posix_shell, 'the host has no POSIX shell (--no-posix-shell), and the mode looks for one '
+          'to run gen.sh with')
+    if why is not None:
+        print('gen.sh --check was not run: ' + why)
+        return
     bash = shutil.which('bash')
     if bash is None:
         print('gen.sh --check was not run: no bash')
         return
-    done = subprocess.run([bash, os.path.join(directory, 'gen.sh'), '--check'], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, timeout=args.watchdog)
-    said = done.stdout.decode('utf-8', 'replace').strip()
-    if done.returncode == 3:
+    # its output goes to a file of the work directory, or of a scratch directory of its own when the mode has none
+    work = args.work or tempfile.mkdtemp(prefix='soundlines-files-')
+    try:
+        said, code = tool_run(args, [bash, os.path.join(directory, 'gen.sh'), '--check'], os.path.join(work, 'gen-check.txt'))
+    finally:
+        if not args.work:
+            shutil.rmtree(work, ignore_errors=True)
+    said = said.strip()
+    check(code is not None, 'gen.sh --check did not end within %d s' % args.watchdog)
+    if code == 3:
         print('gen.sh --check was not run: ' + said)
         return
-    check(done.returncode == 0, 'gen.sh --check ended with exit code %d:\n%s' % (done.returncode, said))
+    check(code == 0, 'gen.sh --check ended with exit code %d:\n%s' % (code, said))
     print(said)
 
 
@@ -877,6 +901,8 @@ def main():
     parser.add_argument('--build', default='', help='names: the build directory of the tests')
     parser.add_argument('--config', action='append', default=[], help='section:key=value, for every run')
     parser.add_argument('--oracle', default='', help='oracle: aica_dsp_guest_oracle, the tool of tests/aica_dsp')
+    parser.add_argument('--no-posix-shell', action='store_true', help='files: the host has no POSIX shell (Windows): the mode fails '
+                                                                         'when it looks for one to run gen.sh with')
     parser.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='files, release, held, heard, oracle: the directory of the guest, with its manifest and its labels')
     parser.add_argument('--watchdog', type=int, default=300, help='seconds a run may take')
     parser.add_argument('--keep', action='store_true', help='keep the work directory of a test that passed')
@@ -890,7 +916,8 @@ def main():
         if args.ticks <= 0 or args.runs <= 0:
             parser.error('the mode %s needs --ticks, and --runs is at least 1' % runs_emulator[0])
 
-        args.emulator = os.path.abspath(args.emulator)
+        # nulldc3 is nulldc3.exe on Windows
+        args.emulator = emurun.executable(os.path.abspath(args.emulator))
         args.work = os.path.abspath(args.work)
         args.guest = os.path.abspath(args.guest)
         if args.oracle:
