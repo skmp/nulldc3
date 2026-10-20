@@ -10,7 +10,7 @@ void win_install_fatal_policy();
 // guest memory fault: terminating) on stderr, then the process ends with 128 + the signal's number
 [[noreturn]] void win_fatal(const char* sig, int signal_number, const void* address, const void* pc);
 
-// Whether an address is in the code region of the recompiler (win_vmem.cpp)
+// Whether an address is in the code region of the recompiler (win_jit_unwind.cpp)
 bool win_in_code_region(const void* address);
 
 // The test hooks of the Windows build: NULLDC_TEST_FATAL=<kind> raises that fault (called right after
