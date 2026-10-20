@@ -1,6 +1,7 @@
 /*
-	nulldc3-winrun: runs a program on the Windows host so that nothing it does can reach the desktop of the person
-	who uses the computer (the platform round's run envelope; tests/winrun/README.md).
+	nulldc3-winrun: runs a program on the Windows host so that no window or box of the program's, and no error box of
+	the system's, reaches the desktop of the person who uses the computer (the platform round's run envelope;
+	tests/winrun/README.md). Crash reports it does not stop: below.
 
 	    nulldc3-winrun [--timeout <s>] [--own-console] [--detach --log <file> --rc <file>] -- <program> [<arg>...]
 	    nulldc3-winrun --probe
@@ -43,8 +44,13 @@
 
 	What the private desktop does not hide: crash reporting (WerFault), a just-in-time debugger, the system's error
 	boxes and the firewall's prompt are other processes and show on the interactive desktop whatever desktop the
-	program is on. The error mode and the job's flag keep them away, with the emulator's own policy; nothing may
-	turn them off.
+	program is on. The error mode and the job's flag keep their boxes away, with the emulator's own policy; nothing
+	may turn them off. They do not keep crash reports away: a process of the job that an exception nobody handles
+	ends is still reported to Windows Error Reporting, silently (a report in the WER ReportQueue or ReportArchive
+	and, where the system keeps local dumps, a dump in %LOCALAPPDATA%\CrashDumps), and so is a __fastfail (where the
+	C runtime's abort() and its invalid-parameter end go by default), which passes every handler. Only the program
+	can keep those away, by ending itself on every fatal exception and abort (the emulator's policy,
+	docs/nulldc3/automated-runs.md).
 
 	Built by the tests project (tests/windows) as nulldc3-winrun.exe, and before there is one by bootstrap.cmd of
 	this directory with cl.exe alone. Windows 10 1809 or later (CreatePseudoConsole).

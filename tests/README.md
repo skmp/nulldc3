@@ -221,7 +221,9 @@ More about the suites:
 The project builds with MSVC (Visual Studio 2026, its CMake and Ninja, from its developer prompt) the way it builds on
 Linux, RelWithDebInfo by default, with the static C runtime. Every program it runs there runs inside
 `nulldc3-winrun` (`winrun/README.md`): the tests of `windows/` start the emulator through it, and ctest itself runs
-inside one, so that nothing a test does can reach the desktop:
+inside one, so that no window or box of a test reaches the desktop. It does not stop crash reports: a C++ suite that
+crashes there (`common/test_guard.cpp` traps no fault on Windows) is reported to Windows Error Reporting, silently,
+outside the build directory:
 
     cmake -S tests -B <build dir> -G Ninja -DNULLDC_EMULATOR=<build>\nulldc3.exe -DNULLDC_ELF_DIR=<dir> ^
           -DNULLDC_WREN7_DIR=<dir> -DNULLDC_CAIQUE_DIR=<dir> -DNULLDC_SHRIKE4_DIR=<dir> ^

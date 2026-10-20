@@ -1,8 +1,9 @@
 # nulldc3-winrun
 
 The run envelope of the Windows host: every program a test, a harness or an agent starts on Windows (the emulator,
-a C++ suite, ctest itself, a harness's Python or node) runs inside it, so that nothing the program does can reach the
-desktop of the person who uses the computer. `winrun.cpp` has the whole description at its top.
+a C++ suite, ctest itself, a harness's Python or node) runs inside it, so that no window or box of the program's, and
+no error box of the system's, reaches the desktop of the person who uses the computer (crash reports it does not
+stop: below). `winrun.cpp` has the whole description at its top.
 
     nulldc3-winrun [--timeout <s>] [--own-console] [--detach --log <file> --rc <file>] -- <program> [<arg>...]
     nulldc3-winrun --probe
@@ -40,8 +41,17 @@ desktop of the person who uses the computer. `winrun.cpp` has the whole descript
 
 **What the private desktop does not hide**: crash reporting, a just-in-time debugger, the system's error boxes and
 the firewall's prompt are other processes and show on the interactive desktop whatever desktop the program is on.
-The error mode and the job's flag keep them away, with the emulator's own policy (`docs/nulldc3/automated-runs.md`);
-no test or run may turn them off.
+The error mode and the job's flag keep their boxes away, with the emulator's own policy
+(`docs/nulldc3/automated-runs.md`); no test or run may turn them off.
+
+**What nulldc3-winrun does not stop**: crash reports. A process that an exception nobody handles ends is still
+reported to Windows Error Reporting, silently: a report in the WER `ReportQueue` or `ReportArchive` and, where the
+system keeps local dumps, a dump in `%LOCALAPPDATA%\CrashDumps`, outside any work folder. A `__fastfail` (where the C
+runtime's `abort()` and its invalid-parameter end go by default) passes every handler and is reported the same way.
+The error mode and the job only keep the box away. What keeps the report away is the program's own handling: the
+emulator ends itself on every fatal exception, abort and invalid parameter with a line and 128 + N, and reports
+nothing (its policy; `windows.fatal.*` check that nothing new appears in those places); a C++ suite of the tests
+project that crashes is reported.
 
 **Building it.** The tests project builds it on Windows as `nulldc3-winrun.exe` (`tests/windows`). Before there is
 one, `bootstrap.cmd <output directory>` builds it with `cl.exe` alone (from a developer prompt of Visual Studio, or
