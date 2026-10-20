@@ -21,9 +21,11 @@
 # and runs version.cmake on each as the build does (cmake -P, "git" from the PATH), with the PATH without git, and
 # with GIT_DIR and GIT_WORK_TREE pointing at another repository (as in a git hook). Each case checks the version,
 # the full hash and the dirty flag, the derived forms, the three files (the header's #defines, and no #include or
-# #pragma in it), and that <h> is 10 hexadecimal digits and the start of `git rev-parse HEAD`. The describe outputs
-# a repository cannot easily make (N = 5, 70000 and the cap, outputs of other forms) go through the script's own
-# functions. A second run that has nothing new rewrites none of the files.
+# #pragma in it), and that <h> is 10 hexadecimal digits and the start of `git rev-parse HEAD`; a case about an
+# untracked or an ignored file first checks that `git status --porcelain` shows it (commits stage f alone, so such a
+# file never goes into a commit by the way). The describe outputs a repository cannot easily make (N = 5, 70000 and
+# the cap, outputs of other forms) go through the script's own functions. A second run that has nothing new
+# rewrites none of the files.
 
 if(NOT WORK OR NOT GIT OR NOT SCRIPT)
   message(FATAL_ERROR "version.derive: needs -DWORK=<scratch directory> -DGIT=<git> -DSCRIPT=<version.cmake>")
@@ -77,10 +79,11 @@ function(repo name base)
   git("${WORK}/${name}" add -A)
 endfunction()
 
-# commit(<dir> <text>): <text> into the tracked file f, and a commit of everything
+# commit(<dir> <text>): <text> into the tracked file f, and a commit of f alone (repo() staged the base and
+# .gitignore): a file a case leaves untracked stays untracked through the commits after it
 function(commit dir text)
   file(WRITE "${dir}/f" "${text}\n")
-  git("${dir}" add -A)
+  git("${dir}" add f)
   git("${dir}" commit -q -m "${text}")
 endfunction()
 
@@ -108,6 +111,23 @@ macro(fail what text)
   message("version.derive: FAIL ${what}: ${text}")
   math(EXPR failed "${failed} + 1")
 endmacro()
+
+# shows(<case> <dir> <line> [IGNORED]): `git status --porcelain` of <dir> with its untracked files (and with
+# IGNORED its ignored ones) has the line <line>, so that a case about such a file has the file it is about
+function(shows what dir line)
+  cmake_parse_arguments(ARG "IGNORED" "" "" ${ARGN})
+  set(args status --porcelain --untracked-files=normal)
+  if(ARG_IGNORED)
+    list(APPEND args --ignored)
+  endif()
+  git("${dir}" ${args})
+  string(REPLACE "\n" ";" lines "${git_out}")
+  if(NOT line IN_LIST lines)
+    string(REPLACE ";" " " args "${args}")
+    fail("${what}" "git ${args} of ${dir} has no line \"${line}\": \"${git_out}\"")
+    set(failed ${failed} PARENT_SCOPE)
+  endif()
+endfunction()
 
 # forms(<case> <version> <numbers> <dotted> <short> <expected numbers X,Y,Z,N>): the derived forms are those of
 # X,Y,Z,N
@@ -250,6 +270,8 @@ expect(on_tag "${WORK}/tagged" "3.0.0-pre" 3,0,0,0)
 
 file(WRITE "${WORK}/tagged/untracked.txt" "untracked\n")
 file(WRITE "${WORK}/tagged/ignored.txt" "ignored\n")
+shows(on_tag.untracked_and_ignored "${WORK}/tagged" "?? untracked.txt")
+shows(on_tag.untracked_and_ignored "${WORK}/tagged" "!! ignored.txt" IGNORED)
 expect(on_tag.untracked_and_ignored "${WORK}/tagged" "3.0.0-pre" 3,0,0,0)
 
 file(WRITE "${WORK}/tagged/f" "changed\n")
@@ -267,6 +289,9 @@ expect(after_two.dirty "${WORK}/tagged" "3.0.0-pre+2.g@H@.dirty" 3,0,0,2 DIRTY)
 file(REMOVE "${WORK}/tagged/f")
 expect(after_two.deleted "${WORK}/tagged" "3.0.0-pre+2.g@H@.dirty" 3,0,0,2 DIRTY)
 git("${WORK}/tagged" checkout -q -- f)
+# untracked.txt and ignored.txt are still there, and still neither tracked nor in a commit
+shows(after_two.untracked_and_ignored "${WORK}/tagged" "?? untracked.txt")
+shows(after_two.untracked_and_ignored "${WORK}/tagged" "!! ignored.txt" IGNORED)
 expect(after_two.untracked_and_ignored "${WORK}/tagged" "3.0.0-pre+2.g@H@" 3,0,0,2)
 
 # the files are written when their text changes, and only then
@@ -359,8 +384,13 @@ git("${WORK}/super" submodule add -q "${tagged_url}" sub)
 git("${WORK}/super" commit -q -m "the submodule")
 expect(submodule "${WORK}/super/sub" "3.0.0-pre+2.g@H@" 3,0,0,2)
 expect(superproject "${WORK}/super" "3.0.0-pre+g@H@" 3,0,0,0)
-file(WRITE "${WORK}/super/sub/untracked.txt" "untracked\n")
+# a file of the submodule's own that is untracked there: the superproject's status with untracked files says that
+# sub has changed (" M sub"), the one without them says nothing
+file(WRITE "${WORK}/super/sub/untracked-in-sub.txt" "untracked\n")
+shows(superproject.sub_untracked "${WORK}/super/sub" "?? untracked-in-sub.txt")
+shows(superproject.sub_untracked "${WORK}/super" " M sub")
 expect(superproject.sub_untracked "${WORK}/super" "3.0.0-pre+g@H@" 3,0,0,0)
+file(REMOVE "${WORK}/super/sub/untracked-in-sub.txt")
 git("${WORK}/super/sub" checkout -q "${tagged_1}")
 expect(superproject.sub_moved "${WORK}/super" "3.0.0-pre+g@H@.dirty" 3,0,0,0 DIRTY)
 expect(submodule.moved "${WORK}/super/sub" "3.0.0-pre" 3,0,0,0)
@@ -390,6 +420,7 @@ file(WRITE "${WORK}/copy/f" "a copy\n")
 expect(copy_without_git "${WORK}/copy" "3.0.0-pre+nogit" 3,0,0,0 NOGIT)
 repo(outer 9.9.9)
 file(WRITE "${WORK}/outer/inner/nulldc3/version-base.txt" "3.0.0-pre\n")
+git("${WORK}/outer" add inner)
 commit("${WORK}/outer" "a tree inside")
 git("${WORK}/outer" tag v9.9.9)
 expect(copy_inside_another_repository "${WORK}/outer/inner" "3.0.0-pre+nogit" 3,0,0,0 NOGIT)
