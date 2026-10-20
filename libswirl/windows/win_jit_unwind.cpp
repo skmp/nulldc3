@@ -20,7 +20,10 @@
 	  range;
 	- everything else, the blocks and the memory trampolines: the 40 bytes of a block's frame (STACK_ALIGN of
 	  rec_x64.cpp) below the return address.
-	The fatal handler (win_fatal.cpp) also asks whether a fault is in this region.
+	The system takes a jump at a return address to a place outside the range of the code's function for an epilogue
+	that ends in a tail call, and unwinds it as a bare return: no return address in the main loop or in RunBlock may
+	be such a jump (rec_x64.cpp, build_runblock). The fatal handler (win_fatal.cpp) also asks whether a fault is in
+	this region. The test windows.abi.xmm walks stacks through this data in a machine of its own.
 */
 static u8* code_region = NULL;
 static size_t code_region_size = 0;

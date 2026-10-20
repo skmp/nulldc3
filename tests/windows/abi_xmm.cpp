@@ -8,15 +8,29 @@
 	least the backend needs (tests/common/sh4_env.cpp, 64 KiB of RAM behind memory handlers), modelled on
 	tests/sh4_dynarec/dynarec_runner.cpp. The guest code adds twelve FPU registers to each other in a loop, so that
 	its blocks use every one of xmm6-xmm15:
-	    RunBlock   one block of the twelve additions, compiled as dynarec_runner.cpp compiles one, run once
+	    RunBlock   one block of the twelve additions, compiled as dynarec_runner.cpp compiles one, run once; then
+	               once more with one cycle left in the slice, so that RunBlock ends the slice and calls
+	               UpdateSystem_INTC
 	    Mainloop   the loop through the block manager until the slice ends: UpdateSystem_INTC of this file stops
 	               the CPU there, and the main loop returns
 	Each passes when the ten registers came back as the canaries and the guest's registers have the sums.
+
+	The stack walks: the code region of this machine is the emulator's on Windows, a region of its own near the
+	program with the emulator's unwind data (libswirl/windows/win_jit_unwind.cpp), so this file has its own
+	vmem_platform_prepare_jit_block and the other stubs of tests/common/sh4_stubs_rec.cpp (which is then not linked).
+	The thunk also loads canaries into the eight general registers a callee keeps, and notes its rsp at the call.
+	UpdateSystem_INTC, called by RunBlock and by Mainloop at the end of the slice, walks the stack from where it is
+	with the system's unwinder (RtlLookupFunctionEntry, RtlVirtualUnwind): the walk has to come to the return
+	address in the thunk, with the thunk's rsp, xmm6-xmm15 and general registers, as a debugger, a crash dump or
+	an exception that nobody takes would walk it. A return address in RunBlock that is a jump out of its range is
+	unwound by the system as an epilogue, and that walk leaves the stack (rec_x64.cpp, build_runblock).
 */
 #ifndef XBYAK_NO_OP_NAMES
 #define XBYAK_NO_OP_NAMES
 #endif
 #include "deps/xbyak/xbyak.h"
+
+#include <windows.h>
 
 #include "sh4_env.h"
 #include "test_guard.h"
@@ -28,14 +42,47 @@
 #include "hw/sh4/dyna/decoder.h"
 #include "hw/sh4/dyna/ngen.h"
 #include "hw/mem/_vmem.h"
+#include "hw/sh4/sh4_mem.h"
+#include "windows/win_jit_unwind.h"
 
 #include <cstdio>
 #include <cstring>
 
-//hw/sh4/dyna/driver.cpp, hw/sh4/dyna/shil.cpp
+//hw/sh4/dyna/driver.cpp, hw/sh4/dyna/shil.cpp, jit/backend/x64/rec_x64.cpp
 extern u32 LastAddr;
 extern u32 LastAddr_min;
 void AnalyseBlock(RuntimeBlockInfo* blk);
+extern "C" int cycle_counter;
+
+//What tests/common/sh4_stubs_rec.cpp has, but the code region: a region of its own near the program, as
+//libswirl/windows/win_vmem.cpp makes the emulator's, with the page behind it for the unwind data, which the
+//emulator's win_jit_unwind.cpp writes and hands to the system. Inside the program's image (the stubs' region is
+//SH4_TCB) the system would never ask for it: it takes the unwind data of a pc in an image from the image.
+u8* GetMemPtr(u32 Addr, u32 size) { return 0; }
+bool IsOnRam(u32 addr) { return false; }
+string get_writable_data_path(const string& filename) { return filename; }
+
+static const size_t unwind_page = 4096;
+
+bool vmem_platform_prepare_jit_block(void* code_area, unsigned size, void** code_area_rwx)
+{
+	//within 2 GB of the program, as the code addresses the program's data relative to rip
+	uintptr_t base = (uintptr_t)GetModuleHandleW(nullptr) & ~(uintptr_t)0xFFFFF;
+	for (uintptr_t step = 8 * 1024 * 1024; step < 1800u * 1024 * 1024; step += 8 * 1024 * 1024)
+	{
+		for (uintptr_t at : { base + step, base - step })
+		{
+			void* region = VirtualAlloc((void*)at, size + unwind_page, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+			if (region)
+			{
+				win_jit_code_region_prepared(region, size);
+				*code_area_rwx = region;
+				return true;
+			}
+		}
+	}
+	return false;
+}
 
 //The guest: 64 KiB of RAM at 0x0C000000 and its mirrors, the code at 0x8C010000
 static u8 ram[64 * 1024];
@@ -67,6 +114,87 @@ static void put_code()
 	memcpy(&ram[at + 2], &nop, 2);
 }
 
+//The stack walk of UpdateSystem_INTC: what it found
+struct Walk
+{
+	int frames;          //frames unwound
+	bool reached;        //it came to the return address in the thunk
+	bool faulted;        //the walk faulted (and stopped)
+	bool rsp_ok, xmm_ok, gpr_ok;
+	char trail[512];     //the frames it went through
+};
+static Walk walk;
+static bool walk_armed;
+static DWORD64 thunk_return;   //the return address of the thunk's call of the code under test
+static DWORD64 thunk_rsp;      //the thunk's rsp at that call (the thunk writes it)
+static u8 canaries[160 + 64];  //xmm6-xmm15, then rbx rbp rdi rsi r12 r13 r14 r15
+
+static void trail_add(const char* where, DWORD64 offset)
+{
+	size_t n = strlen(walk.trail);
+	if (n < sizeof(walk.trail) - 40)
+		sprintf_s(walk.trail + n, sizeof(walk.trail) - n, "%s+%llx ", where, (unsigned long long)offset);
+}
+
+//From here to the thunk with the system's unwinder: a frame of this program or of the code region at a time
+__declspec(noinline) static void walk_to_thunk()
+{
+	CONTEXT ctx;
+	RtlCaptureContext(&ctx);
+	ULONG_PTR low = 0, high = 0;
+	GetCurrentThreadStackLimits(&low, &high);
+	const DWORD64 image = (DWORD64)GetModuleHandleW(nullptr);
+	memset(&walk, 0, sizeof(walk));
+	__try
+	{
+		for (int depth = 0; depth < 12; depth++)
+		{
+			if (ctx.Rip == thunk_return)
+			{
+				walk.reached = true;
+				break;
+			}
+			if (ctx.Rsp < low || ctx.Rsp + 512 > high)
+			{
+				trail_add("rsp-off-the-stack", ctx.Rsp);
+				break;
+			}
+			DWORD64 base = 0;
+			PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
+			bool in_region = ctx.Rip >= (DWORD64)CodeCache && ctx.Rip < (DWORD64)CodeCache + CODE_SIZE;
+			bool in_image = f && base == image;
+			if (!in_region && !in_image)
+			{
+				trail_add("elsewhere", ctx.Rip);	//no frame of this program
+				break;
+			}
+			trail_add(in_region ? "region" : "program", ctx.Rip - (in_region ? (DWORD64)CodeCache : image));
+			if (f)
+			{
+				void* handler_data = nullptr;
+				DWORD64 establisher = 0;
+				RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, f, &ctx, &handler_data, &establisher, nullptr);
+			}
+			else
+			{
+				ctx.Rip = *(DWORD64*)ctx.Rsp;	//a leaf
+				ctx.Rsp += 8;
+			}
+			walk.frames++;
+		}
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		walk.faulted = true;
+	}
+	if (!walk.reached)
+		return;
+	walk.rsp_ok = ctx.Rsp == thunk_rsp;
+	walk.xmm_ok = memcmp(&ctx.Xmm6, canaries, 160) == 0;
+	DWORD64 gpr[8] = { ctx.Rbx, ctx.Rbp, ctx.Rdi, ctx.Rsi, ctx.R12, ctx.R13, ctx.R14, ctx.R15 };
+	walk.gpr_ok = memcmp(gpr, canaries + 160, 64) == 0;
+}
+
 //The main loop ends at the end of its first slice: this file's UpdateSystem, in place of tests/common's
 static u32 slice_ends;
 extern "C" int UpdateSystem()
@@ -77,10 +205,15 @@ extern "C" int UpdateSystem()
 }
 extern "C" int UpdateSystem_INTC()
 {
+	if (walk_armed)
+	{
+		walk_armed = false;
+		walk_to_thunk();
+	}
 	return UpdateSystem();
 }
 
-//void thunk(void (*code)(void*), void* arg, const u8 canaries[160], u8 out[160])
+//void thunk(void (*code)(void*), void* arg, const u8 canaries[160 + 64], u8 out[160])
 typedef void ThunkFP(void* code, void* arg, const u8* canaries, u8* out);
 
 struct CanaryThunk : Xbyak::CodeGenerator
@@ -105,9 +238,15 @@ struct CanaryThunk : Xbyak::CodeGenerator
 
 		for (int i = 0; i < 10; i++)
 			movups(Xbyak::Xmm(6 + i), xword[r8 + i * 16]);
+		const Xbyak::Reg64 kept[8] = { rbx, rbp, rdi, rsi, r12, r13, r14, r15 };
+		for (int i = 0; i < 8; i++)
+			mov(kept[i], qword[r8 + 160 + i * 8]);
+		mov(rax, (size_t)&thunk_rsp);
+		mov(qword[rax], rsp);
 		mov(rax, rcx);
 		mov(rcx, rdx);
 		call(rax);
+		thunk_return = (DWORD64)CC_RW2RX(getCurr());
 
 		mov(r9, qword[rsp + 32]);
 		for (int i = 0; i < 10; i++)
@@ -182,11 +321,22 @@ static bool canaries_back(const u8* canaries, const u8* out, const char* what)
 
 static void make_canaries(u8* canaries, u32 seed)
 {
-	for (int i = 0; i < 40; i++)
+	for (int i = 0; i < 56; i++)
 	{
 		u32 v = 0xC0DE0000u ^ (seed << 8) ^ (u32)(i * 0x9E3779B9u);
 		memcpy(canaries + i * 4, &v, 4);
 	}
+}
+
+static void check_walk(const char* what)
+{
+	printf("%s: the walk from UpdateSystem_INTC: %d frame(s): %s%s\n", what, walk.frames, walk.trail,
+	       walk.faulted ? "(it faulted)" : "");
+	char text[160];
+	sprintf_s(text, "%s: a stack walk from UpdateSystem_INTC comes to the return address in the thunk", what);
+	check(walk.reached, text);
+	sprintf_s(text, "%s: ... with the thunk's rsp, xmm6-xmm15 and general registers", what);
+	check(walk.reached && walk.rsp_ok && walk.xmm_ok && walk.gpr_ok, text);
 }
 
 static void test_runblock()
@@ -213,9 +363,11 @@ static void test_runblock()
 	rdv_ngen->Compile(block, NoCheck, false, false, true);
 	verify(block->code != 0);
 
-	u8 canaries[160], out[160];
+	u8 out[160];
 	make_canaries(canaries, 1);
 	sh4_int_bCpuRun = true;
+	cycle_counter = SH4_TIMESLICE;
+	slice_ends = 0;
 	thunk((void*)rdv_ngen->RunBlock, (void*)CC_RW2RX(block->code), canaries, out);
 
 	float want[fp_regs];
@@ -229,6 +381,18 @@ static void test_runblock()
 	check(block->guest_opcodes == (u32)fp_regs + 2 && Sh4cntx.pc == code_pc, "RunBlock ran the block of the twelve additions and the branch");
 	check(sums, "RunBlock: the guest's FPU registers have the sums of one pass");
 	check(canaries_back(canaries, out, "RunBlock"), "RunBlock gives xmm6-xmm15 back as they were");
+	check(slice_ends == 0, "RunBlock: the slice did not run out");
+
+	//once more with one cycle left: the block uses the slice up, and RunBlock calls UpdateSystem_INTC
+	make_canaries(canaries, 3);
+	cycle_counter = 1;
+	slice_ends = 0;
+	walk_armed = true;
+	sh4_int_bCpuRun = true;
+	thunk((void*)rdv_ngen->RunBlock, (void*)CC_RW2RX(block->code), canaries, out);
+	check(slice_ends == 1, "RunBlock with the slice used up: it ended the slice (UpdateSystem_INTC)");
+	check(canaries_back(canaries, out, "RunBlock at the end of the slice"), "RunBlock at the end of the slice gives xmm6-xmm15 back as they were");
+	check_walk("RunBlock");
 
 	delete block;
 }
@@ -239,9 +403,11 @@ static void test_mainloop()
 	put_code();
 	recompiler->ClearCache();
 
-	u8 canaries[160], out[160];
+	u8 out[160];
 	make_canaries(canaries, 2);
+	cycle_counter = SH4_TIMESLICE;
 	slice_ends = 0;
+	walk_armed = true;
 	sh4_int_bCpuRun = true;
 	thunk((void*)rdv_ngen->Mainloop, sh4_dyna_rcb, canaries, out);
 
@@ -252,6 +418,7 @@ static void test_mainloop()
 		changed = changed || fr[n] != (float)(n + 1);
 	check(changed, "Mainloop: the guest's FPU registers have changed");
 	check(canaries_back(canaries, out, "Mainloop"), "Mainloop gives xmm6-xmm15 back as they were");
+	check_walk("Mainloop");
 }
 
 int main(int argc, char** argv)

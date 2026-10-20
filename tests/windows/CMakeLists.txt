@@ -19,7 +19,8 @@
 #	windows.helpbox             the help/error box: a refused command line to a pipe and to NUL (exit 2, no window);
 #	                            with a console of its own and config:Headless=yes (exit 2, no window, within 10 s);
 #	                            with a console of its own and not headless (the box on the private desktop: 125)
-#	windows.abi.xmm             Mainloop and RunBlock give xmm6-xmm15 back (abi_xmm.cpp)
+#	windows.abi.xmm             Mainloop and RunBlock give xmm6-xmm15 back, and a stack walk from UpdateSystem_INTC
+#	                            through each comes to its caller with the emulator's unwind data (abi_xmm.cpp)
 #	windows.binary.stdout       no \r in the emulator's stdout or stderr
 #	windows.dsound.failed       DirectSound that fails (NULLDC_TEST_DSOUND=fail) with the speed limit on: no sound,
 #	                            and the guest headless still reaches its 90 vblanks and its exit line
@@ -87,7 +88,10 @@ if((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT}))
     hw/sh4/dyna/blockmanager.cpp
     jit/backend/x64/rec_x64.cpp
     deps/crypto/sha1.cpp
+    windows/win_jit_unwind.cpp
   )
+  # abi_xmm.cpp has the stubs of tests/common/sh4_stubs_rec.cpp itself, with a code region of its own that has the
+  # emulator's unwind data (windows/win_jit_unwind.cpp), so that file of nulldc_test_common is not linked
   add_executable(windows_abi_xmm abi_xmm.cpp)
   target_link_libraries(windows_abi_xmm PRIVATE nulldc_windows_dynarec nulldc_test_common)
   add_test(NAME windows.abi.xmm COMMAND "${nulldc_winrun}" --timeout 60 -- $<TARGET_FILE:windows_abi_xmm>)

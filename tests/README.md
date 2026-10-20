@@ -160,7 +160,7 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `windows.headless.nowindow` | Windows only: the guest of the tree headless with `NULLDC_TEST_UI_REPORT=1`, through `nulldc3-winrun`: exit 0, the exit line, no window and no COM apartment window, the no-dialog policy read back (`wer`, `invparam`, `purecall`, `sigabrt`, `abort`) | the emulator |
 | `windows.fatal.segv` `.ill` `.trap` `.abort` `.div` `.stack` `.invparam` `.purecall` | Windows only: `NULLDC_TEST_FATAL=<kind>`: the `fault_handler` line and 128 + the signal (for `trap`, `die()`'s line, no `fault_handler` line, 133), no window, nothing new in the crash-report places | the emulator |
 | `windows.helpbox` | Windows only: the help/error box is shown only where the output cannot be read and the run is not headless: a pipe, `NUL`, a console of its own headless (exit 2, no window), a console of its own not headless (the box, on the private desktop) | the emulator |
-| `windows.abi.xmm` | Windows only: the x64 backend's `Mainloop` and `RunBlock` give `xmm6`-`xmm15` back (an Xbyak canary thunk, a machine of its own) | none |
+| `windows.abi.xmm` | Windows only: the x64 backend's `Mainloop` and `RunBlock` give `xmm6`-`xmm15` back (an Xbyak canary thunk, a machine of its own), and a stack walk from `UpdateSystem_INTC` through each comes to the thunk with the emulator's unwind data | none |
 | `windows.binary.stdout` `windows.exitcode` | Windows only: no `\r` in the emulator's stdout or stderr; headless with nothing to run exits with 1 | the emulator |
 | `windows.dsound.failed` | Windows only: DirectSound that fails (`NULLDC_TEST_DSOUND=fail`) is no sound, and the guest headless with the speed limit on still reaches its exit | the emulator |
 

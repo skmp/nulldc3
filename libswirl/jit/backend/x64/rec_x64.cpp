@@ -190,6 +190,24 @@ public:
 #endif
 	}
 
+	// The other end of mainloop_prologue: the frame dropped, the registers back, the return
+	void mainloop_epilogue() {
+#ifdef _WIN32
+		for (int i = 0; i < 10; i++)
+			movaps(Xbyak::Xmm(6 + i), xword[rsp + STACK_ALIGN - 8 + i * 16]);
+#endif
+		add(rsp, MAINLOOP_FRAME); // Restore to previous state
+		pop(r15);
+		pop(r14);
+		pop(r13);
+		pop(r12);
+		pop(rsi);
+		pop(rdi);
+		pop(rbp);
+		pop(rbx);
+		ret();
+	}
+
 	//TODO: FIXME THIS DOES NOT CONFORM TO NGEN SPEC AROUND INTERRUPT HANDLING
 	void build_mainloop() {
 		Xbyak::Label run_loop, slice_loop, slice_end, end_loop;
@@ -236,20 +254,7 @@ public:
 
 		L(end_loop);  // -- end_loop
 		mainloop_exit = getCurr();
-#ifdef _WIN32
-		for (int i = 0; i < 10; i++)
-			movaps(Xbyak::Xmm(6 + i), xword[rsp + STACK_ALIGN - 8 + i * 16]);
-#endif
-		add(rsp, MAINLOOP_FRAME); // Restore to previous state
-		pop(r15);
-		pop(r14);
-		pop(r13);
-		pop(r12);
-		pop(rsi);
-		pop(rdi);
-		pop(rbp);
-		pop(rbx);
-		ret();
+		mainloop_epilogue();
 
 		// Align end for perf
 		while (getSize() & 15)
@@ -268,7 +273,12 @@ public:
 
 	// One pass of the main loop's slice_loop for a block that is not in the block cache: runs it, then does the
 	// end-of-slice work if the slice ran out. It has the frame of the main loop, so that the block can leave
-	// through mainloop_exit as any other.
+	// through mainloop_exit as any other. On Windows it ends in an epilogue of its own instead of the jump to
+	// mainloop_exit: the return address of its call of UpdateSystem_INTC is the instruction behind the call, and
+	// the system's unwinder takes a jump there to a place outside RunBlock's range of the unwind data for an
+	// epilogue that ends in a tail call, which it unwinds as a bare return (from the home space): a stack walk
+	// from UpdateSystem_INTC would leave the stack there (libswirl/windows/win_jit_unwind.cpp; the test
+	// windows.abi.xmm walks it).
 	void build_runblock() {
 		Xbyak::Label slice_left;
 		u8 prolog[19];
@@ -284,7 +294,11 @@ public:
 		call(UpdateSystem_INTC);
 
 		L(slice_left);
+#ifdef _WIN32
+		mainloop_epilogue();
+#else
 		jmp(mainloop_exit);
+#endif
 
 		// Align end for perf
 		while (getSize() & 15)
