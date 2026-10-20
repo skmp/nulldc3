@@ -1,5 +1,11 @@
 #include "test_guard.h"
 
+// Every suite links this: an MSVC build of the tests project without /EHsc stops here (nulldc3/cmake/config.cmake),
+// also where a suite keeps CMake's own flags
+#if defined(_MSC_VER) && !defined(_CPPUNWIND)
+#error "MSVC build without /EHsc: JSON_THROW would be std::abort"
+#endif
+
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
