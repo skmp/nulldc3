@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <title>nullDC</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2645"/>
+      <stop offset="1" stop-color="#0f111a"/>
+    </linearGradient>
+    <radialGradient id="orange" cx="0.36" cy="0.3" r="0.85">
+      <stop offset="0" stop-color="#ffbe6b"/>
+      <stop offset="0.55" stop-color="#ff7d1f"/>
+      <stop offset="1" stop-color="#d95600"/>
+    </radialGradient>
+    <radialGradient id="blue" cx="0.36" cy="0.3" r="0.85">
+      <stop offset="0" stop-color="#9be3ff"/>
+      <stop offset="0.55" stop-color="#4fc3f7"/>
+      <stop offset="1" stop-color="#1f86c9"/>
+    </radialGradient>
+    <linearGradient id="bodyBlue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7fd6fb"/>
+      <stop offset="1" stop-color="#2a98d6"/>
+    </linearGradient>
+    <linearGradient id="bodyOrange" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffa64a"/>
+      <stop offset="1" stop-color="#d95600"/>
+    </linearGradient>
+  </defs>
+  <rect width="16" height="16" rx="3.5" fill="url(#tile)"/>
+  <path d="M 2.6 13 C 1.6 13 1.5 11.8 1.9 10.9 C 2.3 9.8 3.3 9.2 4.4 9.2 C 5.5 9.2 6.2 9.8 6.7 10.5 L 12.2 10.6 C 13.4 10.8 14.2 11.8 14.4 13 Z" fill="url(#bodyBlue)"/>
+  <g stroke="#5fcaf8" stroke-width="1.25" stroke-linecap="round" fill="none">
+    <path d="M 3.4 9.6 L 2.3 6"/>
+    <path d="M 5 9.4 L 5.4 5.8"/>
+  </g>
+  <circle cx="9.4" cy="7.4" r="4.1" fill="url(#orange)"/>
+  <circle cx="9.4" cy="7.4" r="1" fill="#0f111a"/>
+</svg>

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>nullDC</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2645"/>
+      <stop offset="1" stop-color="#0f111a"/>
+    </linearGradient>
+    <radialGradient id="orange" cx="0.36" cy="0.3" r="0.85">
+      <stop offset="0" stop-color="#ffbe6b"/>
+      <stop offset="0.55" stop-color="#ff7d1f"/>
+      <stop offset="1" stop-color="#d95600"/>
+    </radialGradient>
+    <radialGradient id="blue" cx="0.36" cy="0.3" r="0.85">
+      <stop offset="0" stop-color="#9be3ff"/>
+      <stop offset="0.55" stop-color="#4fc3f7"/>
+      <stop offset="1" stop-color="#1f86c9"/>
+    </radialGradient>
+    <linearGradient id="bodyBlue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7fd6fb"/>
+      <stop offset="1" stop-color="#2a98d6"/>
+    </linearGradient>
+    <linearGradient id="bodyOrange" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffa64a"/>
+      <stop offset="1" stop-color="#d95600"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="248" height="248" rx="56" fill="url(#tile)"/>
+  <path d="M 40 204 C 26 204 24 186 30 172 C 36 156 52 146 70 146 C 88 146 102 150 114 160 L 196 166 C 214 172 228 186 230 204 Z" fill="url(#bodyBlue)"/>
+  <g stroke="#5fcaf8" stroke-width="9" stroke-linecap="round" fill="none">
+    <path d="M 58 152 Q 46 124 38 100"/>
+    <path d="M 74 150 Q 74 120 80 96"/>
+  </g>
+  <circle cx="38" cy="98" r="9" fill="#5fcaf8"/>
+  <circle cx="80" cy="94" r="9" fill="#5fcaf8"/>
+  <circle cx="150" cy="118" r="62" fill="url(#orange)"/>
+  <circle cx="150" cy="118" r="45" fill="none" stroke="#fff" stroke-opacity=".22" stroke-width="3.5"/>
+  <circle cx="150" cy="118" r="26" fill="#ffe2bd" fill-opacity=".4"/>
+  <circle cx="150" cy="118" r="14" fill="#0f111a"/>
+  <path d="M 101.5 90 A 56 56 0 0 1 126.3 67.2" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="7" stroke-linecap="round"/>
+  <rect x="5" y="5" width="246" height="246" rx="55" fill="none" stroke="#4fc3f7" stroke-opacity=".3" stroke-width="2"/>
+</svg>

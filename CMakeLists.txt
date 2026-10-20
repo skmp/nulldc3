@@ -225,6 +225,7 @@ elseif (${HOST_OS} EQUAL ${OS_LINUX})
 
     list(APPEND osd_SRCS
       ${d_core}/linux-dist/main.cpp
+      ${d_core}/linux-dist/x11_icon.cpp
       ${d_core}/linux/common.cpp
       ${d_core}/linux/context.cpp
       ${d_core}/linux/posix_vmem.cpp
