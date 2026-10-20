@@ -61,3 +61,17 @@ else()
   nulldc_add_skipped_test(harness.emurun "no python3 to run tests/common/emurun_test.py with")
 endif()
 
+# Windows: the policy of test_guard.cpp for a program that dies, which every suite that links it has (no box, no
+# crash report, 128 + the signal's number): common_selftest made to fault outside of a guarded call, through
+# nulldc3-winrun, and the crash-report places of the profile listed by name before and after (guard_windows.cmake)
+if(${HOST_OS} EQUAL ${OS_WINDOWS})
+  if(NULLDC_WINRUN)
+    set(nulldc_guard_winrun "${NULLDC_WINRUN}")
+  else()
+    set(nulldc_guard_winrun "$<TARGET_FILE:nulldc3_winrun>")
+  endif()
+  add_test(NAME common.guard.windows
+           COMMAND "${CMAKE_COMMAND}" "-DWINRUN=${nulldc_guard_winrun}" "-DPROGRAM=$<TARGET_FILE:common_selftest>"
+                   "-DWORK=${CMAKE_BINARY_DIR}/common/work/common.guard.windows" -P "${CMAKE_CURRENT_SOURCE_DIR}/guard_windows.cmake")
+  set_tests_properties(common.guard.windows PROPERTIES TIMEOUT 600)
+endif()
