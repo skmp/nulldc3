@@ -155,13 +155,13 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `aica.dsp.wasm` | the WebAssembly build of the AICA DSP core in node, through its loader and its C interface, against the core compiled for the host, on the same programs | emcc and node, skipped without them |
 | `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | the script that builds it, run by sh on a PATH without emcc: it builds with the emsdk in `EMSDK`, and says that it has no emcc when there is no emsdk | an emcc that is in an emsdk, and node; skipped otherwise |
 | `aica.dsp.wasm.devtools` | the DSP module the UI commits (`src/wasm/aica-dsp-core/` of `NULLDC_DEVTOOLS_DIR`) is this tree's core: its `PROVENANCE.json` has the fixed keys and names the two files beside it, byte for byte; the trace that `aica.dsp.wasm` replays is replayed on the UI's loader and wasm with every answer the native core's; and where the emcc `build.sh` uses (the `PATH`, else the emsdk of `EMSDK`, else `~/emsdk`) has the version `PROVENANCE.json` names, the two files are the bytes of a fresh `build.sh` of the tree | node and the UI checkout (`NULLDC_DEVTOOLS_DIR`); no emcc |
-
 | `windows.winrun.probe` | Windows only (`windows/README.md` has these): the probe of `nulldc3-winrun` (`winrun/README.md`) names its private desktop `winrun-<n>`, its visible window is in the list, the verdict is 125 | none |
 | `windows.headless.nowindow` | Windows only: the guest of the tree headless with `NULLDC_TEST_UI_REPORT=1`, through `nulldc3-winrun`: exit 0, the exit line, no window and no COM apartment window, the no-dialog policy read back (`wer`, `invparam`, `purecall`, `sigabrt`, `abort`) | the emulator |
 | `windows.fatal.segv` `.ill` `.trap` `.abort` `.div` `.stack` `.invparam` `.purecall` | Windows only: `NULLDC_TEST_FATAL=<kind>`: the `fault_handler` line and 128 + the signal (for `trap`, `die()`'s line, no `fault_handler` line, 133), no window, nothing new in the crash-report places | the emulator |
 | `windows.helpbox` | Windows only: the help/error box is shown only where the output cannot be read and the run is not headless: a pipe, `NUL`, a console of its own headless (exit 2, no window), a console of its own not headless (the box, on the private desktop) | the emulator |
 | `windows.abi.xmm` | Windows only: the x64 backend's `Mainloop` and `RunBlock` give `xmm6`-`xmm15` back (an Xbyak canary thunk, a machine of its own) | none |
 | `windows.binary.stdout` `windows.exitcode` | Windows only: no `\r` in the emulator's stdout; headless with nothing to run exits with 1 | the emulator |
+
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
 and the `debugger.selftest.*`, `debugger.contract.*` and `debugger.sound.*` tests run on Linux hosts with python3;
