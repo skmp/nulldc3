@@ -79,6 +79,14 @@
 
 #if HOST_OS == OS_LINUX || HOST_OS == OS_DARWIN
 #include <time.h>
+#elif HOST_OS == OS_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #endif
 
 // hw/pvr/spg.cpp: the vblanks of the machine
@@ -164,6 +172,43 @@ struct {
 	std::atomic<bool> busy { false };	// the emulator thread did not take a call
 } hc;
 
+#if HOST_OS == OS_WINDOWS
+// Windows counts the CPU time of a thread in cycles (QueryThreadCycleTime): the cycles of the time stamp counter
+// while the thread ran, at a rate that does not change. GetThreadTimes would give it in ticks of the clock
+// interrupt, about 15.6 ms each, as many as fell while the thread ran: a thread of a cycle of this test runs for a
+// few of them, and would read 0 or a multiple of 15625 us. The rate, in cycles per microsecond, is taken once
+// against the performance counter on a thread that spins: the largest of five tries of 20 ms, since a try in which
+// the thread lost the processor counts fewer cycles, never more
+double ThreadCyclesPerMicro()
+{
+	static double rate = 0;
+
+	if (rate == 0)
+	{
+		LARGE_INTEGER frequency;
+		QueryPerformanceFrequency(&frequency);
+
+		for (int i = 0; i < 5; i++)
+		{
+			ULONG64 c0, c1;
+			LARGE_INTEGER t0, t1;
+
+			QueryThreadCycleTime(GetCurrentThread(), &c0);
+			QueryPerformanceCounter(&t0);
+			do
+				QueryPerformanceCounter(&t1);
+			while ((t1.QuadPart - t0.QuadPart) * 50 < frequency.QuadPart);
+			QueryThreadCycleTime(GetCurrentThread(), &c1);
+
+			double us = (double)(t1.QuadPart - t0.QuadPart) * 1e6 / (double)frequency.QuadPart;
+			rate = std::max(rate, (double)(c1 - c0) / us);
+		}
+	}
+
+	return rate;
+}
+#endif
+
 // The CPU time of the calling thread in microseconds: what the thread did, whatever else the machine does.
 // The wall clock on a host without such a clock
 double ThreadMicros()
@@ -173,6 +218,13 @@ double ThreadMicros()
 
 	if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0)
 		return ts.tv_sec * 1e6 + ts.tv_nsec / 1e3;
+#elif HOST_OS == OS_WINDOWS
+	// the rate first: the first call spins for it, before the cycles of the thread are read
+	const double rate = ThreadCyclesPerMicro();
+	ULONG64 cycles;
+
+	if (QueryThreadCycleTime(GetCurrentThread(), &cycles))
+		return (double)cycles / rate;
 #endif
 
 	return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now().time_since_epoch()).count();
