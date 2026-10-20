@@ -20,9 +20,6 @@
 #include <string>
 #include <vector>
 
-// cfg/cl.cpp; declared here as long as cfg/cfg.h does not declare it beside cl_HelpText()
-const string& cl_FinishText();
-
 // What cl.cpp takes from stdclass.cpp, unused here: --version and --help return before a directory is chosen
 string get_writable_config_path(const string& filename) { return filename; }
 string get_readonly_config_path(const string& filename) { return filename; }
