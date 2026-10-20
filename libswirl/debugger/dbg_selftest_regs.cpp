@@ -2673,8 +2673,8 @@ std::vector<u8> MakeGdromState(const std::vector<u8>& real, u32 seed)
 	std::vector<u8> made(real.size());
 	u32 state = seed * 0x9E3779B1u + 0x1234567u;
 
-	for (u8& byte : made)
-		byte = (NextRandom(&state) >> 16) & 1;
+	for (u8& b : made)
+		b = (NextRandom(&state) >> 16) & 1;
 
 	size_t state_at, disc_at;
 	gd_states gd_state;
