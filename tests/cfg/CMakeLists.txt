@@ -13,6 +13,8 @@
 nulldc_add_libswirl_library(nulldc_cfg
   SOURCES cfg/cfg.cpp cfg/ini.cpp cfg/cl.cpp
 )
+# cl.cpp's --version prints the version
+nulldc_add_version_sources(nulldc_cfg)
 
 add_executable(cfg_overrides cfg_test.cpp)
 target_link_libraries(cfg_overrides PRIVATE nulldc_cfg)

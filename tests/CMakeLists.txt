@@ -129,6 +129,25 @@ function(nulldc_add_missing_data_test name reason)
 endfunction()
 
 
+## The version ##
+#
+#	nulldc3/cmake/version.cmake runs at every build, as it does for the emulator (nulldc3/README.md), and writes
+#	generated/nulldc3_version.h, nulldc3-version.txt and nulldc3-version.cmake into this build directory when their
+#	text changes. The library that holds cfg/cl.cpp (--version) compiles libswirl/version.cpp and version_title.cpp
+#	and is built after this step (nulldc_add_version_sources, common/libswirl.cmake). The project of
+#	tests/debugger/net, added below, has a step of its own with another target name.
+#
+
+add_custom_target(nulldc_tests_version
+  COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${nulldc_root_path}" "-DOUTPUT_DIR=${CMAKE_BINARY_DIR}"
+          -P "${nulldc_root_path}/nulldc3/cmake/version.cmake"
+  BYPRODUCTS "${CMAKE_BINARY_DIR}/generated/nulldc3_version.h" "${CMAKE_BINARY_DIR}/nulldc3-version.txt"
+             "${CMAKE_BINARY_DIR}/nulldc3-version.cmake"
+  COMMENT "The version of nullDC (tests)"
+  VERBATIM)
+set(NULLDC_VERSION_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated")
+
+
 ## The debugger's suites ##
 #
 #	The modules of the debugger that link without the emulator have their suites in tests/debugger. Each is a

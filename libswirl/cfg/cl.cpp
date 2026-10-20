@@ -26,6 +26,7 @@
 #include <fcntl.h>
 
 #include "cfg/cfg.h"
+#include "nulldc_version.h"
 #include "stdclass.h"
 
 #if HOST_OS == OS_WINDOWS
@@ -85,6 +86,7 @@ struct Item
 struct CommandLine
 {
 	bool help = false;
+	bool version = false;
 	bool portable = false;
 	string portable_dir;		// as given
 	bool shared = false;
@@ -94,7 +96,7 @@ struct CommandLine
 
 // The switches of this build, without their dashes
 const char* const switches[] = {
-	"config", "portable", "shared", "help",
+	"config", "portable", "shared", "help", "version",
 #if HOST_OS == OS_WINDOWS
 	"console", "log",
 #endif
@@ -195,6 +197,12 @@ bool parse(int argc, wchar* argv[], CommandLine& cl)
 		{
 			// what follows is not looked at
 			cl.help = true;
+			return true;
+		}
+		else if (name == "version")
+		{
+			// what follows is not looked at either
+			cl.version = true;
 			return true;
 		}
 		else if (name == "config")
@@ -526,6 +534,7 @@ const string& cl_HelpText()
 		"  --log                 write the output of the emulator to nulldc3-log.txt in that directory\n"
 #endif
 		"  --help                show this text\n"
+		"  --version             print the version of the emulator, nullDC <version>\n"
 		"  --                    every word after it is a game, also one that begins with a dash\n\n"
 		"Without --portable and --shared the emulator keeps its files in the directory of its executable.\n"
 		"Every word that begins with a dash is a switch: an unknown one, or one written with one dash, is an\n"
@@ -564,6 +573,13 @@ int ParseCommandLine(int argc,wchar* argv[])
 	if (cl.help)
 	{
 		fputs(cl_HelpText().c_str(), stdout);
+		return rv_cli_finish;
+	}
+	if (cl.version)
+	{
+		// one line on stdout, before anything is set up: no directory, no config, no display
+		printf("nullDC %s\n", nulldc_version());
+		fflush(stdout);
 		return rv_cli_finish;
 	}
 	if (!choose_dirs(cl))
