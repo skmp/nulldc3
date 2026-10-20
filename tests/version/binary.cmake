@@ -35,7 +35,16 @@ if(NOT rc EQUAL 0)
 endif()
 file(STRINGS "${WORK}/nulldc3-version.txt" version LIMIT_COUNT 1)
 
-execute_process(COMMAND "${EMULATOR}" --config config:Headless=yes , audio:backend=none , config:Dreamcast.RTC=946684800
+# Windows: through nulldc3-winrun (-DWINRUN=, tests/windows), with a portable directory of the test's own
+set(launcher "")
+set(portable "")
+if(WINRUN)
+  set(launcher "${WINRUN}" --timeout 50 --)
+  file(MAKE_DIRECTORY "${WORK}/portable")
+  set(portable --portable "${WORK}/portable")
+endif()
+execute_process(COMMAND ${launcher} "${EMULATOR}" ${portable}
+                        --config config:Headless=yes , audio:backend=none , config:Dreamcast.RTC=946684800
                         --version
                 WORKING_DIRECTORY "${WORK}" TIMEOUT 60
                 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
