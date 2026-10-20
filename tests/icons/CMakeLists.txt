@@ -36,6 +36,10 @@ nulldc_add_libswirl_library(nulldc_x11_icon
 
 add_executable(icons_x11 x11_icon_test.cpp)
 target_link_libraries(icons_x11 PRIVATE nulldc_x11_icon)
+if(WIN32)
+  # the policy of the tests project for a program that dies (../common/win_policy.cpp: no box, no crash report, one line and 128 + the signal's number)
+  target_sources(icons_x11 PRIVATE "${nulldc_tests_path}/common/win_policy.cpp")
+endif()
 
 add_test(NAME icons.x11 COMMAND icons_x11)
 set_tests_properties(icons.x11 PROPERTIES TIMEOUT 60)
