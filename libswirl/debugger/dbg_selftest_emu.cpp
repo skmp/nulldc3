@@ -35,6 +35,7 @@
 */
 
 #include "dbg_selftest.h"
+#include "dbg_selftest_nap.h"
 #include "dbg_sh4.h"
 
 #include "libswirl.h"
@@ -113,7 +114,7 @@ double MsSince(Clock::time_point t0)
 
 void Nap(int ms)
 {
-	std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+	selftest::NapUs((s64)ms * 1000);
 }
 
 /*
@@ -319,7 +320,7 @@ int ProbeTick(void*, int, int, int)
 #endif
 
 	if (probe.slowUs != 0 && g_in_sleep)
-		std::this_thread::sleep_for(std::chrono::microseconds(probe.slowUs));
+		selftest::NapUs(probe.slowUs);
 
 	switch (probe.mode)
 	{
@@ -457,7 +458,7 @@ bool WaitLifetime(Lifetime want, int timeout_ms = 20000)
 		if (MsSince(t0) > timeout_ms)
 			return false;
 
-		std::this_thread::sleep_for(std::chrono::microseconds(100));
+		selftest::NapUs(100);
 	}
 
 	return true;
@@ -834,7 +835,7 @@ void PauseBegin(const emu::RunState& stop)
 
 			// with interrupts and SLEEP waits: somewhere in the guest, not at the first slice end behind the resume
 			if (settle)
-				std::this_thread::sleep_for(std::chrono::microseconds(200 + (i * 37) % 400));
+				selftest::NapUs(200 + (i * 37) % 400);
 
 			{
 				std::lock_guard<std::mutex> lock(seen_lock);
@@ -1748,7 +1749,7 @@ DBG_SELFTEST_GUEST(emu_hoststop, "emu.hoststop")
 				}
 
 				// somewhere in the guest
-				std::this_thread::sleep_for(std::chrono::microseconds(100 + (i * 53) % 900));
+				selftest::NapUs(100 + (i * 53) % 900);
 
 				emu::RequestPause();
 
@@ -3452,7 +3453,7 @@ void StopRunsRounds()
 		}
 
 		// somewhere in the guest
-		std::this_thread::sleep_for(std::chrono::microseconds(100 + (i * 53) % 900));
+		selftest::NapUs(100 + (i * 53) % 900);
 
 		if (i % 3 != 0)
 			emu::RequestPause();
@@ -3675,11 +3676,11 @@ void TermRound(TermCase which, u32 round)
 	{
 	case TC_RUNNING:
 	case TC_GUEST_RESET:
-		std::this_thread::sleep_for(jitter);
+		selftest::NapUs(jitter.count());
 		break;
 
 	case TC_PAUSE_PENDING:
-		std::this_thread::sleep_for(jitter / 8);
+		selftest::NapUs((jitter / 8).count());
 		emu::RequestPause();
 		break;
 
@@ -3705,7 +3706,7 @@ void TermRound(TermCase which, u32 round)
 
 	case TC_CALL_RESET:
 		aux = std::thread([] { emu::Call(emu::CC_WRITE, [] { emu::Reset(); }); });
-		std::this_thread::sleep_for(jitter);
+		selftest::NapUs(jitter.count());
 		break;
 
 	case TC_RESUME:
@@ -4074,7 +4075,7 @@ DBG_SELFTEST_GUEST(emurun_pauses, "emurun.pauses")
 				if (!WaitLifetime(Lifetime::Running, 5000))
 					return;
 
-				std::this_thread::sleep_for(std::chrono::microseconds(100 + (i * 97) % 500));
+				selftest::NapUs(100 + (i * 97) % 500);
 
 				if (!PauseOnce(&after, 5000))
 					return;
