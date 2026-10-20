@@ -529,11 +529,27 @@ static int run(const Options& opt)
 	GetExitCodeProcess(pi.hProcess, &code);
 	CloseHandle(pi.hProcess);
 
-	JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting = {};
-	if (QueryInformationJobObject(job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), nullptr) &&
-	    accounting.ActiveProcesses > 0)
-		say(L"winrun: %lu process(es) of the job still ran when the program ended: ended with the job",
-		    (unsigned long)accounting.ActiveProcesses);
+	// the job's peak of committed memory, all its processes together (a build's memory, for its report)
+	JOBOBJECT_EXTENDED_LIMIT_INFORMATION used = {};
+	if (QueryInformationJobObject(job, JobObjectExtendedLimitInformation, &used, sizeof(used), nullptr))
+		say(L"winrun: peak memory of the job %llu MB (of one process %llu MB); %.1f s",
+		    (unsigned long long)(used.PeakJobMemoryUsed >> 20), (unsigned long long)(used.PeakProcessMemoryUsed >> 20),
+		    (double)(GetTickCount64() - start) / 1000.0);
+
+	// what of the job still runs (a process the program started and left behind) ends with the job
+	struct
+	{
+		JOBOBJECT_BASIC_PROCESS_ID_LIST list;
+		ULONG_PTR more[255];
+	} left = {};
+	left.list.NumberOfAssignedProcesses = 256;
+	if (QueryInformationJobObject(job, JobObjectBasicProcessIdList, &left, sizeof(left), nullptr))
+		for (DWORD k = 0; k < left.list.NumberOfProcessIdsInList; k++)
+		{
+			DWORD pid = (DWORD)left.list.ProcessIdList[k];
+			say(L"winrun: still running when the program ended, ended with the job: pid=%lu image=%ls",
+			    (unsigned long)pid, image_of(pid).c_str());
+		}
 	CloseHandle(job);	// KILL_ON_JOB_CLOSE: whatever is left of it ends here
 
 	if (pseudo)
