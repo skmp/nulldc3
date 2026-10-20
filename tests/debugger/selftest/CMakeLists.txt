@@ -24,8 +24,12 @@
 #	    CONFIG <section:key=value>...   more --config items for every run
 #	    ARGS <argument>...          more arguments for selftest.py
 #	    TIMEOUT <seconds>           of ctest, default 600
-#	    WINDOWS_OPEN                not run on Windows, an open defect there (nulldc_selftest_windows_open), which
-#	                                the test says when it is run: no skip of the platform
+#
+#	The sessions nap for fractions of a millisecond, between pauses, while they wait for a state and for every
+#	slice inside a SLEEP wait. They nap with dbg::selftest::NapUs (libswirl/debugger/dbg_selftest_nap.h): on
+#	Windows std::this_thread::sleep_for lasts a tick of the system timer, 15.6 ms, whatever it is asked for, and
+#	emu outlasted its watchdog there and emurun.pauses its run; NapUs is sleep_for on a POSIX host and on Windows a
+#	high-resolution waitable timer and a short spin. debugger.selftest.nap holds it
 #
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -49,18 +53,6 @@ else()
   set(nulldc_selftest_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3${CMAKE_EXECUTABLE_SUFFIX}")
 endif()
 
-# What keeps a session from passing on Windows, for the tests that say WINDOWS_OPEN: an open defect of the Windows
-# gate in the selftest of the emulator (libswirl/debugger, not a file of the tests), not a skip of the platform. The
-# session naps for fractions of a millisecond with std::this_thread::sleep_for (300 us for every slice inside a SLEEP
-# wait, dbg_selftest_emu.cpp; sleeps of 100 to 600 us between pauses; a call that times out after 2 s while it waits
-# for such slices), and on Windows every such nap lasts a tick of the system timer: 15.6 ms, and still 1 to 2 ms
-# where the process asks for a 1 ms timer (timeBeginPeriod), which the emulator does not. Measured on the Windows
-# host: emu outlasts its watchdog of 300 s on both engines, emurun.pauses its run; with timeBeginPeriod(1) at the
-# start of a session emurun.pauses passes, and emu still outlasts its watchdog (the SLEEP bound of emu.step waits
-# 15 s). The fix is naps that the timer tick does not round up, in the selftest of the emulator
-set(nulldc_selftest_windows_open
-    "an open defect of the Windows gate, not a skip of the platform: the session naps for fractions of a millisecond (std::this_thread::sleep_for in libswirl/debugger/dbg_selftest_emu.cpp and dbg_selftest.cpp), and on Windows every nap lasts a tick of the system timer (15.6 ms; 1 to 2 ms with timeBeginPeriod(1)): emu outlasts its watchdog, emurun.pauses its run")
-
 # The environment of the tests: Python writes no bytecode into the source tree; on Windows the scripts start every
 # program inside nulldc3-winrun (tests/common/emurun.py)
 set(nulldc_selftest_env PYTHONDONTWRITEBYTECODE=1)
@@ -73,7 +65,7 @@ if(${HOST_OS} EQUAL ${OS_WINDOWS})
 endif()
 
 function(nulldc_debugger_selftest name)
-  cmake_parse_arguments(ARG "WINDOWS_OPEN" "MODE;SELFTEST;ELF;TIMEOUT" "ENGINES;CONFIG;ARGS" ${ARGN})
+  cmake_parse_arguments(ARG "" "MODE;SELFTEST;ELF;TIMEOUT" "ENGINES;CONFIG;ARGS" ${ARGN})
 
   if(NOT ARG_ENGINES)
     set(ARG_ENGINES jit interp)
@@ -97,11 +89,6 @@ function(nulldc_debugger_selftest name)
 
     if(nulldc_selftest_skip)
       nulldc_add_skipped_test(${test} "${nulldc_selftest_skip}")
-      continue()
-    endif()
-    if(ARG_WINDOWS_OPEN AND ${HOST_OS} EQUAL ${OS_WINDOWS})
-      add_test(NAME ${test} COMMAND ${CMAKE_COMMAND} -E echo "OPEN DEFECT, NOT RUN: ${nulldc_selftest_windows_open}")
-      set_tests_properties(${test} PROPERTIES SKIP_REGULAR_EXPRESSION "OPEN DEFECT, NOT RUN:")
       continue()
     endif()
 
@@ -134,7 +121,12 @@ endfunction()
 
 # One line for the selftest of each package of the debugger
 
-nulldc_debugger_selftest(emu WINDOWS_OPEN)
+nulldc_debugger_selftest(emu)
+
+# The naps of the sessions (libswirl/debugger/dbg_selftest_nap.cpp): naps of 100 us to 50 ms last what they were
+# asked for, never less and at most a little more, and wait without a spin for the nap; on Windows also without the
+# high-resolution timer. A machine test, on one engine
+nulldc_debugger_selftest(nap ENGINES jit)
 
 # The device tree's registers, guest memory and the device accessors against the live machine
 # (libswirl/debugger/dbg_selftest_regs.cpp): machine tests, on the machine of the booted program, and one
@@ -241,7 +233,7 @@ endif()
 
 nulldc_debugger_selftest(emurun.reads   MODE same-hash ELF 2ndmix.elf)
 nulldc_debugger_selftest(emurun.pending MODE same-hash ELF 2ndmix.elf)
-nulldc_debugger_selftest(emurun.pauses  MODE same-hash ELF 2ndmix.elf ENGINES ${nulldc_selftest_exact_engines} WINDOWS_OPEN
+nulldc_debugger_selftest(emurun.pauses  MODE same-hash ELF 2ndmix.elf ENGINES ${nulldc_selftest_exact_engines}
                          ARGS --expect "pauses were taken and resumed")
 
 # The debugger's writes in a run of the guest of the tree that an Exit.* key ends: 240 stops latched at slice ends,
