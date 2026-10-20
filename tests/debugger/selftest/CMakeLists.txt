@@ -204,7 +204,8 @@ endif()
 # the comparisons of sessions.py on made-up sessions, every key it holds and the repeats of its rule
 if(Python3_Interpreter_FOUND)
   add_test(NAME debugger.selftest.log.rule
-           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/selftest/selftest.py" --mode log-rule)
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/selftest/selftest.py" --mode log-rule
+                   --work "${CMAKE_BINARY_DIR}/debugger/selftest/work/debugger.selftest.log.rule")
   add_test(NAME debugger.selftest.sh4bp.sessions.rule
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/sh4bp/sessions.py" --rule)
   set_tests_properties(debugger.selftest.log.rule debugger.selftest.sh4bp.sessions.rule PROPERTIES

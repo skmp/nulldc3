@@ -10,6 +10,10 @@ this file and read what those print through it. Python 3.9 and the standard libr
                             options of the sanitizers: the run has its directory (--portable) and needs nothing else.
                             On Windows also SystemRoot, without which Winsock does not start (WSAStartup fails with
                             10106), and TEMP and TMP in the run's own directory (<work>/tmp): nothing of the profile
+    tool_environment(work)  the environment of a program that is not the emulator (the contract runner, the tool of a
+                            mode): the caller's. On Windows with TEMP and TMP in <work>/tmp and npm's cache, where npm
+                            writes a log of every command, in <work>/npm-cache: node keeps its files in TEMP (tsx its
+                            cache), and the caller's TEMP and npm cache are the profile's unless the caller moved them
     executable(path)        the program at a path that names it without its suffix: nulldc3 is nulldc3.exe on Windows
     command(argv, timeout)  what is started for argv: on Windows argv inside nulldc3-winrun (its path from the
                             environment variable NULLDC_WINRUN, which the tests project passes; a harness on Windows
@@ -75,6 +79,27 @@ def environment(work, host=None, environ=None):
         os.makedirs(temp, exist_ok=True)
         env['TEMP'] = temp
         env['TMP'] = temp
+    return env
+
+
+# What tool_environment sets on Windows, by its name in capitals (Windows' names of variables do not care about case)
+TOOL_VARIABLES = ('TEMP', 'TMP', 'NPM_CONFIG_CACHE')
+
+
+def tool_environment(work, host=None, environ=None):
+    """The environment of a program that is not the emulator, whose files are under work (see the top of the file)."""
+    host = host or system()
+    environ = os.environ if environ is None else environ
+    env = dict(environ)
+    if host == 'windows':
+        for name in list(env):
+            if name.upper() in TOOL_VARIABLES:
+                del env[name]
+        temp = os.path.join(work, 'tmp')
+        os.makedirs(temp, exist_ok=True)
+        env['TEMP'] = temp
+        env['TMP'] = temp
+        env['npm_config_cache'] = os.path.join(work, 'npm-cache')
     return env
 
 

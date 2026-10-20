@@ -9,9 +9,10 @@
 Every emulator is run as tests/system runs one: headless, its files in a directory of its own under the work
 directory (--portable), an empty environment (no display), the real-time clock pinned, a core file size limit
 of 1 byte, and a watchdog. A process this script starts is ended by its pid. On Windows the environment has
-SystemRoot and TEMP and TMP of the run's directory, and the emulator and the contract runner (npm.cmd and the node
-it starts) run inside nulldc3-winrun, whose job ends all of it when the process is ended (tests/common/emurun.py,
-which starts every program of this script and reads what it prints). README.md has the modes:
+SystemRoot and TEMP and TMP of the run's directory, the contract runner's (the caller's environment) has TEMP, TMP
+and npm's cache in the work directory, and the emulator and the contract runner (npm.cmd and the node it starts) run
+inside nulldc3-winrun, whose job ends all of it when the process is ended (tests/common/emurun.py, which starts
+every program of this script and reads what it prints). README.md has the modes:
 
     m1             the gate of milestone M1: the emulator at its StartPaused stop, and the contract runner of the
                    devtools UI against it (npm run contract -- --url ... --profile emulator --elf ... --milestone M1)
@@ -352,7 +353,9 @@ def runner_command(args, port, more):
 
 
 def runner_env(args):
-    env = dict(os.environ)
+    # the caller's environment; on Windows TEMP, TMP and npm's cache in the work directory (tsx keeps its cache in
+    # TEMP, npm a log of every command in its cache), not in the profile (tests/common/emurun.py)
+    env = emurun.tool_environment(args.work)
     # npm starts node, which is where npm is
     env['PATH'] = os.path.dirname(os.path.abspath(args.npm)) + os.pathsep + env.get('PATH', '')
     env.pop('DISPLAY', None)

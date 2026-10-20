@@ -17,7 +17,8 @@ what it prints). README.md has the modes:
     parked      the run stays parked: after --hold seconds the process is still there and has printed no exit
                 line. It is killed, and that is a pass
     log-rule    what the checks of the other modes make of the output of a run, on outputs that are made up, with
-                lines that end in \n and in \r\n: no emulator is run, and --emulator and --work are not asked for
+                lines that end in \n and in \r\n: no emulator is run, and --emulator is not asked for. The made-up
+                outputs are written under --work, as everything this script writes: nothing into the caller's TEMP
 
 Every run has to be made on the engine it was asked for, and a run with a session on the SH4 debug engine as well.
 The emulator takes config:Dynarec.Enabled=yes for a wish: a build without a recompiler, or one whose recompiler
@@ -39,7 +40,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 
 # the run helper of the harnesses; nothing is written into the source tree for it
 sys.dont_write_bytecode = True
@@ -313,8 +313,11 @@ def mode_log_rule(args):
     the summary, the exit line and its last field, on outputs that are made up. Every line ends in \\n, and in a
     second copy in \\r\\n, as a program whose stdout is in text mode writes it on Windows: the reading of the output
     has to give the same fields for both, or the names of the engine and the last field of a line would end in a
-    \\r that no check expects. No emulator is run."""
-    work = tempfile.mkdtemp(prefix='selftest-log-rule-')
+    \\r that no check expects. No emulator is run. The outputs are written into <work>/made-up and removed behind
+    the checks."""
+    work = os.path.join(args.work, 'made-up')
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work)
     cases = 0
     try:
         for engine in ('jit', 'interp'):
@@ -355,7 +358,7 @@ def mode_log_rule(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--emulator', default='', help='every mode but log-rule')
-    parser.add_argument('--work', default='', help='every mode but log-rule')
+    parser.add_argument('--work', required=True, help='the directory of everything the script writes')
     parser.add_argument('--selftest', default='')
     parser.add_argument('--mode', default='session', choices=('session', 'guest-exit', 'same-hash', 'parked', 'log-rule'))
     parser.add_argument('--engine', default='jit', choices=('jit', 'interp'))
@@ -368,8 +371,9 @@ def main():
     parser.add_argument('--keep', action='store_true', help='keep the work directory of a run that passed')
     args = parser.parse_args()
 
+    args.work = os.path.abspath(args.work)
     if args.mode == 'log-rule':
-        # nothing is run, and nothing is written but a scratch directory of its own
+        # nothing is run, and nothing is written but the made-up outputs under --work
         try:
             mode_log_rule(args)
         except Failed as failure:
@@ -378,13 +382,11 @@ def main():
         print('PASS')
         return 0
 
-    missing = ['--' + name for name in ('emulator', 'work') if not getattr(args, name)]
-    if missing:
-        parser.error('the following arguments are required: ' + ', '.join(missing))
+    if not args.emulator:
+        parser.error('the following arguments are required: --emulator')
 
     # nulldc3 is nulldc3.exe on Windows
     args.emulator = emurun.executable(os.path.abspath(args.emulator))
-    args.work = os.path.abspath(args.work)
     args.guest = os.path.abspath(args.guest)
 
     if not os.path.isfile(args.emulator):

@@ -8,6 +8,10 @@ What it holds, on every host, for both systems (each function of emurun takes th
     environment     on a POSIX host nothing of the caller's environment but the options of the sanitizers; on Windows
                     those, SystemRoot (Winsock does not start without it) and TEMP and TMP in <work>/tmp, made there,
                     and nothing of the profile (no PATH, no USERPROFILE, no APPDATA, no LOCALAPPDATA, no HOME)
+    tool_environment
+                    the environment of a program that is not the emulator: the caller's; on Windows with TEMP and TMP
+                    in <work>/tmp, made there, and npm's cache in <work>/npm-cache, in place of the caller's in any
+                    letter case
     executable      nulldc3 is nulldc3.exe on Windows where nulldc3 names no file; on a POSIX host a path is a path
     read_text       a \\r in front of a \\n is not part of the line
     command         on Windows the program inside nulldc3-winrun (NULLDC_WINRUN), with a timeout of its own behind
@@ -18,16 +22,24 @@ What it holds, on every host, for both systems (each function of emurun takes th
     no_shell        Windows has no POSIX shell; a POSIX host has one
     the harnesses   tests/debugger/selftest/selftest.py, tests/debugger/contract/contract.py,
                     tests/debugger/guest/dsptest/soundlines.py and tests/debugger/sh4bp/sessions.py start no program
-                    but through emurun: no subprocess call of their own, and no module that knows the host's limits
+                    but through emurun: no subprocess call of their own, and no module that knows the host's limits;
+                    every start names the environment of the program (emurun.start(..., env=...)), and none reads the
+                    caller's environment but through emurun (no os.environ, no os.getenv)
 
-and with a program it starts (this Python, on a script of the work directory):
+and with a program it starts (this Python, on a script of the work directory), once as an emulator and once as a
+program that is not one (emulator=False: the contract runner, npm.cmd and node, and the tools of the modes):
 
     on Windows      the program ran inside nulldc3-winrun: its output ends with nulldc3-winrun's line of its desktop,
                     winrun-<n>, and the program found itself on a desktop of that name that is not the one of this
-                    test (which may be inside a nulldc3-winrun of its own, ctest's); it was given the environment of
-                    emurun and nothing else of the profile; kill() ended it and the program it had started, which
-                    nothing waited for: the job ended both
-    on a POSIX host the program ran with a core file size limit of 1 byte and the environment of emurun
+                    test (which may be inside a nulldc3-winrun of its own, ctest's); as an emulator it was given the
+                    environment of emurun and nothing else of the profile, as a tool the caller's with the TEMP, TMP
+                    and npm cache of its run; kill() ended it and the program it had started, which nothing waited
+                    for: the job ended both
+    on a POSIX host the program ran; as an emulator with a core file size limit of 1 byte and the environment of
+                    emurun, as a tool with the caller's environment
+
+and the scratch files of a harness: selftest.py --mode log-rule, run with Python's own temporary directory made one
+that is not there, writes what it writes under its --work and nothing into the caller's TEMP.
 
 Python 3.9 and the standard library. Exit code 0 when all of it held.
 """
@@ -69,6 +81,7 @@ import sys
 
 print('environment: ' + ','.join(sorted(name.upper() for name in os.environ)))
 print('temp: ' + os.environ.get('TEMP', ''))
+print('npmcache: ' + os.environ.get('npm_config_cache', ''))
 if sys.platform == 'win32':
     import ctypes
     from ctypes import wintypes
@@ -152,7 +165,25 @@ def test_environment(work):
     check(os.path.isdir(temp), 'Windows: the TEMP of a run is not made: ' + temp)
     env = emurun.environment(run, 'windows', {'SystemRoot': 'D:\\Win'})
     check(env.get('SystemRoot') == 'D:\\Win', 'Windows: SystemRoot is not taken as the caller has it: %r' % (env,))
-    return 'the environment: POSIX the sanitizers\' options alone; Windows SystemRoot, TEMP and TMP of the run and nothing of the profile'
+
+    # a program that is not the emulator: the caller's environment; on Windows TEMP, TMP and npm's cache of the run in
+    # place of the caller's, whatever the letter case of their names
+    caller = {'HOME': '/home/u', 'PATH': '/usr/bin', 'TMPDIR': '/tmp/u', 'npm_config_cache': '/home/u/.npm'}
+    env = emurun.tool_environment(os.path.join(work, 'tool-posix'), 'posix', caller)
+    check(env == caller and env is not caller, 'POSIX: the environment of a tool is not the caller\'s: %r' % (env,))
+    caller = {'SYSTEMROOT': 'C:\\Windows', 'PATH': 'C:\\Windows\\system32', 'USERPROFILE': 'C:\\Users\\u',
+              'TEMP': 'C:\\Users\\u\\AppData\\Local\\Temp', 'tmp': 'C:\\Users\\u\\AppData\\Local\\Temp',
+              'NPM_CONFIG_CACHE': 'C:\\Users\\u\\AppData\\Local\\npm-cache', 'npm_config_fund': 'false'}
+    before = dict(caller)
+    run = os.path.join(work, 'tool-windows')
+    env = emurun.tool_environment(run, 'windows', caller)
+    temp = os.path.join(run, 'tmp')
+    check(env == {'SYSTEMROOT': 'C:\\Windows', 'PATH': 'C:\\Windows\\system32', 'USERPROFILE': 'C:\\Users\\u', 'TEMP': temp,
+                  'TMP': temp, 'npm_config_cache': os.path.join(run, 'npm-cache'), 'npm_config_fund': 'false'} and caller == before,
+          'Windows: the environment of a tool is not the caller\'s with TEMP, TMP and npm\'s cache of its run: %r' % (env,))
+    check(os.path.isdir(temp), 'Windows: the TEMP of a tool is not made: ' + temp)
+    return ('the environment: POSIX the sanitizers\' options alone; Windows SystemRoot, TEMP and TMP of the run and nothing of '
+            'the profile; a tool the caller\'s, on Windows with TEMP, TMP and npm\'s cache of its run')
 
 
 def test_executable(work):
@@ -246,53 +277,70 @@ def test_harnesses(work):
                     found.append('%s:%d subprocess.%s' % (name, node.lineno, node.attr))
                 if node.value.id == 'os' and (node.attr.startswith('spawn') or node.attr.startswith('exec') or node.attr in ('system', 'popen', 'fork')):
                     found.append('%s:%d os.%s' % (name, node.lineno, node.attr))
+                # the environment of a program comes from emurun (environment, tool_environment): on Windows the
+                # caller's TEMP and npm cache are the profile's
+                if node.value.id == 'os' and node.attr in ('environ', 'environb', 'getenv', 'getenvb', 'putenv', 'unsetenv'):
+                    found.append('%s:%d os.%s' % (name, node.lineno, node.attr))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) \
+                    and node.func.value.id == 'emurun' and node.func.attr == 'start':
+                env = [keyword.value for keyword in node.keywords if keyword.arg == 'env']
+                if not env or (isinstance(env[0], ast.Constant) and env[0].value is None):
+                    found.append('%s:%d emurun.start without the environment of its program (env=)' % (name, node.lineno))
         for module in ('resource', 'signal', 'multiprocessing', 'pty'):
             if module in imports:
                 found.append('%s imports %s' % (name, module))
         check('emurun' in imports, '%s does not import emurun' % name)
-    check(not found, 'a harness starts a program, or ends one, without emurun: ' + '; '.join(found))
-    return 'the %d harnesses start every program through emurun' % len(HARNESSES)
+    check(not found, 'a harness starts a program, or ends one, or makes its environment, without emurun: ' + '; '.join(found))
+    return 'the %d harnesses start every program through emurun, with an environment of emurun' % len(HARNESSES)
 
 
-def test_run(work):
-    """A program started through emurun, on this host."""
+def run_child(work, emulator):
+    """CHILD started through emurun on this host, as an emulator or as a program that is not one: what it held."""
+    kind = 'emulator' if emulator else 'tool'
     script = os.path.join(work, 'child.py')
-    with open(script, 'w', encoding='utf-8') as f:
-        f.write(CHILD)
-    run_dir = os.path.join(work, 'run')
+    if not os.path.isfile(script):
+        with open(script, 'w', encoding='utf-8') as f:
+            f.write(CHILD)
+    run_dir = os.path.join(work, 'run-' + kind)
     os.makedirs(run_dir)
-    env = emurun.environment(run_dir)
+    env = emurun.environment(run_dir) if emulator else emurun.tool_environment(run_dir)
     log_path = os.path.join(run_dir, 'log.txt')
     with open(log_path, 'wb') as log:
-        process = emurun.start([sys.executable, '-I', '-B', script], 60, cwd=run_dir, env=env, stdout=log, stderr=subprocess.STDOUT)
+        process = emurun.start([sys.executable, '-I', '-B', script], 60, cwd=run_dir, env=env, stdout=log, stderr=subprocess.STDOUT,
+                               emulator=emulator)
         try:
             code = process.wait(timeout=60)
         except subprocess.TimeoutExpired:
             emurun.kill(process)
-            raise Failed('the program did not end within 60 s')
+            raise Failed('%s: the program did not end within 60 s' % kind)
     text = emurun.read_text(log_path)
-    check(code == 0, 'the program ended with exit code %s:\n%s' % (code, text))
+    check(code == 0, '%s: the program ended with exit code %s:\n%s' % (kind, code, text))
     said = dict(line.split(': ', 1) for line in text.splitlines() if ': ' in line and not line.startswith('winrun: '))
 
     if emurun.system() == 'windows':
         desktop = re.search(r'^winrun: desktop \S*\\(winrun-\d+): \d+ window\(s\) seen, 0 visible, 0 of the emulator\'s class; '
                             r'the program\'s exit status 0; winrun exits with 0$', text, re.M)
-        check(desktop is not None, 'the program did not run inside nulldc3-winrun: its output has no line of nulldc3-winrun\'s '
-              'desktop:\n' + text)
+        check(desktop is not None, '%s: the program did not run inside nulldc3-winrun: its output has no line of nulldc3-winrun\'s '
+              'desktop:\n%s' % (kind, text))
         mine = desktop_of_this_thread()
         check(said.get('desktop') == desktop.group(1) and said.get('desktop') != mine,
-              'the program ran on the desktop "%s"; nulldc3-winrun made "%s", and this test is on "%s"' % (said.get('desktop'), desktop.group(1), mine))
+              '%s: the program ran on the desktop "%s"; nulldc3-winrun made "%s", and this test is on "%s"' % (kind, said.get('desktop'), desktop.group(1), mine))
         names = said.get('environment', '').split(',')
-        # Windows itself puts a few variables into every process (a missing SystemRoot among them); none of the profile's
-        profile = [name for name in names if name in ('PATH', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'HOMEPATH', 'USERNAME', 'HOME')]
-        check('SYSTEMROOT' in names and 'TEMP' in names and not profile, 'the program had the environment %s' % names)
-        check(os.path.normcase(said.get('temp', '')) == os.path.normcase(os.path.join(run_dir, 'tmp')),
-              'the program\'s TEMP is %s, not the run\'s' % said.get('temp'))
+        temp = os.path.normcase(os.path.join(run_dir, 'tmp'))
+        check(os.path.normcase(said.get('temp', '')) == temp, '%s: the program\'s TEMP is %s, not the run\'s' % (kind, said.get('temp')))
+        if emulator:
+            # Windows itself puts a few variables into every process (a missing SystemRoot among them); none of the profile's
+            profile = [name for name in names if name in ('PATH', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'HOMEPATH', 'USERNAME', 'HOME')]
+            check('SYSTEMROOT' in names and 'TEMP' in names and not profile, 'emulator: the program had the environment %s' % names)
+        else:
+            check(os.path.normcase(said.get('npmcache', '')) == os.path.normcase(os.path.join(run_dir, 'npm-cache')) and 'PATH' in names,
+                  'tool: the program had npm\'s cache in %s and the environment %s, not the caller\'s with the cache of its run' % (said.get('npmcache'), names))
 
         # kill(): nulldc3-winrun ends, and its job with everything in it, a program the program left running too
         log_path = os.path.join(run_dir, 'kill.txt')
         with open(log_path, 'wb') as log:
-            process = emurun.start([sys.executable, '-I', '-B', script, 'kid'], 60, cwd=run_dir, env=env, stdout=log, stderr=subprocess.STDOUT)
+            process = emurun.start([sys.executable, '-I', '-B', script, 'kid'], 60, cwd=run_dir, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                   emulator=emulator)
             kid = None
             deadline = time.monotonic() + 30
             while kid is None and time.monotonic() < deadline:
@@ -300,14 +348,61 @@ def test_run(work):
                 kid = int(found.group(1)) if found else None
                 time.sleep(0.1)
             emurun.kill(process)
-        check(kid is not None, 'the program did not say which program it started:\n' + emurun.read_text(log_path))
-        check(process_gone(kid, 10), 'the program the program started (pid %d) runs on when the run is killed: it is not in the job' % kid)
-        return 'a program through emurun: inside nulldc3-winrun on %s, with the environment of emurun; kill() ended it and its program' % desktop.group(1)
+        check(kid is not None, '%s: the program did not say which program it started:\n%s' % (kind, emurun.read_text(log_path)))
+        check(process_gone(kid, 10), '%s: the program the program started (pid %d) runs on when the run is killed: it is not in the job' % (kind, kid))
+        return '%s inside nulldc3-winrun on %s; kill() ended it and its program' % (kind, desktop.group(1))
 
-    check(said.get('core') == '1', 'the program ran with a core file size limit of %s, not 1' % said.get('core'))
     names = said.get('environment', '').split(',')
-    check(set(names) <= set(emurun.SANITIZER_VARIABLES) | {'LC_CTYPE', ''}, 'the program had the environment %s' % names)
-    return 'a program through emurun: the program itself, with a core file size limit of 1 byte and the environment of emurun'
+    if emulator:
+        check(said.get('core') == '1', 'emulator: the program ran with a core file size limit of %s, not 1' % said.get('core'))
+        check(set(names) <= set(emurun.SANITIZER_VARIABLES) | {'LC_CTYPE', ''}, 'emulator: the program had the environment %s' % names)
+        return 'emulator: the program itself, with a core file size limit of 1 byte and the environment of emurun'
+    check(set(name.upper() for name in os.environ) <= set(names) | {'LC_CTYPE'}, 'tool: the program had the environment %s, not the caller\'s' % names)
+    return 'tool: the program itself, with the caller\'s environment'
+
+
+def test_run(work):
+    """A program started through emurun, on this host: as an emulator, and as a program that is not one (the contract
+    runner, the tools of the modes), which on Windows runs inside nulldc3-winrun all the same."""
+    return 'a program through emurun: ' + '; '.join(run_child(work, emulator) for emulator in (True, False))
+
+
+# Runs a harness with Python's temporary directory made one that is not there: tempfile.mkdtemp() or any other file
+# of tempfile made without dir= fails the run. TRAP <directory that is not there> <script> <arguments>...
+TRAP = r"""
+import runpy
+import sys
+import tempfile
+tempfile.tempdir = sys.argv[1]
+sys.argv = sys.argv[2:]
+runpy.run_path(sys.argv[0], run_name='__main__')
+"""
+
+
+def test_scratch(work):
+    """selftest.py --mode log-rule writes under its --work, nothing into the caller's TEMP."""
+    trap = os.path.join(work, 'trap.py')
+    with open(trap, 'w', encoding='utf-8') as f:
+        f.write(TRAP)
+    run_dir = os.path.join(work, 'scratch')
+    os.makedirs(run_dir)
+    nowhere = os.path.join(run_dir, 'no-such-directory')
+    rule = os.path.join(run_dir, 'log-rule')
+    log_path = os.path.join(run_dir, 'log.txt')
+    with open(log_path, 'wb') as log:
+        process = emurun.start([sys.executable, '-I', '-B', trap, nowhere, os.path.join(TESTS, 'debugger', 'selftest', 'selftest.py'),
+                                '--mode', 'log-rule', '--work', rule], 60, cwd=run_dir, env=emurun.tool_environment(run_dir),
+                               stdout=log, stderr=subprocess.STDOUT, emulator=False)
+        try:
+            code = process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            emurun.kill(process)
+            raise Failed('selftest.py --mode log-rule did not end within 60 s')
+    text = emurun.read_text(log_path)
+    check(code == 0 and re.search(r'^PASS$', text, re.M) is not None and not os.path.exists(nowhere),
+          'selftest.py --mode log-rule with Python\'s temporary directory at %s, which is not there: exit code %s:\n%s' % (nowhere, code, text))
+    check(os.path.isdir(rule), 'selftest.py --mode log-rule made nothing under its --work ' + rule)
+    return 'selftest.py --mode log-rule writes under its --work, with no temporary directory of Python\'s'
 
 
 def main():
@@ -318,7 +413,8 @@ def main():
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
 
-    tests = (test_environment, test_executable, test_read_text, test_command, test_npm, test_no_shell, test_harnesses, test_run)
+    tests = (test_environment, test_executable, test_read_text, test_command, test_npm, test_no_shell, test_harnesses, test_run,
+             test_scratch)
     failed = 0
     for test in tests:
         try:

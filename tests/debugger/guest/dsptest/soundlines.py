@@ -12,9 +12,10 @@ A run is the emulator on the program, headless, with no audio device (audio:back
 pinned and the SH4 on the recompiler or on the interpreter (--engine), with its files in a directory of its own
 under the work directory (--portable), an empty environment (no display), a core file size limit of 1 byte, and a
 watchdog. A process this script starts is ended by its pid. On Windows the environment has SystemRoot and TEMP and
-TMP of the run's directory, and the emulator and the tool of the mode oracle run inside nulldc3-winrun
-(tests/common/emurun.py, which starts every program of this script and reads what it prints). The sound is made
-sample by sample, with the DSP, in every time step of the AICA: the emulator has no other way to make it.
+TMP of the run's directory, the tool of the mode oracle has the caller's with TEMP and TMP of its own directory, and
+the emulator and the tool run inside nulldc3-winrun (tests/common/emurun.py, which starts every program of this
+script and reads what it prints). The sound is made sample by sample, with the DSP, in every time step of the AICA:
+the emulator has no other way to make it.
 
 Every run has to be made on the engine it was asked for. The emulator takes config:Dynarec.Enabled=yes for a wish:
 a build without a recompiler, or one whose recompiler cannot be set up, goes on with the interpreter and says
@@ -228,10 +229,13 @@ def hash_run(args, name, engine, more=()):
 
 def tool_run(args, command, log_path):
     """A program that is not the emulator (aica_dsp_guest_oracle, gen.sh), run to its end through emurun with the
-    caller's environment: what it printed, and its exit code (None when the watchdog ended it)."""
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    caller's environment (on Windows with TEMP and TMP in the directory of its output): what it printed, and its
+    exit code (None when the watchdog ended it)."""
+    directory = os.path.dirname(log_path)
+    os.makedirs(directory, exist_ok=True)
     with open(log_path, 'wb') as out:
-        process = emurun.start(command, args.watchdog, stdout=out, stderr=subprocess.STDOUT, emulator=False)
+        process = emurun.start(command, args.watchdog, env=emurun.tool_environment(directory), stdout=out,
+                               stderr=subprocess.STDOUT, emulator=False)
         try:
             code = process.wait(timeout=args.watchdog)
         except subprocess.TimeoutExpired:
