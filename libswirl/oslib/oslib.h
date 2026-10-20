@@ -30,8 +30,10 @@ u32 static INLINE bitscanrev(u32 v)
 #endif
 }
 
-//FIX ME
+// MSVC's optimisation hint, which the other compilers do not have (MSVC keeps its own intrinsic)
+#if BUILD_COMPILER != COMPILER_VC
 #define __assume(x)
+#endif
 
 void os_DebugBreak();
 

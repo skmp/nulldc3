@@ -1221,19 +1221,6 @@ _end:
 	// the cost of the block as the sum of its instructions, in front of the cycle tricks
 	const u32 opcode_cycles = blk->guest_cycles;
 
-#if HOST_OS == OS_WINDOWS
-	switch (rbi->addr)
-	{
-	case 0x8C09ED16:
-	case 0x8C0BA50E:
-	case 0x8C0BA506:
-	case 0x8C0BA526:
-	case 0x8C224800:
-		printf("HASH: %08X reloc %s\n", blk->addr, blk->hash(false, true));
-		break;
-	}
-#endif
-
 	// cycle tricks
 	if (settings.dynarec.idleskip)
 	{
