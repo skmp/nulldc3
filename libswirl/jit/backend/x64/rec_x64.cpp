@@ -163,7 +163,7 @@ public:
 	// The frame of the main loop and of RunBlock: the eight general registers a caller expects back, and on Windows
 	// xmm6-xmm15 as well, in which the blocks keep guest registers there (x64_regalloc.h). On Windows the xmm
 	// registers lie in the frame right above the 32 bytes of the callee's home space (as tests/sh4_dynarec's
-	// entry has them), and the unwind data of the code region describes the frame (libswirl/windows/win_vmem.cpp:
+	// entry has them), and the unwind data of the code region describes the frame (libswirl/windows/win_jit_unwind.cpp:
 	// win_jit_unwind_frame, which reads the end of every instruction of the prologue from prolog).
 #ifdef _WIN32
 #define MAINLOOP_FRAME (STACK_ALIGN + 10 * 16)
