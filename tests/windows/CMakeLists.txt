@@ -21,6 +21,8 @@
 #	                            with a console of its own and not headless (the box on the private desktop: 125)
 #	windows.abi.xmm             Mainloop and RunBlock give xmm6-xmm15 back (abi_xmm.cpp)
 #	windows.binary.stdout       no \r in the emulator's stdout
+#	windows.dsound.failed       DirectSound that fails (NULLDC_TEST_DSOUND=fail) with the speed limit on: no sound,
+#	                            and the guest headless still reaches its 90 vblanks and its exit line
 #	windows.exitcode            a run that cannot go on (headless, nothing to run) exits with 1
 #
 #	NULLDC_WINRUN               an nulldc3-winrun.exe to use instead of the one built here; also what version.binary
@@ -72,6 +74,7 @@ foreach(kind segv ill trap abort div stack invparam purecall)
 endforeach()
 windows_case(windows.helpbox helpbox EMULATOR)
 windows_case(windows.binary.stdout binary_stdout EMULATOR)
+windows_case(windows.dsound.failed dsound_failed EMULATOR)
 windows_case(windows.exitcode exitcode EMULATOR)
 
 # The canary thunk around the x64 backend's main loop and RunBlock, on a machine of its own (abi_xmm.cpp)

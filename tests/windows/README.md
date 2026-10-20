@@ -20,6 +20,7 @@ each keeps the output of its runs in `<build>/windows/work/<test>/*.log`.
 | `windows.helpbox` | the help and error box: a refused command line with its output to a pipe, then to `NUL` (exit 2, no window); with a console of its own (`--own-console`) and `config:Headless=yes` (exit 2 within 10 s, no window); with a console of its own and not headless, the box on the private desktop (`#32770` of `nulldc3.exe` in nulldc3-winrun's list, the verdict 125 at the 10 s timeout) |
 | `windows.abi.xmm` | `Mainloop` and `RunBlock` of the x64 backend give `xmm6`-`xmm15` back as they found them (`abi_xmm.cpp`: an Xbyak thunk with ten canaries around each, on a machine of its own whose guest code uses twelve FPU registers) |
 | `windows.binary.stdout` | no `\r` in the emulator's stdout (`--help`, and the guest's run with its exit line) |
+| `windows.dsound.failed` | `audio:backend=directsound` with `NULLDC_TEST_DSOUND=fail` (DirectSound fails as on a system without a sound device; nothing of it is called) and `aica.LimitFPS=yes`: the line `DirectSound: DirectSoundCreate8 failed (0x88780078): no sound`, and the guest headless still reaches its 90 vblanks, exit 0 and the exit line, within 60 s (no sound is no wait for a sound device) |
 | `windows.exitcode` | headless with nothing to run: exit 1 and the error line (`runctl_fail`) |
 
 `docs/nulldc3/automated-runs.md` has the policy, the fatal line and the exit codes these check.

@@ -303,6 +303,25 @@ elseif(CASE STREQUAL "binary_stdout")
     message("${name}: ${length} bytes of stdout")
   endforeach()
 
+elseif(CASE STREQUAL "dsound_failed")
+  # DirectSound that cannot start (NULLDC_TEST_DSOUND=fail: DirectSoundCreate8 answers DSERR_NODRIVER and is not
+  # called, so nothing sounds) is no sound, and with the speed limit on (aica.LimitFPS, the default) the run waits
+  # for no sound device: the samples take the push path, which takes nothing, and the guest reaches its 90 vblanks
+  # and its exit line. The keys are P0's but for audio:backend.
+  set(dskeys --portable "${WORK}/portable" --config config:Headless=yes , audio:backend=directsound ,
+             config:Dreamcast.RTC=946684800 , config:aica.LimitFPS=yes)
+  run(dsound ENV NULLDC_TEST_DSOUND=fail TIMEOUT 60 COMMAND "${EMULATOR}" ${dskeys} ${guest_run})
+  no_window(dsound)
+  if(NOT dsound_rc EQUAL 0)
+    problem("exit ${dsound_rc}, not 0 (124: the run hung)")
+  endif()
+  if(NOT dsound_out MATCHES "DirectSound: DirectSoundCreate8 failed \\(0x88780078\\): no sound")
+    problem("no line of the failed DirectSound on stdout")
+  endif()
+  if(NOT dsound_out MATCHES "\nnulldc-exit: reason=vblanks ")
+    problem("no exit line")
+  endif()
+
 elseif(CASE STREQUAL "detach")
   # --detach returns at once with the copy's pid, though its caller reads its output through a pipe (here CMake's,
   # as WSL's interop or Python's subprocess would), and the copy runs the program to its end and writes the rc file

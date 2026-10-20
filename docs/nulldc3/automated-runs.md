@@ -170,8 +170,9 @@ needs the GUI (settings, the game list, disc swaps).
   context exists (`os_CreateWindow` and `os_SetupInput` return). The main thread makes no COM apartment either: the
   `CoInitialize` of a windowed run is in the windowed path of `os_CreateWindow`, since an apartment has hidden windows
   of its own. DirectSound, when `audio:backend` picks it, takes the desktop window for its cooperative level; a
-  DirectSound that fails says so on stdout and the run goes on without sound. Automated runs pass
-  `audio:backend=none` anyway.
+  DirectSound that fails (a system without a sound device: `DirectSound: <step> failed (<code>): no sound` on stdout)
+  is no sound, and the run goes on as with `audio:backend=none`, its speed limit (`aica.LimitFPS`) waiting for no
+  sound device. Automated runs pass `audio:backend=none` anyway.
 * `nulldc3.exe` is a console program: run by a harness it writes into the handles it was given and never opens a
   console of its own. stdout and stderr are in binary mode (no `\r` in front of a `\n`, the bytes Linux writes) and
   unbuffered. `main` returns the exit code of run control: 0, 1 (`runctl_fail`, a failed selftest session), 2 for a
@@ -211,7 +212,9 @@ line and ends the same way. Nothing reaches Windows Error Reporting or a just-in
 
 **Test hooks** (Windows builds): `NULLDC_TEST_FATAL=<kind>` raises a fault right after the emulator has started,
 `segv`, `ill`, `trap` (`die()`), `abort`, `div`, `stack`, `invparam` (a C runtime call with an invalid parameter) or
-`purecall`; `NULLDC_TEST_UI_REPORT=1` prints one line at the end of `main`,
+`purecall`; `NULLDC_TEST_DSOUND=fail` makes DirectSound fail as on a system without a sound device (its first step
+answers `DSERR_NODRIVER`, and nothing of DirectSound is called); `NULLDC_TEST_UI_REPORT=1` prints one line at the end
+of `main`,
 
     nulldc-ui: app=0 windows=0 errmode=8003 wer=20 invparam=1 purecall=1 sigabrt=1 abort=0 classes=
 

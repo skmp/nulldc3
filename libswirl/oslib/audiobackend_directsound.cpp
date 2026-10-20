@@ -90,7 +90,11 @@ static void directsound_init(audio_backend_pull_callback_t pull_callback)
 
 	CoInitializeEx(NULL, COINIT_MULTITHREADED);
 
-	if (directsound_failed("DirectSoundCreate8", DirectSoundCreate8(NULL, &dsound, NULL)))
+	// The test hook NULLDC_TEST_DSOUND=fail (tests/windows, windows.dsound.failed): a system without a sound device,
+	// whose DirectSoundCreate8 answers DSERR_NODRIVER; DirectSound is not called, so nothing sounds
+	const char* test_hook = getenv("NULLDC_TEST_DSOUND");
+	bool forced_failure = test_hook != nullptr && strcmp(test_hook, "fail") == 0;
+	if (directsound_failed("DirectSoundCreate8", forced_failure ? DSERR_NODRIVER : DirectSoundCreate8(NULL, &dsound, NULL)))
 	{
 		dsound = nullptr;
 		return;
@@ -247,9 +251,12 @@ static void directsound_term()
 	num_buffer_events = 0;
 }
 
+// Pull only while the thread that pulls runs: a DirectSound that failed (or whose thread did not start) is no sound,
+// and the stream then takes the push path, whose directsound_push takes nothing and waits for nobody. In pull mode
+// with the speed limit (aica.LimitFPS) the emulator waits for room in the ring, which only dsound_thread makes.
 static bool directsound_preferpull()
 {
-	return true;
+	return dsound_running && thread != nullptr;
 }
 
 audiobackend_t audiobackend_directsound = {
