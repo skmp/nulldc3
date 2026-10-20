@@ -51,6 +51,7 @@
 #include "dbg_symbols.h"
 
 #include "libswirl.h"
+#include "nulldc_version.h"
 #include "cfg/cfg.h"
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_mem.h"
@@ -1440,7 +1441,7 @@ DBG_SELFTEST(core_tick, "core.tick")
 	if (shape.is_object() && shape.contains("deviceTree"))
 		CollectNodes(shape["deviceTree"], "", &nodes, &problems);
 
-	Check(shape.size() == 6 && shape["emulator"] == json({ { "name", "nullDC" }, { "version", "3.0.0" }, { "build", "native" } }) && shape["protocol"] == 3
+	Check(shape.size() == 6 && shape["emulator"] == json({ { "name", "nullDC" }, { "version", nulldc_version() }, { "build", "native" } }) && shape["protocol"] == 3
 		&& shape["ui"].is_string() && shape["capabilities"].is_array() && shape["targets"].is_array() && shape["deviceTree"].is_array(),
 		"it has emulator, protocol 3, ui, capabilities, targets and deviceTree, and nothing else");
 

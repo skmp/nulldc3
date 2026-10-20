@@ -11,7 +11,7 @@
 #include "imgui/imgui.h"
 #include "gui_partials.h"
 #include "gui_util.h"
-#include "version.h"
+#include "nulldc_version.h"
 #include "utils/glwrap/GLES.h"
 
 void gui_settings_about()
@@ -21,9 +21,8 @@ void gui_settings_about()
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, normal_padding);
 	    if (ImGui::CollapsingHeader("nullDC", ImGuiTreeNodeFlags_DefaultOpen))
 	    {
-			ImGui::Text("Version: %s", NULLDC_VERSION);
-			ImGui::Text("Git Hash: %s", GIT_HASH);
-			ImGui::Text("Build Date: %s", BUILD_DATE);
+			ImGui::Text("Version: %s", nulldc_version());
+			ImGui::Text("Git Hash: %s%s", nulldc_git_hash(), nulldc_git_dirty() ? "-dirty" : "");
 			ImGui::Text("Target: %s",
 #if DC_PLATFORM == DC_PLATFORM_DREAMCAST
 					"Dreamcast"

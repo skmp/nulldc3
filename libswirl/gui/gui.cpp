@@ -31,7 +31,6 @@
 #include "linux-dist/main.h"	// FIXME for kcode[]
 #include "gui_util.h"
 
-#include "version.h"
 #include "oslib/audiostream.h"
 #include "hw/pvr/Renderer_if.h"
 #include "libswirl.h"
