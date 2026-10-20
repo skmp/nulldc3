@@ -1,1 +1,3 @@
+# Configure wrote the version here until the version moved into the build directory
+# (nulldc3/cmake/version.cmake): an old checkout may still have the file, which nothing includes
 /version.h

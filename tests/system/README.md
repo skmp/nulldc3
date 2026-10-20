@@ -49,7 +49,7 @@ Every test is `system_test.py --case <case>` on one of the two emulators, but fo
 
 | test (`system.` and `system.hle.`) | what has to hold | needs |
 |---|---|---|
-| `help` | `--help` prints the usage text and exits with 0: every switch at the start of a line of its own (`--config` with the form of its list, `--portable <dir>`, `--shared`, `--help`, `--`), none in a one-dash form; it starts no run and makes not the directory of a `--portable` in front of it | |
+| `help` | `--help` prints the usage text and exits with 0: every switch at the start of a line of its own (`--config` with the form of its list, `--portable <dir>`, `--shared`, `--help`, `--version`, `--`), none in a one-dash form; it starts no run and makes not the directory of a `--portable` in front of it | |
 | `guest_exit.jit` `guest_exit.interp` | a program that returns to the BIOS ends the run: its text is on stdout, `reason=guest-exit`, exit code 0, the engine is the one that was asked for | |
 | `exit.vblanks.jit` `exit.vblanks.interp` | `Exit.AfterVblanks=20` ends a program that never ends: `reason=vblanks vblanks=20`, the emulated time of 20 vblanks, a wall time and a speed, a state hash | |
 | `exit.seconds` | `Exit.AfterSeconds=0.25` ends the run at the first vblank from 0.25 emulated seconds on; no hash that was not asked for | |

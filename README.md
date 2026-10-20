@@ -53,6 +53,8 @@ written with one dash, is an error that says so (exit status 2, nothing is start
                         of the executable
     --shared            keep them in the per-user directories of the system instead (below)
     --help              the usage text
+    --version           the version, "nullDC <version>": 3.0.0-pre+g<first 10 characters of the commit> until
+                        the tag v3.0.0-pre is reachable (nulldc3/README.md has the rule)
     --                  every word after it is a game, also one whose name begins with a dash
     --console, --log    Windows only: a console window for the output; the output into nulldc3-log.txt in
                         the emulator's directory

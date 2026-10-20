@@ -19,6 +19,7 @@
 
 #include "hw/aica/dsp.h"
 #include "hw/sh4/sh4_if.h"
+#include "nulldc_version.h"
 
 #include <atomic>
 #include <chrono>
@@ -998,7 +999,7 @@ std::string BuildDescribe(const emu::RunState& state)
 	w.Key("name");
 	w.String("nullDC");
 	w.Key("version");
-	w.String("3.0.0");
+	w.String(nulldc_version());
 	w.Key("build");
 	w.String("native");
 	w.EndObject();

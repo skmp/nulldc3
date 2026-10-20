@@ -7,6 +7,7 @@
 
 #include "debugger/dbg_net.h"
 #include "debugger/dbg_webui.h"
+#include "nulldc_version.h"
 
 #include "check.h"
 
@@ -27,12 +28,15 @@ static std::string ReadAll(const std::filesystem::path& path) {
 	return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
 }
 
-// The text of the built-in page is the same in every build, with a bundle embedded or not: it names the
-// product and says where a UI comes from.
+// The text of the built-in page is the same in every build, with a bundle embedded or not, but for the
+// version the build made (nulldc3/cmake/version.cmake): it names the product and its version, and says where
+// a UI comes from.
 static void TestBuiltinPage() {
 	const std::string& page = webui::BuiltinPage();
-	CHECK(page.find("<title>nullDC 3.0.0 debugger</title>") != std::string::npos);
-	CHECK(page.find("<h1>nullDC 3.0.0 debugger</h1>") != std::string::npos);
+	const std::string name = std::string("nullDC ") + nulldc_version() + " debugger";
+	CHECK(nulldc_version()[0] != '\0');
+	CHECK(page.find("<title>" + name + "</title>") != std::string::npos);
+	CHECK(page.find("<h1>" + name + "</h1>") != std::string::npos);
 	CHECK(page.find("no Dreamcast DevTools embedded") != std::string::npos);
 	CHECK(page.find("devtools/dist-native") != std::string::npos);
 	CHECK(page.find("NULLDC_DEVTOOLS_DIST") != std::string::npos);

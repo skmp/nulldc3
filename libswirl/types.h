@@ -414,8 +414,11 @@ using namespace std;
 #endif
 
 
-#define VER_FULLNAME	VER_EMUNAME " git" _X_x_X_MMU_VER_STR " (built " __DATE__ "@" __TIME__ ")"
-#define VER_SHORTNAME	VER_EMUNAME " git" _X_x_X_MMU_VER_STR
+// The window titles: VER_EMUNAME and the version of the build, "nullDC 3.0.0-pre+g<h>" (nulldc_title(),
+// version_title.cpp)
+#include "nulldc_version.h"
+#define VER_FULLNAME	nulldc_title()
+#define VER_SHORTNAME	nulldc_title()
 
 
 void os_DebugBreak();

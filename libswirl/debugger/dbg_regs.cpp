@@ -24,7 +24,7 @@
 #include "hw/sh4/sh4_interrupts.h"
 #include "hw/sh4/sh4_mmr.h"
 #include "hw/sh4/sh4_sched.h"
-#include "version.h"
+#include "nulldc_version.h"
 
 #include <cstdio>
 #include <cstring>
@@ -604,18 +604,9 @@ static bool ReadText(u32 selector, char* text, u32 n)
 		return true;
 
 	case kTextBuild:
-	{
-		// the revision the build system found; it finds none outside a plain checkout
-		const char* revision = NULLDC_VERSION;
-		size_t len = strlen(revision);
-		const char notfound[] = "-NOTFOUND";
-
-		if (len == 0 || (len >= sizeof(notfound) - 1 && strcmp(revision + len - (sizeof(notfound) - 1), notfound) == 0))
-			snprintf(text, n, "nullDC 3.0.0");
-		else
-			snprintf(text, n, "nullDC 3.0.0 %s", revision);
+		// the version the build made from git (nulldc3/cmake/version.cmake)
+		snprintf(text, n, "nullDC %s", nulldc_version());
 		return true;
-	}
 
 	case kTextTimingMode:
 		snprintf(text, n, "fast");

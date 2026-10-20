@@ -52,6 +52,18 @@ function(nulldc_add_libswirl_library target)
   target_compile_definitions(${target} PUBLIC FEAT_SHREC=${shrec} FEAT_AREC=${arec})
 endfunction()
 
+# nulldc_add_version_sources(<target>)
+#
+# libswirl/version.cpp and version_title.cpp (nulldc_version(), nulldc_title(), ...) into <target>, which is built
+# after the version step of tests/CMakeLists.txt. version.cpp is the one translation unit that includes the generated
+# nulldc3_version.h, and has the generated directory on its include path alone. A source file's properties belong
+# to a directory: call it in the directory that makes <target>.
+function(nulldc_add_version_sources target)
+  target_sources(${target} PRIVATE "${nulldc_core_path}/version.cpp" "${nulldc_core_path}/version_title.cpp")
+  set_source_files_properties("${nulldc_core_path}/version.cpp" PROPERTIES INCLUDE_DIRECTORIES "${NULLDC_VERSION_INCLUDE_DIR}")
+  add_dependencies(${target} nulldc_tests_version)
+endfunction()
+
 # The SH4 interpreter: opcode handlers, opcode tables, register banks, exceptions and the memory map tables.
 # What these reference from the rest of the emulator is in tests/common/sh4_stubs*.cpp
 set(NULLDC_SH4_INTERP_SOURCES

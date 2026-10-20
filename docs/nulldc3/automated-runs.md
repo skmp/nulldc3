@@ -196,9 +196,14 @@ On WSL2 the kernel pipes core files to a handler that ignores `ulimit -c 0`; the
 from running is exactly 1 byte (`prlimit --core=1:`, `resource.setrlimit(RLIMIT_CORE, (1, hard))`; `ulimit -c 1` in
 bash is 1024 bytes and does not do it). `tests/system` and `tests/perf` set it for every run.
 
-## `--help`
+## `--help` and `--version`
 
-Prints the usage text and exits with code 0, without opening a display or reading the config, and without making
-or choosing a directory. A command line that is refused (a one-dash switch, an unknown one, `--portable` without a
-directory, a directory that cannot be written, ...) prints one line `nulldc3: <why>` on stderr and exits with code 2
-before a machine is made.
+`--help` prints the usage text and exits with code 0, without opening a display or reading the config, and without
+making or choosing a directory. `--version` does the same with the line `nullDC <version>`, the last on stdout (the
+Linux build prints three lines of its own setup in front of it, the personality and the page size, as it does for
+`--help`): the version the build made from git, `3.0.0-pre+g<h>` (the first 10 characters of the commit) until a tag
+`v<T>` is reachable, `<T>` on the tag, `.dirty` or `+dirty` behind it when a tracked file had changed
+(`nulldc3/README.md` has the rule). A script that has a build directory and not the binary reads the same string
+from `nulldc3-version.txt` there. A command line that is refused (a one-dash switch, an unknown one, `--portable`
+without a directory, a directory that cannot be written, ...) prints one line `nulldc3: <why>` on stderr and exits
+with code 2 before a machine is made.

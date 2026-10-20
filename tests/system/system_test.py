@@ -274,7 +274,7 @@ def check_hash(run):
 # a blank or the end of the line behind), with the form of the list behind --config and of the directory of
 # --portable
 HELP_SWITCHES = ('--config section:key=value [ , section:key=value ]...', '--portable <dir>', '--shared', '--help',
-                 '--')
+                 '--version', '--')
 HELP_TEXTS = ('Usage: nulldc3 [switches] [game]', 'docs/nulldc3/automated-runs.md')
 
 
@@ -290,7 +290,7 @@ def case_help(h):
     for switch in HELP_SWITCHES:
         check(re.search(r'^  %s(\s|$)' % re.escape(switch), run.log, re.M) is not None,
               'the usage text lists no "%s" (at the start of a line)' % switch, run)
-    one_dash = re.findall(r'(?<![-\w])-(?:config|portable|shared|help)\b', run.log)
+    one_dash = re.findall(r'(?<![-\w])-(?:config|portable|shared|help|version)\b', run.log)
     check(not one_dash, 'the usage text has a one-dash switch: %s' % one_dash, run)
     check('Config dir is' not in run.log and 'nulldc-exit' not in run.log, 'a run after --help', run)
     check(not os.path.exists(portable), '--help made the directory of --portable', run)
