@@ -1,0 +1,30 @@
+;; no-windowserver.sb: the sandbox profile of tests/macos/macrun.py (sandbox-exec -f). It allows everything but the
+;; Mach services that put a process on the desktop of the person who uses the Mac:
+;;
+;;   com.apple.windowserver.active          the window server (SkyLight's connection, which AppKit makes for every
+;;                                          NSApplication, a window, an alert, a menu bar; CoreGraphics' session
+;;                                          and display calls go through it as well)
+;;   com.apple.windowmanager.server         the window manager of macOS 13 and later (Stage Manager), which AppKit
+;;                                          tells about the windows of an application
+;;   com.apple.dock.server                  the Dock: its tile, its icon and its menu for an application
+;;   com.apple.coreservices.launchservicesd LaunchServices' check-in of an application (_RegisterApplication),
+;;                                          which makes the process an application the Dock shows; an open of a
+;;                                          URL or an application (NSWorkspace, open) goes there too
+;;
+;; The names were checked against the strings of the shared cache of macOS 26.4 (AppKit, SkyLight, HIServices,
+;; LaunchServices): each of the four is there as the name of a Mach service. The other names of those families
+;; that the cache holds are dispatch queues, defaults keys, notifications and files, or LaunchServices' database
+;; services (com.apple.lsd.*), which put nothing on the desktop and which ordinary tools read.
+;;
+;; Under the profile no program can make a window or a Dock icon or show a dialog: the lookup of the window server
+;; is refused, so AppKit cannot connect, and an application cannot check in. macos.sandbox.canary shows it: under
+;; the profile it cannot reach the window server, and the kernel says that the process is sandboxed and that the
+;; lookup is denied.
+
+(version 1)
+(allow default)
+(deny mach-lookup
+  (global-name "com.apple.windowserver.active")
+  (global-name "com.apple.windowmanager.server")
+  (global-name "com.apple.dock.server")
+  (global-name "com.apple.coreservices.launchservicesd"))
