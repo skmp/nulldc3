@@ -11,6 +11,9 @@
 #
 #	macos.sandbox.canary        canary.c through macrun.py: it cannot reach the window server, and the kernel
 #	                            says sandboxed and the window server's lookup denied
+#	macos.macrun.tree           a long step's timeout (macrun.py --detach around a ctest whose test runs
+#	                            macrun.py again around a sleeper, which that one starts in a session of its own):
+#	                            124, and the sleeper ends with the step
 #	macos.headless.nowindow     the guest headless with NULLDC_TEST_UI_REPORT=1: app=0 windows=0, exit 0, the
 #	                            exit line, the ARM7 on the interpreter
 #	macos.fatal.<kind>          NULLDC_TEST_FATAL=<kind> for segv ill trap abort: the fault_handler line (segv's
@@ -73,6 +76,7 @@ function(macos_case test case)
 endfunction()
 
 macos_case(macos.sandbox.canary canary TIMEOUT 60)
+macos_case(macos.macrun.tree tree TIMEOUT 120)
 macos_case(macos.headless.nowindow headless EMULATOR)
 foreach(kind segv ill trap abort)
   macos_case(macos.fatal.${kind} fatal.${kind} EMULATOR)

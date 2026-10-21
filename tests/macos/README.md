@@ -27,8 +27,15 @@ nothing of it can reach the desktop of the person who uses the Mac: no window, n
   missing and `CI` is not set in the environment. With `CI` set (a CI runner), the program runs without a profile
   and the line says so.
 - **Its own process group**: the program starts in a new session (`setsid`); `--timeout <s>` (default 3600) ends
-  the whole group with `SIGKILL` and exits with 124; what is left of the group when the program has ended is killed
-  too, and so is the group when `macrun.py` gets `SIGTERM`, `SIGINT` or `SIGHUP`.
+  the whole group with `SIGKILL`, and every process below the program in a group or a session of its own, and exits
+  with 124; what is left of the group, and below it, when the program has ended is killed too, and so is all of it
+  when `macrun.py` gets `SIGTERM`, `SIGINT` or `SIGHUP`. The processes below the program come from the kernel's
+  process table (`sysctl` `kern.proc.all` through libSystem, checked on `macrun.py`'s own entry; `/bin/ps` is setuid
+  root on macOS and cannot run under a profile, "Operation not permitted", so it is only the fallback): the tree is
+  stopped (`SIGSTOP`) until it grows no more, then each of its groups and processes gets `SIGKILL`, again until
+  nothing is left. That is what ends the program of a `macrun.py` inside a long step (a test in a ctest under
+  `macrun.py --detach`): it is in a session of its own, and that `macrun.py` dies in the same sweep, before it could
+  end it.
 - **Its files**: `TMPDIR` is `<work>/tmp`, the program's id is in `<work>/run/<name>.pid` (`<work>`: `--work`, or
   the current directory). `__CFBundleIdentifier` is taken out of the program's environment: a program `macrun.py`
   runs was never started by LaunchServices (the emulator's alert rule asks it).
@@ -54,6 +61,7 @@ they check, on a command line that is refused before anything runs). The output 
 | test | what it checks |
 |---|---|
 | `macos.sandbox.canary` | `canary.c` through `macrun.py`: it tries to reach the window server without AppKit (`CGSessionCopyCurrentDictionary`) and prints the kernel's view of itself; under the profile it must not reach the window server, and the kernel must say sandboxed (`sandbox_check(pid, NULL, 0)`) and the window server's `mach-lookup` denied (`sandbox_check(pid, "mach-lookup", SANDBOX_FILTER_GLOBAL_NAME, "com.apple.windowserver.active")`; the SPI is declared in the file, as WebKit's `SandboxSPI.h` does). The test also asks the kernel whether its caller, ctest, is sandboxed, and `macrun.py` has to have applied the profile when it is not and to have run under the caller's when it is. A gate runs it twice: from a ctest that is not sandboxed, and from a ctest under `macrun.py --detach` |
+| `macos.macrun.tree` | the shape of a gate's long step: `macrun.py --detach` with a timeout of 20 s around a ctest (a project the test writes into its work directory) whose one test runs `macrun.py` again around a sleeper of 600 s, which that `macrun.py` starts in a session of its own and whose command line names a file of the work directory. The sleeper has to run (its pid file, and `kill -0` of that pid), the step's rc file has to say 124 and its log `timeout after`, and the sleeper has to have ended with the step; one that outlived it is ended by the test, by its pid |
 | `macos.headless.nowindow` | the guest 90 vblanks headless with `NULLDC_TEST_UI_REPORT=1`: exit 0 by an exit, the exit line, `nulldc-ui: app=0 windows=0` (no `NSApplication` was made), the ARM7 on the interpreter (`Using SCPU Interpreter`: no ARM7 recompiler is built) |
 | `macos.fatal.segv` `.ill` `.trap` `.abort` | `NULLDC_TEST_FATAL=<kind>` (`segv` a write to address 16, which no mapping holds: a `SIGSEGV`, as on Linux; `ill` `udf #0`; `trap` `die()`; `abort` `abort()`): the `fault_handler` line of the signal on stderr and 128 + its number by an exit, not a signal (139, 132, 134), for `segv` with the address `0x10` (the fault handler, which takes the write for a possible guest memory fault first, has come back to it with its registers: a `SIGBUS` at the trap page's address is the handler reporting its own thunk), for `ill` with the instruction as both address and pc; for `trap` `Fatal error : NULLDC_TEST_FATAL` on stdout, no `fault_handler` line and 133; for every kind the line `Config dir is: <work>/portable/` that the start printed on stdout before the fault (stdout is line-buffered: a buffer that stdio still held would be lost at the `_exit`); nothing new in `~/Library/Logs/DiagnosticReports` (its names, before and 5 s after) |
 | `macos.refused` | a refused command line (`--bogus`), not headless: with stderr to a pipe, exit 2 and the reason there; with stderr to `/dev/null`, exit 2 at once; headless with stderr to `/dev/null`, exit 2; each `nulldc-ui: app=0 windows=0` (no alert was made) |

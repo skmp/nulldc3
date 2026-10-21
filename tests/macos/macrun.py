@@ -19,8 +19,12 @@ Dock or LaunchServices: no window, no Dock icon, no dialog on the desktop of the
   and CI is not set in the environment (with CI set, a runner of the CI, the program runs without a profile and the
   line says so).
 - Its own process group: the program starts in a new session (setsid). --timeout <s> (default 3600): when it runs
-  out, SIGKILL to the whole group and exit 124. When the program has ended, what is left of its group is killed too.
-  A SIGTERM, SIGINT or SIGHUP to macrun.py kills the group and ends macrun.py with 128 + that signal.
+  out, SIGKILL to the whole group, and to every process below the program in a group or a session of its own, and
+  exit 124. When the program has ended, what is left of its group, and below it, is killed too. A SIGTERM, SIGINT or
+  SIGHUP to macrun.py kills the same and ends macrun.py with 128 + that signal. (A macrun.py that the program runs,
+  a test inside a ctest of a long step, starts its own program in a session of its own; it dies in the same sweep,
+  before it can end that program, so the sweep reads the whole tree from the kernel's process table first, stops
+  it, then kills it.)
 - TMPDIR is <work>/tmp (made), <work> being --work or the current directory; the program's id goes into
   <work>/run/<name>.pid. __CFBundleIdentifier is taken out of the program's environment: a program that macrun.py
   runs was never started by LaunchServices (the emulator's alert rule asks it, nulldc3/apple/AppDelegate.mm).
@@ -36,15 +40,28 @@ Dock or LaunchServices: no window, no Dock icon, no dialog on the desktop of the
 Python 3.9, the standard library only. docs/nulldc3/automated-runs.md and tests/macos/README.md say more.
 """
 import ctypes
+import errno
 import os
 import signal
+import struct
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SANDBOX_EXEC = '/usr/bin/sandbox-exec'
 LIBSYSTEM = '/usr/lib/libSystem.B.dylib'
+PS = '/bin/ps'
 NOT_RUN = 126
+
+# struct kinfo_proc of <sys/sysctl.h>, the same on arm64 and x86_64: its size, and the offsets of kp_proc.p_stat,
+# kp_proc.p_pid, kp_eproc.e_ppid and kp_eproc.e_pgid; p_stat SZOMB is a zombie
+KINFO_PROC_SIZE = 648
+KP_STAT = 36
+KP_PID = 40
+KP_PPID = 560
+KP_PGID = 564
+SZOMB = 5
 
 
 def say(text):
@@ -108,6 +125,137 @@ def kill_group(pgid):
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
+
+
+def signal_pid(pid, sn):
+    try:
+        os.kill(pid, sn)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def process_table():
+    """{pid: (ppid, pgid)} of every process that has not ended (zombies left out): from the kernel, else from ps;
+    None when neither can tell."""
+    table = table_from_kernel()
+    if table is None:
+        table = table_from_ps()
+    return table
+
+
+def table_from_kernel():
+    """The table from sysctl kern.proc.all through libSystem, what ps reads. ps itself is setuid root on macOS and
+    so cannot run under a sandbox profile ("Operation not permitted"), where macrun.py runs inside a long step. The
+    layout of struct kinfo_proc is checked on this process's own entry; None when that or the call fails. sysctl
+    has no variadic arguments."""
+    if sys.platform != 'darwin':
+        return None
+    try:
+        sysctl = ctypes.CDLL(LIBSYSTEM, use_errno=True).sysctl
+    except (OSError, AttributeError):
+        return None
+    sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint, ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+                       ctypes.c_void_p, ctypes.c_size_t]
+    sysctl.restype = ctypes.c_int
+    mib = (ctypes.c_int * 4)(1, 14, 0, 0)	# CTL_KERN, KERN_PROC, KERN_PROC_ALL
+    data = None
+    for _ in range(5):
+        size = ctypes.c_size_t(0)
+        if sysctl(mib, 4, None, ctypes.byref(size), None, 0) != 0:
+            return None
+        size.value += size.value // 4 + 32 * KINFO_PROC_SIZE	# room for the processes started since
+        buf = ctypes.create_string_buffer(size.value)
+        if sysctl(mib, 4, buf, ctypes.byref(size), None, 0) == 0:
+            data = buf.raw[:size.value]
+            break
+        if ctypes.get_errno() != errno.ENOMEM:
+            return None
+    if data is None or len(data) % KINFO_PROC_SIZE:
+        return None
+    table = {}
+    for at in range(0, len(data), KINFO_PROC_SIZE):
+        if data[at + KP_STAT] == SZOMB:
+            continue
+        pid = struct.unpack_from('=i', data, at + KP_PID)[0]
+        table[pid] = struct.unpack_from('=ii', data, at + KP_PPID)
+    if table.get(os.getpid()) != (os.getppid(), os.getpgrp()):
+        return None
+    return table
+
+
+def table_from_ps():
+    """The table from ps, where the kernel's cannot be read."""
+    try:
+        r = subprocess.run([PS, '-A', '-o', 'pid=,ppid=,pgid=,stat='], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError:
+        return None
+    if r.returncode != 0:
+        return None
+    table = {}
+    for line in r.stdout.decode('ascii', 'replace').splitlines():
+        f = line.split()
+        if len(f) < 4 or not (f[0].isdigit() and f[1].isdigit() and f[2].isdigit()):
+            continue
+        if f[3].startswith('Z'):
+            continue
+        table[int(f[0])] = (int(f[1]), int(f[2]))
+    return table
+
+
+def tree_of(table, leader, waited):
+    """What macrun.py started that is still there: the program (until it has been waited for: then its pid may be
+    another process's), what is left of its process group, and every process below those, whatever its group or
+    session; and the process groups of all of them."""
+    children = {}
+    for pid, (ppid, _) in table.items():
+        children.setdefault(ppid, []).append(pid)
+    todo = [pid for pid, (_, pgid) in table.items() if pgid == leader]
+    if not waited and leader in table:
+        todo.append(leader)
+    me = os.getpid()
+    found = set()
+    while todo:
+        pid = todo.pop()
+        if pid in found or pid == me or pid <= 1:
+            continue
+        found.add(pid)
+        todo.extend(children.get(pid, []))
+    return found, {table[pid][1] for pid in found}
+
+
+def end_tree(p):
+    """SIGKILL to the program's process group and to every process below the program, also one in a group or a
+    session of its own. The tree is read from ps and stopped (SIGSTOP), again until it has grown no more, so that
+    nothing of it forks or ends between the look and the kill; then each of its groups and each of its processes
+    gets SIGKILL; all of it again until nothing is left. A macrun.py inside the program dies in that sweep, and the
+    program it started, in a session of its own, with it. Without a process table: the program's group alone."""
+    leader = p.pid
+    own_group = os.getpgrp()
+    for _ in range(20):
+        stopped = set()
+        groups = set()
+        for _ in range(50):
+            table = process_table()
+            if table is None:
+                kill_group(leader)
+                return
+            found, found_groups = tree_of(table, leader, p.returncode is not None)
+            groups |= found_groups
+            new = found - stopped
+            if not new:
+                break
+            for pid in new:
+                signal_pid(pid, signal.SIGSTOP)
+            stopped |= new
+        if not stopped:
+            return
+        for pgid in groups:
+            if pgid > 1 and pgid != own_group:
+                kill_group(pgid)
+        for pid in stopped:
+            signal_pid(pid, signal.SIGKILL)
+        time.sleep(0.05)
 
 
 def signal_name(n):
@@ -187,8 +335,9 @@ def run(opts, command):
         f.write('%d\n' % p.pid)
 
     def on_signal(sn, frame):
-        kill_group(p.pid)
-        say('%s: %s to macrun.py: the process group %d is killed' % (name, signal_name(sn), p.pid))
+        end_tree(p)
+        say('%s: %s to macrun.py: the process group %d and what is below it are killed' % (name, signal_name(sn),
+                                                                                         p.pid))
         sys.exit(128 + sn)
 
     for sn in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -197,11 +346,11 @@ def run(opts, command):
     try:
         status = p.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        kill_group(p.pid)
+        end_tree(p)
         p.wait()
-        say('%s: timeout after %g s: the process group %d is killed' % (name, timeout, p.pid))
+        say('%s: timeout after %g s: the process group %d and what is below it are killed' % (name, timeout, p.pid))
         return 124
-    kill_group(p.pid)
+    end_tree(p)
     if status < 0:
         say('%s: killed by signal %d (%s)' % (name, -status, signal_name(-status)))
         return 128 - status

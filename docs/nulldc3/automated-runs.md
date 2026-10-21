@@ -310,8 +310,10 @@ hosts only);
 **Automated runs on the Mac go through `tests/macos/macrun.py`** (`tests/macos/README.md`): every emulator run of an
 automated run there, and every long step (a build, ctest), runs under the sandbox profile
 `tests/macos/no-windowserver.sb`, which denies the window server, the window manager, the Dock and LaunchServices, so
-that nothing it runs can make a window, a Dock icon or a dialog; in a process group of its own, with a timeout,
-`TMPDIR` in its work directory and a PID file; a long step runs detached under `caffeinate -i` with a log and an rc
+that nothing it runs can make a window, a Dock icon or a dialog; in a process group of its own, with a timeout
+(which, like the program's end and a signal to `macrun.py`, kills the group and every process below the program,
+also one in a session of its own, such as the emulator of a `macrun.py` inside a long step), `TMPDIR` in its work
+directory and a PID file; a long step runs detached under `caffeinate -i` with a log and an rc
 file. It applies the profile when its caller has none, and runs the program under the caller's otherwise (a ctest
 under `macrun.py --detach`); it runs nothing without `/usr/bin/sandbox-exec` unless `CI` is set. Its exit status is
 the program's, 128 + N for a signal, 124 for its timeout, 126 when it ran nothing. Every run also carries the keys of
