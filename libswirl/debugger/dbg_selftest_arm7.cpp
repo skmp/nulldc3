@@ -31,6 +31,7 @@
 */
 
 #include "dbg_selftest.h"
+#include "dbg_selftest_nap.h"
 #include "dbg_arm7.h"
 #include "dbg_arm7_private.h"
 #include "dbg_sh4.h"
@@ -121,7 +122,7 @@ double MsSince(Clock::time_point t0)
 
 void Nap(int ms)
 {
-	std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+	selftest::NapUs((s64)ms * 1000);
 }
 
 /*
@@ -499,7 +500,7 @@ bool WaitLifetime(Lifetime want, int timeout_ms = kBoundMs)
 		if (MsSince(t0) > timeout_ms)
 			return false;
 
-		std::this_thread::sleep_for(std::chrono::microseconds(100));
+		selftest::NapUs(100);
 	}
 
 	return true;
@@ -781,7 +782,7 @@ int HandTick(void*, int, int, int)
 			Clock::time_point t0 = Clock::now();
 
 			while (!hand.release && MsSince(t0) < kHoldMs)
-				std::this_thread::sleep_for(std::chrono::microseconds(200));
+				selftest::NapUs(200);
 
 			hand.sawCall = (g_attn.load() & ATTN_CALL) != 0;
 			hand.holding = false;
@@ -4845,7 +4846,7 @@ BOUNDED_GUEST_TEST(arm7n_idlebp, "arm7n.idlebp")
 			if (MsSince(t0) > kBoundMs)
 				return;
 
-			std::this_thread::sleep_for(std::chrono::microseconds(500));
+			selftest::NapUs(500);
 		}
 
 		emu::Call(emu::CC_TABLE, [] {

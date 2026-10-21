@@ -245,9 +245,12 @@ Windows is WSL's launcher, so the check of the sounding guest's generated files 
 and says so. The emulator's own keys are those above. On a POSIX host the helper starts the program itself, with an
 environment of the sanitizers' options alone (a tool: the caller's) and a core size limit of 1 byte. `tests/system`
 builds no emulator on Windows: the tests project takes `-DNULLDC_EMULATOR=<nulldc3.exe>` (`tests/README.md`, "On
-Windows"). The programs of the tests project that the tests run on Windows have the emulator's policy for a program
-that dies (`tests/common/win_policy.cpp`: no box, no crash report, one line and 128 + the signal's number), which
-`common.guard.windows` holds; `nulldc3-winrun` does not stop crash reports.
+Windows"). Every program of the tests project has the emulator's policy for a program that dies on Windows
+(`tests/common/win_policy.cpp`: no box, no crash report, one line and 128 + the signal's number), which
+`common.policy.windows` reads in every program the project builds and `common.guard.windows` makes four of them show;
+`nulldc3-winrun` does not stop crash reports. The selftest sessions of the debugger (`Debugger:SelfTest`) nap for
+fractions of a millisecond with a high-resolution waitable timer on Windows (`libswirl/debugger/dbg_selftest_nap.h`),
+where `std::this_thread::sleep_for` lasts a tick of the system timer; the emulator asks for no timer resolution.
 
 ## Faults
 

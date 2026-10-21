@@ -86,3 +86,53 @@ if(${HOST_OS} EQUAL ${OS_WINDOWS})
                    "-DWORK=${CMAKE_BINARY_DIR}/common/work/common.guard.windows" -P "${CMAKE_CURRENT_SOURCE_DIR}/guard_windows.cmake")
   set_tests_properties(common.guard.windows PROPERTIES TIMEOUT 600)
 endif()
+
+# Windows: the policy is in every program of the project (policy_windows.cmake reads its mark in the file of each).
+#   common.policy.windows           every executable target of the project, found by a walk of its directories once
+#                                   all of them are made (a call deferred to the end of the top directory): each has
+#                                   the policy, and the control has none. Not walked: nulldc3-winrun (tests/winrun),
+#                                   the runner every program of the tests runs inside, whose error mode keeps the
+#                                   system's boxes away, and which NULLDC_TEST_GUARD_FAULT of the policy would make
+#                                   fault in place of the program it runs (common.guard.windows); and the control
+#   common.policy.windows.catches   the script on common_selftest and the control: it fails, and names the control
+#                                   alone as a program without the policy
+# The control, common_policy_absent, is a program of the project built without the policy (an empty main, written
+# into the build directory)
+if(${HOST_OS} EQUAL ${OS_WINDOWS})
+  if(CMAKE_VERSION VERSION_LESS 3.19)
+    foreach(test common.policy.windows common.policy.windows.catches)
+      nulldc_add_missing_data_test(${test} "CMake ${CMAKE_VERSION} cannot defer the walk of the project's targets: cmake_language(DEFER) needs 3.19")
+    endforeach()
+  else()
+    file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/policy_absent.cpp" CONTENT "int main() { return 0; }\n")
+    add_executable(common_policy_absent "${CMAKE_CURRENT_BINARY_DIR}/policy_absent.cpp")
+
+    add_test(NAME common.policy.windows.catches
+             COMMAND "${CMAKE_COMMAND}" "-DPROGRAMS=|$<TARGET_FILE:common_selftest>|$<TARGET_FILE:common_policy_absent>"
+                     -P "${CMAKE_CURRENT_SOURCE_DIR}/policy_windows.cmake")
+    set_tests_properties(common.policy.windows.catches PROPERTIES TIMEOUT 120
+                         PASS_REGULAR_EXPRESSION "\n1 of 2 programs lack the policy: common_policy_absent\n")
+
+    function(nulldc_policy_windows_test)
+      set(programs "")
+      set(directories "${CMAKE_SOURCE_DIR}")
+      while(directories)
+        list(POP_FRONT directories directory)
+        get_property(targets DIRECTORY "${directory}" PROPERTY BUILDSYSTEM_TARGETS)
+        foreach(target ${targets})
+          get_target_property(type ${target} TYPE)
+          if(type STREQUAL "EXECUTABLE" AND NOT target STREQUAL "nulldc3_winrun" AND NOT target STREQUAL "common_policy_absent")
+            string(APPEND programs "|$<TARGET_FILE:${target}>")
+          endif()
+        endforeach()
+        get_property(subdirectories DIRECTORY "${directory}" PROPERTY SUBDIRECTORIES)
+        list(APPEND directories ${subdirectories})
+      endwhile()
+      add_test(NAME common.policy.windows
+               COMMAND "${CMAKE_COMMAND}" "-DPROGRAMS=${programs}" "-DCONTROLS=|$<TARGET_FILE:common_policy_absent>"
+                       -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/policy_windows.cmake")
+      set_tests_properties(common.policy.windows PROPERTIES TIMEOUT 300)
+    endfunction()
+    cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL nulldc_policy_windows_test)
+  endif()
+endif()

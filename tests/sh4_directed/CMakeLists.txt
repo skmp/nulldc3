@@ -13,6 +13,10 @@
 
 add_executable(sh4_directed_gen directed_gen.cpp)
 target_link_libraries(sh4_directed_gen PRIVATE nulldc_test_common)
+if(WIN32)
+  # the policy of the tests project for a program that dies (../common/win_policy.cpp: no box, no crash report, one line and 128 + the signal's number)
+  target_sources(sh4_directed_gen PRIVATE "${nulldc_tests_path}/common/win_policy.cpp")
+endif()
 
 set(nulldc_sh4_directed_dir "${CMAKE_CURRENT_BINARY_DIR}/vectors")
 file(MAKE_DIRECTORY "${nulldc_sh4_directed_dir}")

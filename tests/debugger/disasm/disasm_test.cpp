@@ -20,6 +20,11 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 using namespace dbg;
 
 namespace
@@ -604,6 +609,12 @@ namespace
 
 int main(int argc, char** argv)
 {
+#ifdef _WIN32
+	// the dump modes write their lines as Linux does, each ending in \n alone: a stdout in text mode would end every
+	// one in \r\n, which dsp_playground.mts does not take (debugger.disasm.dsp_playground)
+	_setmode(_fileno(stdout), _O_BINARY);
+#endif
+
 	const std::string mode = argc > 1 ? argv[1] : "golden";
 
 	if (mode == "sh4" && argc == 4)

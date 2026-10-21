@@ -23,8 +23,17 @@ What it holds, on every host, for both systems (each function of emurun takes th
     the harnesses   tests/debugger/selftest/selftest.py, tests/debugger/contract/contract.py,
                     tests/debugger/guest/dsptest/soundlines.py and tests/debugger/sh4bp/sessions.py start no program
                     but through emurun: no subprocess call of their own, and no module that knows the host's limits;
-                    every start names the environment of the program (emurun.start(..., env=...)), and none reads the
-                    caller's environment but through emurun (no os.environ, no os.getenv)
+                    every start names the environment of the program (emurun.start(..., env=...)), none reads the
+                    caller's environment but through emurun (no os.environ, no os.getenv), and none names the host
+                    or the caller's environment to emurun.environment or emurun.tool_environment (the host they run
+                    on decides)
+    the harnesses' tools
+                    the environments contract.py and soundlines.py build for the programs that are not the emulator,
+                    built as on a Windows host (emurun.system answering 'windows'), with a caller whose TEMP, TMP and
+                    npm cache are directories of its own: contract.py's runner_env (the contract runner, npm.cmd and
+                    node) and the environment soundlines.py's tool_run starts a tool with (the oracle of a mode; the
+                    start itself is taken over by the test) have TEMP and TMP in <work>/tmp and npm's cache in
+                    <work>/npm-cache of their run, and no value of the caller's
 
 and with a program it starts (this Python, on a script of the work directory), once as an emulator and once as a
 program that is not one (emulator=False: the contract runner, npm.cmd and node, and the tools of the modes):
@@ -281,6 +290,12 @@ def test_harnesses(work):
                 # caller's TEMP and npm cache are the profile's
                 if node.value.id == 'os' and node.attr in ('environ', 'environb', 'getenv', 'getenvb', 'putenv', 'unsetenv'):
                     found.append('%s:%d os.%s' % (name, node.lineno, node.attr))
+            # emurun builds the environment for the host the harness runs on, from the caller's: a harness that names
+            # either one (a second argument, host=, environ=) builds another host's, on Windows the caller's TEMP
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) \
+                    and node.func.value.id == 'emurun' and node.func.attr in ('environment', 'tool_environment'):
+                if len(node.args) > 1 or any(keyword.arg in ('host', 'environ', None) for keyword in node.keywords):
+                    found.append('%s:%d emurun.%s names the host or the environment' % (name, node.lineno, node.func.attr))
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) \
                     and node.func.value.id == 'emurun' and node.func.attr == 'start':
                 env = [keyword.value for keyword in node.keywords if keyword.arg == 'env']
@@ -292,6 +307,81 @@ def test_harnesses(work):
         check('emurun' in imports, '%s does not import emurun' % name)
     check(not found, 'a harness starts a program, or ends one, or makes its environment, without emurun: ' + '; '.join(found))
     return 'the %d harnesses start every program through emurun, with an environment of emurun' % len(HARNESSES)
+
+
+def load_harness(name):
+    """A harness of the tests (a path under tests/), imported as a module of its own: it runs nothing when it is not the
+    main program. It imports the emurun of this test."""
+    import importlib.util
+    path = os.path.join(TESTS, *name.split('/'))
+    spec = importlib.util.spec_from_file_location('harness_' + os.path.splitext(os.path.basename(path))[0], path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    check(module.emurun is emurun, '%s does not use the emurun of this test' % name)
+    return module
+
+
+def check_tool_env(what, env, run, caller):
+    """env: the environment a harness built for a tool of its run directory run, on Windows, for a caller whose TEMP,
+    TMP and npm cache are the values of caller."""
+    temp = os.path.join(run, 'tmp')
+    cache = os.path.join(run, 'npm-cache')
+    temps = dict((name, value) for name, value in env.items() if name.upper() in ('TEMP', 'TMP'))
+    caches = dict((name, value) for name, value in env.items() if name.upper() == 'NPM_CONFIG_CACHE')
+    check(temps == {'TEMP': temp, 'TMP': temp} and list(caches.values()) == [cache],
+          '%s, built for Windows: TEMP and TMP %r and npm\'s cache %r, not %s and %s of the run' % (what, temps, caches, temp, cache))
+    kept = sorted(name for name, value in env.items() if value in caller)
+    check(not kept, '%s, built for Windows, keeps the caller\'s %s' % (what, ', '.join(kept)))
+
+
+def test_tool_environments(work):
+    """The environments contract.py and soundlines.py build for their tools, built as on a Windows host."""
+    contract = load_harness('debugger/contract/contract.py')
+    soundlines = load_harness('debugger/guest/dsptest/soundlines.py')
+    caller = (os.path.join(work, 'caller', 'tmp'), os.path.join(work, 'caller', 'npm-cache'))
+    names = ('TEMP', 'TMP', 'npm_config_cache')
+    saved_environ = dict((name, os.environ.get(name)) for name in names)
+    saved_system, saved_start = emurun.system, emurun.start
+    started = []
+
+    class Ended(object):
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+    def start(argv, timeout, cwd=None, env=None, stdout=None, stderr=None, emulator=True):
+        started.append((list(argv), env, emulator))
+        return Ended()
+
+    try:
+        os.environ['TEMP'] = caller[0]
+        os.environ['TMP'] = caller[0]
+        os.environ['npm_config_cache'] = caller[1]
+        emurun.system = lambda: 'windows'
+
+        # the contract runner: npm.cmd and the node behind it
+        run = os.path.join(work, 'contract')
+        env = contract.runner_env(argparse.Namespace(work=run, npm=os.path.join(work, 'nodejs', 'npm.cmd')))
+        check_tool_env('contract.py runner_env', env, run, caller)
+
+        # a tool of a mode of soundlines.py, started by tool_run (here the start is the test's own)
+        emurun.start = start
+        log = os.path.join(work, 'soundlines', 'oracle-tool.txt')
+        soundlines.tool_run(argparse.Namespace(watchdog=60), ['aica_dsp_guest_oracle'], log)
+        check(len(started) == 1 and started[0][2] is False and started[0][1] is not None,
+              'soundlines.py tool_run did not start its tool once, as a program that is not the emulator, with an environment: %r' % (started,))
+        check_tool_env('soundlines.py tool_run', started[0][1], os.path.dirname(log), caller)
+    finally:
+        emurun.system, emurun.start = saved_system, saved_start
+        for name, value in saved_environ.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    return ('the tools\' environments of contract.py and soundlines.py, built for Windows: TEMP, TMP and npm\'s cache of their '
+            'run, nothing of the caller\'s')
 
 
 def run_child(work, emulator):
@@ -413,8 +503,8 @@ def main():
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
 
-    tests = (test_environment, test_executable, test_read_text, test_command, test_npm, test_no_shell, test_harnesses, test_run,
-             test_scratch)
+    tests = (test_environment, test_executable, test_read_text, test_command, test_npm, test_no_shell, test_harnesses,
+             test_tool_environments, test_run, test_scratch)
     failed = 0
     for test in tests:
         try:

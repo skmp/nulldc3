@@ -5,10 +5,12 @@
 	directory, for every process an exception nobody handled ended, also under nulldc3-winrun, whose error mode and
 	job keep the box away and not the report).
 
-	Which programs have it: every suite that links nulldc_test_common (test_guard.cpp pulls this object in), the
-	programs of tests/debugger/sh4bp, disasm_test (tests/debugger/disasm, which the oracle dsptest runs) and
-	aica_dsp_guest_oracle (tests/aica_dsp, the tool of the mode oracle of soundlines.py). common.guard.windows makes
-	each of them fault (guard_windows.cmake).
+	Which programs have it: every program of the tests project but nulldc3-winrun, the runner the others run inside
+	(and the control of common.policy.windows): every suite that links test_guard.cpp of nulldc_test_common, which
+	pulls this object in, and every other program, which links this file in its own directory (CMake's target_sources
+	on Windows). common.policy.windows reads the mark below in every program the project builds
+	(policy_windows.cmake); common.guard.windows makes four of them fault (guard_windows.cmake): common_selftest,
+	disasm_test, sh4bp_test and aica_dsp_guest_oracle.
 
 	What it sets: the error mode, no report UI, abort() without its box and its report and with a SIGABRT handler,
 	the C runtime's invalid-parameter and pure-call handlers (without them the runtime ends with __fastfail, past
@@ -69,6 +71,11 @@
 // What test_guard.cpp names (/include) so that the linker takes this object out of nulldc_test_common
 extern "C" int nulldc_win_policy;
 int nulldc_win_policy = 1;
+
+// What common.policy.windows reads in the file of every program of the tests project (policy_windows.cmake): this
+// text is in the image of a program that has the policy, whose constructor below names it, so that no linker drops it
+extern "C" const char nulldc_win_policy_mark[];
+const char nulldc_win_policy_mark[] = "nulldc_win_policy: no box, no crash report, one line and 128 + the signal's number";
 
 namespace {
 
@@ -250,10 +257,14 @@ void fault_from_the_environment()
 	fflush(stderr);
 }
 
+const char* volatile policy_mark;
+
 struct WindowsPolicy
 {
 	WindowsPolicy()
 	{
+		policy_mark = nulldc_win_policy_mark;
+
 		SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
 		WerSetFlags(WER_FAULT_REPORTING_NO_UI);
 

@@ -41,6 +41,7 @@
 #include "deps/nlohmann/json.hpp"
 
 #include "dbg_selftest.h"
+#include "dbg_selftest_nap.h"
 #include "dbg_arm7.h"
 #include "dbg_core_private.h"
 #include "dbg_dsp.h"
@@ -103,7 +104,7 @@ double MsSince(Clock::time_point t0)
 
 void Nap(int ms)
 {
-	std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+	selftest::NapUs((s64)ms * 1000);
 }
 
 /*
@@ -160,7 +161,7 @@ bool WaitLifetime(Lifetime want, int timeout_ms = kBoundMs)
 		if (MsSince(t0) > timeout_ms)
 			return false;
 
-		std::this_thread::sleep_for(std::chrono::microseconds(100));
+		selftest::NapUs(100);
 	}
 
 	return true;

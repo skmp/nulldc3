@@ -42,6 +42,7 @@
 */
 
 #include "dbg_selftest.h"
+#include "dbg_selftest_nap.h"
 #include "dbg_arm7.h"
 #include "dbg_core_private.h"
 #include "dbg_mem.h"
@@ -142,7 +143,7 @@ double MsSince(Clock::time_point t0)
 
 void Nap(int ms)
 {
-	std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+	selftest::NapUs((s64)ms * 1000);
 }
 
 /*
