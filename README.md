@@ -85,6 +85,10 @@ Get the source and build the UI as on Linux. Build the emulator:
     cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
     ninja -C build
 
+On macOS the build uses no ccache unless the configure line asks for it, `-DNULLDC_CCACHE=ON` (as on Linux it uses
+the one it finds): a ccache that cannot start, as Homebrew's after an upgrade has taken a library it links, would end
+every compile in an abort and a crash report.
+
 `build/nulldc3.app` is the emulator, an application bundle: its executable `Contents/MacOS/nulldc3`, its icon and the
 licences in `Contents/Resources`, its version in `Contents/Info.plist`, signed ad hoc by the build (no Developer ID,
 not notarized). It is portable: its files are in the folder that holds `nulldc3.app` (here `build/`), or in the one of

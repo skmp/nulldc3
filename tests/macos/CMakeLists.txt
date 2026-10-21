@@ -26,6 +26,8 @@
 #	                            Info.plist (plutil -lint, every key of the template, the three version keys
 #	                            against the build's nulldc3-version.cmake), the icon and the licences that match
 #	                            whether the build embeds the UI
+#	macos.build.ccache          neither the tests project's build nor the emulator's compiles through ccache
+#	                            unless its configure line asks, -DNULLDC_CCACHE=ON (read from their commands)
 #	macos.icns.iconutil         Apple's iconutil reads nulldc3/apple/nulldc3.icns into an iconset, and makes an
 #	                            .icns of the PNGs of nulldc3/icon/png (which elements it writes: the test's output)
 #
@@ -71,6 +73,7 @@ function(macos_case test case)
   add_test(NAME ${test}
            COMMAND "${CMAKE_COMMAND}" "-DCASE=${case}" "-DMACRUN=${macrun}" "-DEMULATOR=${NULLDC_EMULATOR}"
                    "-DCANARY=$<TARGET_FILE:macos_canary>" "-DGUEST=${nulldc_macos_guest}" "-DTREE=${nulldc_root_path}"
+                   "-DCTEST=${CMAKE_CTEST_COMMAND}" "-DTESTS_BUILD=${CMAKE_BINARY_DIR}"
                    "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/work/${test}" -P "${nulldc_macos_script}")
   set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
 endfunction()
@@ -83,6 +86,7 @@ foreach(kind segv ill trap abort)
 endforeach()
 macos_case(macos.refused refused EMULATOR)
 macos_case(macos.bundle.codesign bundle EMULATOR)
+macos_case(macos.build.ccache ccache TIMEOUT 60)
 macos_case(macos.icns.iconutil icns TIMEOUT 60)
 
 # what version.binary starts the emulator through (tests/version)

@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
 
 find_program(CCACHE_FOUND ccache)
-if (CCACHE_FOUND AND NOT CMAKE_HOST_WIN32)
+# macOS: through ccache only when asked, -DNULLDC_CCACHE=ON. A ccache that cannot start there (Homebrew's, after an
+# upgrade took a library it links) ends every compile in dyld's abort, and every abort leaves a crash report in
+# ~/Library/Logs/DiagnosticReports; CCACHE_DISABLE=1 cannot help, ccache reads it once it has started
+if(CMAKE_HOST_APPLE)
+  option(NULLDC_CCACHE "macOS: compile and link through the ccache on the PATH" OFF)
+endif()
+if (CCACHE_FOUND AND NOT CMAKE_HOST_WIN32 AND (NOT CMAKE_HOST_APPLE OR NULLDC_CCACHE))
   set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
   set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
 endif()

@@ -174,6 +174,7 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `macos.fatal.segv` `.ill` `.trap` `.abort` | macOS only: `NULLDC_TEST_FATAL=<kind>`: the `fault_handler` line and 128 + the signal by an exit, not the signal (`segv` writes to address 16, a `SIGSEGV` at address `0x10` as on Linux: 139, 132, 134; for `trap`, `die()`'s line, no `fault_handler` line, 133), the stdout printed before the fault (stdout is line-buffered), nothing new in `~/Library/Logs/DiagnosticReports` | the emulator |
 | `macos.refused` | macOS only: a refused command line, not headless, with stderr to a pipe and to `/dev/null`, and headless: exit 2, no `NSApplication` (no alert), the reason on stderr where it goes | the emulator |
 | `macos.bundle.codesign` | macOS only: the emulator's `nulldc3.app`: its ad-hoc signature (`codesign --verify --strict --deep`), its `Info.plist` (`plutil -lint`, every key of the template, the version keys against the build's `nulldc3-version.cmake`), the icon and exactly the licences that match whether the build embeds the UI | the emulator |
+| `macos.build.ccache` | macOS only: neither the tests project's build nor the emulator's (`NULLDC_EMULATOR`'s) compiles through ccache unless its configure line has `-DNULLDC_CCACHE=ON`, and with it and a ccache found both do; read from their commands (`ninja -t commands`, or the `build.make` files), nothing is compiled | none |
 | `macos.icns.iconutil` | macOS only: Apple's `iconutil` reads `nulldc3/apple/nulldc3.icns` into its ten images, and makes an `.icns` of the approved PNGs (which elements it writes: the test's output) | none |
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
@@ -312,6 +313,9 @@ step (inside it `macrun.py` finds its caller sandboxed and runs under that profi
 
 - `NULLDC_EMULATOR`: `nulldc3.app/Contents/MacOS/nulldc3` of an emulator build (configured with
   `-DNULLDC_DEVTOOLS_DIST=OFF` for a gate); `macos.bundle.codesign` checks the bundle around it.
+- ccache: on macOS neither the tests project nor the emulator compiles through ccache unless the configure line has
+  `-DNULLDC_CCACHE=ON` (a ccache that cannot start ends every compile in dyld's abort, and each abort leaves a crash
+  report); `macos.build.ccache` holds it for the tests project's build and for the emulator's.
 - `Python3_EXECUTABLE`: Xcode's `/usr/bin/python3` (3.9) is the one the round's scripts keep to.
 - The data: the same files of caique-rtl (74) and wren7-rtl (120) as on Windows, and `2ndmix.elf` and `hello.elf`;
   shrike4-rtl is not needed (`sh4.fpu.*` is x86-64 only).
