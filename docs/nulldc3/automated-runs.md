@@ -14,7 +14,7 @@ A complete headless run:
 
 | key | value | meaning |
 |---|---|---|
-| `config:Headless` | `yes` | No window, no GL context, no host input. Linux only. See below. |
+| `config:Headless` | `yes` | No window, no GL context, no host input. Linux, Windows and macOS. See below. |
 | `config:Exit.AfterVblanks` | N | The run ends at the N-th vblank since the start of the process. |
 | `config:Exit.AfterSeconds` | S (a decimal number) | The run ends at the first vblank at or after S emulated seconds (S x 200,000,000 SH4 cycles of the scheduler). |
 | `config:Exit.OnGuestExit` | `yes` | The run ends when the guest program returns to the BIOS (the exit hook of reios, `REIOS: Exit`). Always so in headless mode and with `Exit.AfterVblanks` or `Exit.AfterSeconds`. |
@@ -24,7 +24,7 @@ A complete headless run:
 | `config:Dreamcast.RTC` | N, seconds since 1970 | Pins the real-time clock: every run starts at that second, taken as the time of the console (no time zone). 0 or absent: the time of the host. |
 | `config:Debug.FixedRtc` | N, seconds since 1970 | The same pin under a second key. When both keys are there and this one is not 0, this one is taken. |
 | `<product id>:Dreamcast.RTC`, `<product id>:Debug.FixedRtc` | as above | The two keys in the section of a game (`[T1234N]` in `emu.cfg`, the product number of the disc). Like every setting of a game they go over the keys of that name in section `config` for that game, 0 included; between the two keys the rule is the same: `Debug.FixedRtc`, when it is not 0, is taken. |
-| `config:Debug.BlockOnFault` | `yes` | A fatal fault blocks the process for a native debugger instead of ending it. Linux. See "Faults". |
+| `config:Debug.BlockOnFault` | `yes` | A fatal fault blocks the process for a native debugger instead of ending it. Linux and macOS. See "Faults". |
 | `config:Debug.AicaHash` | N | The sound regression harness: the run ends behind the N-th tick of the AICA with one line of hashes, and with no exit line. See "The sound line". |
 
 Keys that were there before and that a headless run usually wants: `audio:backend=none` (no audio device is opened;
@@ -159,8 +159,8 @@ Renderers in headless mode (`config:pvr.backend`):
 `Exit.FrameHash` and `Exit.FramePng` also work with a window, for `refsw2` and `refmister`. The GL renderers
 present nothing that is captured (`frame=none`).
 
-Not headless: the macOS main (it still creates its window), save states with the GUI's notifications, anything that
-needs the GUI (settings, the game list, disc swaps).
+Not headless: save states with the GUI's notifications, anything that needs the GUI (settings, the game list, disc
+swaps).
 
 ### Windows
 
@@ -252,6 +252,72 @@ Windows"). Every program of the tests project has the emulator's policy for a pr
 fractions of a millisecond with a high-resolution waitable timer on Windows (`libswirl/debugger/dbg_selftest_nap.h`),
 where `std::this_thread::sleep_for` lasts a tick of the system timer; the emulator asks for no timer resolution.
 
+### macOS
+
+`config:Headless=yes` on macOS is the same mode, with these macOS parts (`nulldc3/apple/AppDelegate.mm`,
+`libswirl/linux/common.cpp`):
+
+* The process makes nothing of AppKit. `main` reads the directories (Foundation alone), sets up the fault handler and
+  runs `nulldc_init`, which reads the command line and the configuration; a headless `os_CreateWindow` returns before
+  there is an `NSApplication`, and so does `os_SetupInput`. No `NSApplication`, no window, no menu bar, no Dock
+  icon, no check-in with LaunchServices, no connection to the window server. The loop of the user interface runs on
+  the main thread, as on Linux, and `main` returns the exit code of run control: 0, 1, and 2 for a refused command
+  line and a bad configuration of the debugger. With a window the `NSApplication` is made there, when the emulator
+  asks for its window (the Dock icon, the menu, the window); a run that ends by itself (an exit key) ends the
+  application, with the same exit codes. Windows are not restorable: a windowed run writes no state of its windows
+  into `~/Library/Saved Application State`.
+* A refused command line shows an alert only where nobody can read its message: no `--config` item of the command
+  line sets `config:Headless`, stderr is `/dev/null` or closed, and LaunchServices started the process (the Finder,
+  the Dock, `open`: `__CFBundleIdentifier` is in its environment, or launchd is its parent). Otherwise the message is
+  on stderr alone, with the exit code 2.
+* stdout is line-buffered, as on Linux, and every `printf` goes there; the setup's line `Linux paging: ...` goes to
+  stderr, so that the stdout of `--version` is its one line.
+* The executable is the bundle's, `nulldc3.app/Contents/MacOS/nulldc3`. An automated run starts it by its path, never
+  with `open`: LaunchServices makes an application of what it opens.
+
+**Fatal ends in automated runs** (headless, or with one of the `Exit.*` keys) are an exit, not the signal: macOS
+writes a crash report into `~/Library/Logs/DiagnosticReports` for every process that a signal ends. The line is
+Linux's, on stderr,
+
+    fault_handler: unhandled SIGBUS at address 0x10, pc 0x1004c2f34, not a guest memory fault: terminating
+
+and the process ends with `_exit(128 + N)`:
+
+| what | signal | exit |
+|---|---|---|
+| an access to an address with no page | `SIGSEGV` | 139 |
+| an access that the page does not allow: a write to a page mapped read-only, an address in `__PAGEZERO` (a null pointer) | `SIGBUS` | 138 |
+| an illegal instruction | `SIGILL` | 132 |
+| a breakpoint instruction (`__builtin_trap()`), no debugger attached | `SIGTRAP` | 133 |
+| `abort()`, `std::terminate` | `SIGABRT` | 134 |
+| a floating-point exception (arm64 traps neither an integer divide by zero nor a floating-point operation) | `SIGFPE` | 136 |
+
+`die()` and `verify()` print their own `Fatal error : ...` / `Verify Failed` line on stdout and, with no debugger
+attached, end with 133 without a `fault_handler` line, so that a test tells them from a breakpoint instruction. A run
+with a person in front of it dies of the signal, as before, and its crash report is that person's. A `SIGSEGV` or
+`SIGBUS` that is a guest memory fault is handled as on Linux (on macOS a write to a page that is mapped read-only is a
+`SIGBUS`).
+
+**Test hooks** (macOS builds): `NULLDC_TEST_FATAL=<kind>` raises a fault right after the emulator has started,
+`segv` (a write to address 16, a `SIGBUS` on macOS), `ill`, `trap` (`die()`) or `abort` (`div` on x86_64 hosts only);
+`NULLDC_TEST_UI_REPORT=1` prints one line when `main` ends,
+
+    nulldc-ui: app=0 windows=0
+
+`app` 1 when the process has an `NSApplication`, `windows` its windows. `tests/macos` holds these.
+
+**Automated runs on the Mac go through `tests/macos/macrun.py`** (`tests/macos/README.md`): every emulator run of an
+automated run there, and every long step (a build, ctest), runs under the sandbox profile
+`tests/macos/no-windowserver.sb`, which denies the window server, the window manager, the Dock and LaunchServices, so
+that nothing it runs can make a window, a Dock icon or a dialog; in a process group of its own, with a timeout,
+`TMPDIR` in its work directory and a PID file; a long step runs detached under `caffeinate -i` with a log and an rc
+file. It applies the profile when its caller has none, and runs the program under the caller's otherwise (a ctest
+under `macrun.py --detach`); it runs nothing without `/usr/bin/sandbox-exec` unless `CI` is set. Its exit status is
+the program's, 128 + N for a signal, 124 for its timeout, 126 when it ran nothing. Every run also carries the keys of
+an automated run: `--portable <dir>` and `--config config:Headless=yes , audio:backend=none ,
+config:Dreamcast.RTC=946684800` with the run's `Exit.*` keys. The harnesses of the tests (the selftests, the contract
+gates, the sound lines) do not run on macOS yet (`tests/README.md`, "On macOS").
+
 ## Faults
 
 On Linux a SIGSEGV that is not a guest memory fault (VRAM write protection, a locked JIT page, a fast memory
@@ -291,8 +357,9 @@ bash is 1024 bytes and does not do it). `tests/system` and `tests/perf` set it f
 `--help` prints the usage text and exits with code 0, without opening a display or reading the config, and without
 making or choosing a directory. `--version` does the same with the line `nullDC <version>`, the last on stdout (the
 Linux build prints three lines of its own setup in front of it, the personality and the page size, as it does for
-`--help`): the version the build made from git, `3.0.0-pre+g<h>` (the first 10 characters of the commit) until a tag
-`v<T>` is reachable, `<T>` on the tag, `.dirty` or `+dirty` behind it when a tracked file had changed
+`--help`; the macOS build prints its line of the page size on stderr, and the version's line is its stdout alone):
+the version the build made from git, `3.0.0-pre+g<h>` (the first 10 characters of the commit) until a tag `v<T>` is
+reachable, `<T>` on the tag, `.dirty` or `+dirty` behind it when a tracked file had changed
 (`nulldc3/README.md` has the rule). A script that has a build directory and not the binary reads the same string
 from `nulldc3-version.txt` there. A command line that is refused (a one-dash switch, an unknown one, `--portable`
 without a directory, a directory that cannot be written, ...) prints one line `nulldc3: <why>` on stderr and exits
