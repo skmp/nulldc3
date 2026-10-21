@@ -101,7 +101,7 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `version.derive` | `nulldc3/cmake/version.cmake`, the rule that makes the emulator's version at every build, on git repositories the test makes below its build directory (`version/derive.cmake`; every tag is made there, none in a repository of the tree): on the tag `v3.0.0-pre` (`3.0.0-pre`), two commits after it (`3.0.0-pre+2.g<h>`), dirty by a changed, a staged and a deleted tracked file (`+dirty`, `.dirty`) and not by untracked and ignored files, no tag reachable (`3.0.0-pre+g<h>`), the tags `foo`, `release-1` and `vnext` passed over also when they are nearer than the version tag, a tag whose describe output does not read as `v<T>-<N>-g<hash>` taken as none, a later tag `v3.0.1` over the base `3.0.0-pre` (`3.0.1`, numbers `3,0,1,0`), a worktree (its own HEAD), the repository as a submodule and its superproject (a submodule at another commit or with a changed file makes it dirty, one with an untracked file does not), a shallow clone through a `file://` URL (`+g<h>` with the full clone's `<h>`), a copy without `.git` and one inside another repository (`+nogit`), no git on the `PATH` (`+nogit`), `GIT_DIR` of another repository in the environment; in every case the full hash, the dirty flag, the three files (the header's defines, no `#include` or `#pragma` in it) and `<h>` as the first 10 hexadecimal digits of `git rev-parse HEAD`; a second run with nothing new rewrites none of the files; a base that is missing or no version stops it; through the script's own functions the derived forms for N = 0, 5, 65535, 65536 and 70000 (capped at 65535) and twelve describe outputs of other forms | git |
 | `version.build_time` | the version is made when the emulator is built, not when it is configured (`version/build_time.cmake`): a clone of the tree as it is now (`git clone --shared` at its `HEAD`, the tracked files the tree has changed since copied over and committed), configured once with `-DNULLDC_DEVTOOLS_DIST=OFF`, its target `nulldc3_version` built, an empty commit, the target built again; after each build `nulldc3-version.txt` is what `version.cmake` makes of the clone then and the header's `NULLDC_GIT_HASH` its `git rev-parse HEAD` (after the commit the new `<h>`), CMake did not run again (`CMAKE_PROJECT_INCLUDE` counts the configures) and `git status --porcelain --ignored` of the clone is empty; nothing is compiled. A version made at configure time, or made again by a configure that depends on `.git`, fails, whatever emulator the tests ask | git; the tree a git checkout |
 | `version.cl` | `--version` of `cfg/cl.cpp`, without the emulator (`version/cl_test.cpp`, on `nulldc_cfg`): `ParseCommandLine` returns `rv_cli_finish`, stdout is exactly `nullDC <version>` and a line end, `<version>` being `nulldc_version()`, and `cl_FinishText()` is that same text (what the Windows build shows where stdout cannot be read once the process has ended); for `--help` stdout and `cl_FinishText()` are the usage text; a refused command line leaves `cl_FinishText()` empty | none |
-| `version.binary` | the emulator under test (`NULLDC_EMULATOR`, else the one the system tests build) exits with 0 for `--version`, and its stdout ends in the line `nullDC <version>`, `<version>` what `version.cmake` makes of the tree when the test runs, with nothing in front of it but the three lines `common_linux_setup()` of the Linux and macOS builds prints first (`Personality:`, `Updated personality:`, `Linux paging:`, each in its format): a binary of another commit fails (one not built again since a commit) (`version/binary.cmake`). The system tests' emulator is configured again at every build of the tests (`system/build_emulator.cmake`), so with it this test cannot tell a version made at configure time; `version.build_time` can. With `NULLDC_EMULATOR` an emulator built again after a commit without a configure, it sees that too. Skipped when there is no emulator to ask | the emulator |
+| `version.binary` | the emulator under test (`NULLDC_EMULATOR`, else the one the system tests build) exits with 0 for `--version`, and its stdout ends in the line `nullDC <version>`, `<version>` what `version.cmake` makes of the tree when the test runs, with nothing in front of it but the three lines `common_linux_setup()` of the Linux build prints first (`Personality:`, `Updated personality:`, `Linux paging:`, each in its format), and on macOS with nothing in front of it at all (the stdout is the one line; the setup's `Linux paging:` goes to stderr there): a binary of another commit fails (one not built again since a commit) (`version/binary.cmake`). The system tests' emulator is configured again at every build of the tests (`system/build_emulator.cmake`), so with it this test cannot tell a version made at configure time; `version.build_time` can. With `NULLDC_EMULATOR` an emulator built again after a commit without a configure, it sees that too. Skipped when there is no emulator to ask | the emulator |
 | `debugger.selftest.emu` `.interp` | the selftest of the debugger in the emulator (`nulldc3 --config Debugger:SelfTest=emu`, headless, on the emulator the system tests build; the SH4 on the JIT and, as `.interp`, on the interpreter): the emulator thread and run control, nineteen tests on a guest of the suite's own. Pauses, event breakpoints, calls of every class in every state, host stops against a parked thread, resets, guest exits, steps, the lifetime of the machine (`debugger/selftest/README.md` has every test of these rows) | none |
 | `debugger.selftest.nap` | the naps of the selftests of the debugger (`libswirl/debugger/dbg_selftest_nap.h`, `Debugger:SelfTest=nap`, a machine test on the JIT): naps of 50 ms last never less and at most 25 ms more and take at most 5 ms of the thread's CPU time; naps of 100 us to 1.5 ms are never shorter, their median at most 400 us longer, and those of a millisecond or more are not spun whole. On a POSIX host a nap is `std::this_thread::sleep_for`, and the medians of 40 naps of each request through `NapUs` and as many through `std::this_thread::sleep_for`, one after the other, are within 50 us of each other; on Windows, whose `sleep_for` lasts a tick of the system timer (15.6 ms), a high-resolution waitable timer and a spin of its last 500 us, and the test holds the way without that timer too | none |
 | `debugger.selftest.core` `.interp` | the session `core`: the core of the debugger (`libswirl/debugger/dbg_core.cpp`, `dbg_events.cpp`, `dbg_symbols.cpp`, `dbg_callstack.cpp`) against the live machine, in a session without a server. Eight tests: `core.events` (the event log: 200 entries, ids that ascend and stay, the oldest dropped, a message cut to its bound, nothing logged and no argument evaluated with the gates closed, the direct append), `core.opcodes` (for all 65536 encodings the disassembler reports an instruction exactly where the opcode table executes one, but for the reios trap `0x085B`, whose line is `.word 0x085b ! reios trap`), `core.tables` (breakpoint and watch ids from 1 and never used twice, the bounds of 1024 breakpoints, 64 expressions and 256 characters, and of 256 watches, which a watch on every register of the tree reaches: of its 46 calls each that fits is taken whole and each that would pass the bound is refused whole; the order of the checks of `breakpoints.add`, the breakpoints of each processor handed to that processor alone, watch resolution without regard to case, duplicates, all-or-nothing, the category of a breakpoint, the active mask for mute, solo and no client, the event gates), `core.tick` (the JSON of ticks and of describe: no `null`, the required keys, every register list that of describe, values in their wire form, a full tick and the four base paths, watches on paths a tick does not carry, a symbol name and an event message with bytes that are no ASCII as `?`, the envelope errors, memory that does not wrap), `core.guest` (on the booted program: a step on the reios trap runs the boot, the entry resolves to a symbol, the SH4 call stack, the ARM7 call stack against `dc.aica.arm7.ENABLED` held in reset and running, `breakpointId` in the ticks of a stop until its breakpoint is removed, an event and a code breakpoint under mute), `core.lifetime` (with a thread that plays the host and sends what a client sends: the machine stopped, its guest exited, the machine gone and made again: reason, a new `stopId` for each, `registers: {}` and a tree of `"n/a"` without a machine, bookkeeping in every state, -32001 and -32002), `core.reset` (`control.reset` at the stop of a breakpoint: one more stop, reason `reset`, no `Running` and no breakpoint named, the PC of the SH4 the one a reset leaves, the breakpoints, watches and categories kept, no tick of its own; and while the machine runs: `{}`, nothing published, and the machine boots again into a breakpoint on its entry), `core.writes` (`state.writeMemory`, `state.setRegister` and `state.editWatch` by parameter, by the order of their own errors, in-band, and by lifetime, -32001 and -32002 behind -32602 and in front of every error of a method's own; a path, a name or a watch expression with a NUL in it is none of the tree; the text of a value, of which the low bits of any length count; five capabilities besides the engine's; `flags.writable` in describe on the 109 registers that have a writer and on none of a tick; one tick behind every accepted write, of the stop it was made in; writes served while the machine runs, with a running tick behind them, never -32003) | `2ndmix.elf` of `NULLDC_ELF_DIR` |
@@ -168,6 +168,14 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `windows.abi.xmm` | Windows only: the x64 backend's `Mainloop` and `RunBlock` give `xmm6`-`xmm15` back (an Xbyak canary thunk, a machine of its own), and a stack walk from `UpdateSystem_INTC` through each comes to the thunk with the emulator's unwind data | none |
 | `windows.binary.stdout` `windows.exitcode` | Windows only: no `\r` in the emulator's stdout or stderr; headless with nothing to run exits with 1 | the emulator |
 | `windows.dsound.failed` | Windows only: DirectSound that fails (`NULLDC_TEST_DSOUND=fail`) is no sound, and the guest headless with the speed limit on still reaches its exit | the emulator |
+| `macos.sandbox.canary` | macOS only (`macos/README.md` has these): the canary of `macos/macrun.py` cannot reach the window server under it, and the kernel says that it is sandboxed and that the window server's lookup is denied; `macrun.py` applied the profile for a caller (ctest) without one, and ran under the caller's when ctest itself runs under a profile | none |
+| `macos.macrun.tree` | macOS only: the timeout of a long step, `macos/macrun.py --detach` around a ctest whose test runs `macrun.py` again around a sleeper (which that one starts in a session of its own): the step ends with 124, and the sleeper ends with it, though its `macrun.py` dies in the same sweep | none |
+| `macos.headless.nowindow` | macOS only: the guest of the tree headless with `NULLDC_TEST_UI_REPORT=1`, through `macrun.py`: exit 0 by an exit, the exit line, `nulldc-ui: app=0 windows=0` (no `NSApplication`), the ARM7 on the interpreter | the emulator |
+| `macos.fatal.segv` `.ill` `.trap` `.abort` | macOS only: `NULLDC_TEST_FATAL=<kind>`: the `fault_handler` line and 128 + the signal by an exit, not the signal (`segv` writes to address 16, a `SIGSEGV` at address `0x10` as on Linux: 139, 132, 134; for `trap`, `die()`'s line, no `fault_handler` line, 133), the stdout printed before the fault (stdout is line-buffered), nothing new in `~/Library/Logs/DiagnosticReports` | the emulator |
+| `macos.refused` | macOS only: a refused command line, not headless, with stderr to a pipe and to `/dev/null`, and headless: exit 2, no `NSApplication` (no alert), the reason on stderr where it goes | the emulator |
+| `macos.bundle.codesign` | macOS only: the emulator's `nulldc3.app`: its ad-hoc signature (`codesign --verify --strict --deep`), its `Info.plist` (`plutil -lint`, every key of the template, the version keys against the build's `nulldc3-version.cmake`), the icon and exactly the licences that match whether the build embeds the UI | the emulator |
+| `macos.build.ccache` | macOS only: neither the tests project's build nor the emulator's (`NULLDC_EMULATOR`'s) compiles through ccache unless its configure line has `-DNULLDC_CCACHE=ON`, and with it and a ccache found both do; read from their commands (`ninja -t commands`, or the `build.make` files), nothing is compiled | none |
+| `macos.icns.iconutil` | macOS only: Apple's `iconutil` reads `nulldc3/apple/nulldc3.icns` into its ten images, and makes an `.icns` of the approved PNGs (which elements it writes: the test's output) | none |
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
@@ -178,7 +186,8 @@ The `aica.dsp.diff.*` and `aica.dsp.case.*` tests (the `.emu` ones among them) a
 sits next to the repository; they compile its sample model and its DSP programs (C) from there and read its console
 captures.
 
-The emulator has an SH4 recompiler for x86-64 hosts and one for arm64 hosts, an ARM7 recompiler for arm64 hosts,
+The emulator has an SH4 recompiler for x86-64 hosts and one for arm64 hosts, an ARM7 recompiler for arm64 hosts
+that no build has in this round (`FEAT_AREC` is none on every host: the ARM7 runs on its interpreter everywhere),
 and its interpreters on every host; its DSP is the one core of `libswirl/hw/aica/dsp_core` on every host; it does not configure for 32-bit x86 and arm hosts. Of the recompilers the
 tests here run the x86-64 backend. `-DTARGET_NO_REC=ON` builds the emulator without a recompiler on any host. A
 generic host, one whose processor `nulldc3/cmake/config.cmake` has no name for, gets that build without the fault
@@ -284,6 +293,53 @@ for, and `debugger.selftest.emu` outlasted its watchdog there. `debugger.selftes
 Windows unless `-DNULLDC_WINRUN=` names one, and there `dsp_playground` is a skip of the platform
 (`debugger.disasm.standalone`).
 
+## On macOS
+
+The project builds with the AppleClang of Xcode and CMake and Ninja from Homebrew, as on Linux (macOS 11 or newer
+on Apple silicon). The emulator is the executable of an emulator build's bundle; `tests/system` builds none on macOS.
+Every emulator run the tests make there goes through `macos/macrun.py` (`macos/README.md`), under the sandbox profile
+`macos/no-windowserver.sb`, which denies the window server, the window manager, the Dock and LaunchServices: the
+tests of `macos/` and `version.binary` start the emulator through it, and so does ctest itself when it runs as a long
+step (inside it `macrun.py` finds its caller sandboxed and runs under that profile). Set `TMPDIR` and
+`npm_config_cache` to directories of your own for a run as well, and `EMSDK` (below).
+
+    cmake -S tests -B <build dir> -G Ninja -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3 \
+          -DNULLDC_ELF_DIR=<dir> -DNULLDC_WREN7_DIR=<dir> -DNULLDC_CAIQUE_DIR=<dir> \
+          -DNULLDC_DEVTOOLS_DIR=<UI checkout with node_modules> -DPython3_EXECUTABLE=/usr/bin/python3 \
+          -DNULLDC_TESTS_REQUIRE_DATA=ON
+    ninja -C <build dir>
+    python3 tests/macos/macrun.py --detach --log <file> --rc <file> --name ctest --work <dir> --timeout 5400 -- \
+          ctest --test-dir <build dir> -j 4 --output-on-failure
+
+- `NULLDC_EMULATOR`: `nulldc3.app/Contents/MacOS/nulldc3` of an emulator build (configured with
+  `-DNULLDC_DEVTOOLS_DIST=OFF` for a gate); `macos.bundle.codesign` checks the bundle around it.
+- ccache: on macOS neither the tests project nor the emulator compiles through ccache unless the configure line has
+  `-DNULLDC_CCACHE=ON` (a ccache that cannot start ends every compile in dyld's abort, and each abort leaves a crash
+  report); `macos.build.ccache` holds it for the tests project's build and for the emulator's.
+- `Python3_EXECUTABLE`: Xcode's `/usr/bin/python3` (3.9) is the one the round's scripts keep to.
+- The data: the same files of caique-rtl (74) and wren7-rtl (120) as on Windows, and `2ndmix.elf` and `hello.elf`;
+  shrike4-rtl is not needed (`sh4.fpu.*` is x86-64 only).
+- `NULLDC_EMCC` and `EMSDK`: the AICA DSP's WebAssembly tests look for an emsdk in `EMSDK` and in `~/emsdk`, and emcc
+  writes into the emsdk it runs from (its cache, and the bytecode of its Python, which it runs with `-E`). Where that
+  emsdk is not the run's to write into, `-DNULLDC_EMCC=OFF` skips the three that build with it, and `EMSDK` set to a
+  directory without one for ctest keeps `aica.dsp.wasm.devtools` from asking `~/emsdk` (it then says that the
+  committed module is not compared with a fresh build).
+
+What is skipped on macOS, with its reason (222 of the 326 tests):
+
+| tests | reason |
+|---|---|
+| `debugger.selftest.*`, `debugger.contract.*`, `debugger.sound.*` but `.runner`, the guest oracle of `aica_dsp` (117) | MACb: the package that opens the emulator-driven tests on the Mac |
+| `system.*`, `system.hle.*` (63) | the Linux-only system-test harness |
+| `debugger.sh4bp.*` (29) | the sh4bp gates need an x86-64 build with the SH4 recompiler |
+| `sh4.singlestep.dynarec`, `sh4.directed.dynarec*`, `sh4.differential`, `sh4.directed.differential`, `sh4.fpu.*` (9) | they run the blocks of the x64 backend |
+| `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` (3) | no emcc (or `NULLDC_EMCC=OFF`) |
+| `debugger.sound.runner` (1) | its stand-ins for the emulator are scripts that the host runs by their first line (`#!`): a Linux host |
+
+Two tests of the harnesses fail on macOS until the harnesses are opened there (MACb): `harness.emurun` (the Python program
+it starts as an emulator sees `__CF_USER_TEXT_ENCODING` and `LC_CTYPE` in its environment, which the system and
+Python's locale coercion put into the process itself) and `debugger.guest.dsptest.files` (`gen.sh --check` calls GNU `stat -c`, which macOS' `stat` has not).
+
 ## Layout
 
     common/            shared: libswirl.cmake (nulldc_add_libswirl_library, NULLDC_SH4_INTERP_SOURCES),
@@ -312,6 +368,9 @@ Windows unless `-DNULLDC_WINRUN=` names one, and there `dsp_playground` is a ski
                        (allowed.txt, README.md)
     icons/             icons.generated: the icon files made from the approved PNGs of nulldc3/icon/ are the
                        committed ones; icons.x11: the values of the X11 window's icon
+    macos/             macOS only: macrun.py, the run envelope of the Mac, its sandbox profile and its canary;
+                       the emulator headless, its fatal ends, a refused command line, the bundle and its icon
+                       (README.md)
     version/           version.derive: the rule of the emulator's version (nulldc3/cmake/version.cmake) on
                        scratch repositories; version.build_time: the version is made at the build, not at the
                        configure (a clone, a commit, no reconfigure); version.cl: --version of cfg/cl.cpp and

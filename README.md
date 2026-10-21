@@ -73,6 +73,40 @@ them in `%APPDATA%\nulldc3`. Run it as on Linux, and open the UI at `http://127.
 `config:Headless=yes` works on Windows too (no window, no dialog of any kind), and so does every key of
 `docs/nulldc3/automated-runs.md`, which says how an automated run on Windows goes (`tests/winrun`).
 
+## Quick start (macOS)
+
+You need macOS 11 or newer on Apple silicon (arm64), Xcode (the build is made and tested with Xcode 26; it brings the
+compiler, git and codesign), and CMake, Ninja and Node.js 22.13 or newer for the UI, from Homebrew:
+
+    brew install cmake ninja node
+
+Get the source and build the UI as on Linux. Build the emulator:
+
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+    ninja -C build
+
+On macOS the build uses no ccache unless the configure line asks for it, `-DNULLDC_CCACHE=ON` (as on Linux it uses
+the one it finds): a ccache that cannot start, as Homebrew's after an upgrade has taken a library it links, would end
+every compile in an abort and a crash report.
+
+`build/nulldc3.app` is the emulator, an application bundle: its executable `Contents/MacOS/nulldc3`, its icon and the
+licences in `Contents/Resources`, its version in `Contents/Info.plist`, signed ad hoc by the build (no Developer ID,
+not notarized). It is portable: its files are in the folder that holds `nulldc3.app` (here `build/`), or in the one of
+`--portable <dir>`; `--shared` keeps them in `~/Library/Application Support/nulldc3`. Open it from the Finder, or run
+its executable from a terminal with a game, and open the UI at `http://127.0.0.1:55543/`:
+
+    build/nulldc3.app/Contents/MacOS/nulldc3 <game>
+
+Scripts, tests and CI run that executable by its path, never with `open`: `config:Headless=yes` works on macOS too (no
+window, no Dock icon, no dialog of any kind), and `docs/nulldc3/automated-runs.md` says how an automated run on the Mac
+goes (`tests/macos/macrun.py`). For an IDE, `cmake -S . -B build-xcode -G Xcode` makes an Xcode project of the same
+build, and Xcode signs the bundle ad hoc itself.
+
+A copy of `nulldc3.app` that was downloaded has no signature Gatekeeper knows: open it the first time with the
+Finder's Open in its context menu (or allow it in System Settings, Privacy & Security), and move its folder with the
+Finder before (or clear its quarantine, `xattr -dr com.apple.quarantine <folder>`): opened where it was unpacked,
+macOS runs it from a read-only place (App Translocation), where it cannot keep its files, and the emulator says so.
+
 ## Switches
 
 Every switch is written with two dashes. A word that begins with a dash is always a switch: an unknown one, or one

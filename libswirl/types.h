@@ -209,7 +209,7 @@ struct vram_block
 enum ndc_error_codes
 {
 	rv_ok = 0,			//no error
-	rv_cli_finish=69,	//clean exit after --help
+	rv_cli_finish=69,	//clean exit after --help or --version
 	rv_cli_error=70,	//the command line was refused (cfg/cl.cpp), the message is on stderr: exit status 2
 
 	rv_error=-2,		//error
@@ -330,13 +330,6 @@ struct maple_device_instance
 //includes from CRT
 #include <stdlib.h>
 #include <stdio.h>
-
-
-#if HOST_OS == OS_DARWIN
-int darw_printf(const wchar* Text,...);
-#define printf darw_printf
-#define puts(X) printf("%s\n", X)
-#endif
 
 //includes from c++rt
 #include <vector>

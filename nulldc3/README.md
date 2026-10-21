@@ -11,8 +11,18 @@ names this directory `nulldc_shell_path`.
 - `linux/`: the Linux desktop files: `nulldc3.desktop`, the man pages `man/nulldc3.1` and
   `man/nulldc3-joyconfig.1`, the controller mappings of `mappings/` and `tools/nulldc3-joyconfig.py`, which
   makes them.
-- `apple/`: the macOS sources (`main.m`, the application delegate, the menus, the GL view, the console, the input
-  devices) and the bundle files, `Info.plist` and `build_app_bundle.sh`.
+- `apple/`: the macOS sources (`main.m`; `AppDelegate.mm`, the start of the emulator headless and with a window, the
+  application delegate and the alert rule; the menus, the GL view, the console, the input devices) and the files of
+  the bundle `nulldc3.app`, which the top-level `CMakeLists.txt` makes: `Info.plist.in`, the template of its
+  `Contents/Info.plist` (`org.emudev.nulldc3`, the icon `nulldc3`, nullDC Team, the deployment target, 11.0 by
+  default), `nulldc3.icns` (from `icon/`), and `bundle_stamp.cmake`, the last step of every build that changes the
+  bundle (the target `nulldc3_bundle`): it writes the version keys from `nulldc3-version.cmake`, below
+  (`CFBundleShortVersionString` X.Y.Z, `CFBundleVersion` X.Y.Z.N, `NullDCVersion` the version), then signs the bundle
+  ad hoc (`codesign --force --sign - --timestamp=none`, no hardened runtime, no entitlements) and checks the
+  signature (`codesign --verify --strict --deep`). Its `Resources` hold the icon and the licences a release carries:
+  `LICENSE`, `LICENSE-GPL`, `LICENSE-LGPL`, `LICENSE` of this directory as `LICENSE-shell`, and the UI's
+  `devtools/LICENSE` as `LICENSE-devtools` when the build embeds the UI. With `cmake -G Xcode` Xcode signs the
+  bundle itself.
 - `icon/`: the emulator's icon, the approved art (`nulldc.svg`, `nulldc-small.svg` for 16 and 24 px, `png/` from 16
   to 1024 px, `preview.png`) and `make_icons.py`, which makes from the PNGs the three icon files of the tree:
   `windows/nulldc3.ico`, `apple/nulldc3.icns` and, outside this directory, `libswirl/linux-dist/x11_icon.h`, the

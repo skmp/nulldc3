@@ -14,6 +14,7 @@
 #import "gui/gui.h"
 #import "OSXKeyboardDevice.h"
 #import "OSXGamepadDevice.h"
+#include "utils/run_control.h"
 
 OSXKeyboardDevice keyboard(0);
 static std::shared_ptr<OSXKbGamepadDevice> kb_gamepad(0);
@@ -73,6 +74,9 @@ static void unregister_device_for_gamepad(GCExtendedGamepad *gamepad) {
 }
 
 void os_SetupInput() {
+    // headless: no host input, as on Linux
+    if (runctl_headless())
+        return;
     kb_gamepad = std::make_shared<OSXKbGamepadDevice>(0);
     GamepadDevice::Register(kb_gamepad);
     mouse_gamepad = std::make_shared<OSXMouseGamepadDevice>(0);

@@ -195,14 +195,13 @@ else()
   set(FEAT_SHREC  ${DYNAREC_NONE})
 endif()
 
-# Sound CPU dynarec
-if(${HOST_CPU} EQUAL ${CPU_A64})
-  message("ARM7 Dynarec Features Available")
-  set(FEAT_AREC  ${DYNAREC_JIT})
-else()
-  message("ARM7 Dynarec Features Missing")
-  set(FEAT_AREC ${DYNAREC_NONE})
-endif()
+# Sound CPU dynarec: none on any host. The ARM7 recompiler of arm64 (hw/arm7/arm7_jit_virt_arm64.cpp) is not built in
+# this round (PL-D46): on Apple silicon it writes its MAP_JIT cache without lifting the write protection, unmaps a
+# pointer it never set, maps a region per emulator thread that it never frees and branches to C++ without a range
+# check. The code stays, for the arm64 package A64; the ARM7 runs on the interpreter, as on x86_64
+# (Dynarec.ScpuEnabled finds no recompiler and takes the interpreter, hw/arm7/SoundCPU.cpp).
+message("ARM7 Dynarec Features Missing")
+set(FEAT_AREC ${DYNAREC_NONE})
 
 ## Handle TARGET_* to FEAT_  *FIXME* stupid use one or the other and propogate : part of build cleanup , TARGET_ will only be for platform specifics and FEAT_ as OPTIONS
 #
@@ -291,6 +290,13 @@ elseif ((${BUILD_COMPILER} EQUAL ${COMPILER_GCC}) OR
   
   if(${HOST_CPU} EQUAL ${CPU_X64})
     set(_C_FLAGS "${_C_FLAGS} -msse4")
+  endif()
+
+  # arm64: no contraction of a*b+c into one fused multiply-add. Clang contracts by default on arm64 (GCC in its ISO
+  # mode, the -std=c++20 of the build, does not), and the results of float code would then differ in their last bits
+  # from what the same code computes elsewhere (PL-D48)
+  if(${HOST_CPU} EQUAL ${CPU_A64})
+    set(_C_FLAGS "${_C_FLAGS} -ffp-contract=off")
   endif()
   
     
