@@ -299,7 +299,7 @@ Every emulator run the tests make there goes through `macos/macrun.py` (`macos/R
 `macos/no-windowserver.sb`, which denies the window server, the window manager, the Dock and LaunchServices: the
 tests of `macos/` and `version.binary` start the emulator through it, and so does ctest itself when it runs as a long
 step (inside it `macrun.py` finds its caller sandboxed and runs under that profile). Set `TMPDIR` and
-`npm_config_cache` to directories of your own for a run as well.
+`npm_config_cache` to directories of your own for a run as well, and `EMSDK` (below).
 
     cmake -S tests -B <build dir> -G Ninja -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3 \
           -DNULLDC_ELF_DIR=<dir> -DNULLDC_WREN7_DIR=<dir> -DNULLDC_CAIQUE_DIR=<dir> \
@@ -314,9 +314,11 @@ step (inside it `macrun.py` finds its caller sandboxed and runs under that profi
 - `Python3_EXECUTABLE`: Xcode's `/usr/bin/python3` (3.9) is the one the round's scripts keep to.
 - The data: the same files of caique-rtl (74) and wren7-rtl (120) as on Windows, and `2ndmix.elf` and `hello.elf`;
   shrike4-rtl is not needed (`sh4.fpu.*` is x86-64 only).
-- `NULLDC_EMCC`: the AICA DSP's WebAssembly tests look for an emsdk in `EMSDK` and in `~/emsdk`, and emcc writes into
-  the emsdk it runs from (its cache, and the bytecode of its Python, which it runs with `-E`): `-DNULLDC_EMCC=OFF`
-  skips them where that emsdk is not the run's to write into.
+- `NULLDC_EMCC` and `EMSDK`: the AICA DSP's WebAssembly tests look for an emsdk in `EMSDK` and in `~/emsdk`, and emcc
+  writes into the emsdk it runs from (its cache, and the bytecode of its Python, which it runs with `-E`). Where that
+  emsdk is not the run's to write into, `-DNULLDC_EMCC=OFF` skips the three that build with it, and `EMSDK` set to a
+  directory without one for ctest keeps `aica.dsp.wasm.devtools` from asking `~/emsdk` (it then says that the
+  committed module is not compared with a fresh build).
 
 What is skipped on macOS, with its reason (222 of the 326 tests):
 
