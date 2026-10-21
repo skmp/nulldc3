@@ -15,6 +15,9 @@
 
   #if !defined(TARGET_NO_EXCEPTIONS)
     #include <ucontext.h>
+    #if HOST_OS == OS_DARWIN
+      #include <stddef.h>
+    #endif
   #endif
 
 
@@ -41,11 +44,28 @@ void bicopy(Ta& rei, Tb& seg, bool to_segfault) {
 }
 #if !defined(TARGET_NO_EXCEPTIONS)
 	static thread_local UCTX_type segfault_copy;
+#if HOST_OS == OS_DARWIN
+	// On Darwin uc_mcontext is a pointer, into the signal frame the kernel pushed, and sigreturn restores the
+	// registers it points at. The copy keeps the registers themselves here and points at them: a copy of the pointer
+	// alone would be the live frame, which segfault_set_pc then rewrites to re_raise_fault, and the faulting
+	// instruction would be lost
+	static thread_local __typeof__(*segfault_copy.uc_mcontext) segfault_mcopy;
+
+	// what the kernel's frame has of a ucontext_t: the fields up to the pointer. (With _XOPEN_SOURCE defined before
+	// the SDK's first look at ucontext_t, it carries a copy of the registers behind the pointer, which the frame has
+	// not: the copies below would then run over the frame.)
+	static_assert(sizeof(UCTX_type) == offsetof(UCTX_type, uc_mcontext) + sizeof(segfault_copy.uc_mcontext),
+	              "ucontext_t is not the kernel's ucontext");
+#endif
 #endif
 
 void segfault_store(void* segfault_ctx) {
 #if !defined(TARGET_NO_EXCEPTIONS)
 	memcpy(&segfault_copy, UCTX_data, sizeof(segfault_copy));
+#if HOST_OS == OS_DARWIN
+	memcpy(&segfault_mcopy, UCTX_data->uc_mcontext, sizeof(segfault_mcopy));
+	segfault_copy.uc_mcontext = &segfault_mcopy;
+#endif
 
 	fault_printf("sgctx stored, %d\n", sizeof(segfault_copy));
 #endif
@@ -53,7 +73,15 @@ void segfault_store(void* segfault_ctx) {
 
 void segfault_load(void* segfault_ctx) {
 #if !defined(TARGET_NO_EXCEPTIONS)
+#if HOST_OS == OS_DARWIN
+	// the stored context into the frame of this signal, which keeps its own pointer to its own registers
+	auto live_mcontext = UCTX_data->uc_mcontext;
 	memcpy(UCTX_data, &segfault_copy, sizeof(*UCTX_data));
+	UCTX_data->uc_mcontext = live_mcontext;
+	memcpy(live_mcontext, &segfault_mcopy, sizeof(segfault_mcopy));
+#else
+	memcpy(UCTX_data, &segfault_copy, sizeof(*UCTX_data));
+#endif
 
 	fault_printf("sgctx loaded, %d\n", sizeof(*UCTX_data));
 #endif

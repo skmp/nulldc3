@@ -113,7 +113,7 @@ function(crash_reports out)
   set(${out} "${entries}" PARENT_SCOPE)
 endfunction()
 
-set(fault_re "fault_handler: unhandled ([A-Z]+) at address 0x[0-9a-f]+, pc 0x[0-9a-f]+, not a guest memory fault: terminating")
+set(fault_re "fault_handler: unhandled ([A-Z]+) at address (0x[0-9a-f]+), pc (0x[0-9a-f]+), not a guest memory fault: terminating")
 
 if(CASE STREQUAL "canary")
   # Whether ctest, and this script, run under a profile already, asked of the kernel apart from macrun.py: the
@@ -178,10 +178,13 @@ elseif(CASE STREQUAL "headless")
 
 elseif(CASE MATCHES "^fatal\\.(.+)$")
   set(kind "${CMAKE_MATCH_1}")
-  # segv writes to address 16, inside __PAGEZERO: a page that is there without access, which Darwin reports as a
-  # protection fault, SIGBUS (138), as it does for a write to a page that is mapped read-only (SIGSEGV is for an
-  # address with no page at all)
-  set(sig_segv SIGBUS)
+  # segv writes to address 16, which no mapping of the process holds: SIGSEGV (139) on macOS as on Linux, with that
+  # address in the line (a write to a page mapped read-only or without access is a SIGBUS there). The fault handler
+  # first takes it for a possible guest memory fault, through its thunk on the trap page (linux/common.cpp), and
+  # has to come back to the faulting write with the registers of the fault: a SIGBUS at the trap page's address is
+  # the handler reporting its own thunk
+  set(sig_segv SIGSEGV)
+  set(addr_segv 0x10)
   set(sig_ill SIGILL)
   set(sig_abort SIGABRT)
   set(code_SIGBUS 138)
@@ -219,8 +222,21 @@ elseif(CASE MATCHES "^fatal\\.(.+)$")
   else()
     if(NOT fatal_err MATCHES "${fault_re}")
       problem("no fault_handler line on stderr")
-    elseif(NOT CMAKE_MATCH_1 STREQUAL sig)
-      problem("the fault_handler line says ${CMAKE_MATCH_1}, not ${sig}")
+    else()
+      set(line_sig "${CMAKE_MATCH_1}")
+      set(line_addr "${CMAKE_MATCH_2}")
+      set(line_pc "${CMAKE_MATCH_3}")
+      message("the fault_handler line: ${line_sig} at ${line_addr}, pc ${line_pc}")
+      if(NOT line_sig STREQUAL sig)
+        problem("the fault_handler line says ${line_sig}, not ${sig}")
+      endif()
+      if(DEFINED addr_${kind} AND NOT line_addr STREQUAL addr_${kind})
+        problem("the fault_handler line says address ${line_addr}, not ${addr_${kind}}")
+      endif()
+      # an illegal instruction's address is the instruction, the pc the line names
+      if(kind STREQUAL "ill" AND NOT line_addr STREQUAL line_pc)
+        problem("the fault_handler line of ill says address ${line_addr} and pc ${line_pc}, not the instruction twice")
+      endif()
     endif()
   endif()
   set(new "")

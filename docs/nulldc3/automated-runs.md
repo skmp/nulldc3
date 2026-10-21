@@ -279,14 +279,14 @@ where `std::this_thread::sleep_for` lasts a tick of the system timer; the emulat
 writes a crash report into `~/Library/Logs/DiagnosticReports` for every process that a signal ends. The line is
 Linux's, on stderr,
 
-    fault_handler: unhandled SIGBUS at address 0x10, pc 0x1004c2f34, not a guest memory fault: terminating
+    fault_handler: unhandled SIGSEGV at address 0x10, pc 0x10146cda8, not a guest memory fault: terminating
 
 and the process ends with `_exit(128 + N)`:
 
 | what | signal | exit |
 |---|---|---|
-| an access to an address with no page | `SIGSEGV` | 139 |
-| an access that the page does not allow: a write to a page mapped read-only, an address in `__PAGEZERO` (a null pointer) | `SIGBUS` | 138 |
+| an access to an address that no mapping holds: a null pointer (an address in `__PAGEZERO`), an address beyond every mapping | `SIGSEGV` | 139 |
+| an access that the page does not allow: a write to a page mapped read-only, any access to a page mapped without access (`PROT_NONE`) | `SIGBUS` | 138 |
 | an illegal instruction | `SIGILL` | 132 |
 | a breakpoint instruction (`__builtin_trap()`), no debugger attached | `SIGTRAP` | 133 |
 | `abort()`, `std::terminate` | `SIGABRT` | 134 |
@@ -296,10 +296,11 @@ and the process ends with `_exit(128 + N)`:
 attached, end with 133 without a `fault_handler` line, so that a test tells them from a breakpoint instruction. A run
 with a person in front of it dies of the signal, as before, and its crash report is that person's. A `SIGSEGV` or
 `SIGBUS` that is a guest memory fault is handled as on Linux (on macOS a write to a page that is mapped read-only is a
-`SIGBUS`).
+`SIGBUS`); one that is not comes back to the faulting instruction first, so that the line names its address and pc.
 
 **Test hooks** (macOS builds): `NULLDC_TEST_FATAL=<kind>` raises a fault right after the emulator has started,
-`segv` (a write to address 16, a `SIGBUS` on macOS), `ill`, `trap` (`die()`) or `abort` (`div` on x86_64 hosts only);
+`segv` (a write to address 16, a `SIGSEGV` at address `0x10`, 139), `ill`, `trap` (`die()`) or `abort` (`div` on x86_64
+hosts only);
 `NULLDC_TEST_UI_REPORT=1` prints one line when `main` ends,
 
     nulldc-ui: app=0 windows=0

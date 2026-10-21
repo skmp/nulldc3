@@ -13,9 +13,9 @@
 #	                            says sandboxed and the window server's lookup denied
 #	macos.headless.nowindow     the guest headless with NULLDC_TEST_UI_REPORT=1: app=0 windows=0, exit 0, the
 #	                            exit line, the ARM7 on the interpreter
-#	macos.fatal.<kind>          NULLDC_TEST_FATAL=<kind> for segv ill trap abort: the fault_handler line (for trap
-#	                            die's line and no fault_handler line), 128 + the signal by an exit, not a signal,
-#	                            nothing new in ~/Library/Logs/DiagnosticReports
+#	macos.fatal.<kind>          NULLDC_TEST_FATAL=<kind> for segv ill trap abort: the fault_handler line (segv's
+#	                            SIGSEGV at address 0x10; for trap die's line and no fault_handler line), 128 + the
+#	                            signal by an exit, not a signal, nothing new in ~/Library/Logs/DiagnosticReports
 #	macos.refused               a refused command line with stderr to a pipe and to /dev/null: exit 2, no
 #	                            NSApplication, the reason on stderr where it goes
 #	macos.bundle.codesign       the emulator's bundle: its signature (codesign --verify --strict --deep), its
