@@ -6,8 +6,14 @@ if (CCACHE_FOUND AND NOT CMAKE_HOST_WIN32)
   set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
 endif()
 
-# The executable: nulldc3 on every system (macOS: nulldc3.app, nulldc3/apple/build_app_bundle.sh)
+# The executable: nulldc3 on every system (macOS: inside the bundle nulldc3.app, below)
 set(TNAME nulldc3)
+
+# macOS: the oldest system the build runs on, 11.0 unless the configure line gives another (arm64 needs 11.0; the
+# tree needs 10.15 for std::filesystem). A cache variable, read when project() enables the languages.
+if(CMAKE_HOST_APPLE)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "The oldest macOS the build runs on")
+endif()
 
 # Windows (MSVC): the static runtime, so that nulldc3.exe needs no redistributable beside it, and the debug
 # information in the objects (/Z7), so that no mspdbsrv.exe outlives a build (PL-D32). Both are read when
@@ -21,7 +27,12 @@ if(CMAKE_HOST_WIN32)
   set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
 endif()
 
-project(${TNAME})
+# the macOS shell is Objective-C and Objective-C++ (nulldc3/apple)
+if(CMAKE_HOST_APPLE)
+  project(${TNAME} LANGUAGES C CXX OBJC OBJCXX)
+else()
+  project(${TNAME})
+endif()
 
 set(DEBUG_CMAKE ON)
 
@@ -301,7 +312,57 @@ include_directories ("${nulldc_core_path}")
 
 set(nulldc_SRCS ${core_SRCS} ${deps_SRCS} ${osd_SRCS})
 
-  add_executable(${TNAME}${binSuffix} ${nulldc_SRCS}) 
+if(${HOST_OS} EQUAL ${OS_DARWIN})
+  # The bundle nulldc3.app (nulldc3/README.md): Contents/MacOS/nulldc3, Contents/Info.plist from the template
+  # nulldc3/apple/Info.plist.in, and in Contents/Resources the icon and the licences a release carries (PL-D80):
+  # LICENSE, LICENSE-GPL, LICENSE-LGPL, nulldc3/LICENSE as LICENSE-shell, and the UI's devtools/LICENSE as
+  # LICENSE-devtools only when the build embeds the UI (DBG_WEBUI_BUNDLE_DIR, libswirl/debugger/cmake/dbg_webui.cmake);
+  # without it the submodule is never read. Three of them are named LICENSE: they are copied into the build
+  # directory under their names first.
+  set(nulldc_bundle_licences "${CMAKE_CURRENT_BINARY_DIR}/bundle-licences")
+  set(nulldc_bundle_resources "${nulldc_shell_path}/apple/nulldc3.icns")
+  set(nulldc_licence_sources
+    "LICENSE=${nulldc_root_path}/LICENSE"
+    "LICENSE-GPL=${nulldc_root_path}/LICENSE-GPL"
+    "LICENSE-LGPL=${nulldc_root_path}/LICENSE-LGPL"
+    "LICENSE-shell=${nulldc_shell_path}/LICENSE")
+  if(DBG_WEBUI_BUNDLE_DIR)
+    if(NOT EXISTS "${nulldc_root_path}/devtools/LICENSE")
+      message(FATAL_ERROR "The build embeds the UI (${DBG_WEBUI_BUNDLE_DIR}), and its licence goes into the bundle as LICENSE-devtools: there is no devtools/LICENSE (${nulldc_root_path}/devtools/LICENSE). Initialise the submodule devtools, or configure with -DNULLDC_DEVTOOLS_DIST=OFF to build without the UI.")
+    endif()
+    list(APPEND nulldc_licence_sources "LICENSE-devtools=${nulldc_root_path}/devtools/LICENSE")
+  else()
+    # a configure of this build directory that embedded the UI left its licence: it goes, from the bundle too
+    file(REMOVE "${nulldc_bundle_licences}/LICENSE-devtools"
+                "${CMAKE_CURRENT_BINARY_DIR}/${TNAME}${binSuffix}.app/Contents/Resources/LICENSE-devtools")
+  endif()
+  foreach(entry ${nulldc_licence_sources})
+    string(REGEX MATCH "^([^=]+)=(.*)$" _ "${entry}")
+    configure_file("${CMAKE_MATCH_2}" "${nulldc_bundle_licences}/${CMAKE_MATCH_1}" COPYONLY)
+    list(APPEND nulldc_bundle_resources "${nulldc_bundle_licences}/${CMAKE_MATCH_1}")
+  endforeach()
+  set_source_files_properties(${nulldc_bundle_resources} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  # the set of the resources, written when it changes: another set signs the bundle again (the stamp below)
+  string(REPLACE ";" "\n" nulldc_bundle_set "${nulldc_bundle_resources}\n")
+  set(nulldc_bundle_set_file "${nulldc_bundle_licences}/resources.txt")
+  set(nulldc_bundle_set_old "")
+  if(EXISTS "${nulldc_bundle_set_file}")
+    file(READ "${nulldc_bundle_set_file}" nulldc_bundle_set_old)
+  endif()
+  if(NOT nulldc_bundle_set_old STREQUAL nulldc_bundle_set)
+    file(WRITE "${nulldc_bundle_set_file}" "${nulldc_bundle_set}")
+  endif()
+
+  add_executable(${TNAME}${binSuffix} MACOSX_BUNDLE ${nulldc_SRCS} ${nulldc_bundle_resources})
+
+  # the version keys stay placeholders in the template: the build writes them (below)
+  set(NULLDC_BUNDLE_VERSION_AT_BUILD "written-at-build-time")
+  set_target_properties(${TNAME}${binSuffix} PROPERTIES
+    MACOSX_BUNDLE_INFO_PLIST "${nulldc_shell_path}/apple/Info.plist.in"
+    XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-")
+else()
+  add_executable(${TNAME}${binSuffix} ${nulldc_SRCS})
+endif()
 
 target_compile_features(${TNAME}${binSuffix} PRIVATE cxx_std_20)
 
@@ -425,9 +486,6 @@ if(${HOST_OS} EQUAL ${OS_LINUX})
 endif()
 
 if(${HOST_OS} EQUAL ${OS_DARWIN})
-  enable_language(OBJC)
-  enable_language(OBJCXX)
-
   # Silence warnings about OpenGL deprecation on Mojave and greater (10.14+)
   target_compile_options(${TNAME} PRIVATE -DGL_SILENCE_DEPRECATION)
 
@@ -455,12 +513,41 @@ if(${HOST_OS} EQUAL ${OS_DARWIN})
     "-framework GameController"
   )
 
-  # Create the macOS app bundle
-  add_custom_command(TARGET ${TNAME} POST_BUILD
-    COMMAND bash "-c" "APP_NAME=\"${TNAME}\" D_OSX=\"${d_osx}\" CMAKE_CURRENT_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\" CMAKE_CURRENT_BINARY_DIR=\"${CMAKE_CURRENT_BINARY_DIR}\" \"${d_osx}/build_app_bundle.sh\""
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Creating macOS app bundle..."
-  )
+  # The version keys of the bundle's Info.plist and the ad-hoc signature (nulldc3/apple/bundle_stamp.cmake;
+  # PL-D42): a command with a stamp file, the last step of every build that changes the bundle. Not a POST_BUILD
+  # step: that runs only when the executable is linked again, while CMake writes Contents/Info.plist from the
+  # template whenever it generates the build, and after a configure without a link the keys would be gone and the
+  # seal broken. It depends on the executable, the version file, the template, the plist CMake writes and every
+  # resource in the bundle. The Xcode generator signs the bundle itself (XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY above),
+  # after its own steps: there the keys are written after the link, and nothing is signed here.
+  set(nulldc_bundle_contents "$<TARGET_BUNDLE_CONTENT_DIR:${TNAME}>")
+  if(CMAKE_GENERATOR STREQUAL "Xcode")
+    add_custom_command(TARGET ${TNAME} POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" "-DBUNDLE=$<TARGET_BUNDLE_DIR:${TNAME}>"
+              "-DVERSION_FILE=${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.cmake" -DSIGN=OFF
+              -P "${d_osx}/bundle_stamp.cmake"
+      COMMENT "The version of nulldc3.app"
+      VERBATIM)
+  else()
+    set(nulldc_bundle_depends
+      "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.cmake"
+      "${d_osx}/Info.plist.in"
+      "${d_osx}/bundle_stamp.cmake"
+      "${nulldc_bundle_contents}/Info.plist"
+      "${nulldc_bundle_set_file}")
+    foreach(resource ${nulldc_bundle_resources})
+      get_filename_component(resource_name "${resource}" NAME)
+      list(APPEND nulldc_bundle_depends "${nulldc_bundle_contents}/Resources/${resource_name}")
+    endforeach()
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-bundle.stamp"
+      COMMAND "${CMAKE_COMMAND}" "-DBUNDLE=$<TARGET_BUNDLE_DIR:${TNAME}>"
+              "-DVERSION_FILE=${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.cmake"
+              "-DSTAMP=${CMAKE_CURRENT_BINARY_DIR}/nulldc3-bundle.stamp" -P "${d_osx}/bundle_stamp.cmake"
+      DEPENDS ${TNAME} ${nulldc_bundle_depends}
+      COMMENT "The version and the signature of nulldc3.app"
+      VERBATIM)
+    add_custom_target(nulldc3_bundle ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-bundle.stamp")
+  endif()
 
 endif()
 
