@@ -23,7 +23,7 @@ echo "Creating the app bundle directories"
 mkdir -p ${BUNDLE_MACOS_ROOT}
 mkdir -p ${BUNDLE_RESOURCES_ROOT}
 echo "Copying the bundle root directory files"
-cp ${MACOS_SOURCE_ROOT}/Info.plist ${INFO_PLIST}
+cp ${MACOS_SOURCE_ROOT}/Info.plist.in ${INFO_PLIST}
 echo "Copying the bundle MacOS directory files"
 cp ${BUILD_ROOT}/${APP_NAME} ${BUNDLE_MACOS_ROOT}/${APP_NAME}
 echo "Copying the bundle Resources directory files"
