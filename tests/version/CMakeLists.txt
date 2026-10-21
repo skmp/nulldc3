@@ -18,8 +18,8 @@
 #	version.binary   the emulator under test (NULLDC_EMULATOR, else the one the system tests build) prints
 #	                 "nullDC <version>" for --version, <version> what version.cmake makes of the tree now, as the
 #	                 last line of its stdout, with nothing in front of it but the three setup lines of the Linux
-#	                 and macOS builds (binary.cmake): a binary of another commit fails (one not built again since a
-#	                 commit). The system tests' emulator is configured again at every build of this project
+#	                 build (binary.cmake; on macOS the line is alone): a binary of another commit fails (one not
+#	                 built again since a commit). The system tests' emulator is configured again at every build of this project
 #	                 (tests/system/build_emulator.cmake), so with it this test cannot tell a version made at
 #	                 configure time from one made at the build; version.build_time can, in every configuration.
 #	                 Skipped when there is no emulator to ask.
@@ -70,16 +70,23 @@ elseif(TARGET nulldc_emulator)
   set(nulldc_version_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
 endif()
 if(nulldc_version_emulator)
-  # on Windows the emulator runs through nulldc3-winrun (tests/windows), as every program the tests start there
+  # on Windows the emulator runs through nulldc3-winrun (tests/windows), as every program the tests start there; on
+  # macOS through macrun.py (tests/macos), as every emulator run there
   set(nulldc_version_winrun "")
   if(WIN32)
     set(nulldc_version_winrun "-DWINRUN=${nulldc_winrun}")
+  elseif(APPLE)
+    set(nulldc_version_winrun "-DMACRUN=${NULLDC_MACRUN}")
   endif()
-  add_test(NAME version.binary
-           COMMAND "${CMAKE_COMMAND}" "-DEMULATOR=${nulldc_version_emulator}" "-DTREE=${nulldc_root_path}"
-                   "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/binary" ${nulldc_version_winrun}
-                   -P "${CMAKE_CURRENT_SOURCE_DIR}/binary.cmake")
-  set_tests_properties(version.binary PROPERTIES TIMEOUT 120)
+  if(APPLE AND NOT NULLDC_MACRUN)
+    nulldc_add_missing_data_test(version.binary "no python3 to run tests/macos/macrun.py with, which the emulator runs through on macOS")
+  else()
+    add_test(NAME version.binary
+             COMMAND "${CMAKE_COMMAND}" "-DEMULATOR=${nulldc_version_emulator}" "-DTREE=${nulldc_root_path}"
+                     "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/binary" ${nulldc_version_winrun}
+                     -P "${CMAKE_CURRENT_SOURCE_DIR}/binary.cmake")
+    set_tests_properties(version.binary PROPERTIES TIMEOUT 120)
+  endif()
 else()
   nulldc_add_skipped_test(version.binary "no emulator to ask: NULLDC_EMULATOR is empty and the system tests build none")
 endif()

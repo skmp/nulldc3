@@ -5,10 +5,11 @@
 # nulldc3/cmake/version.cmake is run on the tree into WORK, as a build runs it, and the emulator is asked with
 # --version (behind P0's keys of a headless run, which --version leaves unread): it has to exit with 0, and its
 # stdout has to end in the line "nullDC <version>" and a line end, exactly, with nothing in front of it but the lines
-# the Linux and macOS builds print before the command line is read: common_linux_setup() of libswirl/linux/common.cpp
-# prints "Personality: <8 hex digits>", "Updated personality: <8 hex digits>" and "Linux paging: <size> <8 hex
-# digits> <8 hex digits>" on stdout first. Every other line fails, and once those three are gone (to stderr, or
-# --version answered before them), setup_lines below goes and the stdout is the one line alone. (execute_process
+# the Linux build prints before the command line is read: common_linux_setup() of libswirl/linux/common.cpp prints
+# "Personality: <8 hex digits>", "Updated personality: <8 hex digits>" and "Linux paging: <size> <8 hex digits> <8
+# hex digits>" on stdout first (the macOS build prints its "Linux paging" line on stderr, and none of the others:
+# its stdout is the one line alone). Every other line fails, and once those three are gone on Linux too (to stderr,
+# or --version answered before them), setup_lines below goes and the stdout is the one line alone. (execute_process
 # drops the \r of a \r\n: a carriage return in the emulator's stdout is not seen here.)
 #
 # An emulator of another commit says another version: NULLDC_EMULATOR built before a commit, or the system tests'
@@ -35,11 +36,17 @@ if(NOT rc EQUAL 0)
 endif()
 file(STRINGS "${WORK}/nulldc3-version.txt" version LIMIT_COUNT 1)
 
-# Windows: through nulldc3-winrun (-DWINRUN=, tests/windows), with a portable directory of the test's own
+# Windows: through nulldc3-winrun (-DWINRUN=, tests/windows), macOS: through macrun.py (-DMACRUN=<python>|<macrun.py>,
+# tests/macos), with a portable directory of the test's own
 set(launcher "")
 set(portable "")
 if(WINRUN)
   set(launcher "${WINRUN}" --timeout 50 --)
+  file(MAKE_DIRECTORY "${WORK}/portable")
+  set(portable --portable "${WORK}/portable")
+elseif(MACRUN)
+  string(REPLACE "|" ";" launcher "${MACRUN}")
+  list(APPEND launcher --name version --work "${WORK}" --timeout 50 --)
   file(MAKE_DIRECTORY "${WORK}/portable")
   set(portable --portable "${WORK}/portable")
 endif()
