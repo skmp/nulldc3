@@ -28,8 +28,6 @@ static CGFloat _backingScaleFactor;
 static CGSize _glViewSize;
 static void gl_resize();
 
-static bool _isInitializing = true;
-
 @interface AppDelegate()
 @property (strong) NSTextStorage *consoleTextStorage;
 @end
@@ -160,7 +158,6 @@ static bool _isInitializing = true;
     args.push_back(nullptr);
     int result = nulldc_init((int)args.size() - 1, args.data());
     if (result == 0) {
-        _isInitializing = false;
         [self captureConsoleOutput];
         #if FEAT_HAS_SERIAL_TTY
         _removePTYSymlink = common_serial_pty_setup();
@@ -433,23 +430,6 @@ int get_mic_data(u8* buffer) {
 }
 
 int push_vmu_screen(u8* buffer) {
-    return 0;
-}
-
-int darw_printf(const wchar* text,...) {
-    va_list args;
-
-    static wchar temp[2048];
-    va_start(args, text);
-    vsprintf(temp, text, args);
-    va_end(args);
-    
-    if (_isInitializing) {
-        fprintf(stdout, "%s", temp);
-    } else {
-        NSLog(@"%s", temp);
-    }
-    
     return 0;
 }
 
