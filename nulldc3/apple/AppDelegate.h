@@ -7,7 +7,7 @@
 #import "EmuGLView.h"
 #import "ConsoleViewController.h"
 
-@interface AppDelegate : NSObject <NSWindowDelegate, EmuGLViewDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, EmuGLViewDelegate>
 
 // Main UI display window
 @property (strong) NSWindow *mainWindow;
@@ -19,9 +19,10 @@
 
 + (AppDelegate *)sharedInstance;
 
-- (instancetype)initWithArgc:(int)argc andArgv:(char**)argv;
-
 - (void)showConsoleWindow:(NSMenuItem *)menuItem;
 - (void)hideConsoleWindow:(NSMenuItem *)menuItem;
+
+// About nullDC: the version of the build and its CFBundleVersion
+- (void)showAboutPanel:(id)sender;
 
 @end

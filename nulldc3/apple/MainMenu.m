@@ -29,8 +29,11 @@ static NSMenuItem *_toggleConsoleMenuItem;
     NSMenu *appMenu = [[NSMenu alloc] init];
     [appMenuItem setSubmenu:appMenu];
     // About
+    // (the version of the build, AppDelegate.mm, not the standard panel's CFBundleShortVersionString alone)
     NSString *aboutTitle = [NSString stringWithFormat:@"About %@", appName];
-    [appMenu addItem:[[NSMenuItem alloc] initWithTitle:aboutTitle action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""]];
+    NSMenuItem *aboutItem = [[NSMenuItem alloc] initWithTitle:aboutTitle action:@selector(showAboutPanel:) keyEquivalent:@""];
+    [aboutItem setTarget:[AppDelegate sharedInstance]];
+    [appMenu addItem:aboutItem];
     [appMenu addItem:[NSMenuItem separatorItem]];
     // Services
     NSMenuItem *servicesItem = [[NSMenuItem alloc] initWithTitle:@"Services" action:nil keyEquivalent:@""];
