@@ -481,8 +481,20 @@ bool choose_dirs(const CommandLine& cl)
 					+ choose_another);
 			dir = host_dirs.exe_dir;
 			if (!writable(dir, why))
+			{
+#if HOST_OS == OS_DARWIN
+				// App Translocation (PL-D49): macOS runs an application that was downloaded and is opened where it
+				// was unpacked, with its quarantine, from a random read-only place, a path with /AppTranslocation/
+				if (dir.find("/AppTranslocation/") != string::npos)
+					return fail("the directory of the executable, " + dir + ", cannot be written (" + why + "): "
+						"macOS runs this copy of nulldc3.app from a read-only place (App Translocation, for an "
+						"application that was downloaded and has not been moved). Move the folder that holds "
+						"nulldc3.app to another place with the Finder, or clear its quarantine with "
+						"xattr -dr com.apple.quarantine <that folder>, and open it again; or " + choose_another);
+#endif
 				return fail("the directory of the executable, " + dir + ", cannot be written (" + why + "); "
 					+ choose_another);
+			}
 		}
 		clear_dirs();
 		set_user_config_dir(dir);
