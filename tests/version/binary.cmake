@@ -7,10 +7,11 @@
 # stdout has to end in the line "nullDC <version>" and a line end, exactly, with nothing in front of it but the lines
 # the Linux build prints before the command line is read: common_linux_setup() of libswirl/linux/common.cpp prints
 # "Personality: <8 hex digits>", "Updated personality: <8 hex digits>" and "Linux paging: <size> <8 hex digits> <8
-# hex digits>" on stdout first (the macOS build prints its "Linux paging" line on stderr, and none of the others:
-# its stdout is the one line alone). Every other line fails, and once those three are gone on Linux too (to stderr,
-# or --version answered before them), setup_lines below goes and the stdout is the one line alone. (execute_process
-# drops the \r of a \r\n: a carriage return in the emulator's stdout is not seen here.)
+# hex digits>" on stdout first. The macOS build prints its "Linux paging" line on stderr, and none of the others:
+# its stdout is the one line alone, and there (MACRUN) no line in front of it passes. Every other line fails, and
+# once those three are gone on Linux too (to stderr, or --version answered before them), setup_lines below goes and
+# the stdout is the one line alone everywhere. (execute_process drops the \r of a \r\n: a carriage return in the
+# emulator's stdout is not seen here.)
 #
 # An emulator of another commit says another version: NULLDC_EMULATOR built before a commit, or the system tests'
 # emulator when the tests project was not built again after one. The system tests' emulator is configured again at
@@ -56,12 +57,16 @@ execute_process(COMMAND ${launcher} "${EMULATOR}" ${portable}
                 WORKING_DIRECTORY "${WORK}" TIMEOUT 60
                 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
 
-# the setup lines of common_linux_setup(), the only lines that may come before the version's
+# the setup lines of common_linux_setup(), the only lines that may come before the version's; on macOS (MACRUN)
+# none: there the version's line is the whole stdout
 string(REPEAT "[0-9A-F]" 8 hex8)
 set(setup_lines
   "^Personality: ${hex8}$"
   "^Updated personality: ${hex8}$"
   "^Linux paging: [0-9]+ ${hex8} ${hex8}$")
+if(MACRUN)
+  set(setup_lines "")
+endif()
 
 set(line "nullDC ${version}\n")
 string(LENGTH "${out}" out_length)
