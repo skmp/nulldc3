@@ -15,7 +15,8 @@
 #	                            exit line, the ARM7 on the interpreter
 #	macos.fatal.<kind>          NULLDC_TEST_FATAL=<kind> for segv ill trap abort: the fault_handler line (segv's
 #	                            SIGSEGV at address 0x10; for trap die's line and no fault_handler line), 128 + the
-#	                            signal by an exit, not a signal, nothing new in ~/Library/Logs/DiagnosticReports
+#	                            signal by an exit, not a signal, the stdout printed before the fault, nothing new
+#	                            in ~/Library/Logs/DiagnosticReports
 #	macos.refused               a refused command line with stderr to a pipe and to /dev/null: exit 2, no
 #	                            NSApplication, the reason on stderr where it goes
 #	macos.bundle.codesign       the emulator's bundle: its signature (codesign --verify --strict --deep), its

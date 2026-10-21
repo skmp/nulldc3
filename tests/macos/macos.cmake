@@ -212,6 +212,12 @@ elseif(CASE MATCHES "^fatal\\.(.+)$")
   if(NOT fatal_err MATCHES "NULLDC_TEST_FATAL: ${kind}\n")
     problem("the hook did not say NULLDC_TEST_FATAL: ${kind} on stderr")
   endif()
+  # what nulldc_init printed on stdout before the hook: stdout is line-buffered (nulldc_macos_main), so it is in the
+  # pipe before the fault, which ends the process by _exit with nothing of stdio flushed
+  string(FIND "${fatal_out}" "\nConfig dir is: ${WORK}/portable/\n" at)
+  if(at EQUAL -1)
+    problem("no \"Config dir is: ${WORK}/portable/\" on stdout: what stdio held before the fault is lost")
+  endif()
   if(kind STREQUAL "trap")
     if(NOT fatal_out MATCHES "Fatal error : NULLDC_TEST_FATAL")
       problem("no \"Fatal error : NULLDC_TEST_FATAL\" on stdout")
