@@ -6,7 +6,7 @@ its jobs call (README.md of the tree, "CI", says what runs when).
 | test | what has to hold | needs |
 |---|---|---|
 | `ci.hygiene` | `nulldc3/ci/hygiene.py` on the tree: no tracked file (as it is in the working tree) names a home directory of Linux (`/home/`), macOS (`/Users/`) or Windows (`\Users\`, `C:/Users/`), a path of WSL's network (`\\wsl$`, `\\wsl.localhost`) or of its drive mounts (`/mnt/<letter>/`), a private IPv4 address (10/8, 172.16/12, 192.168/16) or a `.local` host name, but the lines that a row of `nulldc3/ci/hygiene-allow.txt` allows, each with its reason; and every row still allows a line ("gone" otherwise). Skipped when the tree is not a git checkout | git |
-| `ci.workflows` | `nulldc3/ci/check_workflows.py --self-test` on `.github/workflows/ci.yml`: the rules of the cut's 6.1 and 6.5 that actionlint does not check (below), and each of 22 mutations of the workflow caught by one of them; then (Linux and macOS) `release_test.py`: `nulldc3/ci/release.sh` against a stand-in for `gh` in a scratch repository below the build directory (below). On Windows the stand-in part is not run (`release.sh` is a bash script, and no test there runs a POSIX shell), and the test says so | python3; git and cmake for the stand-in |
+| `ci.workflows` | `nulldc3/ci/check_workflows.py --self-test` on `.github/workflows/ci.yml`: the rules of the cut's 6.1 and 6.5 that actionlint does not check (below), and each of 29 mutations of the workflow caught by one of them; then (Linux and macOS) `release_test.py`: `nulldc3/ci/release.sh` against a stand-in for `gh` in a scratch repository below the build directory (below). On Windows the stand-in part is not run (`release.sh` is a bash script, and no test there runs a POSIX shell), and the test says so | python3; git and cmake for the stand-in |
 
 ## check_workflows.py
 
@@ -26,10 +26,13 @@ flow sequences, quoted, plain and block scalars; anything else is refused, and t
   runs `gh`;
 - every `uses:` pinned by a full commit SHA with its version in a comment;
 - no `secrets.` but `secrets.GITHUB_TOKEN`; no step that prints the environment (`printenv`, `env` or `set` alone,
-  `export -p`, `declare -p`, PowerShell's `env:` drive, `toJSON` of a context);
+  `export -p`, `declare -p`, PowerShell's `env:` drive, `toJSON` of a context) in any command of a run line: each
+  line is split into its commands at `&&`, `||`, `;`, `|` and `&` (not the `&` of `2>&1` or `&>`), and into what a
+  `$(...)`, a backquote or a `(...)` holds, so that `nulldc3/ci/linux.sh deps && env` is caught as `env` alone is;
 - `concurrency` per ref, cancelled in progress for pull requests only; every artifact kept 7 days; every checkout with
-  the whole history and no token kept; every `run:` step a call of a script of `nulldc3/ci/` or one of two
-  provisioning lines (no build logic in the file).
+  the whole history and no token kept; every command of every `run:` line a call of a script of `nulldc3/ci/` or one
+  of two provisioning lines (no build logic in the file, not even behind a call of a script on its line, and no
+  command substitution or subshell).
 
 Run it alone: `python3 nulldc3/ci/check_workflows.py [--self-test]`. `actionlint` (a pinned release) checks the
 syntax and the expressions; neither replaces the other.

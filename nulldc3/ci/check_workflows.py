@@ -18,10 +18,13 @@ The rules, each printed with PASS or FAIL:
     step runs gh itself;
   - every uses: is pinned by a full commit SHA (40 hexadecimal digits) with its version in a comment;
   - no secrets. but secrets.GITHUB_TOKEN; no step prints the environment (printenv, env or set alone, export -p,
-    declare -p, Get-ChildItem env:, toJSON of env, secrets, vars, github, runner or job);
+    declare -p, Get-ChildItem env:, toJSON of env, secrets, vars, github, runner or job) in any command of a run
+    line: a line is split into its commands at &&, ||, ;, | and &, and into what a $(...), a backquote or a (...)
+    holds;
   - concurrency ci-${{ github.ref }}, cancelled in progress for pull requests only;
   - every artifact kept 7 days; every checkout with fetch-depth 0 and without the token kept;
-  - the run steps provision and call the scripts of nulldc3/ci/ (no build logic in the file).
+  - every command of every run line provisions or calls a script of nulldc3/ci/ (no build logic in the file, not
+    even behind a call of a script on its line).
 Exit status 1 when a rule failed. --self-test applies a list of mutations to the workflow, each of which has to fail
 a rule, and fails when one does not. Python 3.9, the standard library only.
 """
@@ -219,10 +222,62 @@ def run_lines(step):
     return [line.strip() for line in run.splitlines() if line.strip() and not line.strip().startswith('#')]
 
 
-ENV_DUMP = re.compile(r'(\bprintenv\b|^env$|^env\s*[|>]|^set$|^set\s*[|>]|\bexport\s+-p\b|\bdeclare\s+-[px]\b|'
+def commands_of(line):
+    """The commands of a run line: split where a shell (bash or PowerShell) starts another command, at &&, ||, ;, |
+    and & outside quotes (not the & of a redirection, 2>&1 or &>), so that a rule holds for every command of the
+    line and not only for its first one. A command substitution or a subshell ($(...), a backquote, (...) outside
+    single quotes) is a command of its own: the line gets the marker "$(" (which no rule takes) and the commands
+    inside it are split the same way."""
+    commands, current, quote, depth, backquote, i = [], '', None, 0, False, 0
+
+    def cut():
+        commands.append(current.strip())
+        return ''
+
+    while i < len(line):
+        c = line[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            current += c
+        elif c == '`' and backquote:
+            current = cut()
+            backquote = False
+        elif line.startswith('$(', i) or c == '`' or (c == '(' and quote is None):
+            current = cut()
+            commands.append('$(')
+            if c == '`':
+                backquote = True
+            else:
+                depth += 1
+            i += 2 if c == '$' else 1
+            continue
+        elif c == ')' and depth > 0:
+            current = cut()
+            depth -= 1
+        elif quote == '"':
+            if c == '"':
+                quote = None
+            current += c
+        elif c in '\'"':
+            quote = c
+            current += c
+        elif c in ';|' or (c == '&' and not current.endswith(('>', '<')) and not line.startswith('&>', i)):
+            current = cut()
+            while i + 1 < len(line) and line[i + 1] in '&|;':
+                i += 1
+        else:
+            current += c
+        i += 1
+    cut()
+    return [command for command in commands if command]
+
+
+ENV_DUMP = re.compile(r'(\bprintenv\b|^env\s*(>|$)|^set\s*(>|$)|\bexport\s+-p\b|\bdeclare\s+-[px]\b|'
                       r'\b(Get-ChildItem|gci|ls|dir)\s+env:|toJSON\(\s*(env|secrets|vars|github|runner|job)\s*\)|'
                       r'\bcompgen\s+-v\b|\[System\.Environment\]::GetEnvironmentVariables|\bSet-Item\b.*env:)',
                       re.I)
+SCRIPT_CALL = re.compile(r'^(\.[\\/])?nulldc3[\\/]ci[\\/][A-Za-z0-9_.-]+\.(sh|ps1|py)(\s|$)')
 
 
 def check(source):
@@ -328,7 +383,7 @@ def check(source):
         steps = job.get('steps') if isinstance(job, dict) and isinstance(job.get('steps'), list) else []
         for step in steps:
             for line in run_lines(step):
-                if ENV_DUMP.search(line):
+                if any(ENV_DUMP.search(command) for command in commands_of(line)):
                     dumps.append('%s: %s' % (name, line))
     for match in re.finditer(r'toJSON\(\s*(env|secrets|vars|github|runner|job)\s*\)', source, re.I):
         dumps.append(match.group(0))
@@ -359,8 +414,8 @@ def check(source):
     rule(checkouts and all(depth == '0' and keep is False for _, depth, keep in checkouts),
          'every checkout has the whole history (fetch-depth 0) and keeps no token: %s' % checkouts)
     thin = [(name, line) for name, line in runs
-            if not re.match(r'^(\.[\\/])?nulldc3[\\/]ci[\\/][A-Za-z0-9_.-]+\.(sh|ps1|py)(\s|$)', line) and line not in PROVISION]
-    rule(not thin, 'every run step provisions or calls a script of nulldc3/ci/: %s' % thin)
+            if not all(SCRIPT_CALL.match(command) or command in PROVISION for command in commands_of(line))]
+    rule(not thin, 'every command of every run step provisions or calls a script of nulldc3/ci/: %s' % thin)
     return results
 
 
@@ -394,6 +449,14 @@ def mutations(source):
     yield 'an action pinned without its version', sub('actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0', 'actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830')
     yield 'a printenv step', sub('      - run: nulldc3/ci/linux.sh deps\n', '      - run: printenv\n      - run: nulldc3/ci/linux.sh deps\n')
     yield 'an env step', sub('      - run: nulldc3/ci/linux.sh deps\n', '      - run: env | sort\n      - run: nulldc3/ci/linux.sh deps\n')
+    # the same behind a call of a script, on its line
+    yield 'env behind && on a script\'s line', sub('      - run: nulldc3/ci/linux.sh deps\n', '      - run: nulldc3/ci/linux.sh deps && env\n')
+    yield 'env | sort behind ; on a script\'s line', sub('      - run: nulldc3/ci/linux.sh deps\n', '      - run: nulldc3/ci/linux.sh deps; env | sort\n')
+    yield 'env behind & on a script\'s line', sub('      - run: nulldc3/ci/linux.sh deps\n', '      - run: nulldc3/ci/linux.sh deps & env > e.txt\n')
+    yield 'env in a substitution on a script\'s line', sub('      - run: nulldc3/ci/linux.sh deps\n', '      - run: nulldc3/ci/linux.sh deps "$(env)"\n')
+    yield 'printenv behind || on a script\'s line', sub('      - run: nulldc3/ci/linux.sh deps\n', '      - run: nulldc3/ci/linux.sh deps || printenv\n')
+    yield 'build logic behind && on a script\'s line', sub('      - run: nulldc3/ci/linux.sh deps\n', '      - run: nulldc3/ci/linux.sh deps && cmake -S . -B b && ninja -C b\n')
+    yield 'build logic behind ; on the PowerShell line', sub('-Out "$env:RUNNER_TEMP\\release-files"\n', '-Out "$env:RUNNER_TEMP\\release-files"; cmake --build b\n')
     yield 'a dry_run input', sub('      require_ui_tag:\n', '      dry_run:\n        type: boolean\n        default: true\n      require_ui_tag:\n')
     yield 'a push of branches', sub("  push:\n    tags:\n      - 'v*'\n", "  push:\n    branches:\n      - main\n    tags:\n      - 'v*'\n")
     yield 'a secret', sub('GH_TOKEN: ${{ github.token }}', 'GH_TOKEN: ${{ secrets.RELEASE_PAT }}')
