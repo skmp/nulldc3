@@ -4,7 +4,9 @@
 #	directory adds nothing. The emulator is the one the system tests build (<build dir>/system/emulator/nulldc3), or
 #	NULLDC_EMULATOR. Every run is headless, with the keys of an automated run (a portable directory under the test's
 #	work directory, config:Headless=yes, audio:backend=none, config:Dreamcast.RTC=946684800), DISPLAY and
-#	WAYLAND_DISPLAY taken out of its environment, under a timeout. The cases are in linux_arm64.cmake; the output of
+#	WAYLAND_DISPLAY taken out of its environment, with a core file size limit of 1 byte (as common/emurun.py starts
+#	an emulator on a POSIX host: a crash is not piped to the system's core handler), under a timeout; each case
+#	checks that envelope on a shell before it starts an emulator. The cases are in linux_arm64.cmake; the output of
 #	each run is in <build dir>/linux_arm64/work/<test>/*.log.
 #
 #	linux_arm64.hashes.jit     the state hashes of the SH4 on the recompiler of a Linux arm64 host: the guest of the

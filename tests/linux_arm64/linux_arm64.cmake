@@ -5,7 +5,12 @@
 #
 # Every emulator run carries the keys of an automated run (a portable directory under WORK, config:Headless=yes,
 # audio:backend=none, config:Dreamcast.RTC=946684800), runs without DISPLAY and WAYLAND_DISPLAY in its environment
-# (env -u) and ends within its timeout (timeout(1): TERM, then KILL 10 s later; exit status 124 when it was ended so).
+# (env -u), with a core file size limit of 1 byte (prlimit(1), as tests/common/emurun.py starts an emulator on a POSIX
+# host: the one limit with which the kernel does not pipe a crash to the system's core handler, apport or
+# systemd-coredump, which write outside the build) and ends within its timeout (timeout(1): TERM, then KILL 10 s
+# later; exit status 124 when it was ended so). Each case first runs a shell in that envelope, with DISPLAY and
+# WAYLAND_DISPLAY set in its own environment, and starts no emulator unless the shell had neither and its core file
+# size limit was 1 byte.
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -24,14 +29,17 @@ if(NOT EXISTS "${EMULATOR}")
   message(FATAL_ERROR "linux_arm64.cmake: no emulator at ${EMULATOR}")
 endif()
 find_program(env_program env)
+find_program(prlimit_program prlimit)
 find_program(timeout_program timeout)
-if(NOT env_program OR NOT timeout_program)
-  message(FATAL_ERROR "linux_arm64.cmake: no env(1) or no timeout(1) to run the emulator with")
+find_program(sh_program sh)
+if(NOT env_program OR NOT prlimit_program OR NOT timeout_program OR NOT sh_program)
+  message(FATAL_ERROR "linux_arm64.cmake: no env(1), prlimit(1), timeout(1) or sh(1) to run the emulator with")
 endif()
 
-# run(<name> [TIMEOUT <s>] [ENV <name=value>...] COMMAND <program> <argument>...): headless, under timeout(1), through
-# env(1), which executes it (the exit status is the program's, 128 + N for a signal N, 124 for the timeout);
-# <name>_rc, <name>_out, <name>_err
+# run(<name> [TIMEOUT <s>] [ENV <name=value>...] COMMAND <program> <argument>...): headless, with a core file size
+# limit of 1 byte (prlimit --core=1:, the hard limit kept; the kernel compares bytes, so ulimit -c's blocks of 512 or
+# 1024 bytes cannot give it), under timeout(1), through env(1) and prlimit(1), which execute it (the exit status is
+# the program's, 128 + N for a signal N, 124 for the timeout); <name>_rc, <name>_out, <name>_err
 function(run name)
   cmake_parse_arguments(ARG "" "TIMEOUT" "ENV;COMMAND" ${ARGN})
   if(NOT ARG_TIMEOUT)
@@ -40,6 +48,7 @@ function(run name)
   math(EXPR outer "${ARG_TIMEOUT} + 30")
   string(TIMESTAMP t0 "%s")
   execute_process(COMMAND "${env_program}" -u DISPLAY -u WAYLAND_DISPLAY ${ARG_ENV}
+                          "${prlimit_program}" --core=1: --
                           "${timeout_program}" -k 10 ${ARG_TIMEOUT} ${ARG_COMMAND}
                   WORKING_DIRECTORY "${WORK}" TIMEOUT ${outer} RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   string(TIMESTAMP t1 "%s")
@@ -50,6 +59,41 @@ function(run name)
   set(${name}_out "${out}" PARENT_SCOPE)
   set(${name}_err "${err}" PARENT_SCOPE)
 endfunction()
+
+# The envelope, before any emulator: a shell run as run() runs the emulator, with DISPLAY and WAYLAND_DISPLAY in this
+# script's environment for that run (restored after it), prints its limits and its environment
+foreach(var DISPLAY WAYLAND_DISPLAY)
+  set(saved_defined_${var} 0)
+  if(DEFINED ENV{${var}})
+    set(saved_defined_${var} 1)
+    set(saved_${var} "$ENV{${var}}")
+  endif()
+  set(ENV{${var}} "nulldc-envelope-check")
+endforeach()
+run(envelope TIMEOUT 30 COMMAND "${sh_program}" -c "cat /proc/self/limits && echo --- && env")
+foreach(var DISPLAY WAYLAND_DISPLAY)
+  if(saved_defined_${var})
+    set(ENV{${var}} "${saved_${var}}")
+  else()
+    unset(ENV{${var}})
+  endif()
+endforeach()
+if(NOT "${envelope_rc}" STREQUAL "0")
+  problem("envelope: exit status ${envelope_rc}, not 0: ${envelope_err}")
+endif()
+if(NOT "${envelope_out}" MATCHES "\nMax core file size +([^ ]+) +([^ ]+) +bytes")
+  problem("envelope: no core file size line in /proc/self/limits")
+elseif(NOT CMAKE_MATCH_1 STREQUAL "1")
+  problem("envelope: the core file size limit is ${CMAKE_MATCH_1}, not 1 byte (hard ${CMAKE_MATCH_2}): a crash would be piped to the system's core handler")
+endif()
+if("${envelope_out}" MATCHES "\n((WAYLAND_)?DISPLAY=[^\n]*)")
+  problem("envelope: the run's environment has ${CMAKE_MATCH_1}")
+endif()
+if(problems)
+  string(REPLACE ";" "\n  " problems "${problems}")
+  message(FATAL_ERROR "${CASE}: no emulator started, the envelope is not the one of an automated run:\n  ${problems}\n(${WORK}/envelope.log)")
+endif()
+message("envelope: core file size limit 1 byte, no DISPLAY and no WAYLAND_DISPLAY")
 
 if(CASE STREQUAL "hashes")
   # The state hashes of the SH4 on the recompiler of a Linux arm64 host (config:Dynarec.Enabled=yes; the ARM7 on

@@ -373,8 +373,11 @@ The emulator is built for 4 KiB pages: on a kernel with 16 or 64 KiB pages it re
 The tests of `linux_arm64/` run there and nowhere else: `linux_arm64.hashes.jit` holds the state hashes of the arm64
 recompiler on Linux to the references of `linux_arm64/linux_arm64.cmake` (the arm64 host's, which equal the Mac's of
 `macos.hashes.jit`; a hash is good for one host, and another host whose recompiler computes otherwise needs references
-of its own), and `linux_arm64.pages.refused` the refusal. The harnesses expect the debugger's arm64 rules there as on
-the Mac (S04 of the contract gates recorded on the recompiler and the forced fallback, PL-D78).
+of its own), and `linux_arm64.pages.refused` the refusal. Their runs are headless, without `DISPLAY` and
+`WAYLAND_DISPLAY`, with a core file size limit of 1 byte (as `common/emurun.py` starts an emulator on a POSIX host, so
+that a crash is not piped to the system's core handler, apport or systemd-coredump), and neither test starts an
+emulator before a shell run the same way has shown that envelope. The harnesses expect the debugger's arm64 rules
+there as on the Mac (S04 of the contract gates recorded on the recompiler and the forced fallback, PL-D78).
 
 The objdump oracles of `debugger/disasm` need `sh-elf-objdump` and `arm-eabi-objdump` (`-DSH_OBJDUMP=`,
 `-DARM_OBJDUMP=`), and fail without them on Linux. An `sh-elf-objdump` for an arm64 host has to be built with
