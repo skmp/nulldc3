@@ -25,7 +25,9 @@ published one) and logs every call. The cases:
     - a published Release there: refused, nothing created or changed;
     - a draft whose asset the upload got wrong (the stand-in's digest): it stays a draft, no edit;
     - the UI <base>+g<h>: refused, no gh call; a configure line naming another UI: refused, no gh call;
-    - the tag v3.0.1 (a commit after it): refused, no gh call.
+    - a commit after the tag v<base>, the files named with that checkout's version <base>+1.g<h> and the tag pushed
+      v<base>: refused (the tag is not the checkout's version), no gh call;
+    - the tag v3.0.1 on that commit: refused, no gh call.
 Exit status 0 when every case holds. Python 3.9, the standard library only.
 """
 import argparse
@@ -120,6 +122,16 @@ def make_files(directory, version, ui_version, other_ui=None, missing=None):
         with open(os.path.join(directory, name.rsplit('.', 1)[0] + '.configure.txt'), 'w') as f:
             f.write('Dreamcast DevTools: the bundle was built from the submodule\'s commit 0123456789abcdef\n'
                     'Dreamcast DevTools: embedding /runner/temp/dist-native (%s, protocol 3)\n' % said)
+
+
+def checkout_version(repo, work):
+    """The version nulldc3/cmake/version.cmake makes of the scratch repository's checkout, as release.sh does."""
+    scratch = os.path.join(work, 'version')
+    os.makedirs(scratch, exist_ok=True)
+    subprocess.run(['cmake', '-DSOURCE_DIR=' + repo, '-DOUTPUT_DIR=' + scratch, '-P',
+                    os.path.join(repo, 'nulldc3', 'cmake', 'version.cmake')],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    return open(os.path.join(scratch, 'nulldc3-version.txt')).read().strip()
 
 
 def main():
@@ -286,8 +298,17 @@ def main():
     rc, output, calls, after = release('publish', dict(pushed, GITHUB_REF_NAME='v' + base), '--tag', 'v3.0.1')
     check(rc != 0 and not calls, 'publish, --tag another than the tag pushed: refused: rc=%d' % rc)
 
-    # the tag v3.0.1 on a commit after it
+    # a commit after the tag v<base>: the checkout's version is <base>+1.g<h>, the tag pushed still v<base>, which
+    # is the base (as when every job's checkout came out another than the tag's commit, or dirty)
     git(repo, 'commit', '-q', '--allow-empty', '-m', 'after')
+    later = checkout_version(repo, work)
+    make_files(files, later, base)
+    rc, output, calls, after = release('publish', pushed)
+    check(later != base and rc != 0 and not calls and after is None and 'is not the version of the checkout' in output,
+          'publish, the tag v%s and the checkout %s (files and configure lines of it, the UI %s): refused, no gh call: rc=%d %s'
+          % (base, later, base, rc, show(output)))
+
+    # the tag v3.0.1 on that commit
     git(repo, 'tag', '-a', 'v3.0.1', '-m', 'scratch')
     make_files(files, '3.0.1', base)
     rc, output, calls, after = release('publish', dict(pushed, GITHUB_REF_NAME='v3.0.1'))

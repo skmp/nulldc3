@@ -47,8 +47,9 @@ untagged and tagged; a configure line naming another UI; a file missing; a run w
 `GITHUB_REF_TYPE=tag`) never calls `gh`. `publish` on the tag `v<base>` made in the scratch repository: refused for a
 dispatch or a branch push, with nothing created; the draft made, its assets checked, then published; a draft there
 already uploaded with `--clobber` and published; a published Release refused, nothing changed; an asset uploaded
-wrong left a draft; a UI `<base>+g<h>`, a configure line naming another UI and the tag `v3.0.1` refused before any
-`gh` call. No tag is made anywhere else. With `--clone` the scratch repository is a clone of the tree's `HEAD`
+wrong left a draft; a UI `<base>+g<h>`, a configure line naming another UI, a checkout one commit after the tag
+`v<base>` (its version `<base>+1.g<h>`, the files named with it, the tag pushed `v<base>`) and the tag `v3.0.1`
+refused before any `gh` call. No tag is made anywhere else. With `--clone` the scratch repository is a clone of the tree's `HEAD`
 (`git clone --shared`) instead of the four files.
 
     python3 tests/ci/release_test.py --tree . --work <scratch directory> [--clone]
