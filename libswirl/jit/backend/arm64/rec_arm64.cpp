@@ -1443,24 +1443,47 @@ void Arm64RegAlloc::Writeback_FPU(u32 reg, eFReg nreg)
 }
 
 
+// The store queue's write to main memory with the MMU off (the do_sqw_nommu of the context, called by the blocks and
+// by the interpreter): x0 the address, x1 the store queues
+#define A64_SQW_NOMMU_AREA_3 \
+		"and x12, x0, #0x20			\n\t"	/* SQ# selection, isolate */ \
+		"add x12, x12, x1			\n\t"	/* SQ# selection, add to SQ ptr */ \
+		"ld2 { v0.2D, v1.2D }, [x12]\n\t" \
+		"movz x11, #0x0C00, lsl #16 \n\t" \
+		"add x11, x1, x11			\n\t"	/* get ram ptr from x1, part 1 */ \
+		"ubfx x0, x0, #5, #20		\n\t"	/* get ram offset */ \
+		"add x11, x11, #512			\n\t"	/* get ram ptr from x1, part 2 */ \
+		"add x11, x11, x0, lsl #5	\n\t"	/* ram + offset */ \
+		"st2 { v0.2D, v1.2D }, [x11] \n\t" \
+		"ret						\n"
+
+#if defined(__ELF__) && !defined(__clang__)
+// GCC has no naked functions on arm64: it ignores the attribute, with a warning, and a build without optimisation
+// gives the function a frame, which the ret of the assembly would leave on the stack. With GCC the function is the
+// assembly itself, in .text, as the stubs at the top of this file are
+__asm__
+(
+		".pushsection .text			\n\t"
+		".p2align 2					\n\t"
+		A64_HIDDEN(do_sqw_nommu_area_3)
+		".globl " A64_SYM(do_sqw_nommu_area_3) "	\n\t"
+		".type " A64_SYM(do_sqw_nommu_area_3) ", %function	\n\t"
+	A64_SYM(do_sqw_nommu_area_3) ":		\n\t"
+		A64_SQW_NOMMU_AREA_3
+		".size " A64_SYM(do_sqw_nommu_area_3) ", . - " A64_SYM(do_sqw_nommu_area_3) "	\n\t"
+		".popsection				\n"
+);
+#else
 extern "C" naked void do_sqw_nommu_area_3(u32 dst, u8* sqb)
 {
 	__asm__
 	(
-		"and x12, x0, #0x20			\n\t"	// SQ# selection, isolate
-		"add x12, x12, x1			\n\t"	// SQ# selection, add to SQ ptr
-		"ld2 { v0.2D, v1.2D }, [x12]\n\t"
-		"movz x11, #0x0C00, lsl #16 \n\t"
-		"add x11, x1, x11			\n\t"	// get ram ptr from x1, part 1
-		"ubfx x0, x0, #5, #20		\n\t"	// get ram offset
-		"add x11, x11, #512			\n\t"	// get ram ptr from x1, part 2
-		"add x11, x11, x0, lsl #5	\n\t"	// ram + offset
-		"st2 { v0.2D, v1.2D }, [x11] \n\t"
-		"ret						\n"
+		A64_SQW_NOMMU_AREA_3
 
 		: : : "memory"
 	);
 }
+#endif
 
 static Arm64Assembler* compiler;
 
