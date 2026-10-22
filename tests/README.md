@@ -333,7 +333,7 @@ directories of your own for the rest of a run as well (ctest, the scripts, `npm 
   directory without one for ctest keeps `aica.dsp.wasm.devtools` from asking `~/emsdk` (it then says that the
   committed module is not compared with a fresh build).
 
-What is skipped on macOS (arm64), with its reason (105 of the 330 tests; every other one runs):
+What is skipped on macOS (arm64), with its reason (118 of the 331 tests; every other one runs):
 
 | tests | reason |
 |---|---|
@@ -342,6 +342,7 @@ What is skipped on macOS (arm64), with its reason (105 of the 330 tests; every o
 | `sh4.singlestep.dynarec`, `sh4.directed.dynarec*`, `sh4.differential`, `sh4.directed.differential`, `sh4.fpu.*` (9) | they run the blocks of the x64 backend |
 | `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` (3) | no emcc (or `NULLDC_EMCC=OFF`) |
 | `debugger.sound.runner` (1) | its stand-ins for the emulator are scripts that the host runs by their first line (`#!`): a Linux host |
+| the known limits of the arm64 recompiler's debugger (13) | `KNOWN LIMIT (A64), NOT RUN`: below, "Known limits of the arm64 recompiler's debugger (A64)" |
 
 The objdump oracles of `debugger/disasm` run where the binutils are: `arm-none-eabi-objdump` of Homebrew
 (`brew install arm-none-eabi-binutils`), and `sh-elf-objdump` where a KallistiOS toolchain is at
@@ -357,11 +358,64 @@ there (`NATIVE_RECOMPILER`), `debugger.selftest.emurun.pauses` runs on the inter
 x86-64, and S04 of the contract gates is recorded, not gated, on the recompiler of an arm64 host, with and without
 `--fallback` (PL-D78; `debugger/contract/README.md`): `contract.py` passes a gate whose runner failed S04 alone, on
 its `SH4_CYCLES` checks only, and prints `S04: recorded (PL-D78): <detail>`; the interpreter is gated in full.
-Thirteen targets on the recompiler of the Mac meet those rules and fail: `debugger.selftest.emu`, `.regs` and
-`.core` (their checks of a running machine read the SH4's context at a slice end and a running tick in full),
-`debugger.selftest.hostcycles` and `.writesrun.neutral`, and `debugger.sound.neutral.*.jit` (8: their state hash
-after stops and resumes, which the restarted slice moves). They are open: an arm64 rule for them, or the arm64
-recompiler's own slice counter and context at its slice ends, is the integrator's decision; their `.interp` runs pass.
+Thirteen targets on the recompiler meet those rules and fail, on the Mac and on Linux arm64 alike: they are the known
+limits of the arm64 recompiler's debugger, registered as such on every arm64 host (below).
+
+## On Linux arm64
+
+The project builds natively on an arm64 Linux host (Ubuntu 24.04 on aarch64, GCC 13, CMake and Ninja of the
+distribution) with the configure line of Linux x86_64, and `tests/system` builds its emulators there as on Linux
+x86_64: the arm64 SH4 recompiler (`libswirl/jit/backend/arm64`, its debug engine `sh4-debug-fallback`), no ARM7
+recompiler (the ARM7 runs on its interpreter, as on every host), `-ffp-contract=off` (`nulldc3/cmake/config.cmake`).
+The emulator is built for 4 KiB pages: on a kernel with 16 or 64 KiB pages it refuses to start, with
+`nulldc3: this build needs 4 KiB pages; this kernel uses <n> KiB` on stderr and exit status 1
+(`libswirl/linux/common.cpp`; `linux_arm64.pages.refused` shows it through the test hook `NULLDC_TEST_PAGE_SIZE`).
+The tests of `linux_arm64/` run there and nowhere else: `linux_arm64.hashes.jit` holds the state hashes of the arm64
+recompiler on Linux to the references of `linux_arm64/linux_arm64.cmake` (the arm64 host's, which equal the Mac's of
+`macos.hashes.jit`; a hash is good for one host, and another host whose recompiler computes otherwise needs references
+of its own), and `linux_arm64.pages.refused` the refusal. The harnesses expect the debugger's arm64 rules there as on
+the Mac (S04 of the contract gates recorded on the recompiler and the forced fallback, PL-D78).
+
+The objdump oracles of `debugger/disasm` need `sh-elf-objdump` and `arm-eabi-objdump` (`-DSH_OBJDUMP=`,
+`-DARM_OBJDUMP=`), and fail without them on Linux. An `sh-elf-objdump` for an arm64 host has to be built with
+`-fsigned-char`: binutils' SH disassembler takes the sign of an 8-bit branch displacement from a cast to `char`
+(`opcodes/sh-dis.c`), which is unsigned on arm64 Linux, and an objdump built as it is puts the target of every `bt`,
+`bf`, `bt/s` and `bf/s` with a negative displacement 512 bytes too far (`debugger.disasm.sh4_objdump`: 512
+unexplained encodings).
+
+What is skipped on Linux arm64, with its reason (58 of the 321 tests; every other one runs):
+
+| tests | reason |
+|---|---|
+| `debugger.sh4bp.*` (29) | the sh4bp gates need an x86-64 build with the SH4 recompiler |
+| `sh4.singlestep.dynarec`, `sh4.directed.dynarec*`, `sh4.differential`, `sh4.directed.differential`, `sh4.fpu.*` (9) | they run the blocks of the x64 backend |
+| `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` (3) | no emcc |
+| `system.vmem.none`, `system.vmem.taken`, and the two of `system.hle.*` (4) | they say `SKIPPED` where the host gives no unprivileged user and mount namespace (`unshare -rm`), as Ubuntu 24.04's AppArmor restricts them by default |
+| the known limits of the arm64 recompiler's debugger (13) | `KNOWN LIMIT (A64), NOT RUN`: below |
+
+## Known limits of the arm64 recompiler's debugger (A64)
+
+The arm64 SH4 recompiler has no native debugger support (design 2.3.5: the x86-64 recompiler has it; a later
+package, A64, gives it to the arm64 one). Thirteen targets fail on it for that, and on an arm64 host, macOS and Linux,
+they are registered as known limits (the owner's decision of 2026-10-22): each prints
+`KNOWN LIMIT (A64), NOT RUN: <cause>` and ctest counts it as skipped. Their twins on the interpreter (`.interp`) run on
+every host, and on every host that is not arm64 the targets themselves run as they always did.
+
+| target | cause |
+|---|---|
+| `debugger.selftest.emu`, `debugger.selftest.regs`, `debugger.selftest.core` | the arm64 recompiler keeps the SH4's registers in host registers inside a slice and stores its context only at the slice's end: the SH4's registers of a running tick are stale (`registersStale`), and what the checks read of the SH4's context while the machine runs, or at a slice end, is not the machine's (`emu.pause`: the pc of the context at the park is not the one at the latch; `regs.tick` and `core.tick`: a running full tick has no `dc.sh4.cpu`; `core.tables`, `core.writes`: a watch and a register write of the running SH4) |
+| `debugger.selftest.hostcycles`, `debugger.selftest.writesrun.neutral` | the arm64 recompiler starts its slice counter anew at every entry of its loop: a stop and its resume move SH4 time by up to a slice (PL-D78's S04), and the run the debugger stopped and resumed does not end in the state hash of the run nobody touched |
+| `debugger.sound.neutral.hitresume.jit`, `.steps.jit`, `.hoststop.jit`, `.dsp.hitresume.jit`, `.dsp.steps.jit`, `.dsp.hoststop.jit`, `.sgc.running.jit`, `.sgc.paused.jit` (8) | the same as the line above: the state hash at 90 vblanks of the run with the session is not the one of the run without it (its `sh4` part); the sound line at 2000 ticks is |
+
+The list is `nulldc_a64_known_limits()` of `debugger/selftest/CMakeLists.txt`: whole target names, each a run of the
+SH4 on the recompiler with a twin on the interpreter, and the cause of each; `nulldc_debugger_selftest` and
+`nulldc_sound_neutral` (`debugger/guest/dsptest/CMakeLists.txt`) register them. `debugger.a64.knownlimits` checks the
+registration on every host, deciding from `CMAKE_SYSTEM_PROCESSOR` by itself whether the host is arm64: every entry is
+such a target, its twin is registered to run, on an arm64 host the target is a known limit and on any other host it is
+registered to run, and nothing else is a known limit. On the Mac the thirteen failed in every run of MACb's gate with
+the same lines, on Linux arm64 in LA64's, and passed on the interpreter; nothing else of the debugger's tests fails on
+the arm64 recompiler. When A64 has given the recompiler its native debugger support, an entry leaves the list with
+the change that makes its target pass there.
 
 ## Layout
 
@@ -394,6 +448,8 @@ recompiler's own slice counter and context at its slice ends, is the integrator'
     macos/             macOS only: macrun.py, the run envelope of the Mac, its sandbox profile and its canary;
                        the emulator headless, its fatal ends, a refused command line, the bundle and its icon
                        (README.md)
+    linux_arm64/       Linux arm64 only: the state hashes of the arm64 recompiler there, and the refusal of a
+                       kernel whose pages are not 4 KiB (CMakeLists.txt)
     version/           version.derive: the rule of the emulator's version (nulldc3/cmake/version.cmake) on
                        scratch repositories; version.build_time: the version is made at the build, not at the
                        configure (a clone, a commit, no reconfigure); version.cl: --version of cfg/cl.cpp and
