@@ -2,7 +2,7 @@
 #
 #   cmake -DCASE=<case> "-DMACRUN=<python>|<macrun.py>" -DEMULATOR=<nulldc3.app/Contents/MacOS/nulldc3>
 #         -DCANARY=<macos_canary> -DGUEST=<dsptest.elf> -DTREE=<the top of the tree> -DWORK=<scratch directory>
-#         -P macos.cmake
+#         [-DELF_DIR=<the directory of 2ndmix.elf>] -P macos.cmake
 #
 # Every program built in the round is started through macrun.py (the sandbox profile, its own process group, a
 # timeout, TMPDIR under WORK), and every emulator run carries P0's keys (a portable directory under WORK,
@@ -649,6 +649,50 @@ elseif(CASE STREQUAL "icns")
     endwhile()
     message("the elements iconutil writes for the PNGs: ${types}")
   endif()
+
+elseif(CASE STREQUAL "hashes")
+  # The state hashes of the SH4 on the recompiler of an arm64 Mac (config:Dynarec.Enabled=yes; the ARM7 on the
+  # interpreter, PL-D46): the Mac's own references, as P0's are Linux's. MACa's gate read them twice equal on the
+  # default and the -DNULLDC_DEBUGGER=OFF bundles, MACb's on its head. They are what the arm64 JIT computes, on the
+  # Darwin fault context it runs on: a mutation of that context (linux/context.cpp) changed these alone, and passed
+  # every other target. A hash is good for one host (design 5.6): nothing compares these with another host's
+  set(ref_guest c9bb6e60601ab606)
+  set(ref_2ndmix 6ab1933550d37163)
+  set(file_guest "${GUEST}")
+  set(file_2ndmix "${ELF_DIR}/2ndmix.elf")
+  set(vblanks_guest 90)
+  set(vblanks_2ndmix 600)
+  foreach(prog guest 2ndmix)
+    if(NOT EXISTS "${file_${prog}}")
+      problem("${prog}: no ${file_${prog}}")
+      continue()
+    endif()
+    file(MAKE_DIRECTORY "${WORK}/portable-${prog}")
+    run(${prog} TIMEOUT 240 COMMAND "${EMULATOR}" --portable "${WORK}/portable-${prog}" --config config:Headless=yes ,
+        audio:backend=none , config:Dreamcast.RTC=946684800 , config:Exit.AfterVblanks=${vblanks_${prog}} ,
+        config:Exit.StateHash=yes , config:Dynarec.Enabled=yes "${file_${prog}}")
+    ended(${prog} 0)
+    if(NOT "${${prog}_out}" MATCHES "\nUsing MCPU Recompiler\n")
+      problem("${prog}: the SH4 does not run on the recompiler (no \"Using MCPU Recompiler\")")
+    endif()
+    if(NOT "${${prog}_out}" MATCHES "\nnulldc-exit: ([^\n]*)\n")
+      problem("${prog}: no exit line")
+      continue()
+    endif()
+    set(line "${CMAKE_MATCH_1}")
+    message("${prog}: nulldc-exit: ${line}")
+    set(hash "")
+    if(line MATCHES " hash=([0-9a-f]+) ")
+      set(hash "${CMAKE_MATCH_1}")
+    endif()
+    if(NOT line MATCHES "^reason=vblanks " OR NOT line MATCHES " vblanks=${vblanks_${prog}} " OR NOT hash)
+      problem("${prog}: the exit line is not the one of ${vblanks_${prog}} vblanks with a state hash: ${line}")
+    elseif(NOT hash STREQUAL "${ref_${prog}}")
+      problem("${prog}: hash=${hash}, the Mac's reference for the arm64 recompiler is ${ref_${prog}}")
+    else()
+      message("${prog}: hash=${hash}, the reference")
+    endif()
+  endforeach()
 
 else()
   message(FATAL_ERROR "macos.cmake: no case ${CASE}")

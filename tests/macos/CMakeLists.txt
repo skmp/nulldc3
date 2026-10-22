@@ -30,6 +30,11 @@
 #	                            unless its configure line asks, -DNULLDC_CCACHE=ON (read from their commands)
 #	macos.icns.iconutil         Apple's iconutil reads nulldc3/apple/nulldc3.icns into an iconset, and makes an
 #	                            .icns of the PNGs of nulldc3/icon/png (which elements it writes: the test's output)
+#	macos.hashes.jit            the state hashes of the SH4 on the recompiler of an arm64 Mac: the guest at 90
+#	                            vblanks and 2ndmix.elf (NULLDC_ELF_DIR) at 600, each the Mac's own reference
+#	                            (macos.cmake has them): a change of what the arm64 JIT computes, or of the Darwin
+#	                            fault context it runs on, is red. A hash is good for one host: these are compared
+#	                            with nothing of another
 #
 #	NULLDC_MACRUN, what version.binary (tests/version) starts the emulator through on macOS, is set for the
 #	directories behind this one.
@@ -73,7 +78,7 @@ function(macos_case test case)
   add_test(NAME ${test}
            COMMAND "${CMAKE_COMMAND}" "-DCASE=${case}" "-DMACRUN=${macrun}" "-DEMULATOR=${NULLDC_EMULATOR}"
                    "-DCANARY=$<TARGET_FILE:macos_canary>" "-DGUEST=${nulldc_macos_guest}" "-DTREE=${nulldc_root_path}"
-                   "-DCTEST=${CMAKE_CTEST_COMMAND}" "-DTESTS_BUILD=${CMAKE_BINARY_DIR}"
+                   "-DCTEST=${CMAKE_CTEST_COMMAND}" "-DTESTS_BUILD=${CMAKE_BINARY_DIR}" "-DELF_DIR=${NULLDC_ELF_DIR}"
                    "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/work/${test}" -P "${nulldc_macos_script}")
   set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
 endfunction()
@@ -88,6 +93,16 @@ macos_case(macos.refused refused EMULATOR)
 macos_case(macos.bundle.codesign bundle EMULATOR)
 macos_case(macos.build.ccache ccache TIMEOUT 60)
 macos_case(macos.icns.iconutil icns TIMEOUT 60)
+
+# The references are the arm64 recompiler's; x86_64 macOS is kept source-consistent and unbuilt
+if(NOT ${HOST_CPU} EQUAL ${CPU_A64})
+  nulldc_add_skipped_test(macos.hashes.jit "the references are the state hashes of the arm64 recompiler: this is not an arm64 host")
+elseif(NOT NULLDC_ELF_DIR OR NOT EXISTS "${NULLDC_ELF_DIR}/2ndmix.elf")
+  nulldc_add_missing_data_test(macos.hashes.jit
+    "no 2ndmix.elf in NULLDC_ELF_DIR (\"${NULLDC_ELF_DIR}\"), configure with -DNULLDC_ELF_DIR=<directory with the KallistiOS examples>")
+else()
+  macos_case(macos.hashes.jit hashes EMULATOR TIMEOUT 300)
+endif()
 
 # what version.binary starts the emulator through (tests/version)
 string(REPLACE ";" "|" nulldc_macrun_arg "${nulldc_macrun}")
