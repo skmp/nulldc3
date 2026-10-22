@@ -8,13 +8,13 @@
 #       npm ci and npm run build:native in the UI checkout, its dist-native/ copied into <dir> (the artifact
 #       "dist-native"); --fetch-tags first fetches the tags of the checkout's origin (the UI's public repository on a
 #       runner), so that the UI's version finds its tag v* also when the checkout of the submodule left them out
-#   linux.sh build --dist <dist-native> [--work <dir>] [--out <dir>]
+#   linux.sh build --dist <dist-native> [--work <dir>] [--out <dir>] [--jobs <n>]
 #       <work>/release: the release emulator, Release, the UI bundle <dist-native> embedded (an explicit path: no
 #       bundle there is a configure error), -DNULLDC_PREFIX_MAP=ON, -DCMAKE_VERBOSE_MAKEFILE=OFF; its configure
 #       lines "Dreamcast DevTools: ..." into <out>/nulldc3-<version>-linux-<arch>.configure.txt, beside the
 #       AppImage appimage.sh makes there. <work>/hle: the -DHAS_TA_LLE=OFF emulator for the system tests (no UI).
 #   linux.sh test <ci|full> --ui <ui checkout> [--work <dir>] [--data <dir>] [--no-npm-ci] [--no-emsdk]
-#                 [-- <cmake argument>...]
+#                 [--jobs <n>] [-- <cmake argument>...]
 #       the tests project (<work>/tests) with the two emulators of build as NULLDC_EMULATOR and
 #       NULLDC_EMULATOR_TA_HLE, the vector submodules of the tree, the UI checkout (npm ci there; with --no-npm-ci
 #       its node_modules as they are, for a checkout that is not the script's to change) as NULLDC_DEVTOOLS_DIR, and ctest -j4 --output-junit <work>/tests/junit.xml. ci: what CI has (PL-D58), the
@@ -25,6 +25,7 @@
 #       not the run's to use (-DNULLDC_EMCC=OFF, and EMSDK of ctest a directory without one), as on a runner, which
 #       has none. The cmake arguments after -- go to the tests project's configure (an objdump of one's own, say).
 #
+# --jobs <n>: ninja's -j (default: ninja's own, the processors and two).
 # The UI checkout <ui> is the submodule devtools on a runner, a clone of the UI elsewhere; it has to be at the commit
 # the tree pins for devtools (the gitlink), so that the UI the tests use is the one that is embedded.
 set -euo pipefail
@@ -114,6 +115,7 @@ cmd_build() {
   local dist="" work="" out=""
   while [ $# -gt 0 ]; do
     case $1 in
+      --jobs) jobs=(-j "$2"); shift 2 ;;
       --dist) dist=$2; shift 2 ;;
       --work) work=$2; shift 2 ;;
       --out) out=$2; shift 2 ;;
@@ -134,7 +136,7 @@ cmd_build() {
   # the release emulator
   cmake -S "$tree" -B "$work/release" -G Ninja -DCMAKE_BUILD_TYPE=Release "${launcher[@]}" \
     -DNULLDC_DEVTOOLS_DIST="$dist" -DNULLDC_PREFIX_MAP=ON -DCMAKE_VERBOSE_MAKEFILE=OFF -Wno-dev | tee "$work/release-configure.log"
-  ninja -C "$work/release"
+  ninja -C "$work/release" ${jobs[@]+"${jobs[@]}"}
   local version arch_
   version=$(cat "$work/release/nulldc3-version.txt")
   arch_=$(arch)
@@ -146,7 +148,7 @@ cmd_build() {
   # the emulator without the TA of lxdream, for the system tests' system.hle.* (no UI: it ships nowhere)
   cmake -S "$tree" -B "$work/hle" -G Ninja -DCMAKE_BUILD_TYPE=Release "${launcher[@]}" \
     -DHAS_TA_LLE=OFF -DNULLDC_DEVTOOLS_DIST=OFF -DNULLDC_PREFIX_MAP=ON -DCMAKE_VERBOSE_MAKEFILE=OFF -Wno-dev > "$work/hle-configure.log"
-  ninja -C "$work/hle"
+  ninja -C "$work/hle" ${jobs[@]+"${jobs[@]}"}
 }
 
 cmd_test() {
@@ -162,6 +164,7 @@ cmd_test() {
       --data) data=$2; shift 2 ;;
       --no-npm-ci) npm_ci=no; shift ;;
       --no-emsdk) emsdk=no; shift ;;
+      --jobs) jobs=(-j "$2"); shift 2 ;;
       --) shift; extra=("$@"); break ;;
       *) usage ;;
     esac
@@ -199,7 +202,7 @@ cmd_test() {
     args+=(-DNULLDC_EMCC=OFF)
   fi
   cmake -S "$tree/tests" -B "$work/tests" -G Ninja -Wno-dev "${launcher[@]}" "${args[@]}" ${extra[@]+"${extra[@]}"}
-  ninja -C "$work/tests"
+  ninja -C "$work/tests" ${jobs[@]+"${jobs[@]}"}
   local rc=0
   if [ $emsdk = no ]; then
     EMSDK=$work/no-emsdk ctest --test-dir "$work/tests" -j4 --output-on-failure --output-junit "$work/tests/junit.xml" || rc=$?
@@ -210,6 +213,7 @@ cmd_test() {
   return $rc
 }
 
+jobs=()
 [ $# -ge 1 ] || usage
 command=$1
 shift

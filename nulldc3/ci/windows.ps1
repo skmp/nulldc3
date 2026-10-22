@@ -4,7 +4,7 @@ Written for Windows PowerShell 5.1 (powershell.exe), which every Windows 10 and 
 "shell: powershell". Every path comes from the parameters; on a runner RUNNER_TEMP is the default of -Work.
 
     windows.ps1 -Mode ci|full -Dist <dist-native> -Ui <ui checkout> [-Work <dir>] [-Out <dir>] [-Data <dir>]
-                [-Python <python.exe>] [-NoNpmCi]
+                [-Python <python.exe>] [-NoNpmCi] [-Jobs <n>]
 
  1. The UI checkout: its LICENSE (the zip's LICENSE-devtools) has to be there and the checkout at the commit the
     tree pins for devtools (git rev-parse HEAD:devtools); else the script stops and says what it compared.
@@ -25,7 +25,8 @@ Written for Windows PowerShell 5.1 (powershell.exe), which every Windows 10 and 
     checkout's LICENSE) and README.txt (readme-windows.txt of this directory). Its entries are listed and checked.
  6. The smoke run (smoke.py) of the zip unpacked with tar.exe: --version, a headless guest run and the debugger's
     describe, each through nulldc3-winrun, with P0's keys and a --portable directory below <work>.
-Exit status 0 when the build, the tests, the zip and the smoke run all passed.
+-Jobs <n>: ninja's -j (default: ninja's own). Exit status 0 when the build, the tests, the zip and the smoke run all
+passed.
 #>
 param(
     [Parameter(Mandatory = $true)][ValidateSet('ci', 'full')][string]$Mode,
@@ -35,7 +36,8 @@ param(
     [string]$Out = '',
     [string]$Data = '',
     [string]$Python = '',
-    [switch]$NoNpmCi
+    [switch]$NoNpmCi,
+    [int]$Jobs = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -70,6 +72,8 @@ $Dist = (Resolve-Path $Dist).Path
 $Ui = (Resolve-Path $Ui).Path
 if ($Python -eq '') { $Python = (Get-Command python.exe).Source }
 $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
+$ninjaJobs = @()
+if ($Jobs -gt 0) { $ninjaJobs = @('-j', "$Jobs") }
 
 # 1. the UI checkout
 if (-not (Test-Path (Join-Path $Ui 'LICENSE') -PathType Leaf)) {
@@ -108,7 +112,7 @@ $configure = @(& cmake -S $tree -B $release -G Ninja -DCMAKE_BUILD_TYPE=Release 
 $status = $LASTEXITCODE
 $configure | Write-Output
 if ($status -ne 0) { Fail "the release emulator's configure failed with exit status $status" }
-Run 'the release build' { & ninja -C $release }
+Run 'the release build' { & ninja -C $release @ninjaJobs }
 $version = (Get-Content (Join-Path $release 'nulldc3-version.txt') -TotalCount 1).Trim()
 $lines = @($configure | Where-Object { $_ -match '^-- Dreamcast DevTools: ' } | ForEach-Object { $_.Substring(3) })
 if (-not ($lines | Where-Object { $_ -match '^Dreamcast DevTools: embedding ' })) {
@@ -145,7 +149,7 @@ if ($Mode -eq 'full') {
         '-DNULLDC_TESTS_REQUIRE_DATA=OFF')
 }
 Run 'the tests project configure' { & cmake -S "$tree\tests" -B $tests -G Ninja -Wno-dev @args_ }
-Run 'the tests project build' { & ninja -C $tests }
+Run 'the tests project build' { & ninja -C $tests @ninjaJobs }
 # '--' quoted: Windows PowerShell drops a bare -- on its way to a program
 & $winrun --timeout 7200 '--' ctest --test-dir $tests -j4 --output-on-failure --output-junit "$tests\junit.xml"
 $ctest = $LASTEXITCODE

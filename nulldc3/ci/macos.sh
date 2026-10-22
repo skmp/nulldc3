@@ -3,7 +3,7 @@
 # own bash 3.2 runs it). Every path comes from the arguments; on a runner RUNNER_TEMP is the default of --work.
 #
 #   macos.sh <ci|full> --dist <dist-native> --ui <ui checkout> [--work <dir>] [--out <dir>] [--data <dir>]
-#            [--ccache] [--no-npm-ci] [--no-emsdk] [-- <cmake argument of the tests project>...]
+#            [--ccache] [--no-npm-ci] [--no-emsdk] [--jobs <n>] [-- <cmake argument of the tests project>...]
 #
 #  1. The UI checkout: its LICENSE (the zip's LICENSE-devtools) has to be there and the checkout at the commit the
 #     tree pins for devtools (git rev-parse HEAD:devtools); else the script stops and says what it compared.
@@ -29,7 +29,8 @@
 #  5. The smoke run of the zip unpacked with ditto -x -k: codesign --verify --strict --deep of the unpacked bundle,
 #     the folder's files, then smoke.py: the inner executable's --version, a headless guest run and the debugger's
 #     describe, each through macrun.py, with P0's keys and a --portable directory below <work>.
-# Exit status 0 when the build, the tests, the zip and the smoke run all passed.
+# --jobs <n>: ninja's -j (default: ninja's own). Exit status 0 when the build, the tests, the zip and the smoke run all
+# passed.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -45,7 +46,7 @@ summary() { if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$@" >> "$G
 mode=$1
 shift
 case $mode in ci|full) ;; *) usage ;; esac
-dist="" ui="" work="" out="" data="" ccache=no npm_ci=yes emsdk=yes
+dist="" ui="" work="" out="" data="" ccache=no npm_ci=yes emsdk=yes jobs=""
 extra=""
 while [ $# -gt 0 ]; do
   case $1 in
@@ -57,6 +58,7 @@ while [ $# -gt 0 ]; do
     --ccache) ccache=yes; shift ;;
     --no-npm-ci) npm_ci=no; shift ;;
     --no-emsdk) emsdk=no; shift ;;
+    --jobs) jobs="-j $2"; shift 2 ;;
     --) shift; extra=$*; break ;;
     *) usage ;;
   esac
@@ -93,7 +95,7 @@ release=$work/release
 cmake -S "$tree" -B "$release" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
   "-DCMAKE_OSX_SYSROOT=$sdk" $cc "-DNULLDC_DEVTOOLS_DIST=$dist" -DNULLDC_PREFIX_MAP=ON -DCMAKE_VERBOSE_MAKEFILE=OFF \
   -Wno-dev | tee "$work/release-configure.log"
-ninja -C "$release"
+ninja -C "$release" $jobs
 version=$(cat "$release/nulldc3-version.txt")
 name=nulldc3-$version-macos-arm64
 grep -q '^-- Dreamcast DevTools: embedding ' "$work/release-configure.log" || die "the release bundle embeds no UI (no line \"Dreamcast DevTools: embedding\" in its configure output)"
@@ -130,7 +132,7 @@ if [ $emsdk = no ]; then
 fi
 # (the paths of this script's arguments have no blanks: a word each)
 cmake -S "$tree/tests" -B "$tests" -G Ninja -Wno-dev $args $extra
-ninja -C "$tests"
+ninja -C "$tests" $jobs
 rc=0
 env $ctest_env ctest --test-dir "$tests" -j4 --output-on-failure --output-junit "$tests/junit.xml" || rc=$?
 cp "$tests/junit.xml" "$work/junit-1.xml"
