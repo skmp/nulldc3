@@ -26,9 +26,11 @@
 #     nulldc3-<version>-macos-arm64/: nulldc3.app (copied with ditto, its signature kept), LICENSE, LICENSE-GPL,
 #     LICENSE-LGPL, LICENSE-shell (nulldc3/LICENSE), LICENSE-devtools (the UI checkout's LICENSE) and README.txt
 #     (readme-macos.txt of this directory).
-#  5. The smoke run of the zip unpacked with ditto -x -k: codesign --verify --strict --deep of the unpacked bundle,
-#     the folder's files, then smoke.py: the inner executable's --version, a headless guest run and the debugger's
-#     describe, each through macrun.py, with P0's keys and a --portable directory below <work>.
+#  5. The smoke run of the zip unpacked with ditto -x -k: codesign --verify --strict --deep of the unpacked bundle;
+#     the unpacked bundle is the built one, file for file (type, mode, size, SHA-256, a link's target, the names of
+#     the extended attributes, which ditto keeps and zip -r drops); the folder's files; then smoke.py: the inner
+#     executable's --version, a headless guest run and the debugger's describe, each through macrun.py, with P0's keys
+#     and a --portable directory below <work>.
 # --jobs <n>: ninja's -j (default: ninja's own). Exit status 0 when the build, the tests, the zip and the smoke run all
 # passed.
 set -euo pipefail
@@ -178,6 +180,37 @@ if codesign --verify --strict --deep "$app"; then
 else
   echo "FAIL codesign --verify --strict --deep of the unpacked bundle"
   failed="$failed codesign"
+fi
+# the unpacked bundle against the built one
+manifest() {
+  $python -I -B - "$1" <<'PY'
+import hashlib, os, stat, subprocess, sys
+top = sys.argv[1]
+for root, dirs, files in os.walk(top):
+    dirs.sort()
+    for name in sorted(dirs + files):
+        path = os.path.join(root, name)
+        st = os.lstat(path)
+        rel = os.path.relpath(path, top)
+        attrs = subprocess.run(['/usr/bin/xattr', path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+        attrs = ','.join(sorted(attrs.decode('utf-8', 'replace').split()))
+        if stat.S_ISLNK(st.st_mode):
+            print('%s link %s [%s]' % (rel, os.readlink(path), attrs))
+        elif stat.S_ISDIR(st.st_mode):
+            print('%s dir %o [%s]' % (rel, stat.S_IMODE(st.st_mode), attrs))
+        else:
+            digest = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+            print('%s file %o %d %s [%s]' % (rel, stat.S_IMODE(st.st_mode), st.st_size, digest, attrs))
+PY
+}
+manifest "$release/nulldc3.app" > "$smoke/built.txt"
+manifest "$app" > "$smoke/unpacked.txt"
+if cmp -s "$smoke/built.txt" "$smoke/unpacked.txt"; then
+  echo "PASS the unpacked bundle is the built one: $(wc -l < "$smoke/built.txt" | tr -d ' ') entries, the same type, mode, size, SHA-256 and extended attributes"
+else
+  echo "FAIL the unpacked bundle is not the built one:"
+  diff "$smoke/built.txt" "$smoke/unpacked.txt" | head -20
+  failed="$failed bundle"
 fi
 listed=$(cd "$smoke/unpacked/$name" && ls -A | sort | tr '\n' ' ')
 wanted=$(printf '%s\n' $LICENCES README.txt nulldc3.app | sort | tr '\n' ' ')
