@@ -5,7 +5,7 @@
 #
 # Every emulator run carries the keys of an automated run (a portable directory under WORK, config:Headless=yes,
 # audio:backend=none, config:Dreamcast.RTC=946684800), runs without DISPLAY and WAYLAND_DISPLAY in its environment
-# and ends within its timeout (timeout(1): TERM, then KILL 10 s later; exit status 124 when it was ended so).
+# (env -u) and ends within its timeout (timeout(1): TERM, then KILL 10 s later; exit status 124 when it was ended so).
 
 cmake_minimum_required(VERSION 3.16)
 
@@ -23,12 +23,14 @@ endmacro()
 if(NOT EXISTS "${EMULATOR}")
   message(FATAL_ERROR "linux_arm64.cmake: no emulator at ${EMULATOR}")
 endif()
+find_program(env_program env)
 find_program(timeout_program timeout)
-if(NOT timeout_program)
-  message(FATAL_ERROR "linux_arm64.cmake: no timeout(1) to run the emulator under")
+if(NOT env_program OR NOT timeout_program)
+  message(FATAL_ERROR "linux_arm64.cmake: no env(1) or no timeout(1) to run the emulator with")
 endif()
 
-# run(<name> [TIMEOUT <s>] [ENV <name=value>...] COMMAND <program> <argument>...): headless, under timeout(1);
+# run(<name> [TIMEOUT <s>] [ENV <name=value>...] COMMAND <program> <argument>...): headless, under timeout(1), through
+# env(1), which executes it (the exit status is the program's, 128 + N for a signal N, 124 for the timeout);
 # <name>_rc, <name>_out, <name>_err
 function(run name)
   cmake_parse_arguments(ARG "" "TIMEOUT" "ENV;COMMAND" ${ARGN})
@@ -37,7 +39,7 @@ function(run name)
   endif()
   math(EXPR outer "${ARG_TIMEOUT} + 30")
   string(TIMESTAMP t0 "%s")
-  execute_process(COMMAND "${CMAKE_COMMAND}" -E env --unset=DISPLAY --unset=WAYLAND_DISPLAY ${ARG_ENV}
+  execute_process(COMMAND "${env_program}" -u DISPLAY -u WAYLAND_DISPLAY ${ARG_ENV}
                           "${timeout_program}" -k 10 ${ARG_TIMEOUT} ${ARG_COMMAND}
                   WORKING_DIRECTORY "${WORK}" TIMEOUT ${outer} RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
   string(TIMESTAMP t1 "%s")
