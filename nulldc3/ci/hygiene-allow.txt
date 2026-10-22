@@ -1,0 +1,35 @@
+# Where a tracked file of the emulator may name what looks like a machine (nulldc3/ci/hygiene.py, the test ci.hygiene).
+#
+# hygiene.py looks for a home directory of Linux, macOS or Windows, a path of WSL's network or of its drive mounts, a
+# private IPv4 address and a .local host name in every tracked file, and every line that has one must be allowed
+# here. One row per line, three fields separated by " | ":
+#
+#   <path> | <text> | <reason>
+#
+#   <path>     a tracked file as git names it, from the top of the tree, with "/"; "<dir>/**" is every file below <dir>
+#   <text>     a piece of the line the row allows, copied from it (case and spaces count); "*": every line of the file
+#   <reason>   why the line may say it: none of these names a machine of the project
+#
+# A row that allows no line any more fails the test too. A package that adds such a line adds its row in the same
+# commit (PL-D79). The owner-specific patterns (PL-D61) are never written here: no row allows them.
+
+# this list, which quotes the lines it allows
+nulldc3/ci/hygiene-allow.txt | * | the list itself: its rows quote the lines they allow
+nulldc3/ci/hygiene-allow-ui.txt | * | the UI's list: its rows quote the lines of the UI they allow
+nulldc3/ci/hygiene.py | re.compile(r'/ | the check itself: the patterns it looks for
+tests/ci/README.md | `ci.hygiene` | the test's documentation: the patterns it looks for
+
+# reicast's code and third-party code, as they came
+libswirl/gui/gui.cpp | /home/raph/RetroPie/roms/dreamcast/ | reicast's default game folder of a RetroPie build: the path of a RetroPie image, not of a machine of the project
+libswirl/gpl/deps/picotcp/README.md | * | picoTCP's documentation (third-party): its examples' addresses on a tap device
+libswirl/gpl/deps/picotcp/modules/pico_dns_common.c | 192.168. | picoTCP (third-party): the examples of its comments
+libswirl/gpl/deps/picotcp/modules/pico_dns_common.h | 192.168.0.1 | picoTCP (third-party): the example of a comment
+libswirl/gpl/deps/picotcp/modules/pico_ipv4.c | 10.0.0.1/24 | picoTCP (third-party): the example of a comment
+libswirl/hw/aica/dsp_core/wasm/build.sh | for word in "$HOME" "$here" "$out" /home/ /Users/ /tmp/ emsdk; do | the build script's own check that the module it makes names no path of the machine that made it
+libswirl/hw/modem/README.md | * | the modem's documentation: the address of the guest on the PPP link, and the route to it, examples
+libswirl/hw/modem/picoppp.cpp | pico_string_to_ipv4("192.168.167. | the two ends of the emulated modem's PPP link, addresses inside the emulator
+reprof/3rdParty/** | * | reprof's third-party .NET libraries as their authors built them: the paths of their PDBs name the authors' machines, not one of the project
+
+# tests whose inputs are made-up paths
+tests/common/emurun_test.py | * | made-up environments of a caller (/home/u, /Users/u, C:\Users\u) that the test's environment rules must drop
+tests/debugger/net/test_http.cpp | file:///home/user/page.html | a made-up Origin the server must refuse

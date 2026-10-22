@@ -1,0 +1,8 @@
+# Where a tracked file of the UI repository (dreamcast-devtools) may name what looks like a machine: the allow list
+# that nulldc3/ci/hygiene.py takes for the UI, `hygiene.py --tree <UI checkout> --allow nulldc3/ci/hygiene-allow-ui.txt`
+# (the format is the one of hygiene-allow.txt beside it). The UI's own checks name the words they look for.
+
+scripts/build-dspsim.ts | const words = new Set<string>(["/home/", "/Users/", "/tmp/", "\\Users\\", "emsdk"]); | the DSP module's build: the words it refuses in the module it makes (a path of the machine that made it)
+scripts/build-dspsim.test.ts | Buffer.from("abc/home/someone/x"), ["/home/"] | the test of that check: a made-up path it has to find
+scripts/build-dspsim.test.ts | Buffer.from("no path"), ["/home/", "/Users/"] | the test of that check: the words it has to find nothing of
+src/lib/aicaDspProvenance.test.ts | const words = ["/home/", "/Users/", "/tmp/", "\\Users\\", "C:\\", "emsdk", homedir(), tmpdir()] | the provenance test: the words the committed module must not hold
