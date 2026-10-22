@@ -299,9 +299,13 @@ The project builds with the AppleClang of Xcode and CMake and Ninja from Homebre
 on Apple silicon). The emulator is the executable of an emulator build's bundle; `tests/system` builds none on macOS.
 Every emulator run the tests make there goes through `macos/macrun.py` (`macos/README.md`), under the sandbox profile
 `macos/no-windowserver.sb`, which denies the window server, the window manager, the Dock and LaunchServices: the
-tests of `macos/` and `version.binary` start the emulator through it, and so does ctest itself when it runs as a long
-step (inside it `macrun.py` finds its caller sandboxed and runs under that profile). Set `TMPDIR` and
-`npm_config_cache` to directories of your own for a run as well, and `EMSDK` (below).
+tests of `macos/` and `version.binary` start the emulator through it, the harnesses of the emulator-driven tests
+(`debugger/selftest`, `debugger/contract`, `debugger/guest`, the oracle of `aica_dsp`, `debugger/sh4bp/sessions.py`)
+start the emulator, the contract runner and their tools through it (`common/emurun.py`: a session of its own, which
+`macrun.py` kills with everything below it when a harness ends the run; `TMPDIR` in the run's directory, and for the
+contract runner and the tools npm's cache there too), and so does ctest itself when it runs as a long step (inside it
+`macrun.py` finds its caller sandboxed and runs under that profile). Set `TMPDIR` and `npm_config_cache` to
+directories of your own for the rest of a run as well (ctest, the scripts, `npm ci`), and `EMSDK` (below).
 
     cmake -S tests -B <build dir> -G Ninja -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3 \
           -DNULLDC_ELF_DIR=<dir> -DNULLDC_WREN7_DIR=<dir> -DNULLDC_CAIQUE_DIR=<dir> \
@@ -312,7 +316,11 @@ step (inside it `macrun.py` finds its caller sandboxed and runs under that profi
           ctest --test-dir <build dir> -j 4 --output-on-failure
 
 - `NULLDC_EMULATOR`: `nulldc3.app/Contents/MacOS/nulldc3` of an emulator build (configured with
-  `-DNULLDC_DEVTOOLS_DIST=OFF` for a gate); `macos.bundle.codesign` checks the bundle around it.
+  `-DNULLDC_DEVTOOLS_DIST=OFF` for a gate); `macos.bundle.codesign` checks the bundle around it. `tests/system`
+  builds no emulator on macOS: without it, or with one that names no file, every test that runs the emulator is a test
+  whose data is missing (a failure with `NULLDC_TESTS_REQUIRE_DATA`), and the configure says so.
+- `NULLDC_DEVTOOLS_DIR`: a checkout of the UI with `npm ci` made on the Mac (`node` and `npm` from Homebrew); the
+  contract runner runs from it against `127.0.0.1`.
 - ccache: on macOS neither the tests project nor the emulator compiles through ccache unless the configure line has
   `-DNULLDC_CCACHE=ON` (a ccache that cannot start ends every compile in dyld's abort, and each abort leaves a crash
   report); `macos.build.ccache` holds it for the tests project's build and for the emulator's.
@@ -325,20 +333,35 @@ step (inside it `macrun.py` finds its caller sandboxed and runs under that profi
   directory without one for ctest keeps `aica.dsp.wasm.devtools` from asking `~/emsdk` (it then says that the
   committed module is not compared with a fresh build).
 
-What is skipped on macOS, with its reason (222 of the 326 tests):
+What is skipped on macOS (arm64), with its reason (105 of the 330 tests; every other one runs):
 
 | tests | reason |
 |---|---|
-| `debugger.selftest.*`, `debugger.contract.*`, `debugger.sound.*` but `.runner`, the guest oracle of `aica_dsp` (117) | MACb: the package that opens the emulator-driven tests on the Mac |
 | `system.*`, `system.hle.*` (63) | the Linux-only system-test harness |
 | `debugger.sh4bp.*` (29) | the sh4bp gates need an x86-64 build with the SH4 recompiler |
 | `sh4.singlestep.dynarec`, `sh4.directed.dynarec*`, `sh4.differential`, `sh4.directed.differential`, `sh4.fpu.*` (9) | they run the blocks of the x64 backend |
 | `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` (3) | no emcc (or `NULLDC_EMCC=OFF`) |
 | `debugger.sound.runner` (1) | its stand-ins for the emulator are scripts that the host runs by their first line (`#!`): a Linux host |
 
-Two tests of the harnesses fail on macOS until the harnesses are opened there (MACb): `harness.emurun` (the Python program
-it starts as an emulator sees `__CF_USER_TEXT_ENCODING` and `LC_CTYPE` in its environment, which the system and
-Python's locale coercion put into the process itself) and `debugger.guest.dsptest.files` (`gen.sh --check` calls GNU `stat -c`, which macOS' `stat` has not).
+The objdump oracles of `debugger/disasm` run where the binutils are: `arm-none-eabi-objdump` of Homebrew
+(`brew install arm-none-eabi-binutils`), and `sh-elf-objdump` where a KallistiOS toolchain is at
+`/opt/toolchains/dc` (Homebrew has none); `gen.sh --check` of the sounding guest likewise runs where `sh-elf-as`
+is. `macos.hashes.jit` holds the state hashes of the arm64 recompiler to the Mac's own references (a hash is good for
+one host: nothing compares the Mac's lines or hashes with Linux's).
+
+**The arm64 recompiler and the debugger's arm64 rules** (design 2.2.8, 2.3.5). Its breakpoints and steps run on the
+interpreter fallback, with or without `Debugger:ForceFallback` (`sh4-debug-fallback`); its running ticks say
+`registersStale` and leave out `dc.sh4.cpu`; and it restarts its slice counter at every entry of its loop, so that a
+pause, a step or a stop of the host moves SH4 time by less than a slice. The harnesses expect the fallback engine
+there (`NATIVE_RECOMPILER`), `debugger.selftest.emurun.pauses` runs on the interpreter only on a host that is not
+x86-64, and S04 of the contract gates is recorded, not gated, on the recompiler of an arm64 host, with and without
+`--fallback` (PL-D78; `debugger/contract/README.md`): `contract.py` passes a gate whose runner failed S04 alone, on
+its `SH4_CYCLES` checks only, and prints `S04: recorded (PL-D78): <detail>`; the interpreter is gated in full.
+Thirteen targets on the recompiler of the Mac meet those rules and fail: `debugger.selftest.emu`, `.regs` and
+`.core` (their checks of a running machine read the SH4's context at a slice end and a running tick in full),
+`debugger.selftest.hostcycles` and `.writesrun.neutral`, and `debugger.sound.neutral.*.jit` (8: their state hash
+after stops and resumes, which the restarted slice moves). They are open: an arm64 rule for them, or the arm64
+recompiler's own slice counter and context at its slice ends, is the integrator's decision; their `.interp` runs pass.
 
 ## Layout
 
