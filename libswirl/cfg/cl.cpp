@@ -558,6 +558,9 @@ const string& cl_HelpText()
 		"  --version             print the version of the emulator, nullDC <version>\n"
 		"  --                    every word after it is a game, also one that begins with a dash\n\n"
 		"Without --portable and --shared the emulator keeps its files in the directory of its executable.\n"
+#if HOST_OS == OS_LINUX
+		"Started from an AppImage, that is the directory that holds the AppImage.\n"
+#endif
 		"Every word that begins with a dash is a switch: an unknown one, or one written with one dash, is an\n"
 		"error.\n\n";
 	return text;

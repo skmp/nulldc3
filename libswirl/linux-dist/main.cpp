@@ -194,9 +194,10 @@ void os_CreateWindow()
 }
 
 
-// The directories a run can keep its files in (cfg/cl.cpp chooses): the one of the executable, and the XDG ones
-// of --shared, $XDG_CONFIG_HOME/nulldc3 and $XDG_DATA_HOME/nulldc3 with the XDG system lists behind them. The
-// reicast directories of before (~/.reicast, the XDG ones named reicast) are not read.
+// The directories a run can keep its files in (cfg/cl.cpp chooses): the one of the executable (in an AppImage, the
+// one that holds the AppImage), and the XDG ones of --shared, $XDG_CONFIG_HOME/nulldc3 and $XDG_DATA_HOME/nulldc3
+// with the XDG system lists behind them. The reicast directories of before (~/.reicast, the XDG ones named reicast)
+// are not read.
 static string xdg_home(const char* variable, const char* fallback, string& why)
 {
 	// a value that is not an absolute path is invalid and ignored (XDG Base Directory Specification)
@@ -231,6 +232,46 @@ static vector<string> xdg_list(const char* variable, const char* fallback)
 	return dirs;
 }
 
+// The directory of a file, from a path that has a "/": "/" for a file at the top
+static string dir_of(const string& path)
+{
+	string::size_type slash = path.find_last_of('/');
+	return slash == 0 ? "/" : path.substr(0, slash);
+}
+
+// Inside an AppImage. Its runtime mounts the AppImage read-only at $APPDIR and starts the executable there, with
+// $APPIMAGE the path of the .AppImage file: the directory of the executable is then the directory of $APPIMAGE (with
+// every link of both resolved), beside the file a user downloaded and started. A program that another AppImage starts
+// (an editor, a terminal) inherits that one's APPIMAGE and APPDIR, and its executable lies outside that APPDIR: for it
+// the directory of its executable stays. True when the rule applies; dir is then the directory, or empty with why
+// saying why it is not known.
+static bool appimage_dir(const string& exe, string& dir, string& why)
+{
+	const char* appimage = getenv("APPIMAGE");
+	const char* appdir = getenv("APPDIR");
+	if (appimage == NULL || appimage[0] == 0 || appdir == NULL || appdir[0] == 0)
+		return false;
+
+	char* mount = realpath(appdir, NULL);
+	if (mount == NULL)
+		return false;
+	string top(mount);
+	free(mount);
+	bool below = top == "/" || (exe.size() > top.size() && exe.compare(0, top.size(), top) == 0 && exe[top.size()] == '/');
+	if (!below)
+		return false;
+
+	char* image = realpath(appimage, NULL);
+	if (image == NULL)
+	{
+		why = string("the AppImage $APPIMAGE, ") + appimage + ": " + strerror(errno);
+		return true;
+	}
+	dir = dir_of(image);
+	free(image);
+	return true;
+}
+
 static HostDirs find_host_dirs()
 {
 	HostDirs dirs;
@@ -249,11 +290,10 @@ static HostDirs find_host_dirs()
 		if ((size_t)n < path.size())
 		{
 			string exe(path.data(), n);
-			string::size_type slash = exe.find_last_of('/');
-			if (slash == string::npos)
+			if (exe.find('/') == string::npos)
 				dirs.exe_dir_error = "/proc/self/exe is " + exe;
-			else
-				dirs.exe_dir = slash == 0 ? "/" : exe.substr(0, slash);
+			else if (!appimage_dir(exe, dirs.exe_dir, dirs.exe_dir_error))
+				dirs.exe_dir = dir_of(exe);
 			break;
 		}
 		path.resize(path.size() * 2);

@@ -134,7 +134,8 @@ The keys for runs without a person (headless, the conditions that end a run, the
 nullDC is portable by default: everything it reads and writes (the configuration, the BIOS and the flash, the VMUs,
 the input mappings, the save states) lives in the directory of its executable (on macOS, the directory that holds
 `nulldc3.app`; on Linux the directory of the file `/proc/self/exe` names, so a symbolic link to the executable uses
-the directory of the file it points at). The working directory plays no part. `--portable <dir>` names another
+the directory of the file it points at; started from an AppImage, the directory that holds the `.AppImage` file, since
+the AppImage itself is a read-only image). The working directory plays no part. `--portable <dir>` names another
 directory; it is made when it is not there. A directory that cannot be written is an error at start that names
 `--portable <dir>` and `--shared`, never a silent change of place.
 
