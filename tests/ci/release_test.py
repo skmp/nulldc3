@@ -2,10 +2,11 @@
 """release_test.py: nulldc3/ci/release.sh against a stand-in for gh that records its arguments, in a scratch git
 repository below --work (never in a repository of the tree, and no tag anywhere else).
 
-    release_test.py --tree <the top of the tree> --work <scratch directory>
+    release_test.py --tree <the top of the tree> --work <scratch directory> [--clone]
 
 The scratch repository holds release.sh, release-notes.md, nulldc3/cmake/version.cmake and nulldc3/version-base.txt
-of the tree, one commit; its tags are made there. The stand-in gh keeps a Release in a JSON file (none, a draft, a
+of the tree, one commit; with --clone it is a clone of the tree's HEAD instead (git clone --shared: what is committed;
+the clone's objects borrow the tree's, and its tags stay in the clone). Its tags are made there. The stand-in gh keeps a Release in a JSON file (none, a draft, a
 published one) and logs every call. The cases:
   check (creates nothing; gh is never called, the state stays):
     - a pull request: the files named with the checkout's version (no tag reachable: <base>+g<h>), the UI's version
@@ -125,6 +126,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--tree', required=True)
     parser.add_argument('--work', required=True)
+    parser.add_argument('--clone', action='store_true')
     options = parser.parse_args()
     tree = os.path.abspath(options.tree)
     work = os.path.abspath(options.work)
@@ -137,13 +139,17 @@ def main():
 
     # the scratch repository
     repo = os.path.join(work, 'repo')
-    for part in ('nulldc3/ci/release.sh', 'nulldc3/ci/release-notes.md', 'nulldc3/cmake/version.cmake',
-                 'nulldc3/version-base.txt'):
-        os.makedirs(os.path.dirname(os.path.join(repo, part)), exist_ok=True)
-        shutil.copy2(os.path.join(tree, part), os.path.join(repo, part))
-    git(work, 'init', '-q', repo)
-    git(repo, 'add', '-A')
-    git(repo, 'commit', '-q', '-m', 'scratch')
+    if options.clone:
+        git(work, 'clone', '-q', '--shared', '--no-recurse-submodules', tree, repo)
+        print('a clone of %s at %s' % (tree, git(repo, 'rev-parse', 'HEAD')))
+    else:
+        for part in ('nulldc3/ci/release.sh', 'nulldc3/ci/release-notes.md', 'nulldc3/cmake/version.cmake',
+                     'nulldc3/version-base.txt'):
+            os.makedirs(os.path.dirname(os.path.join(repo, part)), exist_ok=True)
+            shutil.copy2(os.path.join(tree, part), os.path.join(repo, part))
+        git(work, 'init', '-q', repo)
+        git(repo, 'add', '-A')
+        git(repo, 'commit', '-q', '-m', 'scratch')
     base = open(os.path.join(repo, 'nulldc3', 'version-base.txt')).read().strip()
     head = git(repo, 'rev-parse', 'HEAD')
 
