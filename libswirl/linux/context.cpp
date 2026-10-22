@@ -93,7 +93,15 @@ void context_segfault_bicopy(rei_host_context_t* reictx, void* segfault_ctx, boo
 
 #if !defined(TARGET_NO_EXCEPTIONS)
 #if HOST_CPU == CPU_ARM64
-	bicopy(reictx->pc, MCTX(->__ss.__pc), to_segfault);
+	#if HOST_OS == OS_DARWIN
+		bicopy(reictx->pc, MCTX(->__ss.__pc), to_segfault);
+	#elif HOST_OS == OS_LINUX
+		// Linux's mcontext_t is a struct in the ucontext_t (glibc's, struct sigcontext of the kernel): the pc of
+		// the fault, which sigreturn restores
+		bicopy(reictx->pc, MCTX(.pc), to_segfault);
+	#else
+		#error HOST_OS
+	#endif
 #elif HOST_CPU == CPU_X64
 	#if HOST_OS == OS_LINUX
 		fault_printf("pc set: %d, value: %p %p\n", to_segfault, reictx->pc, MCTX(.gregs[REG_RIP]));
