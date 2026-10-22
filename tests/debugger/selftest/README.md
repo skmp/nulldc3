@@ -22,7 +22,11 @@ The script starts every program through `tests/common/emurun.py`, the run helper
 output through it (a `\r` in front of a `\n` is not part of a line). On Windows the environment of a run is
 `SystemRoot` (Winsock does not start without it) and `TEMP` and `TMP` in the run's directory, and the emulator runs
 inside `nulldc3-winrun` (its path in `NULLDC_WINRUN`, which the tests project passes): there `-DNULLDC_EMULATOR=` is
-`nulldc3.exe` of an emulator build, since `tests/system` builds none, and the tests are skipped without it.
+`nulldc3.exe` of an emulator build, since `tests/system` builds none, and the tests are skipped without it. On macOS
+the environment of a run is `TMPDIR` in the run's directory, and the emulator runs through `tests/macos/macrun.py`
+(the sandbox profile that denies the window server, the Dock and LaunchServices, or the one a long step runs under; a
+session of its own): there `-DNULLDC_EMULATOR=` is `<build>/nulldc3.app/Contents/MacOS/nulldc3` of an emulator
+build, and without it, or with one that names no file, the tests are tests whose data is missing.
 `debugger.selftest.log.rule` holds the checks of the script on made-up output whose lines end in `\n` and in `\r\n`.
 
 **Every run is made on the engine it asks for.** `--engine jit` is `config:Dynarec.Enabled=yes`, `--engine interp`

@@ -220,7 +220,10 @@ endif()
 #	the core and the caique model compute in lockstep on the guest's writes and schedule. They need the caique
 #	checkout, as the other tests of the model, and the emulator, as the tests of tests/debugger/guest. On Windows
 #	tests/system builds no emulator (NULLDC_EMULATOR is nulldc3.exe of an emulator build), and the emulator and the
-#	tool run inside nulldc3-winrun (tests/common/emurun.py; NULLDC_WINRUN, or the one tests/windows builds)
+#	tool run inside nulldc3-winrun (tests/common/emurun.py; NULLDC_WINRUN, or the one tests/windows builds). On macOS
+#	NULLDC_EMULATOR is the executable of an emulator build's bundle, <build>/nulldc3.app/Contents/MacOS/nulldc3:
+#	without it, or with one that names no file, the tests are tests whose data is missing; the emulator and the tool
+#	run through tests/macos/macrun.py there (tests/common/emurun.py)
 #
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -231,12 +234,25 @@ if(NOT NULLDC_SYSTEM_TESTS AND NOT NULLDC_EMULATOR)
 elseif(${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT NULLDC_EMULATOR)
   set(nulldc_oracle_skip
       "no NULLDC_EMULATOR is given, and on Windows tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<nulldc3.exe of an emulator build>")
-elseif(${HOST_OS} EQUAL ${OS_DARWIN})
-  set(nulldc_oracle_skip "MACb")
-elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX} AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS})
+elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX} AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT ${HOST_OS} EQUAL ${OS_DARWIN})
   set(nulldc_oracle_skip "headless mode is there on Linux, Windows and macOS hosts only")
 elseif(NOT Python3_Interpreter_FOUND)
   set(nulldc_oracle_skip "no python3 to run tests/debugger/guest/dsptest/soundlines.py with")
+endif()
+
+# macOS: the emulator is the one of NULLDC_EMULATOR, which has to name a file (nulldc_oracle_missing: the reason)
+set(nulldc_oracle_missing "")
+if(NOT nulldc_oracle_skip AND ${HOST_OS} EQUAL ${OS_DARWIN})
+  if(NOT NULLDC_EMULATOR)
+    set(nulldc_oracle_missing
+        "no NULLDC_EMULATOR is given, and on macOS tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  elseif(NOT EXISTS "${NULLDC_EMULATOR}" OR IS_DIRECTORY "${NULLDC_EMULATOR}")
+    set(nulldc_oracle_missing
+        "NULLDC_EMULATOR names no file (\"${NULLDC_EMULATOR}\"): configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  endif()
+  if(nulldc_oracle_missing)
+    message(WARNING "tests/aica_dsp: ${nulldc_oracle_missing}")
+  endif()
 endif()
 
 if(NULLDC_EMULATOR)
@@ -259,6 +275,8 @@ foreach(engine jit interp)
 
   if(nulldc_oracle_skip)
     nulldc_add_skipped_test(${test} "${nulldc_oracle_skip}")
+  elseif(nulldc_oracle_missing)
+    nulldc_add_missing_data_test(${test} "${nulldc_oracle_missing}")
   elseif(NOT NULLDC_HAVE_CAIQUE)
     nulldc_add_missing_data_test(${test} "${NULLDC_CAIQUE_MISSING}")
   else()

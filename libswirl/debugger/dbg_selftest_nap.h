@@ -16,8 +16,15 @@
 
 	    void dbg::selftest::NapUs(s64 us)       about us microseconds, never less; nothing for 0 or less
 
-	On a POSIX host it is std::this_thread::sleep_for(std::chrono::microseconds(us)), the call the selftests made
-	before it, and nothing else: a nap there lasts what it did.
+	On Linux and the other POSIX hosts it is std::this_thread::sleep_for(std::chrono::microseconds(us)), the call
+	the selftests made before it, and nothing else: a nap there lasts what it did.
+
+	On macOS std::this_thread::sleep_for (nanosleep), and every wait of the kernel that takes the timer's default
+	leeway (a kevent timer, mach_wait_until), lasts about half as long again as it is asked for, whatever the
+	thread's QoS: the kernel coalesces its timers, measured on an Apple M2 under macOS 26 (a nap of 1 ms lasts 1.5 ms,
+	one of 5 ms 7.5 ms). NapUs (dbg_selftest_nap.cpp) waits there on a timer of a kqueue of its thread
+	(EVFILT_TIMER with NOTE_CRITICAL, which the kernel does not coalesce), again for what is left until the nap's
+	end where it came back early, without a spin; where the thread has no kqueue it is std::this_thread::sleep_for.
 
 	On Windows std::this_thread::sleep_for lasts until a tick of the system timer, 15.6 ms (1 to 2 ms where a
 	process has asked for a 1 ms timer with timeBeginPeriod), whatever it is asked for, and a test that naps for
@@ -33,13 +40,13 @@
 	tick rounds up, without a spin.
 
 	The selftest "nap" (dbg_selftest_nap.cpp, debugger.selftest.nap) holds it on every host: how long naps of
-	100 us to 50 ms last and how much CPU time of the thread they take, and on a POSIX host that they last what
-	std::this_thread::sleep_for of the same request lasts.
+	100 us to 50 ms last and how much CPU time of the thread they take, and on a POSIX host but macOS that they last
+	what std::this_thread::sleep_for of the same request lasts.
 */
 
 namespace dbg { namespace selftest {
 
-#if HOST_OS == OS_WINDOWS
+#if HOST_OS == OS_WINDOWS || HOST_OS == OS_DARWIN
 void NapUs(s64 us);
 #else
 inline void NapUs(s64 us)

@@ -5,8 +5,8 @@
 
 
 /*
-	The naps of the selftests (dbg_selftest_nap.h): NapUs on Windows, and the selftest "nap", which holds NapUs on
-	every host.
+	The naps of the selftests (dbg_selftest_nap.h): NapUs on Windows and on macOS, and the selftest "nap", which
+	holds NapUs on every host.
 
 	    nulldc3 --config config:Headless=yes , audio:backend=none , Debugger:SelfTest=nap <any program>
 
@@ -19,9 +19,11 @@
 	  - 40 naps each of 100, 300, 700, 1000 and 1500 us: none shorter than asked for, the median of each request
 	    at most 400 us longer than asked for (std::this_thread::sleep_for of Windows: about 15 ms longer), and naps
 	    of a millisecond or more take at most two thirds of their time on the processor (none is spun whole);
-	  - on a POSIX host, where NapUs is std::this_thread::sleep_for: 40 naps each of 100, 300, 700, 1000 and
-	    1500 us through NapUs and as many through std::this_thread::sleep_for, one after the other, the medians of
-	    each request within 50 us of each other (a nap there lasts what it lasted before NapUs);
+	  - on a POSIX host but macOS, where NapUs is std::this_thread::sleep_for: 40 naps each of 100, 300, 700, 1000
+	    and 1500 us through NapUs and as many through std::this_thread::sleep_for, one after the other, the medians
+	    of each request within 50 us of each other (a nap there lasts what it lasted before NapUs);
+	  - on macOS, where NapUs is a kqueue timer that the kernel does not coalesce: the medians of 40 naps of 1000 us
+	    through each, one after the other, as a note (std::this_thread::sleep_for's about 1500 us);
 	  - on Windows the same for the way without the high-resolution timer, where Windows refuses its flag: the
 	    nap of 50 ms without a spin, and naps of 300 us to within 400 us.
 */
@@ -36,6 +38,11 @@
 
 #if HOST_OS == OS_LINUX || HOST_OS == OS_DARWIN
 #include <time.h>
+#endif
+#if HOST_OS == OS_DARWIN
+#include <errno.h>
+#include <sys/event.h>
+#include <unistd.h>
 #elif HOST_OS == OS_WINDOWS
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -141,6 +148,72 @@ namespace dbg { namespace selftest {
 void NapUs(s64 us)
 {
 	Nap(us, true);
+}
+
+} }
+#endif
+
+#if HOST_OS == OS_DARWIN
+namespace {
+
+// The kqueue of a thread's naps: made at its first nap and closed when the thread ends; -1 where it cannot be made
+struct ThreadQueue {
+	int fd = -2;
+
+	~ThreadQueue()
+	{
+		if (fd >= 0)
+			close(fd);
+	}
+
+	int Get()
+	{
+		if (fd == -2)
+			fd = kqueue();
+
+		return fd;
+	}
+};
+
+thread_local ThreadQueue threadQueue;
+
+}
+
+namespace dbg { namespace selftest {
+
+// A nap of us microseconds (dbg_selftest_nap.h): a timer of the thread's kqueue that the kernel does not coalesce
+// (NOTE_CRITICAL), set again for what is left until the end of the nap, in whole microseconds rounded up, until the
+// steady clock has reached it: never less
+void NapUs(s64 us)
+{
+	if (us <= 0)
+		return;
+
+	typedef std::chrono::steady_clock Steady;
+	const Steady::time_point end = Steady::now() + std::chrono::microseconds(us);
+	const int kq = threadQueue.Get();
+
+	for (;;)
+	{
+		const Steady::time_point now = Steady::now();
+
+		if (now >= end)
+			return;
+
+		const s64 left = (std::chrono::duration_cast<std::chrono::nanoseconds>(end - now).count() + 999) / 1000;
+
+		if (kq < 0)
+		{
+			std::this_thread::sleep_for(std::chrono::microseconds(left));
+			continue;
+		}
+
+		struct kevent timer, fired;
+		EV_SET(&timer, 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT, NOTE_USECONDS | NOTE_CRITICAL, (intptr_t)left, nullptr);
+
+		if (kevent(kq, &timer, 1, &fired, 1, nullptr) < 0 && errno != EINTR)
+			std::this_thread::sleep_for(std::chrono::microseconds(left));
+	}
 }
 
 } }
@@ -279,8 +352,8 @@ void Short(NapFn nap, const char* way, const std::vector<s64>& requests, int n)
 	}
 }
 
-#if HOST_OS != OS_WINDOWS
-// A POSIX host: NapUs is std::this_thread::sleep_for (dbg_selftest_nap.h), and a nap through it lasts what a
+#if HOST_OS != OS_WINDOWS && HOST_OS != OS_DARWIN
+// A POSIX host but macOS: NapUs is std::this_thread::sleep_for (dbg_selftest_nap.h), and a nap through it lasts what a
 // std::this_thread::sleep_for of the same request lasts. n naps of each request through each, one after the other,
 // so that both see the same host: the medians of the two within 50 us of each other (they agree to a few us). The
 // bounds of Short let a nap through that lasts some 300 us more than asked for; this does not
@@ -316,8 +389,18 @@ DBG_SELFTEST(nap_selftest, "nap")
 	Long([](s64 us) { selftest::NapUs(us); }, "NapUs");
 	Short([](s64 us) { selftest::NapUs(us); }, "NapUs", { 100, 300, 700, 1000, 1500 }, 40);
 
-#if HOST_OS != OS_WINDOWS
+#if HOST_OS != OS_WINDOWS && HOST_OS != OS_DARWIN
 	AsSleepFor({ 100, 300, 700, 1000, 1500 }, 40);
+#endif
+
+#if HOST_OS == OS_DARWIN
+	{
+		// what NapUs is not: std::this_thread::sleep_for, which the kernel's coalescing makes longer
+		Naps naps = Measure([](s64 us) { selftest::NapUs(us); }, 1000, 40);
+		Naps sleeps = Measure([](s64 us) { std::this_thread::sleep_for(std::chrono::microseconds(us)); }, 1000, 40);
+		Note("40 naps of 1000 us through NapUs (a kqueue timer, NOTE_CRITICAL) and through std::this_thread::sleep_for: the medians %.0f and %.0f us",
+			naps.Median(), sleeps.Median());
+	}
 #endif
 
 #if HOST_OS == OS_WINDOWS

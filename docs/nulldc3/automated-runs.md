@@ -318,8 +318,26 @@ file. It applies the profile when its caller has none, and runs the program unde
 under `macrun.py --detach`); it runs nothing without `/usr/bin/sandbox-exec` unless `CI` is set. Its exit status is
 the program's, 128 + N for a signal, 124 for its timeout, 126 when it ran nothing. Every run also carries the keys of
 an automated run: `--portable <dir>` and `--config config:Headless=yes , audio:backend=none ,
-config:Dreamcast.RTC=946684800` with the run's `Exit.*` keys. The harnesses of the tests (the selftests, the contract
-gates, the sound lines) do not run on macOS yet (`tests/README.md`, "On macOS").
+config:Dreamcast.RTC=946684800` with the run's `Exit.*` keys.
+
+**The harnesses of the tests on macOS.** `tests/debugger/selftest/selftest.py`, `tests/debugger/contract/contract.py`,
+`tests/debugger/guest/dsptest/soundlines.py` and `tests/debugger/sh4bp/sessions.py` start every program through
+`tests/common/emurun.py`, whose macOS branch runs it through `tests/macos/macrun.py`: under the sandbox profile (or
+the one a long step runs under), in a session of its own, with a timeout behind the harness's watchdog and the
+program's id in the run's directory. An emulator run's environment is the options of the sanitizers and `TMPDIR` in
+the run's own directory, nothing of the caller's (its `TMPDIR` is the user's temporary directory); a program that is
+not the emulator (the contract runner, the tools of the tests) gets the caller's environment with `TMPDIR` and npm's
+cache in its run's directory, so that `node`, `tsx` and npm write nothing outside the work folder. A harness ends a
+run with a `SIGTERM` to `macrun.py`, which kills the program and everything below it (a `SIGKILL` to `macrun.py` would
+leave them running in the session it gave them). The harnesses are Python 3.9 with the standard library, the Python of
+Xcode. They expect what the debugger's arm64 rules say of the arm64 recompiler: its breakpoints and steps on the
+interpreter fallback (`sh4-debug-fallback`, with or without `Debugger:ForceFallback`), and S04 of the contract gates
+recorded, not gated, where it fails on its `SH4_CYCLES` checks alone (PL-D78, `tests/debugger/contract/README.md`).
+`tests/system` builds no emulator on macOS: the tests project takes
+`-DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3` (`tests/README.md`, "On macOS", with the skip list).
+The selftest sessions nap with a kqueue timer that the kernel does not coalesce on macOS
+(`libswirl/debugger/dbg_selftest_nap.h`): its timers with the default leeway, `std::this_thread::sleep_for` among
+them, last about half as long again as they are asked for there.
 
 ## Faults
 

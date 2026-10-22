@@ -9,6 +9,13 @@
 #	starts) run inside nulldc3-winrun (tests/common/emurun.py), whose path the tests have in NULLDC_WINRUN: the one
 #	of NULLDC_WINRUN, or the one tests/windows builds. NULLDC_NPM is npm.cmd there.
 #
+#	On macOS tests/system builds no emulator either: NULLDC_EMULATOR is the executable of an emulator build's bundle,
+#	<build>/nulldc3.app/Contents/MacOS/nulldc3, and without it, or with one that names no file, the tests are tests
+#	whose data is missing (failures with NULLDC_TESTS_REQUIRE_DATA), and the configure says so. There the scripts
+#	start the emulator, and every other program, through tests/macos/macrun.py (tests/common/emurun.py): the sandbox
+#	profile that denies the window server, the Dock and LaunchServices, a session of its own, a timeout, TMPDIR in
+#	the run's directory.
+#
 #	    debugger.contract.m1 .m1.interp .m1.fallback    the gate of milestone M1: the contract runner of the devtools
 #	                                                    UI (npm run contract -- --url ... --profile emulator --elf
 #	                                                    ... --milestone M1), on the JIT, on the interpreter and on
@@ -55,15 +62,25 @@
 #	                                                    2ndmix, and on the sounding guest of the tree
 #	    debugger.contract.hash.listening.rule           what these four take for a full running tick, on ticks
 #	                                                    that are made up: no emulator is run
+#	    debugger.contract.s04.rule                      the rule of the modes that run the contract runner for S04
+#	                                                    on the recompiler of an arm64 host (PL-D78: recorded, not
+#	                                                    gated, when S04 alone failed and on its SH4_CYCLES checks
+#	                                                    only), on summaries of the runner that are made up, and
+#	                                                    run_runner on a runner that is made up: no emulator is run
 #
-#	Every test but hash.listening.rule fails a run that was not made on the engine it asks for: the SH4 on the
+#	Every test but hash.listening.rule and s04.rule fails a run that was not made on the engine it asks for: the SH4 on the
 #	recompiler or the interpreter, and, where a client describes the server, sh4-debug-fallback for a FALLBACK
 #	test and sh4-debug-native for every other (README.md, "The engine of a run").
 #
 #	The runner needs the dreamcast-devtools checkout with its node_modules (NULLDC_DEVTOOLS_DIR) and npm:
 #	without them m1*, m2*, m2arm7*, m2writes*, m3*, m3dsp*, m3dsp21* and hash.idlebp* are tests whose data is missing. Everything
-#	needs 2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree and hash.listening.rule, which
-#	needs python3 and nothing else.
+#	needs 2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree and hash.listening.rule and
+#	s04.rule, which need python3 and nothing else.
+#
+#	On an arm64 host the recompiler's breakpoints and steps run on the interpreter fallback with or without
+#	FALLBACK, behind a loop that restarts its slice counter at every entry: there m1, m2 and m3 on the JIT, and
+#	their .fallback, pass a runner whose S04 alone failed, on its SH4_CYCLES checks only, and say "S04: recorded
+#	(PL-D78)" (contract.py, s04.rule); the interpreter's are gated in full, as every run of an x86-64 host.
 #
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -80,12 +97,25 @@ if(NOT NULLDC_SYSTEM_TESTS AND NOT NULLDC_EMULATOR)
 elseif(${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT NULLDC_EMULATOR)
   set(nulldc_contract_skip
       "no NULLDC_EMULATOR is given, and on Windows tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<nulldc3.exe of an emulator build>")
-elseif(${HOST_OS} EQUAL ${OS_DARWIN})
-  set(nulldc_contract_skip "MACb")
-elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX} AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS})
+elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX} AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT ${HOST_OS} EQUAL ${OS_DARWIN})
   set(nulldc_contract_skip "headless mode is there on Linux, Windows and macOS hosts only")
 elseif(NOT Python3_Interpreter_FOUND)
   set(nulldc_contract_skip "no python3 to run tests/debugger/contract/contract.py with")
+endif()
+
+# macOS: the emulator is the one of NULLDC_EMULATOR, which has to name a file (nulldc_contract_missing: the reason)
+set(nulldc_contract_missing "")
+if(NOT nulldc_contract_skip AND ${HOST_OS} EQUAL ${OS_DARWIN})
+  if(NOT NULLDC_EMULATOR)
+    set(nulldc_contract_missing
+        "no NULLDC_EMULATOR is given, and on macOS tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  elseif(NOT EXISTS "${NULLDC_EMULATOR}" OR IS_DIRECTORY "${NULLDC_EMULATOR}")
+    set(nulldc_contract_missing
+        "NULLDC_EMULATOR names no file (\"${NULLDC_EMULATOR}\"): configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  endif()
+  if(nulldc_contract_missing)
+    message(WARNING "tests/debugger/contract: ${nulldc_contract_missing}")
+  endif()
 endif()
 
 if(NULLDC_EMULATOR)
@@ -150,6 +180,9 @@ function(nulldc_debugger_contract name)
 
     if(nulldc_contract_skip)
       nulldc_add_skipped_test(${test} "${nulldc_contract_skip}")
+      continue()
+    elseif(nulldc_contract_missing)
+      nulldc_add_missing_data_test(${test} "${nulldc_contract_missing}")
       continue()
     endif()
     if(ARG_GUEST)
@@ -301,4 +334,16 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(debugger.contract.hash.listening.rule PROPERTIES TIMEOUT 60 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 else()
   nulldc_add_skipped_test(debugger.contract.hash.listening.rule "no python3 to run tests/debugger/contract/contract.py with")
+endif()
+
+# S04 on the recompiler of an arm64 host is recorded, not gated (PL-D78): the rule of contract.py's run_runner on
+# summaries of the runner that are made up, each accepted or refused, and run_runner on a runner that is made up, with
+# the host it asks platform.machine() for answered by the test. No emulator or runner is run: on every host
+if(Python3_Interpreter_FOUND)
+  add_test(NAME debugger.contract.s04.rule
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/contract/s04_rule_test.py"
+                   --work "${CMAKE_BINARY_DIR}/debugger/contract/work/debugger.contract.s04.rule")
+  set_tests_properties(debugger.contract.s04.rule PROPERTIES TIMEOUT 120 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+else()
+  nulldc_add_skipped_test(debugger.contract.s04.rule "no python3 to run tests/debugger/contract/s04_rule_test.py with")
 endif()
