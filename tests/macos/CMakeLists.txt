@@ -79,7 +79,7 @@ function(macos_case test case)
            COMMAND "${CMAKE_COMMAND}" "-DCASE=${case}" "-DMACRUN=${macrun}" "-DEMULATOR=${NULLDC_EMULATOR}"
                    "-DCANARY=$<TARGET_FILE:macos_canary>" "-DGUEST=${nulldc_macos_guest}" "-DTREE=${nulldc_root_path}"
                    "-DCTEST=${CMAKE_CTEST_COMMAND}" "-DTESTS_BUILD=${CMAKE_BINARY_DIR}" "-DELF_DIR=${NULLDC_ELF_DIR}"
-                   "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/work/${test}" -P "${nulldc_macos_script}")
+                   "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/work/${test}" "-DTEST_TIMEOUT=${ARG_TIMEOUT}" -P "${nulldc_macos_script}")
   set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
 endfunction()
 

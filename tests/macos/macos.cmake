@@ -2,7 +2,7 @@
 #
 #   cmake -DCASE=<case> "-DMACRUN=<python>|<macrun.py>" -DEMULATOR=<nulldc3.app/Contents/MacOS/nulldc3>
 #         -DCANARY=<macos_canary> -DGUEST=<dsptest.elf> -DTREE=<the top of the tree> -DWORK=<scratch directory>
-#         [-DELF_DIR=<the directory of 2ndmix.elf>] -P macos.cmake
+#         [-DELF_DIR=<the directory of 2ndmix.elf>] [-DTEST_TIMEOUT=<the test's ctest TIMEOUT, s>] -P macos.cmake
 #
 # Every program built in the round is started through macrun.py (the sandbox profile, its own process group, a
 # timeout, TMPDIR under WORK), and every emulator run carries P0's keys (a portable directory under WORK,
@@ -662,13 +662,23 @@ elseif(CASE STREQUAL "hashes")
   set(file_2ndmix "${ELF_DIR}/2ndmix.elf")
   set(vblanks_guest 90)
   set(vblanks_2ndmix 600)
+  # The two runs one after the other, each ended by macrun.py at run_timeout (each took about 1 s) and by run()'s
+  # execute_process 60 s after that if macrun.py itself hangs, end inside the test's own TIMEOUT (CMakeLists.txt):
+  # a run that hangs ends here, with its problem line, and not by ctest, which kills only this script and leaves
+  # the run's macrun.py and emulator running
+  set(run_timeout 60)
+  math(EXPR runs_at_most "2 * (${run_timeout} + 60)")
+  math(EXPR with_the_rest "${runs_at_most} + 30")
+  if(NOT TEST_TIMEOUT OR NOT with_the_rest LESS TEST_TIMEOUT)
+    problem("the two runs may take ${runs_at_most} s, and 30 s for the rest: not inside the test's TIMEOUT (${TEST_TIMEOUT} s)")
+  endif()
   foreach(prog guest 2ndmix)
     if(NOT EXISTS "${file_${prog}}")
       problem("${prog}: no ${file_${prog}}")
       continue()
     endif()
     file(MAKE_DIRECTORY "${WORK}/portable-${prog}")
-    run(${prog} TIMEOUT 240 COMMAND "${EMULATOR}" --portable "${WORK}/portable-${prog}" --config config:Headless=yes ,
+    run(${prog} TIMEOUT ${run_timeout} COMMAND "${EMULATOR}" --portable "${WORK}/portable-${prog}" --config config:Headless=yes ,
         audio:backend=none , config:Dreamcast.RTC=946684800 , config:Exit.AfterVblanks=${vblanks_${prog}} ,
         config:Exit.StateHash=yes , config:Dynarec.Enabled=yes "${file_${prog}}")
     ended(${prog} 0)
