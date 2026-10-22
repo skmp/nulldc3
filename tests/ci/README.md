@@ -7,6 +7,7 @@ its jobs call (README.md of the tree, "CI", says what runs when).
 |---|---|---|
 | `ci.hygiene` | `nulldc3/ci/hygiene.py` on the tree: no tracked file (as it is in the working tree) names a home directory of Linux (`/home/`), macOS (`/Users/`) or Windows (`\Users\`, `C:/Users/`), a path of WSL's network (`\\wsl$`, `\\wsl.localhost`) or of its drive mounts (`/mnt/<letter>/`), a private IPv4 address (10/8, 172.16/12, 192.168/16) or a `.local` host name, but the lines that a row of `nulldc3/ci/hygiene-allow.txt` allows, each with its reason; and every row still allows a line ("gone" otherwise). Skipped when the tree is not a git checkout | git |
 | `ci.workflows` | `nulldc3/ci/check_workflows.py --self-test` on `.github/workflows/ci.yml`: the rules of the cut's 6.1 and 6.5 that actionlint does not check (below), and each of 29 mutations of the workflow caught by one of them; then (Linux and macOS) `release_test.py`: `nulldc3/ci/release.sh` against a stand-in for `gh` in a scratch repository below the build directory (below). On Windows the stand-in part is not run (`release.sh` is a bash script, and no test there runs a POSIX shell), and the test says so | python3; git and cmake for the stand-in |
+| `ci.scripts` | `scripts_test.py`: `nulldc3/ci/zipcheck.py` on zips made by the test (below) | python3 |
 
 ## check_workflows.py
 
@@ -53,3 +54,14 @@ refused before any `gh` call. No tag is made anywhere else. With `--clone` the s
 (`git clone --shared`) instead of the four files.
 
     python3 tests/ci/release_test.py --tree . --work <scratch directory> [--clone]
+
+## scripts_test.py
+
+`nulldc3/ci/zipcheck.py`, which `windows.ps1` runs on its zip, reads the entry names from the zip's central
+directory as they are written there (zipfile's `orig_filename`: `tar.exe -t`, Windows' bsdtar, and zipfile's own
+`filename` on Windows show a `\` as `/`, so a listing through either cannot see one). The test makes seven zips: the
+folder's own entry `nulldc3-<v>-windows-x86_64/` and the seven files below it, as `tar.exe -a -c` writes them (passes);
+the same names with `\` and no folder entry, as Compress-Archive of Windows PowerShell 5.1 writes them; `/` without
+the folder's entry; a file missing; a file more; a file below a folder; an entry outside the folder (each refused).
+
+    python3 tests/ci/scripts_test.py --tree . --work <scratch directory>

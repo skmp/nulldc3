@@ -22,7 +22,8 @@ Written for Windows PowerShell 5.1 (powershell.exe), which every Windows 10 and 
  5. The zip <out>\nulldc3-<version>-windows-x86_64.zip, made with Windows' own tar.exe (bsdtar, -a: a zip whose
     entry names have "/", never Compress-Archive, PL-D82): the folder nulldc3-<version>-windows-x86_64\ with
     nulldc3.exe, LICENSE, LICENSE-GPL, LICENSE-LGPL, LICENSE-shell (nulldc3\LICENSE), LICENSE-devtools (the UI
-    checkout's LICENSE) and README.txt (readme-windows.txt of this directory). Its entries are listed and checked.
+    checkout's LICENSE) and README.txt (readme-windows.txt of this directory). Its entries are listed from its
+    central directory and checked (zipcheck.py: no "\", the folder's own entry, exactly those files below it).
  6. The smoke run (smoke.py) of the zip unpacked with tar.exe: --version, a headless guest run and the debugger's
     describe, each through nulldc3-winrun, with P0's keys and a --portable directory below <work>.
 -Jobs <n>: ninja's -j (default: ninja's own). Exit status 0 when the build, the tests, the zip and the smoke run all
@@ -186,20 +187,11 @@ $readme = (Get-Content -Raw (Join-Path $PSScriptRoot 'readme-windows.txt')).Repl
 $zip = Join-Path $Out "$name.zip"
 if (Test-Path $zip) { Remove-Item -Force $zip }
 Run 'tar.exe -a -c' { & $tar -a -c -f $zip -C $stage $name }
-$entries = @(& $tar -t -f $zip)
-if ($LASTEXITCODE -ne 0) { Fail "tar.exe -t of $zip failed" }
-Write-Output "the zip's entries:"
-$entries | ForEach-Object { Write-Output "  $_" }
-$wanted = @('LICENSE', 'LICENSE-GPL', 'LICENSE-LGPL', 'LICENSE-devtools', 'LICENSE-shell', 'README.txt', 'nulldc3.exe')
-$files = @($entries | Where-Object { -not $_.EndsWith('/') } | ForEach-Object { $_ })
-$bad = @($entries | Where-Object { $_.Contains('\') -or -not $_.StartsWith("$name/") })
-$names = @($files | ForEach-Object { $_.Substring($name.Length + 1) } | Sort-Object)
-if ($bad.Count -ne 0 -or (Compare-Object -SyncWindow 0 $names ($wanted | Sort-Object))) {
-    $failed += 'the zip'
-    Write-Output "FAIL the zip: entries outside $name/ or with a backslash: [$($bad -join ', ')]; files [$($names -join ', ')], expected [$($wanted -join ', ')]"
-} else {
-    Write-Output "PASS the zip: every entry below $name/ with / alone, the files $($names -join ', ')"
-}
+# the entries as the zip's central directory has them (zipcheck.py): tar.exe -t shows a "\" of an entry name as "/",
+# and so cannot see one
+& $Python -B "$PSScriptRoot\zipcheck.py" $zip --folder $name --files LICENSE LICENSE-GPL LICENSE-LGPL LICENSE-devtools `
+    LICENSE-shell README.txt nulldc3.exe
+if ($LASTEXITCODE -ne 0) { $failed += 'the zip' }
 Remove-Tree $stage
 
 # 6. the smoke run of the zip unpacked
