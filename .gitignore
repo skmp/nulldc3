@@ -48,3 +48,12 @@ obj/
 # JetBrains IDES
 .idea/
 cmake-build-*/
+
+# CI's scripts (nulldc3/ci) when their --work or --out is inside the tree: an AppDir, an extraction of an AppImage,
+# the release files and their configure lines
+AppDir/
+squashfs-root/
+nulldc3-*.AppImage
+nulldc3-*-windows-x86_64.zip
+nulldc3-*-macos-arm64.zip
+nulldc3-*.configure.txt

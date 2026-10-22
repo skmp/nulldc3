@@ -7,6 +7,30 @@ renderers, and reios in place of the BIOS. It adds a debugger that runs inside t
 Dreamcast DevTools (the submodule `devtools/`, repository `dreamcast-devtools`): breakpoints and steps on the SH4 and
 the ARM7, the registers of the devices, guest memory; and a test suite, `tests/`.
 
+## Downloads
+
+The Releases of `skmp/nulldc3` on GitHub have four files for each version (and `SHA256SUMS`), each with the Dreamcast
+DevTools UI of the same version built in:
+
+| file | what it needs |
+|---|---|
+| `nulldc3-<version>-linux-x86_64.AppImage` | Linux x86_64 with glibc 2.39 or later (Ubuntu 24.04 and newer) and SSE4.1; FUSE 3 (`fusermount3`) to start it, or `--appimage-extract-and-run` |
+| `nulldc3-<version>-linux-arm64.AppImage` | Linux arm64 with glibc 2.39 or later and a kernel with 4 KiB pages; FUSE 3, or `--appimage-extract-and-run` |
+| `nulldc3-<version>-windows-x86_64.zip` | Windows 10 1803 or later, 64-bit: the folder `nulldc3-<version>-windows-x86_64/` with `nulldc3.exe` |
+| `nulldc3-<version>-macos-arm64.zip` | macOS 11 or later on Apple silicon: the folder `nulldc3-<version>-macos-arm64/` with `nulldc3.app` |
+
+Every one is portable by default ("Where the files are" below): the folder that holds `nulldc3.exe` or `nulldc3.app`,
+and for an AppImage the folder that holds the `.AppImage` file. None is signed by a publisher: Windows' SmartScreen
+asks once ("More info", "Run anyway"), and macOS refuses a downloaded `nulldc3.app` until it is allowed in System
+Settings, Privacy & Security ("Open Anyway") or the quarantine of its unpacked folder is cleared (`xattr -dr
+com.apple.quarantine nulldc3-<version>-macos-arm64`; before that macOS runs it from a read-only place, App
+Translocation, and nullDC says it cannot keep its files there). Each file carries five licences: `LICENSE` (the
+emulator's), `LICENSE-GPL` and `LICENSE-LGPL` (the GNU licences that parts of it are under), `LICENSE-shell` (the BSD
+licence of the platform shell, `nulldc3/LICENSE`) and `LICENSE-devtools` (the MIT licence of the UI): in the AppImage
+under `usr/share/doc/nulldc3/`, in the Windows and macOS folders beside the program (and in
+`nulldc3.app/Contents/Resources`). The tag of a Release, in this repository and in `dreamcast-devtools`, is its
+source.
+
 ## Quick start (Linux)
 
 You need git, CMake 3.19 or newer, Ninja, a C++20 compiler (GCC), the development files of X11 and OpenGL (ALSA,
@@ -159,6 +183,29 @@ for the rest, with the system directories of `$XDG_CONFIG_DIRS` and `$XDG_DATA_D
 `/usr/local/share/nulldc3`, `/usr/share/nulldc3`) read behind them; on Windows `%APPDATA%\nulldc3`; on macOS
 `~/Library/Application Support/nulldc3`. An emulator installed where it cannot write, such as `/usr/bin`, is run
 with `--shared`. The directories of reicast (`~/.reicast`, `~/.config/reicast`, ...) are not read.
+
+## CI
+
+`.github/workflows/ci.yml` runs on GitHub-hosted runners for every pull request, for the push of a tag `v*`, and by
+hand (`workflow_dispatch`); a push to a branch starts nothing. Its jobs only provision a runner and call the scripts
+of `nulldc3/ci/`, which run the same on a machine of one's own (each says how at its top):
+
+| job | runner | what it does |
+|---|---|---|
+| `ui` | `ubuntu-24.04` | `linux.sh ui`: `npm ci` and `npm run build:native` in the submodule `devtools/`; the bundle `dist-native` is the artifact every release file embeds |
+| `linux-x86_64`, `linux-arm64` | `ubuntu-24.04`, `ubuntu-24.04-arm` | `linux.sh deps` (apt), `linux.sh build` (the release emulator, Release, the UI embedded, `-DNULLDC_PREFIX_MAP=ON`; and the `-DHAS_TA_LLE=OFF` emulator), `linux.sh test ci` (the tests project on both, with the data public repositories give: the vector submodules, the UI with `npm ci`, the SH and ARM binutils of Ubuntu (the SH one on x86_64 alone); the tests that need the KallistiOS programs or the RTL checkouts are skipped), `appimage.sh` (the AppImage and its smoke run) |
+| `windows-x86_64` | `windows-2025` | `windows.ps1 -Mode ci` (Windows PowerShell 5.1): Visual Studio's newest MSVC, the release `nulldc3.exe`, the tests project with ctest inside `nulldc3-winrun`, the zip made with `tar.exe`, its smoke run |
+| `macos-arm64` | `macos-26` | `macos.sh ci`: the release `nulldc3.app`, `codesign --verify`, the tests project (the emulator through `tests/macos/macrun.py`), the zip made with `ditto`, its smoke run |
+| `release-check` | `ubuntu-24.04` | pull requests and dispatches: `release.sh check`, the four files named with the version, each configure line naming the `ui` job's UI, `SHA256SUMS` and the notes written, and the `gh` commands a tag would run printed; it creates nothing |
+| `release` | `ubuntu-24.04` | the push of a tag alone, the only job that can write: `release.sh publish`, the version, the base `nulldc3/version-base.txt`, the UI's version and the four configure lines all the tag's; a draft Release with the four files and `SHA256SUMS`, its assets checked, then published (a pre-release for a version with a pre-release part) |
+
+Every job's skipped tests are listed with their reasons in its summary; every artifact (the four files, each with its
+configure line, the UI bundle, the would-be notes) is kept 7 days. A dispatch takes the tag it checks against (`tag`)
+and whether the UI must be the tagged one (`require_ui_tag`), and makes nothing. The smoke run of each file, on its
+own runner, starts it as a user would (the AppImage with `APPIMAGE_EXTRACT_AND_RUN=1`): `--version`, a headless run of
+the guest of `tests/debugger/guest/dsptest`, and one with the debugger, whose `debugger.describe` has to name the
+version and the UI. `tests/ci` holds the rules of the workflow (`ci.workflows`) and the check that no tracked file
+names a machine (`ci.hygiene`); `actionlint` checks the file's syntax.
 
 ## Tests and developer documents
 
