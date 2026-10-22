@@ -12,8 +12,8 @@ Every emulator is started as `tests/system` and the selftests start one: headles
 audio device, its files in a directory of its own under the work directory (`--portable <dir>`), an empty
 environment (no display), the real-time clock pinned, a core size limit of 1 byte and a watchdog; a process is
 ended by its pid. The tests run on the emulator that the system tests build (`<build dir>/system/emulator`, or
-`-DNULLDC_EMULATOR=`), and are skipped where those are. No embedded UI bundle is needed. One test runs no emulator:
-`debugger.contract.hash.listening.rule`, which is there wherever python3 is.
+`-DNULLDC_EMULATOR=`), and are skipped where those are. No embedded UI bundle is needed. Two tests run no emulator:
+`debugger.contract.hash.listening.rule` and `debugger.contract.s04.rule`, which are there wherever python3 is.
 
 `contract.py` starts the emulator and the contract runner through `tests/common/emurun.py`, the run helper of the
 harnesses, and reads their output through it (a `\r` in front of a `\n` is not part of a line). On Windows the
@@ -23,7 +23,28 @@ and both run inside `nulldc3-winrun` (`NULLDC_WINRUN`, which the tests project p
 `cmd.exe` it runs and every `node` behind it when the run is ended: Windows has no SIGTERM, and ending the process
 by its pid is ending that job. `tests/system` builds no emulator there: `-DNULLDC_EMULATOR=` is `nulldc3.exe` of an
 emulator build, and the tests are skipped without it. The runner runs on Windows, from a checkout of the UI with
-`npm ci` made there, against `127.0.0.1`.
+`npm ci` made there, against `127.0.0.1`. On macOS the emulator's environment is `TMPDIR` in the run's directory, the
+runner's the caller's with `TMPDIR` and npm's cache in the work directory, and both run through
+`tests/macos/macrun.py` (the sandbox profile that denies the window server, the Dock and LaunchServices, or the one a
+long step runs under; a session of its own, which `macrun.py` kills with everything below it when the run is ended).
+`-DNULLDC_EMULATOR=` is the executable of an emulator build's bundle there,
+`<build>/nulldc3.app/Contents/MacOS/nulldc3` (`tests/system` builds none); without it, or with one that names no
+file, the tests are tests whose data is missing. The runner runs from a checkout of the UI on the Mac with `npm ci`
+made there, against `127.0.0.1`.
+
+**S04 on the recompiler of an arm64 host is recorded, not gated** (PL-D78 of the platform round; the design's
+contract notes, 5.5.4). The arm64 recompiler restarts its slice counter at every entry of its loop, and its
+breakpoints and steps are the interpreter fallback's with or without `Debugger:ForceFallback` (`CaptureEngine` of
+`dbg_emu.cpp`: there is no native engine to force away from), so a step there can move `dc.timing.SH4_CYCLES` by less
+than a slice. `contract.py`'s `run_runner` (the modes that run the runner) passes a run on an `arm64` or `aarch64`
+host with `--engine jit`, with or without `--fallback`, whose runner failed S04 alone, by the runner's summary
+(`--json-file`, `ContractSummary` of the UI's `scripts/contract/run.ts`): one scenario failed, S04; nothing partial,
+nothing not applicable, no invariant violated, no clean-up problem, no required note missing, S04 the one required
+scenario not passed; and S04's one detail is one of its two checks of `SH4_CYCLES` across a step, "went back from
+<a> to <b> in a step" with `<a> - <b>` below `SH4_TIMESLICE` (448), or "did not increase in a step that did not end at
+an exception vector". The test then prints `S04: recorded (PL-D78): <the detail>` behind the runner's summary line.
+Every other result is as before, on every host; the interpreter is gated in full everywhere.
+`debugger.contract.s04.rule` holds the rule on made-up summaries and `run_runner` on a made-up runner.
 
 All the others but twelve boot `2ndmix.elf` of `NULLDC_ELF_DIR` (the KallistiOS example: it runs under reios, starts the
 ARM7, has a `.symtab`, entry `0x8C010000`); `debugger.contract.m2arm7.guest`, `.m2writes.guest`, `.m2.guest`,
@@ -64,6 +85,7 @@ itself, `--milestone M3 --dsp-program --only S00,S21` against the sounding guest
 | `debugger.contract.hash.idlebp` `.interp` | The same two hashes for `Debugger:Enabled=no` and for a run that the contract runner is connected to in its mode `--idle-breakpoint stars_one_frame`: the run starts at its `StartPaused` stop, the runner mutes the category `sh4`, adds a breakpoint on that symbol, resumes and stays connected until the emulator has run its 600 vblanks and ended. The runner has to end with exit code 0 (the muted breakpoint never stopped the target, no invariant was violated) | the devtools checkout, npm |
 | `debugger.contract.hash.listening` `.interp` | The same two hashes for `Debugger:Enabled=no` and for a run that a client only listens to. The run starts at its `StartPaused` stop with `Debugger:TickMs=20 , Debugger:FullTickEvery=1`: the periodic tick comes every 20 ms and every one of them is a full one. The client connects, describes itself (the tick behind the describe has every path that has registers), sends `control.runUntil`, and from there on only receives until the emulator has run its 600 vblanks and ended. A full tick reads every register of the device tree on the emulator thread, which from milestone M2 on is every device: the system bus, the PVR's register file, the register file of the AICA by field, the interrupt controller of the ARM7, the clock, the GD-ROM drive. The client has to have been sent ten full running ticks at least (40 on the JIT and 92 on the interpreter when this was written), each with all 2949 registers; no tick in front of the last running one may be a stop; the ticks behind it are those of the end of the run (`host-stopped`, `no-game`). A running tick that says `registersStale` is a full one without `dc.sh4.cpu`, with the other 91 paths and their 2880 registers: a recompiler whose SH4 context is not complete where a running machine is read sends every running tick that way (design 2.8), which the one for x64 and the interpreter do not; a tick that does not say it is full with every path, and only then | nothing more |
 | `debugger.contract.hash.listening.guest` `.interp` | The same on the sounding guest of the tree, 600 vblanks: its ARM7 runs, its channels play, its timer raises the interrupt of the ARM7, so the registers of the AICA, the status of the selected channel and the interrupt controller are read while they change (310 full ticks on the JIT and 76 on the interpreter when this was written) | no `NULLDC_ELF_DIR` |
+| `debugger.contract.s04.rule` | The rule of PL-D78 above, `s04_recorded` of `contract.py`, on summaries of the runner that are made up (`s04_rule_test.py`), on every host: on `arm64` and `aarch64` with the engine `jit` a summary whose one failed scenario is S04, failed on a went-back of 1 to 447 or on a step that did not move the counter, is recorded; refused are a went-back of 448 or more (and one of 0, one that went forward, one in hex, one with more text behind it), S04's other checks (its PC, two vectors in a row, a tick without `SH4_CYCLES`), `SH4_CYCLES` across a step of the ARM7, a second detail of S04, a second failed scenario, another scenario failed on the same detail, a count of failed, partial, not applicable or passed out of place by itself, a partial, a scenario not applicable, an invariant violation, a clean-up problem, a required note missing, a required scenario not run, nothing verified, the interpreter, an exit code other than 1, no summary, and every x86-64 host. And `run_runner` itself, with the emulator, the runner and the describe behind it made up by the test and `platform.machine()` answering the host of each case: the recorded runs pass and print `S04: recorded (PL-D78): <the detail>`, the refused ones fail as a runner that did not pass, a runner that passed passes as before | python3; no emulator, no program |
 | `debugger.contract.hash.listening.rule` | What the four tests above take for a full running tick (`full_running_tick` of `contract.py`, the mode `hash-listening-rule`), on nine ticks that are made up: every path that has registers is a full tick; with `registersStale` it is every path but `dc.sh4.cpu`, and the register values of a full tick are fewer by that node's; a tick without `dc.sh4.cpu` that does not say `registersStale` is not full, nor is one that says it and has the node all the same, nor one that lacks another path, nor the four base paths of a running tick. No emulator is run. The stale tick is what a recompiler without `SH4DBG_CTX_AT_SLICE` sends while the target runs; on an x64 host neither engine does, so the four tests never meet one there. With the rule as it was first written (the paths of a full tick are every path, whatever the tick says) they fail against such a server with "0 full ticks" although the hashes are equal | python3; no emulator, no program |
 
 No hash is stored in the tree: a test makes its runs itself and compares them with each other.
