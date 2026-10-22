@@ -670,7 +670,8 @@ def run_child_darwin(work, emulator, kind, script, run_dir, env, text, said):
     else:
         check(os.path.normpath(said.get('npmcache', '')) == os.path.normpath(os.path.join(run_dir, 'npm-cache')),
               'tool: the program had npm\'s cache in %s, not in the run\'s' % said.get('npmcache'))
-        check(set(os.environ) <= set(names) | set(DARWIN_OWN), 'tool: the program had the environment %s, not the caller\'s' % names)
+        check(set(name.upper() for name in os.environ) <= set(names) | set(DARWIN_OWN),
+              'tool: the program had the environment %s, not the caller\'s' % names)
 
     # kill(): macrun.py ends the program, in a session of its own, and the program the program started
     log_path = os.path.join(run_dir, 'kill.txt')
