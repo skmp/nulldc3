@@ -7,7 +7,7 @@ its jobs call (README.md of the tree, "CI", says what runs when).
 |---|---|---|
 | `ci.hygiene` | `nulldc3/ci/hygiene.py` on the tree: no tracked file (as it is in the working tree) names a home directory of Linux (`/home/`), macOS (`/Users/`) or Windows (`\Users\`, `C:/Users/`), a path of WSL's network (`\\wsl$`, `\\wsl.localhost`) or of its drive mounts (`/mnt/<letter>/`), a private IPv4 address (10/8, 172.16/12, 192.168/16) or a `.local` host name, but the lines that a row of `nulldc3/ci/hygiene-allow.txt` allows, each with its reason; and every row still allows a line ("gone" otherwise). Skipped when the tree is not a git checkout | git |
 | `ci.workflows` | `nulldc3/ci/check_workflows.py --self-test` on `.github/workflows/ci.yml`: the rules of the cut's 6.1 and 6.5 that actionlint does not check (below), and each of 29 mutations of the workflow caught by one of them; then (Linux and macOS) `release_test.py`: `nulldc3/ci/release.sh` against a stand-in for `gh` in a scratch repository below the build directory (below). On Windows the stand-in part is not run (`release.sh` is a bash script, and no test there runs a POSIX shell), and the test says so | python3; git and cmake for the stand-in |
-| `ci.scripts` | `scripts_test.py`: `nulldc3/ci/zipcheck.py` on zips made by the test (below) | python3 |
+| `ci.scripts` | `scripts_test.py`: `nulldc3/ci/zipcheck.py` on zips made by the test (below); on Linux `nulldc3/ci/smoke.py` against a stand-in for the emulator (below). On macOS and Windows the `smoke.py` part is not run (their runs go through `macrun.py` and `nulldc3-winrun`, which end what they started), and the test says so | python3 |
 
 ## check_workflows.py
 
@@ -63,5 +63,15 @@ directory as they are written there (zipfile's `orig_filename`: `tar.exe -t`, Wi
 folder's own entry `nulldc3-<v>-windows-x86_64/` and the seven files below it, as `tar.exe -a -c` writes them (passes);
 the same names with `\` and no folder entry, as Compress-Archive of Windows PowerShell 5.1 writes them; `/` without
 the folder's entry; a file missing; a file more; a file below a folder; an entry outside the folder (each refused).
+
+`nulldc3/ci/smoke.py` (Linux) runs against a stand-in for the emulator, a Python program written into the scratch
+directory that answers `--version`, writes a run's files and its exit line, and with the debugger enabled serves
+`debugger.describe` on 127.0.0.1; every run of it has a child in its session that ignores SIGTERM, and records its
+id, its child's and its parent's name. The cases: a good stand-in passes, each run went through `timeout(1)` (no run
+outlives its limit even when `smoke.py` is killed), and nothing of a run is left (the session gets SIGKILL once its
+first process has been waited for); a reply that is no JSON, and one that is a list, fail the debugger's check
+without a traceback and leave nothing; SIGTERM to `smoke.py` while it waits for the debugger's port, and SIGHUP
+while the guest's run hangs, end it with 128 + the signal after the run in progress is ended. What a failed case
+leaves (the stand-in's processes, by the ids they recorded) is killed at the end.
 
     python3 tests/ci/scripts_test.py --tree . --work <scratch directory>

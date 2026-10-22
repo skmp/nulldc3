@@ -11,7 +11,9 @@
 #	               push of a tag). On Windows the stand-in part is not run (release.sh is a bash script, and no test
 #	               there runs a POSIX shell): the target says so.
 #	ci.scripts     scripts_test.py: nulldc3/ci/zipcheck.py on zips made here (the entry names of the central
-#	               directory: no "\", the folder's own entry, exactly the files below it).
+#	               directory: no "\", the folder's own entry, exactly the files below it); on Linux
+#	               nulldc3/ci/smoke.py against a stand-in for the emulator (every run through timeout(1), ended
+#	               whatever the debugger answers and on SIGTERM or SIGHUP to smoke.py, nothing of a run left).
 #	README.md of this directory has more.
 #
 
