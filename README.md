@@ -188,7 +188,10 @@ with `--shared`. The directories of reicast (`~/.reicast`, `~/.config/reicast`, 
 
 `.github/workflows/ci.yml` runs on GitHub-hosted runners for every pull request, for the push of a tag `v*`, and by
 hand (`workflow_dispatch`); a push to a branch starts nothing. Its jobs only provision a runner and call the scripts
-of `nulldc3/ci/`, which run the same on a machine of one's own (each says how at its top):
+of `nulldc3/ci/`, which run the same on a machine of one's own (each says how at its top). On a Windows machine or a
+Mac of one's own nothing they built runs outside the envelope of that system: `windows.ps1` runs the tests project's
+build, ctest and the smoke run inside `nulldc3-winrun`, and `macos.sh` runs off a runner only inside the profile of
+`tests/macos/macrun.py` (it stops otherwise: start it with `macrun.py --detach ... -- nulldc3/ci/macos.sh ...`):
 
 | job | runner | what it does |
 |---|---|---|
@@ -204,8 +207,9 @@ configure line, the UI bundle, the would-be notes) is kept 7 days. A dispatch ta
 and whether the UI must be the tagged one (`require_ui_tag`), and makes nothing. The smoke run of each file, on its
 own runner, starts it as a user would (the AppImage with `APPIMAGE_EXTRACT_AND_RUN=1`): `--version`, a headless run of
 the guest of `tests/debugger/guest/dsptest`, and one with the debugger, whose `debugger.describe` has to name the
-version and the UI. `tests/ci` holds the rules of the workflow (`ci.workflows`) and the check that no tracked file
-names a machine (`ci.hygiene`); `actionlint` checks the file's syntax.
+version and the UI. `tests/ci` holds the rules of the workflow (`ci.workflows`), the check that no tracked file
+names a machine (`ci.hygiene`) and the tests of the Windows zip's entry check and of the smoke run's ending
+(`ci.scripts`); `actionlint` checks the file's syntax.
 
 ## Tests and developer documents
 

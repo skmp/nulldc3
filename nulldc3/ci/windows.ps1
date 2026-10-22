@@ -10,15 +10,18 @@ Written for Windows PowerShell 5.1 (powershell.exe), which every Windows 10 and 
     tree pins for devtools (git rev-parse HEAD:devtools); else the script stops and says what it compared.
  2. Visual Studio's newest developer environment (vswhere -latest, vcvars64.bat), and nulldc3-winrun.exe built by
     tests\winrun\bootstrap.cmd into <work>\winrun: every program the script starts that was built here runs inside it
-    (ctest and the release emulator; PL-D69).
+    (PL-D69): the tests project's build (two of its steps run programs it has just built, sh4_directed_gen and
+    aica_dsp_wasm_trace), ctest, and the release emulator's smoke run. The release emulator's build runs nothing it
+    built, and needs no winrun.
  3. The release emulator: Release, the UI bundle -Dist embedded (an explicit path: no bundle there is a configure
     error), -DNULLDC_PREFIX_MAP=ON, -DCMAKE_VERBOSE_MAKEFILE=OFF, into <work>\release; its configure lines
     "Dreamcast DevTools: ..." into <out>\nulldc3-<version>-windows-x86_64.configure.txt.
  4. The tests project (<work>\tests) with the release emulator as NULLDC_EMULATOR, the vector submodules of the tree,
     the UI checkout (npm ci there, unless -NoNpmCi) as NULLDC_DEVTOOLS_DIR; ci: what CI has (PL-D58), missing data
     skips its tests; full: the data of the gates from -Data, which has elf\, wren7-rtl\, caique-rtl\ and
-    shrike4-rtl\, and NULLDC_TESTS_REQUIRE_DATA=ON. ctest -j4 --output-junit inside an outer nulldc3-winrun; the
-    skipped tests with their reasons go into $env:GITHUB_STEP_SUMMARY when it is set (junit.py), and onto stdout.
+    shrike4-rtl\, and NULLDC_TESTS_REQUIRE_DATA=ON. Its build inside nulldc3-winrun, then ctest -j4 --output-junit
+    inside an outer nulldc3-winrun; the skipped tests with their reasons go into $env:GITHUB_STEP_SUMMARY when it is
+    set (junit.py), and onto stdout.
  5. The zip <out>\nulldc3-<version>-windows-x86_64.zip, made with Windows' own tar.exe (bsdtar, -a: a zip whose
     entry names have "/", never Compress-Archive, PL-D82): the folder nulldc3-<version>-windows-x86_64\ with
     nulldc3.exe, LICENSE, LICENSE-GPL, LICENSE-LGPL, LICENSE-shell (nulldc3\LICENSE), LICENSE-devtools (the UI
@@ -162,7 +165,9 @@ if ($Mode -eq 'full') {
 # a configure of its own every time: nothing a run of the other mode cached stays
 if (Test-Path "$tests\CMakeCache.txt") { Remove-Item -Force "$tests\CMakeCache.txt" }
 Run 'the tests project configure' { & cmake -S "$tree\tests" -B $tests -G Ninja -Wno-dev @args_ }
-Run 'the tests project build' { & ninja -C $tests @ninjaJobs }
+# inside nulldc3-winrun: two steps of the build run programs it has just built (the directed SH4 vectors'
+# generator, the AICA DSP core's trace)
+Run 'the tests project build' { & $winrun --timeout 7200 '--' ninja -C $tests @ninjaJobs }
 # '--' quoted: Windows PowerShell drops a bare -- on its way to a program
 & $winrun --timeout 7200 '--' ctest --test-dir $tests -j4 --output-on-failure --output-junit "$tests\junit.xml"
 $ctest = $LASTEXITCODE

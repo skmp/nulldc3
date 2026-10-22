@@ -2,6 +2,14 @@
 # macos.sh: the macOS job of CI (.github/workflows/ci.yml), the same on a runner and on a Mac of one's own (macOS's
 # own bash 3.2 runs it). Every path comes from the arguments; on a runner RUNNER_TEMP is the default of --work.
 #
+# Off a runner (GITHUB_ACTIONS not true) it runs only inside the sandbox profile of tests/macos/macrun.py, and stops
+# at once otherwise (PL-D69): ctest runs the suites the tests project built, and two steps of that build run programs
+# it has just built (sh4_directed_gen, aica_dsp_wasm_trace), all in this script's process tree. So on a Mac of one's
+# own it is started as
+#   python3 tests/macos/macrun.py --detach --log <file> --rc <file> -- nulldc3/ci/macos.sh <ci|full> ...
+# and the macrun.py calls of the tests inside it find their caller sandboxed. A runner is a machine of the run's own,
+# where ctest is not sandboxed and macrun.py applies the profile to every emulator run.
+#
 #   macos.sh <ci|full> --dist <dist-native> --ui <ui checkout> [--work <dir>] [--out <dir>] [--data <dir>]
 #            [--ccache] [--no-npm-ci] [--no-emsdk] [--jobs <n>] [-- <cmake argument of the tests project>...]
 #
@@ -77,6 +85,12 @@ out=$(cd "$out" && pwd)
 dist=$(cd "$dist" && pwd)
 ui=$(cd "$ui" && pwd)
 python=/usr/bin/python3
+
+# 0. off a runner, inside the profile (the kernel's answer, as macrun.py asks it)
+if [ "${GITHUB_ACTIONS:-}" != true ]; then
+  sandboxed=$($python -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import macrun; print(macrun.kernel_says_sandboxed()[0])' "$tree/tests/macos" 2>&1 || true)
+  [ "$sandboxed" = True ] || die "off a runner macos.sh runs only inside the profile of tests/macos/macrun.py, and the kernel says this process is not sandboxed ($sandboxed): start it as python3 tests/macos/macrun.py --detach --log <file> --rc <file> -- nulldc3/ci/macos.sh ... (PL-D69)"
+fi
 
 # 1. the UI checkout
 [ -f "$ui/LICENSE" ] || die "there is no $ui/LICENSE, the UI's licence that the zip carries as LICENSE-devtools"
