@@ -332,6 +332,12 @@ else()
 
 if(NULLDC_PREFIX_MAP)
   set(_C_FLAGS "${_C_FLAGS} -ffile-prefix-map=${nulldc_root_path}=.")
+  # the macOS shell's Objective-C and Objective-C++ (nulldc3/apple) have flags of their own
+  foreach(lang OBJC OBJCXX)
+    if(CMAKE_${lang}_COMPILER_LOADED)
+      string(APPEND CMAKE_${lang}_FLAGS " -ffile-prefix-map=${nulldc_root_path}=.")
+    endif()
+  endforeach()
 endif()
 
 set(_CXX_FLAGS "${_CXX_FLAGS} ${_C_FLAGS}")
