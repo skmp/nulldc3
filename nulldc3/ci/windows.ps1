@@ -54,6 +54,16 @@ function Run([string]$what, [scriptblock]$block) {
     if ($LASTEXITCODE -ne 0) { Fail "$what failed with exit status $LASTEXITCODE" }
 }
 
+# A directory removed, tried again for a minute: an executable that has just run (or that Defender scans because it
+# was just unpacked) stays locked a moment after its process ended. What is left after that is said, not fatal
+function Remove-Tree([string]$path) {
+    for ($i = 0; $i -lt 60 -and (Test-Path $path); $i++) {
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $path
+        if (Test-Path $path) { Start-Sleep -Seconds 1 }
+    }
+    if (Test-Path $path) { Write-Output "windows.ps1: $path could not be removed (a file of it is still in use)" }
+}
+
 function Write-Lf([string]$path, [string[]]$lines) {
     [System.IO.File]::WriteAllText($path, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
 }
@@ -160,7 +170,7 @@ if ($ctest -ne 0) { $failed += "ctest (exit status $ctest)" }
 
 # 5. the zip
 $stage = Join-Path $Work 'zip'
-if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+Remove-Tree $stage
 $folder = Join-Path $stage $name
 New-Item -ItemType Directory -Force -Path $folder | Out-Null
 Copy-Item (Join-Path $release 'nulldc3.exe') $folder
@@ -188,11 +198,11 @@ if ($bad.Count -ne 0 -or (Compare-Object -SyncWindow 0 $names ($wanted | Sort-Ob
 } else {
     Write-Output "PASS the zip: every entry below $name/ with / alone, the files $($names -join ', ')"
 }
-Remove-Item -Recurse -Force $stage
+Remove-Tree $stage
 
 # 6. the smoke run of the zip unpacked
 $smoke = Join-Path $Work 'smoke'
-if (Test-Path $smoke) { Remove-Item -Recurse -Force $smoke }
+Remove-Tree $smoke
 New-Item -ItemType Directory -Force -Path (Join-Path $smoke 'unpacked') | Out-Null
 Run 'tar.exe -x' { & $tar -x -f $zip -C (Join-Path $smoke 'unpacked') }
 $exe = Join-Path $smoke "unpacked\$name\nulldc3.exe"
@@ -200,7 +210,7 @@ $exe = Join-Path $smoke "unpacked\$name\nulldc3.exe"
     --guest "$tree\tests\debugger\guest\dsptest\dsptest.elf" --work (Join-Path $smoke 'run') `
     --portable (Join-Path $smoke 'portable') '--' $winrun --timeout 120 '--'
 if ($LASTEXITCODE -ne 0) { $failed += 'the smoke run' }
-Remove-Item -Recurse -Force $smoke
+Remove-Tree $smoke
 
 if ($failed.Count -ne 0) {
     Write-Output "windows.ps1: failed: $($failed -join '; ')"
