@@ -132,7 +132,9 @@ if [ $emsdk = no ]; then
   args="$args -DNULLDC_EMCC=OFF"
   ctest_env="EMSDK=$work/no-emsdk"
 fi
-# (the paths of this script's arguments have no blanks: a word each)
+# (the paths of this script's arguments have no blanks: a word each.) A configure of its own every time: nothing a
+# run of the other mode cached stays
+rm -f "$tests/CMakeCache.txt"
 cmake -S "$tree/tests" -B "$tests" -G Ninja -Wno-dev $args $extra
 ninja -C "$tests" $jobs
 rc=0

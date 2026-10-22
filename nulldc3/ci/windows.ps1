@@ -158,6 +158,8 @@ if ($Mode -eq 'full') {
     $args_ += @('-DNULLDC_ELF_DIR=', '-DNULLDC_WREN7_DIR=', '-DNULLDC_CAIQUE_DIR=', '-DNULLDC_SHRIKE4_DIR=',
         '-DNULLDC_TESTS_REQUIRE_DATA=OFF')
 }
+# a configure of its own every time: nothing a run of the other mode cached stays
+if (Test-Path "$tests\CMakeCache.txt") { Remove-Item -Force "$tests\CMakeCache.txt" }
 Run 'the tests project configure' { & cmake -S "$tree\tests" -B $tests -G Ninja -Wno-dev @args_ }
 Run 'the tests project build' { & ninja -C $tests @ninjaJobs }
 # '--' quoted: Windows PowerShell drops a bare -- on its way to a program

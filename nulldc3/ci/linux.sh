@@ -201,6 +201,8 @@ cmd_test() {
   if [ $emsdk = no ]; then
     args+=(-DNULLDC_EMCC=OFF)
   fi
+  # a configure of its own every time: nothing a run of the other mode (or another emsdk choice) cached stays
+  rm -f "$work/tests/CMakeCache.txt"
   cmake -S "$tree/tests" -B "$work/tests" -G Ninja -Wno-dev "${launcher[@]}" "${args[@]}" ${extra[@]+"${extra[@]}"}
   ninja -C "$work/tests" ${jobs[@]+"${jobs[@]}"}
   local rc=0
