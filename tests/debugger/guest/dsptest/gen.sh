@@ -57,6 +57,13 @@ fi
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 
+# The size of a file in bytes: GNU stat on Linux, the BSD stat of macOS there (which has no -c)
+if [ "$(uname -s)" = Darwin ]; then
+	size() { stat -f %z "$1"; }
+else
+	size() { stat -c %s "$1"; }
+fi
+
 cat > "$T/arm7.ld" <<'EOF'
 SECTIONS
 {
@@ -255,7 +262,7 @@ labels() {
 	echo "// program (arm7.bin, DSPTEST_ARM7_SIZE bytes at 0 of the wave memory)."
 	echo
 	echo "#define DSPTEST_BASE 0x8C010000"
-	echo "#define DSPTEST_ARM7_SIZE $(stat -c %s "$T/arm7.bin")"
+	echo "#define DSPTEST_ARM7_SIZE $(size "$T/arm7.bin")"
 	echo
 	labels "$T/sh4.sym"
 	echo
@@ -288,4 +295,4 @@ cp "$T/dsptest_dsp.inc" "$T/dsptest.elf" "$T/arm7.bin" "$T/dsptest_labels.inc" .
 chmod 644 dsptest_dsp.inc dsptest.elf arm7.bin dsptest_labels.inc
 sha256sum $FILES > SHA256SUMS
 
-echo "dsptest.elf: $(stat -c %s dsptest.elf) bytes; arm7.bin: $(stat -c %s arm7.bin) bytes (${arm:-kept, there is no ARM assembler}); dsptest_labels.inc: $(grep -c '^#define DSPTEST_[AG]_\|^#define DSPTEST_START' dsptest_labels.inc) labels; dsptest_dsp.inc: $(grep -c '! MPRO\[' dsptest_dsp.inc) steps"
+echo "dsptest.elf: $(size dsptest.elf) bytes; arm7.bin: $(size arm7.bin) bytes (${arm:-kept, there is no ARM assembler}); dsptest_labels.inc: $(grep -c '^#define DSPTEST_[AG]_\|^#define DSPTEST_START' dsptest_labels.inc) labels; dsptest_dsp.inc: $(grep -c '! MPRO\[' dsptest_dsp.inc) steps"
