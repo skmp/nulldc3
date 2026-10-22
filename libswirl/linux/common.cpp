@@ -394,8 +394,35 @@ void linux_fix_personality() {
 void linux_rpi2_init() {
 }
 
+#if HOST_OS == OS_LINUX && HOST_CPU == CPU_ARM64
+// The page of an arm64 Linux kernel is 4, 16 or 64 KiB, as the kernel was configured (Asahi Linux and the Raspberry
+// Pi 5's own kernel have 16 KiB). The build is made for one, REI_PAGE_SIZE (stdclass.h: 4 KiB on Linux), which the
+// guest memory's mirrors, the write protection of its pages and the fault handler's trap page are laid out in. On a
+// kernel with other pages the build refuses to start, before it sets anything up: one line on stderr, exit status 1
+// (PL-D52). NULLDC_TEST_PAGE_SIZE=<bytes> in the environment is taken for the kernel's page size here, and nowhere
+// else: the test hook that shows the refusal on a kernel with 4 KiB pages (tests/linux_arm64)
+static void refuse_other_page_size()
+{
+	long page = sysconf(_SC_PAGESIZE);
+	const char* test_page = getenv("NULLDC_TEST_PAGE_SIZE");
+	if (test_page != nullptr && test_page[0] != 0)
+		page = strtol(test_page, nullptr, 10);
+
+	if (page == REI_PAGE_SIZE)
+		return;
+
+	fflush(stdout);
+	fprintf(stderr, "nulldc3: this build needs %d KiB pages; this kernel uses %ld KiB\n", REI_PAGE_SIZE / 1024, page / 1024);
+	_exit(1);
+}
+#endif
+
 void common_linux_setup()
 {
+#if HOST_OS == OS_LINUX && HOST_CPU == CPU_ARM64
+	refuse_other_page_size();
+#endif
+
 	linux_fix_personality();
 	linux_rpi2_init();
 

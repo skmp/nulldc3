@@ -41,6 +41,28 @@ extern "C" void ngen_LinkBlock_cond_Next_stub();
 extern "C" void ngen_FailedToFindBlock_();
 extern void vmem_platform_flush_cache(void *icache_start, void *icache_end, void *dcache_start, void *dcache_end);
 
+// The names the assembly below gives C symbols, and the visibility of the stubs it defines. A C name is the symbol of
+// the same name on ELF (Linux) and that name behind an underscore on Mach-O (macOS): the compiler's
+// __USER_LABEL_PREFIX__, which is empty on ELF and _ on Mach-O. The stubs are global symbols of the program, hidden
+// on ELF (.hidden), so that no shared object can take their names; Mach-O's assembly gets no directive for them.
+#define A64_STR_(x) #x
+#define A64_STR(x) A64_STR_(x)
+#define A64_SYM(name) A64_STR(__USER_LABEL_PREFIX__) #name
+#if defined(__ELF__)
+#define A64_HIDDEN(name) ".hidden " A64_SYM(name) "\n\t"
+#else
+#define A64_HIDDEN(name) ""
+#endif
+
+// The code cache of macOS is MAP_JIT memory, which a thread writes only while it has lifted the write protection
+// of its JIT pages (pthread_jit_write_protect_np(false)) and executes only after it put it back. Linux has no such
+// call: the code cache is the static array SH4_TCB, writable and executable (vmem_platform_prepare_jit_block)
+#if defined(__APPLE__)
+#define A64_JIT_WRITE_PROTECT(on) pthread_jit_write_protect_np(on)
+#else
+#define A64_JIT_WRITE_PROTECT(on) ((void)0)
+#endif
+
 struct DynaRBI : RuntimeBlockInfo
 {
 	virtual u32 Relink() override;
@@ -72,47 +94,47 @@ static __attribute((used)) void end_slice()
 
 __asm__
 (
-		// ".hidden ngen_LinkBlock_cond_Branch_stub	\n\t"
-		".globl _ngen_LinkBlock_cond_Branch_stub		\n\t"
-	"_ngen_LinkBlock_cond_Branch_stub:		\n\t"
+		A64_HIDDEN(ngen_LinkBlock_cond_Branch_stub)
+		".globl " A64_SYM(ngen_LinkBlock_cond_Branch_stub) "		\n\t"
+	A64_SYM(ngen_LinkBlock_cond_Branch_stub) ":		\n\t"
 		"mov w1, #1							\n\t"
-		"b _ngen_LinkBlock_Shared_stub		\n"
+		"b " A64_SYM(ngen_LinkBlock_Shared_stub) "		\n"
 
-		// ".hidden ngen_LinkBlock_cond_Next_stub	\n\t"
-		".globl _ngen_LinkBlock_cond_Next_stub	\n\t"
-	"_ngen_LinkBlock_cond_Next_stub:			\n\t"
+		A64_HIDDEN(ngen_LinkBlock_cond_Next_stub)
+		".globl " A64_SYM(ngen_LinkBlock_cond_Next_stub) "	\n\t"
+	A64_SYM(ngen_LinkBlock_cond_Next_stub) ":			\n\t"
 		"mov w1, #0							\n\t"
-		"b _ngen_LinkBlock_Shared_stub		\n"
+		"b " A64_SYM(ngen_LinkBlock_Shared_stub) "		\n"
 
-		// ".hidden ngen_LinkBlock_Generic_stub	\n\t"
-		".globl _ngen_LinkBlock_Generic_stub	\n\t"
-	"_ngen_LinkBlock_Generic_stub:			\n\t"
+		A64_HIDDEN(ngen_LinkBlock_Generic_stub)
+		".globl " A64_SYM(ngen_LinkBlock_Generic_stub) "	\n\t"
+	A64_SYM(ngen_LinkBlock_Generic_stub) ":			\n\t"
 		"mov w1, w29						\n\t"	// djump/pc -> in case we need it ..
 		//"b ngen_LinkBlock_Shared_stub		\n"
 
-		// ".hidden ngen_LinkBlock_Shared_stub	\n\t"
-		".globl _ngen_LinkBlock_Shared_stub	\n\t"
-	"_ngen_LinkBlock_Shared_stub:			\n\t"
+		A64_HIDDEN(ngen_LinkBlock_Shared_stub)
+		".globl " A64_SYM(ngen_LinkBlock_Shared_stub) "	\n\t"
+	A64_SYM(ngen_LinkBlock_Shared_stub) ":			\n\t"
 		"mov x0, lr							\n\t"
 		"sub x0, x0, #4						\n\t"	// go before the call
-		"bl _rdv_LinkBlock					\n\t"   // returns an RX addr
+		"bl " A64_SYM(rdv_LinkBlock) "					\n\t"   // returns an RX addr
 		"br x0								\n"
 
-		// ".hidden ngen_FailedToFindBlock_	\n\t"
-		".globl _ngen_FailedToFindBlock_		\n\t"
-	"_ngen_FailedToFindBlock_:				\n\t"
+		A64_HIDDEN(ngen_FailedToFindBlock_)
+		".globl " A64_SYM(ngen_FailedToFindBlock_) "		\n\t"
+	A64_SYM(ngen_FailedToFindBlock_) ":				\n\t"
 		"mov w0, w29						\n\t"
-		"bl _rdv_FailedToFindBlock			\n\t"
+		"bl " A64_SYM(rdv_FailedToFindBlock) "			\n\t"
 		"br x0								\n"
 
-		// ".hidden ngen_blockcheckfail		\n\t"
-		".globl _ngen_blockcheckfail			\n\t"
-	"_ngen_blockcheckfail:					\n\t"
-		"bl _rdv_BlockCheckFail				\n\t"
+		A64_HIDDEN(ngen_blockcheckfail)
+		".globl " A64_SYM(ngen_blockcheckfail) "			\n\t"
+	A64_SYM(ngen_blockcheckfail) ":					\n\t"
+		"bl " A64_SYM(rdv_BlockCheckFail) "				\n\t"
 		"br x0								\n"
 );
 
-// The run flag is an atomic of 32 bits (sh4_if.h): the ldr of _no_update below is a relaxed load of it, the
+// The run flag is an atomic of 32 bits (sh4_if.h): the ldr of no_update below is a relaxed load of it, the
 // poll of the emulator thread
 static_assert(sizeof(Sh4cntx.CpuRunning) == 4, "the main loop loads the run flag as 32 bits");
 
@@ -138,14 +160,14 @@ void rec_mainloop(void* v_cntx)
 		"mov w27, %[_SH4_TIMESLICE]	\n\t"
 		// w29 is next_pc
 		"ldr w29, [x28, %[pc]]		\n\t"
-		"b _no_update				\n"
+		"b " A64_SYM(no_update) "				\n"
 
-		// ".hidden intc_sched			\n\t"
-		".globl _intc_sched			\n\t"
-	"_intc_sched:					\n\t"
+		A64_HIDDEN(intc_sched)
+		".globl " A64_SYM(intc_sched) "			\n\t"
+	A64_SYM(intc_sched) ":					\n\t"
 		"add w27, w27, %[_SH4_TIMESLICE]	\n\t"
 		"mov x29, lr				\n\r"	// Trashing pc here but it will be reset at the end of the block or in DoInterrupts
-		"bl _UpdateSystem			\n\t"
+		"bl " A64_SYM(UpdateSystem) "			\n\t"
 		"mov lr, x29				\n\t"
 		"cbnz w0, 1f 	\n\t"
 		"ret						\n"
@@ -153,12 +175,12 @@ void rec_mainloop(void* v_cntx)
 	".do_interrupts:				\n\t"
 		"1: \n\t"
 		"mov x0, x29				\n\t"
-		"bl _rdv_DoInterrupts		\n\t"	// Updates next_pc based on host pc
+		"bl " A64_SYM(rdv_DoInterrupts) "		\n\t"	// Updates next_pc based on host pc
 		"mov w29, w0				\n"
 
-		// ".hidden no_update			\n\t"
-		".globl _no_update			\n\t"
-	"_no_update:						\n\t"	// next_pc _MUST_ be on w29
+		A64_HIDDEN(no_update)
+		".globl " A64_SYM(no_update) "			\n\t"
+	A64_SYM(no_update) ":						\n\t"	// next_pc _MUST_ be on w29
 		"ldr w0, [x28, %[CpuRunning]] \n\t"
 		"cbz w0, 1f		\n\t"
 
@@ -280,7 +302,7 @@ public:
 
 	void ngen_Compile(RuntimeBlockInfo* block, SmcCheckEnum smc_checks, bool reset, bool staging, bool optimise)
 	{
-		pthread_jit_write_protect_np(false);
+		A64_JIT_WRITE_PROTECT(false);
 		//printf("REC-ARM64 compiling %08x\n", block->addr);
 #ifdef PROFILING
 		SaveFramePointer();
@@ -697,7 +719,7 @@ public:
 		RelinkBlock(block);
 
 		Finalize();
-		pthread_jit_write_protect_np(true);
+		A64_JIT_WRITE_PROTECT(true);
 	}
 
 	void ngen_CC_Start(shil_opcode* op)
@@ -1392,14 +1414,14 @@ u32 DynaRBI::Relink()
 {
 	//printf("DynaRBI::Relink %08x\n", this->addr);
 
-	pthread_jit_write_protect_np(false);
+	A64_JIT_WRITE_PROTECT(false);
 	Arm64Assembler *compiler = new Arm64Assembler((u8 *)this->code + this->relink_offset);
 
 	u32 code_size = compiler->RelinkBlock(this);
 	compiler->Finalize(true);
 	delete compiler;
 
-	pthread_jit_write_protect_np(true);
+	A64_JIT_WRITE_PROTECT(true);
 	return code_size;
 }
 
@@ -1421,24 +1443,47 @@ void Arm64RegAlloc::Writeback_FPU(u32 reg, eFReg nreg)
 }
 
 
+// The store queue's write to main memory with the MMU off (the do_sqw_nommu of the context, called by the blocks and
+// by the interpreter): x0 the address, x1 the store queues
+#define A64_SQW_NOMMU_AREA_3 \
+		"and x12, x0, #0x20			\n\t"	/* SQ# selection, isolate */ \
+		"add x12, x12, x1			\n\t"	/* SQ# selection, add to SQ ptr */ \
+		"ld2 { v0.2D, v1.2D }, [x12]\n\t" \
+		"movz x11, #0x0C00, lsl #16 \n\t" \
+		"add x11, x1, x11			\n\t"	/* get ram ptr from x1, part 1 */ \
+		"ubfx x0, x0, #5, #20		\n\t"	/* get ram offset */ \
+		"add x11, x11, #512			\n\t"	/* get ram ptr from x1, part 2 */ \
+		"add x11, x11, x0, lsl #5	\n\t"	/* ram + offset */ \
+		"st2 { v0.2D, v1.2D }, [x11] \n\t" \
+		"ret						\n"
+
+#if defined(__ELF__) && !defined(__clang__)
+// GCC has no naked functions on arm64: it ignores the attribute, with a warning, and a build without optimisation
+// gives the function a frame, which the ret of the assembly would leave on the stack. With GCC the function is the
+// assembly itself, in .text, as the stubs at the top of this file are
+__asm__
+(
+		".pushsection .text			\n\t"
+		".p2align 2					\n\t"
+		A64_HIDDEN(do_sqw_nommu_area_3)
+		".globl " A64_SYM(do_sqw_nommu_area_3) "	\n\t"
+		".type " A64_SYM(do_sqw_nommu_area_3) ", %function	\n\t"
+	A64_SYM(do_sqw_nommu_area_3) ":		\n\t"
+		A64_SQW_NOMMU_AREA_3
+		".size " A64_SYM(do_sqw_nommu_area_3) ", . - " A64_SYM(do_sqw_nommu_area_3) "	\n\t"
+		".popsection				\n"
+);
+#else
 extern "C" naked void do_sqw_nommu_area_3(u32 dst, u8* sqb)
 {
 	__asm__
 	(
-		"and x12, x0, #0x20			\n\t"	// SQ# selection, isolate
-		"add x12, x12, x1			\n\t"	// SQ# selection, add to SQ ptr
-		"ld2 { v0.2D, v1.2D }, [x12]\n\t"
-		"movz x11, #0x0C00, lsl #16 \n\t"
-		"add x11, x1, x11			\n\t"	// get ram ptr from x1, part 1
-		"ubfx x0, x0, #5, #20		\n\t"	// get ram offset
-		"add x11, x11, #512			\n\t"	// get ram ptr from x1, part 2
-		"add x11, x11, x0, lsl #5	\n\t"	// ram + offset
-		"st2 { v0.2D, v1.2D }, [x11] \n\t"
-		"ret						\n"
+		A64_SQW_NOMMU_AREA_3
 
 		: : : "memory"
 	);
 }
+#endif
 
 static Arm64Assembler* compiler;
 
@@ -1504,7 +1549,7 @@ struct Arm64NGenBackend: NGenBackend
 
 	bool Rewrite(rei_host_context_t* ctx)
 	{
-		pthread_jit_write_protect_np(false);
+		A64_JIT_WRITE_PROTECT(false);
 		//printf("ngen_Rewrite pc %p\n", host_pc);
 		void *host_pc_rw = (void*)CC_RX2RW(ctx->pc);
 		RuntimeBlockInfo *block = bm_GetBlock((void*)ctx->pc);
@@ -1540,7 +1585,7 @@ struct Arm64NGenBackend: NGenBackend
 		delete assembler;
 		ctx->pc = (unat)CC_RW2RX(code_ptr - 2);
 
-		pthread_jit_write_protect_np(true);
+		A64_JIT_WRITE_PROTECT(true);
 		return true;
 	}
 };

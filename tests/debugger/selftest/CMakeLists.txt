@@ -86,6 +86,80 @@ if(${HOST_OS} EQUAL ${OS_WINDOWS})
   endif()
 endif()
 
+## The arm64 recompiler's known debugger limits (A64) ##
+#
+#	The owner's decision of 2026-10-22: the targets nulldc_a64_known_limits() lists fail on the recompiler of an arm64
+#	host for causes of that recompiler, which a later package, A64, removes (native debugger support on the arm64
+#	recompiler, as the x86-64 one has it); until then they are known limits. On an arm64 host (macOS and Linux:
+#	HOST_CPU of nulldc3/cmake/config.cmake) each is registered as a test that prints "KNOWN LIMIT (A64), NOT RUN:
+#	<cause>" and that ctest counts as skipped; its interpreter twin runs there, and on every other host the target
+#	runs as it is. The list names whole targets, each a run of the SH4 on the recompiler with a twin on the
+#	interpreter (debugger.selftest.<name> and .<name>.interp, debugger.sound.neutral.<name>.jit and .<name>.interp),
+#	and the cause of each:
+#
+#	    stale   the arm64 recompiler keeps the SH4's registers in host registers inside a slice and stores its context
+#	            only at the slice's end: the SH4's registers of a running tick are stale (registersStale), and what
+#	            the test's checks read of the SH4's context while the machine runs, or at a slice end, is not the
+#	            machine's
+#	    slice   the arm64 recompiler starts its slice counter anew at every entry of its loop: a stop and its resume
+#	            move SH4 time by up to a slice (PL-D78's S04), and the run the debugger stopped and resumed does not end
+#	            in the state hash of the run nobody touched
+#
+#	nulldc_debugger_selftest (below) and nulldc_sound_neutral (../guest/dsptest) register them;
+#	debugger.a64.knownlimits (../guest/neutral, behind the last of them) checks the registration on every host.
+#	tests/README.md has the list.
+
+# nulldc_a64_known_limits(<out>): the list, <target>=<cause>
+function(nulldc_a64_known_limits out)
+  set(${out}
+      debugger.selftest.emu=stale
+      debugger.selftest.regs=stale
+      debugger.selftest.core=stale
+      debugger.selftest.hostcycles=slice
+      debugger.selftest.writesrun.neutral=slice
+      debugger.sound.neutral.hitresume.jit=slice
+      debugger.sound.neutral.steps.jit=slice
+      debugger.sound.neutral.hoststop.jit=slice
+      debugger.sound.neutral.dsp.hitresume.jit=slice
+      debugger.sound.neutral.dsp.steps.jit=slice
+      debugger.sound.neutral.dsp.hoststop.jit=slice
+      debugger.sound.neutral.sgc.running.jit=slice
+      debugger.sound.neutral.sgc.paused.jit=slice
+      PARENT_SCOPE)
+endfunction()
+
+# nulldc_a64_known_limit(<test> <out>): <out> is the line of the known limit when <test> is one of the list on an
+# arm64 host, else empty
+function(nulldc_a64_known_limit test out)
+  set(line "")
+  if(${HOST_CPU} EQUAL ${CPU_A64})
+    nulldc_a64_known_limits(limits)
+    foreach(entry ${limits})
+      string(REGEX MATCH "^([^=]+)=(.*)$" _ "${entry}")
+      if(CMAKE_MATCH_1 STREQUAL test)
+        if(CMAKE_MATCH_2 STREQUAL "stale")
+          set(line "KNOWN LIMIT (A64), NOT RUN: the arm64 recompiler keeps the SH4's registers in host registers inside a slice and stores its context only at the slice's end: the SH4's registers of a running tick are stale (registersStale), and what this test's checks read of the SH4's context while the machine runs, or at a slice end, is not the machine's")
+        elseif(CMAKE_MATCH_2 STREQUAL "slice")
+          set(line "KNOWN LIMIT (A64), NOT RUN: the arm64 recompiler starts its slice counter anew at every entry of its loop: a stop and its resume move SH4 time by up to a slice (PL-D78's S04), and the run the debugger stopped and resumed does not end in the state hash of the run nobody touched")
+        else()
+          message(FATAL_ERROR "nulldc_a64_known_limits: ${test} has no cause this function knows: ${CMAKE_MATCH_2}")
+        endif()
+      endif()
+    endforeach()
+  endif()
+  set(${out} "${line}" PARENT_SCOPE)
+endfunction()
+
+# nulldc_a64_register(<test> <run|limit|skip> [<line>]): registers <test> as a known limit (limit: the line, which
+# ctest counts as skipped) and notes what <test> was registered as, for debugger.a64.knownlimits
+function(nulldc_a64_register test kind)
+  if(kind STREQUAL "limit")
+    add_test(NAME ${test} COMMAND "${CMAKE_COMMAND}" -E echo "${ARGV2}")
+    set_tests_properties(${test} PROPERTIES SKIP_REGULAR_EXPRESSION "KNOWN LIMIT \\(A64\\), NOT RUN: ")
+  endif()
+  set_property(GLOBAL APPEND PROPERTY NULLDC_A64_REGISTERED "${test}=${kind}")
+endfunction()
+
 function(nulldc_debugger_selftest name)
   cmake_parse_arguments(ARG "" "MODE;SELFTEST;ELF;TIMEOUT" "ENGINES;CONFIG;ARGS" ${ARGN})
 
@@ -111,9 +185,11 @@ function(nulldc_debugger_selftest name)
 
     if(nulldc_selftest_skip)
       nulldc_add_skipped_test(${test} "${nulldc_selftest_skip}")
+      nulldc_a64_register(${test} skip)
       continue()
     elseif(nulldc_selftest_missing)
       nulldc_add_missing_data_test(${test} "${nulldc_selftest_missing}")
+      nulldc_a64_register(${test} skip)
       continue()
     endif()
 
@@ -129,6 +205,7 @@ function(nulldc_debugger_selftest name)
       if(NOT NULLDC_ELF_DIR OR NOT EXISTS "${NULLDC_ELF_DIR}/${ARG_ELF}")
         nulldc_add_missing_data_test(${test}
           "no ${ARG_ELF} in NULLDC_ELF_DIR (\"${NULLDC_ELF_DIR}\"), configure with -DNULLDC_ELF_DIR=<directory with the KallistiOS examples>")
+        nulldc_a64_register(${test} skip)
         continue()
       endif()
       list(APPEND command --guest "${NULLDC_ELF_DIR}/${ARG_ELF}")
@@ -138,9 +215,17 @@ function(nulldc_debugger_selftest name)
       list(APPEND command --config ${item})
     endforeach()
 
+    # a known limit of the arm64 recompiler (above) on an arm64 host
+    nulldc_a64_known_limit(${test} limit)
+    if(limit)
+      nulldc_a64_register(${test} limit "${limit}")
+      continue()
+    endif()
+
     add_test(NAME ${test} COMMAND ${command} ${ARG_ARGS})
     # selftest.py has a watchdog per run of the emulator, this is the one behind it
     set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT "${nulldc_selftest_env}")
+    nulldc_a64_register(${test} run)
   endforeach()
 endfunction()
 

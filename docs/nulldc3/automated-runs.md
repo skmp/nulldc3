@@ -333,11 +333,30 @@ leave them running in the session it gave them). The harnesses are Python 3.9 wi
 Xcode. They expect what the debugger's arm64 rules say of the arm64 recompiler: its breakpoints and steps on the
 interpreter fallback (`sh4-debug-fallback`, with or without `Debugger:ForceFallback`), and S04 of the contract gates
 recorded, not gated, where it fails on its `SH4_CYCLES` checks alone (PL-D78, `tests/debugger/contract/README.md`).
-`tests/system` builds no emulator on macOS: the tests project takes
+Thirteen targets of those tests are known limits of the arm64 recompiler's debugger on every arm64 host, macOS and
+Linux: they say `KNOWN LIMIT (A64), NOT RUN: <cause>` and are counted as skipped (`tests/README.md`, "Known limits of
+the arm64 recompiler's debugger (A64)"). `tests/system` builds no emulator on macOS: the tests project takes
 `-DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3` (`tests/README.md`, "On macOS", with the skip list).
 The selftest sessions nap with a kqueue timer that the kernel does not coalesce on macOS
 (`libswirl/debugger/dbg_selftest_nap.h`): its timers with the default leeway, `std::this_thread::sleep_for` among
 them, last about half as long again as they are asked for there.
+
+### Linux arm64
+
+Headless mode on Linux arm64 is the one of Linux above. The SH4 runs on the arm64 recompiler, the ARM7 on its
+interpreter. The emulator is built for 4 KiB pages (`REI_PAGE_SIZE`): on a kernel whose pages are 16 or 64 KiB (Asahi
+Linux, the Raspberry Pi 5's own kernel) it refuses to start, before it sets anything up, with one line on stderr and
+exit status 1, whatever the command line (`--version` too):
+
+    nulldc3: this build needs 4 KiB pages; this kernel uses 16 KiB
+
+The fault handler reads and writes the pc of a fault in Linux's `mcontext` (`libswirl/linux/context.cpp`). The
+debugger's arm64 rules, and the thirteen known limits of the arm64 recompiler's debugger, are those of the Mac
+(`tests/README.md`, "On Linux arm64" and "Known limits of the arm64 recompiler's debugger (A64)").
+
+Ubuntu on arm64 (and on x86_64) pipes a crash to apport, which writes under `/var` (its log, and a report for a
+program of a package), as WSL2 pipes it to its handler: an automated run there gets the core file size limit of
+exactly 1 byte of "Faults" below, as the runs of `tests/linux_arm64` and the harnesses do.
 
 ## Faults
 
