@@ -18,13 +18,14 @@ the runner writes them with --json-file (ContractSummary of the UI's scripts/con
                 place by itself, a partial, a scenario not applicable, an invariant violation, a clean-up problem, a
                 required note missing, another required scenario not passed, nothing verified;
                 another check of S04 (its PC, two vectors in a row, the SH4_CYCLES of a step of the ARM7), a second
-                detail of S04; the interpreter; an x86-64 host (x86_64, AMD64); an exit code other than 1 (2: no run);
-                no summary
+                detail of S04; either wording of the two with more text before or behind it, or on another field
+                (dc.timing.SCHED_NOW, a field of another node); the interpreter; an x86-64 host (x86_64, AMD64); an
+                exit code other than 1 (2: no run); no summary
 
 and run_runner itself, with the emulator, the runner and the describe behind it made up by the test (no emulator
 or runner is run) and platform.machine() answering the host of each case: the accepted forms pass the target and it
-prints "S04: recorded (PL-D78): <the detail>"; every refused one fails it, with the message of a runner that did
-not pass; a runner that passed passes as before, with no such line.
+prints "S04: recorded (PL-D78): <the detail>"; every refused detail and summary fails it, with the message of a
+runner that did not pass; a runner that passed passes as before, with no such line.
 
 Python 3.9 and the standard library. Exit code 0 when all of it held.
 """
@@ -185,6 +186,15 @@ REFUSED_DETAILS = (
     ('dc.timing.SH4_CYCLES is in every paused tick (2.8)', 'S04 without SH4_CYCLES in a tick'),
     (WENT_BACK % (5000, 4990) + ' ', 'a went-back with more behind it'),
     ('dc.timing.SH4_CYCLES went back from 0x1388 to 0x1380 in a step', 'a went-back in hex'),
+    ('x ' + WENT_BACK % (5000, 4990), 'a went-back with more before it'),
+    ('x ' + DID_NOT_MOVE, 'a did-not-move with more before it'),
+    (DID_NOT_MOVE + ' ', 'a did-not-move with more behind it'),
+    # S04's two wordings on a field other than dc.timing.SH4_CYCLES: of another node, and of dc.timing itself
+    # (SCHED_NOW, dbg_regs_tables.cpp)
+    ('dc.sh4.cpu.PC went back from 5000 to 4990 in a step', 'the went-back of a field of another node'),
+    ('dc.timing.SCHED_NOW went back from 5000 to 4990 in a step', 'the went-back of another field of dc.timing'),
+    ('dc.timing.SCHED_NOW did not increase in a step that did not end at an exception vector',
+     'the did-not-move of another field of dc.timing'),
 )
 
 REFUSED_SUMMARIES = (
@@ -348,12 +358,12 @@ def test_run_runner(contract, work):
                       '%s, jit%s: a run whose S04 alone failed on "%s" did not pass with the line "S04: recorded (PL-D78)": %s\n%s'
                       % (machine, ' --fallback' if fallback else '', detail, why, out))
                 cases += 1
-        for detail, what in REFUSED_DETAILS[:2]:
+        for detail, what in REFUSED_DETAILS:
             ok, out, why = run_gate(contract, run, machine, 'jit', False, 1, summary_with(detail))
             check(not ok and 'the contract runner ended with exit code 1' in why and 'S04: recorded' not in out,
                   '%s, jit: %s passed the target: %s' % (machine, what, out))
             cases += 1
-        for change, what in REFUSED_SUMMARIES[:5]:
+        for change, what in REFUSED_SUMMARIES:
             ok, out, why = run_gate(contract, run, machine, 'jit', False, 1, changed(summary_with(DID_NOT_MOVE), change))
             check(not ok and 'S04: recorded' not in out, '%s, jit: %s passed the target: %s' % (machine, what, out))
             cases += 1
