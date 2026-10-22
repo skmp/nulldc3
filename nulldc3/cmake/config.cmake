@@ -59,6 +59,11 @@ set(TA_LLE 0x60000002)
 # on by default
 option(HAS_TA_LLE "Use TA LLE" ON)
 
+# The release builds of CI (nulldc3/ci) name no path of the machine that built them: GCC and Clang write the source
+# tree as "." into __FILE__ and the debug information (-ffile-prefix-map, appended to the flags below), MSVC writes
+# the PDB's name without its directory into the executable (/PDBALTPATH:%_PDB%). Off: the commands as before
+option(NULLDC_PREFIX_MAP "Release builds: no build machine path in the binary (-ffile-prefix-map, /PDBALTPATH)" OFF)
+
 # set(FEAT_TA ${TA_LLE})
 
 if(HAS_TA_LLE)
@@ -320,7 +325,14 @@ if(MSVC)
   string(APPEND CMAKE_C_FLAGS " /W3 /utf-8")
   string(APPEND CMAKE_CXX_FLAGS " /EHsc /GR /W3 /utf-8 /bigobj /Zc:__cplusplus /permissive-")
   add_link_options(/STACK:8388608 /CETCOMPAT:NO /OPT:NOICF)
+  if(NULLDC_PREFIX_MAP)
+    add_link_options(/PDBALTPATH:%_PDB%)
+  endif()
 else()
+
+if(NULLDC_PREFIX_MAP)
+  set(_C_FLAGS "${_C_FLAGS} -ffile-prefix-map=${nulldc_root_path}=.")
+endif()
 
 set(_CXX_FLAGS "${_CXX_FLAGS} ${_C_FLAGS}")
 
