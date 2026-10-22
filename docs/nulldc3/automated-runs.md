@@ -354,6 +354,10 @@ The fault handler reads and writes the pc of a fault in Linux's `mcontext` (`lib
 debugger's arm64 rules, and the thirteen known limits of the arm64 recompiler's debugger, are those of the Mac
 (`tests/README.md`, "On Linux arm64" and "Known limits of the arm64 recompiler's debugger (A64)").
 
+Ubuntu on arm64 (and on x86_64) pipes a crash to apport, which writes under `/var` (its log, and a report for a
+program of a package), as WSL2 pipes it to its handler: an automated run there gets the core file size limit of
+exactly 1 byte of "Faults" below, as the runs of `tests/linux_arm64` and the harnesses do.
+
 ## Faults
 
 On Linux a SIGSEGV that is not a guest memory fault (VRAM write protection, a locked JIT page, a fast memory
