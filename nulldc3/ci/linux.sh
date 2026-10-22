@@ -64,10 +64,10 @@ default_work() {
 }
 
 cmd_deps() {
+  # (the runner's image has the compiler, CMake, git and curl)
   local packages=(
-    build-essential cmake ninja-build ccache python3 pkg-config git curl file
-    libx11-dev libgl-dev libegl-dev libgles-dev libasound2-dev libpulse-dev libudev-dev libevdev-dev
-    libcurl4-openssl-dev
+    ninja-build ccache python3 pkg-config file
+    libx11-dev libgl-dev libegl-dev libasound2-dev libpulse-dev libudev-dev libevdev-dev libcurl4-openssl-dev
     binutils-arm-none-eabi
   )
   # The SH objdump of Ubuntu's binutils-sh4-linux-gnu is an oracle of debugger.disasm.sh4_objdump on x86_64 only:

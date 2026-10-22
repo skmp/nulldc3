@@ -19,8 +19,8 @@ nulldc3/ci/hygiene-allow-ui.txt | * | the UI's list: its rows quote the lines of
 nulldc3/ci/hygiene.py | re.compile(r'/ | the check itself: the patterns it looks for
 tests/ci/README.md | `ci.hygiene` | the test's documentation: the patterns it looks for
 
-# reicast's code and third-party code, as they came
-libswirl/gui/gui.cpp | /home/raph/RetroPie/roms/dreamcast/ | reicast's default game folder of a RetroPie build: the path of a RetroPie image, not of a machine of the project
+# code the tree came with, and third-party code, as they came
+libswirl/gui/gui.cpp | /home/raph/RetroPie/roms/dreamcast/ | the default game folder of a RetroPie build, from the code the tree was forked from: the path of a RetroPie image, not of a machine of the project
 libswirl/gpl/deps/picotcp/README.md | * | picoTCP's documentation (third-party): its examples' addresses on a tap device
 libswirl/gpl/deps/picotcp/modules/pico_dns_common.c | 192.168. | picoTCP (third-party): the examples of its comments
 libswirl/gpl/deps/picotcp/modules/pico_dns_common.h | 192.168.0.1 | picoTCP (third-party): the example of a comment

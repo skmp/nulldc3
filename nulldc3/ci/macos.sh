@@ -191,8 +191,7 @@ else
 fi
 $python -B "$here/smoke.py" --exe "$app/Contents/MacOS/nulldc3" --version "$version" --ui-version "$ui_version" \
   --guest "$tree/tests/debugger/guest/dsptest/dsptest.elf" --work "$smoke/run" --portable "$smoke/portable" \
-  "--launcher=$python" "--launcher=-I" "--launcher=-B" "--launcher=$tree/tests/macos/macrun.py" "--launcher=--name" \
-  "--launcher=smoke" "--launcher=--work" "--launcher=$smoke/run" "--launcher=--timeout" "--launcher=120" "--launcher=--" \
+  -- $python -I -B "$tree/tests/macos/macrun.py" --name smoke --work "$smoke/run" --timeout 120 -- \
   || failed="$failed smoke"
 rm -rf "$smoke"
 

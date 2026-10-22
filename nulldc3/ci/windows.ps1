@@ -198,7 +198,7 @@ Run 'tar.exe -x' { & $tar -x -f $zip -C (Join-Path $smoke 'unpacked') }
 $exe = Join-Path $smoke "unpacked\$name\nulldc3.exe"
 & $Python -B "$PSScriptRoot\smoke.py" --exe $exe --version $version --ui-version $uiVersion `
     --guest "$tree\tests\debugger\guest\dsptest\dsptest.elf" --work (Join-Path $smoke 'run') `
-    --portable (Join-Path $smoke 'portable') "--launcher=$winrun" '--launcher=--timeout' '--launcher=120' '--launcher=--'
+    --portable (Join-Path $smoke 'portable') '--' $winrun --timeout 120 '--'
 if ($LASTEXITCODE -ne 0) { $failed += 'the smoke run' }
 Remove-Item -Recurse -Force $smoke
 

@@ -3,12 +3,12 @@
 program they made, on the system that made it.
 
     smoke.py --exe <program> --version <version> --ui-version <version> --guest <elf> --work <dir>
-             [--portable <dir> | --beside <dir>] [--launcher <word>]... [--env NAME=VALUE]...
+             [--portable <dir> | --beside <dir>] [--env NAME=VALUE]... [-- <launcher word>...]
 
 Three runs, each with P0's keys (config:Headless=yes, audio:backend=none, config:Dreamcast.RTC=946684800; PL-D71),
-each through the launcher words in front of the program (nulldc3-winrun on Windows, macrun.py on macOS; none on
-Linux, where every run is in a session of its own with DISPLAY and WAYLAND_DISPLAY out of its environment and a core
-file size limit of 1 byte):
+each through the launcher words after "--" in front of the program (nulldc3-winrun on Windows, macrun.py on macOS;
+none on Linux, where every run is in a session of its own with DISPLAY and WAYLAND_DISPLAY out of its environment and
+a core file size limit of 1 byte):
   1. --version: exit status 0, stdout exactly "nullDC <version>" and a line end;
   2. the guest headless for 90 vblanks: exit status 0 and its exit line "nulldc-exit: reason=vblanks ... vblanks=90";
      with --beside <dir> the run has no --portable, and its files (emu.cfg, vmu_save_A1.bin, vmu_save_A2.bin) have
@@ -145,9 +145,15 @@ def main():
     where = parser.add_mutually_exclusive_group()
     where.add_argument('--portable')
     where.add_argument('--beside')
-    parser.add_argument('--launcher', action='append', default=[])
     parser.add_argument('--env', action='append', default=[])
-    options = parser.parse_args()
+    # the launcher's words come after "--" (they have "--" of their own, which argparse would take as its own)
+    argv = sys.argv[1:]
+    launcher = []
+    if '--' in argv:
+        launcher = argv[argv.index('--') + 1:]
+        argv = argv[:argv.index('--')]
+    options = parser.parse_args(argv)
+    options.launcher = launcher
     options.work = os.path.abspath(options.work)
     if os.path.isdir(options.work):
         shutil.rmtree(options.work)
