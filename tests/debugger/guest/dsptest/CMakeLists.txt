@@ -74,7 +74,7 @@ set(nulldc_sound_ticks_2ndmix 40000)
 
 # The function runs in the scope of its caller, a sibling of this directory: it uses what
 # tests/debugger/guest/CMakeLists.txt sets (Python3_EXECUTABLE, nulldc_guest_emulator, nulldc_guest_skip,
-# nulldc_guest_env), nulldc_tests_path and nothing this file sets
+# nulldc_guest_missing, nulldc_guest_env), nulldc_tests_path and nothing this file sets
 function(nulldc_sound_neutral name)
   cmake_parse_arguments(ARG "" "SELFTEST;TIMEOUT" "EXPECT;CONFIG" ${ARGN})
 
@@ -90,6 +90,9 @@ function(nulldc_sound_neutral name)
 
     if(nulldc_guest_skip)
       nulldc_add_skipped_test(${test} "${nulldc_guest_skip}")
+      continue()
+    elseif(nulldc_guest_missing)
+      nulldc_add_missing_data_test(${test} "${nulldc_guest_missing}")
       continue()
     endif()
 
@@ -153,6 +156,9 @@ endif()
 function(nulldc_sound_test test program ticks)
   if(nulldc_guest_skip)
     nulldc_add_skipped_test(${test} "${nulldc_guest_skip}")
+    return()
+  elseif(nulldc_guest_missing)
+    nulldc_add_missing_data_test(${test} "${nulldc_guest_missing}")
     return()
   endif()
 

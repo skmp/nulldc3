@@ -9,6 +9,13 @@
 #	(tests/common/emurun.py), whose path the tests have in NULLDC_WINRUN: the one of NULLDC_WINRUN, or the one
 #	tests/windows builds.
 #
+#	On macOS tests/system builds no emulator either: NULLDC_EMULATOR is the executable of an emulator build's bundle,
+#	<build>/nulldc3.app/Contents/MacOS/nulldc3, and without it, or with one that names no file, the tests are tests
+#	whose data is missing (failures with NULLDC_TESTS_REQUIRE_DATA), and the configure says so. There the scripts
+#	start the emulator, and every other program, through tests/macos/macrun.py (tests/common/emurun.py): the sandbox
+#	profile that denies the window server, the Dock and LaunchServices, a session of its own, a timeout, TMPDIR in
+#	the run's directory.
+#
 #	A package registers the selftest of its file libswirl/debugger/dbg_selftest_<package>.cpp with one line:
 #
 #	    nulldc_debugger_selftest(<name>)
@@ -40,12 +47,25 @@ if(NOT NULLDC_SYSTEM_TESTS AND NOT NULLDC_EMULATOR)
 elseif(${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT NULLDC_EMULATOR)
   set(nulldc_selftest_skip
       "no NULLDC_EMULATOR is given, and on Windows tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<nulldc3.exe of an emulator build>")
-elseif(${HOST_OS} EQUAL ${OS_DARWIN})
-  set(nulldc_selftest_skip "MACb")
-elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX} AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS})
+elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX} AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT ${HOST_OS} EQUAL ${OS_DARWIN})
   set(nulldc_selftest_skip "headless mode is there on Linux, Windows and macOS hosts only")
 elseif(NOT Python3_Interpreter_FOUND)
   set(nulldc_selftest_skip "no python3 to run tests/debugger/selftest/selftest.py with")
+endif()
+
+# macOS: the emulator is the one of NULLDC_EMULATOR, which has to name a file (nulldc_selftest_missing: the reason)
+set(nulldc_selftest_missing "")
+if(NOT nulldc_selftest_skip AND ${HOST_OS} EQUAL ${OS_DARWIN})
+  if(NOT NULLDC_EMULATOR)
+    set(nulldc_selftest_missing
+        "no NULLDC_EMULATOR is given, and on macOS tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  elseif(NOT EXISTS "${NULLDC_EMULATOR}" OR IS_DIRECTORY "${NULLDC_EMULATOR}")
+    set(nulldc_selftest_missing
+        "NULLDC_EMULATOR names no file (\"${NULLDC_EMULATOR}\"): configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  endif()
+  if(nulldc_selftest_missing)
+    message(WARNING "tests/debugger/selftest: ${nulldc_selftest_missing}")
+  endif()
 endif()
 
 if(NULLDC_EMULATOR)
@@ -91,6 +111,9 @@ function(nulldc_debugger_selftest name)
 
     if(nulldc_selftest_skip)
       nulldc_add_skipped_test(${test} "${nulldc_selftest_skip}")
+      continue()
+    elseif(nulldc_selftest_missing)
+      nulldc_add_missing_data_test(${test} "${nulldc_selftest_missing}")
       continue()
     endif()
 
@@ -191,6 +214,8 @@ nulldc_debugger_selftest(writes.smc SELFTEST smcwrites ENGINES jit CONFIG config
 set(test debugger.selftest.sh4bp.sessions)
 if(nulldc_selftest_skip)
   nulldc_add_skipped_test(${test} "${nulldc_selftest_skip}")
+elseif(nulldc_selftest_missing)
+  nulldc_add_missing_data_test(${test} "${nulldc_selftest_missing}")
 elseif(NOT NULLDC_ELF_DIR OR NOT EXISTS "${NULLDC_ELF_DIR}/2ndmix.elf")
   nulldc_add_missing_data_test(${test}
     "no 2ndmix.elf in NULLDC_ELF_DIR (\"${NULLDC_ELF_DIR}\"), configure with -DNULLDC_ELF_DIR=<directory with the KallistiOS examples>")
