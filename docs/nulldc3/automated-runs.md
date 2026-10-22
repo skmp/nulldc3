@@ -395,9 +395,9 @@ bash is 1024 bytes and does not do it). `tests/system` and `tests/perf` set it f
 ## `--help` and `--version`
 
 `--help` prints the usage text and exits with code 0, without opening a display or reading the config, and without
-making or choosing a directory. `--version` does the same with the line `nullDC <version>`, the last on stdout (the
-Linux build prints three lines of its own setup in front of it, the personality and the page size, as it does for
-`--help`; the macOS build prints its line of the page size on stderr, and the version's line is its stdout alone):
+making or choosing a directory (the Linux build prints three lines of its own setup in front of it, the personality
+and the page size). `--version` does the same with the line `nullDC <version>`, its whole stdout on every system (the
+Linux build answers it before its setup, the macOS build prints its line of the page size on stderr):
 the version the build made from git, `3.0.0-pre+g<h>` (the first 10 characters of the commit) until a tag `v<T>` is
 reachable, `<T>` on the tag, `.dirty` or `+dirty` behind it when a tracked file had changed
 (`nulldc3/README.md` has the rule). A script that has a build directory and not the binary reads the same string

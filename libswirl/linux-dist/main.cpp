@@ -275,6 +275,7 @@ static HostDirs find_host_dirs()
 }
 
 void common_linux_setup();
+void common_linux_check_pages();
 void common_linux_fault_block(bool block);
 #if FEAT_HAS_SERIAL_TTY
 bool common_serial_pty_setup();
@@ -321,6 +322,19 @@ void os_gl_term()
 	#endif
 }
 
+// The first of --help and --version in front of the first "--" is --version
+static bool asks_version(int argc, wchar* argv[])
+{
+	for (int i = 1; i < argc; i++)
+	{
+		if (strcmp(argv[i], "--") == 0 || strcmp(argv[i], "--help") == 0)
+			return false;
+		if (strcmp(argv[i], "--version") == 0)
+			return true;
+	}
+	return false;
+}
+
 int main(int argc, wchar* argv[])
 {
 	// A process that a signal ends loses what stdio still holds: with a file or a pipe behind stdout
@@ -330,6 +344,17 @@ int main(int argc, wchar* argv[])
 
 	// the directories to choose from, the command line chooses in nulldc_init()
 	cl_SetHostDirs(find_host_dirs());
+
+	// --version is answered before the setup below prints its lines on stdout, so that its one line is the whole
+	// stdout: when the first --help or --version in front of a "--" is --version, the command line is read here,
+	// and that is either the version's line or the command line refused before it (a --version as the value of
+	// --portable or --config is refused too); --help goes on as before. A Linux arm64 kernel whose pages are not
+	// the build's is refused before either, as it is for every command line
+	if (asks_version(argc, argv))
+	{
+		common_linux_check_pages();
+		return ParseCommandLine(argc, argv) == rv_cli_finish ? 0 : 2;
+	}
 
 	#if defined(USE_SDL)
 		if (SDL_Init(0) != 0)

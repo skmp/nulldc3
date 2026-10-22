@@ -43,9 +43,8 @@ xsend="$work/xsend"
 ${CC:-cc} -O1 -o "$xsend" "$here/xsend.c" -lX11 || { echo "xsend.c did not build"; exit 2; }
 
 # the window title while the debugger holds the machine: "nullDC <version> [paused by debugger]", the version
-# being the build's, which --version prints as "nullDC <version>" (its last line on stdout: the Linux build prints
-# its personality and paging lines in front of it)
-version=$("$bin" --version | tail -n 1)
+# being the build's, which --version prints as "nullDC <version>", its one line on stdout
+version=$("$bin" --version)
 case "$version" in
 "nullDC "?*) ;;
 *) echo "$bin --version did not say the version (\"$version\")"; exit 2 ;;
