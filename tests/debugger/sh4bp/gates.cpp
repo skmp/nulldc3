@@ -2468,16 +2468,32 @@ static void gate_dense()
 
 	//A code cache that has no room for the code of a block when it is empty: the block is made of fewer
 	//instructions. That moves block ends, and time with them; what the guest computes stays.
+	//The line at 0x8C020000 is in a page without data: its blocks do not check their code when they are entered
+	//(DoCheck: NoCheck). The line at 0x8C004000 is in the first 64 KiB of RAM, whose pages hold data from the reset
+	//on (bm_Reset): each of its blocks checks its code when it is entered (Dynarec.SmcCheckLevel of this machine:
+	//FullCheck), with code of its own in front of the block's, about two bytes of host code and one of literal a byte
+	//of guest code on arm64. The cache of that line has less room than the check of a block of the whole fp line
+	//(fp instructions cost no cycles: up to 500 instructions a block). The room a compile keeps for the check is held
+	//there: a compile that kept too little would write the check past the end of the room
+	struct SmallCache { u32 top; bool data; u32 room; };
+	const SmallCache small_caches[] = {
+		{ 0x8C020000, false, 2600 },
+		{ 0x8C004000, true, 1600 },
+	};
+
+	for (const SmallCache& c : small_caches)
 	{
-		const u32 top = 0x8C020000;
+		const u32 top = c.top;
 		const u32 line = 600;
 		const u32 passes = 2;
-		const u32 room = 2600;
+		const u32 room = c.room;
+		const char* page = c.data ? "a page with data, every block checking its code" : "a page without data";
 
 		for (bool fp : { false, true })
 		{
 			std::vector<OwnHit> hits[2];
 			u32 most_bytes = 0;
+			bool page_data = !c.data;
 
 			for (int i = 0; i < 2; i++)
 			{
@@ -2486,7 +2502,10 @@ static void gate_dense()
 				const u32 cache_begin = LastAddr_min;
 
 				if (i == 1)
+				{
+					page_data = bm_RamPageHasData(top, d.end + 4 - top);
 					LastAddr_min = LastAddr = CODE_SIZE - room;
+				}
 
 				//every eighth instruction of the line, and the end
 				std::vector<u32> ids, at;
@@ -2527,9 +2546,12 @@ static void gate_dense()
 				&& hits[1][same].regs.same_all(hits[0][same].regs))
 				same++;
 
+			check(page_data == c.data, "%s line at %08X: the RAM of the line is %s", fp ? "fp" : "integer", top,
+				page_data ? "in a page with data" : "in a page without data");
+
 			check(hits[0].size() == passes * (line / 8) + 1 && hits[1].size() == hits[0].size() && same == hits[0].size() && most_bytes != 0 && most_bytes <= room,
-				"%s line of %u instructions in a code cache of %u bytes: the jit runs it in blocks of at most %u bytes of host code, its stops are the interpreter's with their registers (%zu stops, %zu agree)",
-				fp ? "fp" : "integer", line, room, most_bytes, hits[1].size(), same);
+				"%s line of %u instructions in %s, in a code cache of %u bytes: the jit runs it in blocks of at most %u bytes of host code, its stops are the interpreter's with their registers (%zu stops, %zu agree)",
+				fp ? "fp" : "integer", line, page, room, most_bytes, hits[1].size(), same);
 		}
 	}
 }
