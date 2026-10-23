@@ -3616,6 +3616,269 @@ static void gate_unwind()
 #endif
 
 
+#if HOST_CPU == CPU_ARM64
+/*
+	abi (arm64): the main loop and RunBlock of the arm64 recompiler give a caller back what the AAPCS64 makes a callee
+	keep: x19-x29, sp and the low 64 bits of v8-v15 (d8-d15), through every way they end (jit/backend/arm64/
+	rec_arm64.cpp: one frame and one exit for both). The blocks keep guest registers in w19-w26 and s8-s15 (a write of
+	sN clears the rest of v<N>), the slice counter in w27, the context in x28 and the pc in w29: a frame that saved
+	s8-s15 as 32-bit values, or an exit that missed one of them, gives the caller other values back. As windows.abi.xmm
+	for Windows' xmm6-xmm15: a thunk loads canaries into the nineteen registers, calls the code under test, and writes
+	what they hold when it returns, and sp. The gate puts a wrapper of the thunk in the place of Mainloop and of
+	RunBlock (rdv_ngen), so that the machine's runs and steps go through it, on a line whose instructions write r0 to
+	r7 and fr0 to fr9 (flush_line_write: every host register of the blocks holds a guest register), and checks every
+	call, case by case:
+	    the loop entered with the cpu stopped (the poll), a host stop at a slice end, a pause latched at a slice end,
+	    the loop entered with the slice used up (the end of the slice first);
+	    with native debugger checks also a check that stops in a block, a flow report that stops, the code of a block
+	    that hands its rest over, a step (RunBlock), a step that ends the slice (RunBlock's end of slice)
+*/
+extern "C" void sh4bp_abi_thunk(void (*fn)(void*), void* arg, const u64* in, u64* out);
+
+#define ABI_STR_(x) #x
+#define ABI_STR(x) ABI_STR_(x)
+#define ABI_SYM(name) ABI_STR(__USER_LABEL_PREFIX__) #name
+#if defined(__ELF__)
+#define ABI_TEXT ".pushsection .text\n\t"
+#define ABI_TEXT_END ".popsection\n"
+#else
+#define ABI_TEXT ".text\n\t"
+#define ABI_TEXT_END ""
+#endif
+
+//in: x19-x29 (11), d8-d15 (8); out: the same nineteen behind the call, and sp in front of it and behind it
+__asm__
+(
+	ABI_TEXT
+	".p2align 2\n\t"
+	".globl " ABI_SYM(sh4bp_abi_thunk) "\n"
+	ABI_SYM(sh4bp_abi_thunk) ":\n\t"
+	"hint #34\n\t"						// bti c
+	"stp x29, x30, [sp, #-176]!\n\t"
+	"stp x19, x20, [sp, #16]\n\t"
+	"stp x21, x22, [sp, #32]\n\t"
+	"stp x23, x24, [sp, #48]\n\t"
+	"stp x25, x26, [sp, #64]\n\t"
+	"stp x27, x28, [sp, #80]\n\t"
+	"stp d8, d9, [sp, #96]\n\t"
+	"stp d10, d11, [sp, #112]\n\t"
+	"stp d12, d13, [sp, #128]\n\t"
+	"stp d14, d15, [sp, #144]\n\t"
+	"str x3, [sp, #160]\n\t"
+	"mov x9, sp\n\t"
+	"str x9, [x3, #152]\n\t"
+	"mov x9, x0\n\t"
+	"mov x0, x1\n\t"
+	"ldp x19, x20, [x2, #0]\n\t"
+	"ldp x21, x22, [x2, #16]\n\t"
+	"ldp x23, x24, [x2, #32]\n\t"
+	"ldp x25, x26, [x2, #48]\n\t"
+	"ldp x27, x28, [x2, #64]\n\t"
+	"ldr x29, [x2, #80]\n\t"
+	"ldp d8, d9, [x2, #88]\n\t"
+	"ldp d10, d11, [x2, #104]\n\t"
+	"ldp d12, d13, [x2, #120]\n\t"
+	"ldp d14, d15, [x2, #136]\n\t"
+	"blr x9\n\t"
+	"ldr x9, [sp, #160]\n\t"
+	"stp x19, x20, [x9, #0]\n\t"
+	"stp x21, x22, [x9, #16]\n\t"
+	"stp x23, x24, [x9, #32]\n\t"
+	"stp x25, x26, [x9, #48]\n\t"
+	"stp x27, x28, [x9, #64]\n\t"
+	"str x29, [x9, #80]\n\t"
+	"stp d8, d9, [x9, #88]\n\t"
+	"stp d10, d11, [x9, #104]\n\t"
+	"stp d12, d13, [x9, #120]\n\t"
+	"stp d14, d15, [x9, #136]\n\t"
+	"mov x10, sp\n\t"
+	"str x10, [x9, #160]\n\t"
+	"ldp d14, d15, [sp, #144]\n\t"
+	"ldp d12, d13, [sp, #128]\n\t"
+	"ldp d10, d11, [sp, #112]\n\t"
+	"ldp d8, d9, [sp, #96]\n\t"
+	"ldp x27, x28, [sp, #80]\n\t"
+	"ldp x25, x26, [sp, #64]\n\t"
+	"ldp x23, x24, [sp, #48]\n\t"
+	"ldp x21, x22, [sp, #32]\n\t"
+	"ldp x19, x20, [sp, #16]\n\t"
+	"ldp x29, x30, [sp], #176\n\t"
+	"ret\n\t"
+	ABI_TEXT_END
+);
+
+static const char* const abi_names[19] = {
+	"x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29",
+	"d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15",
+};
+
+//What the wrappers found, for the case that runs
+static struct
+{
+	MainloopFnPtr_t mainloop;
+	RunBlockFnPtr_t runblock;
+	u64 seed;
+	u32 mainloop_calls, runblock_calls;
+	u32 bad_calls;
+	char first_bad[200];
+} abi;
+
+static void abi_call(void (*fn)(void*), void* arg, const char* what)
+{
+	u64 in[19];
+	u64 out[21];
+
+	//values a block does not make: every bit pattern of the canaries differs in both halves from call to call
+	for (u32 i = 0; i < 19; i++)
+		in[i] = (abi.seed += 0x9E3779B97F4A7C15ull) | 0x8000000100000001ull;
+
+	memset(out, 0, sizeof(out));
+	sh4bp_abi_thunk(fn, arg, in, out);
+
+	int wrong = -1;
+	for (u32 i = 0; i < 19 && wrong < 0; i++)
+		if (out[i] != in[i])
+			wrong = (int)i;
+
+	if (wrong >= 0 || out[20] != out[19])
+	{
+		if (abi.bad_calls++ == 0)
+		{
+			if (wrong >= 0)
+				snprintf(abi.first_bad, sizeof(abi.first_bad), "%s gave %s back as %016llX, not %016llX", what, abi_names[wrong],
+					(unsigned long long)out[wrong], (unsigned long long)in[wrong]);
+			else
+				snprintf(abi.first_bad, sizeof(abi.first_bad), "%s gave sp back as %016llX, not %016llX", what,
+					(unsigned long long)out[20], (unsigned long long)out[19]);
+		}
+	}
+}
+
+static void abi_mainloop(void* rcb)
+{
+	abi.mainloop_calls++;
+	abi_call(abi.mainloop, rcb, "Mainloop");
+}
+
+static void abi_runblock(void* code)
+{
+	abi.runblock_calls++;
+	abi_call((void (*)(void*))abi.runblock, code, "RunBlock");
+}
+
+//The wrappers in the place of the backend's two entries, from here until abi_off()
+static void abi_on()
+{
+	abi.mainloop = rdv_ngen->Mainloop;
+	abi.runblock = rdv_ngen->RunBlock;
+
+	rdv_ngen->Mainloop = abi_mainloop;
+	if (abi.runblock)
+		rdv_ngen->RunBlock = abi_runblock;
+
+	abi.mainloop_calls = abi.runblock_calls = abi.bad_calls = 0;
+	abi.first_bad[0] = 0;
+}
+
+static void abi_off()
+{
+	rdv_ngen->Mainloop = abi.mainloop;
+	rdv_ngen->RunBlock = abi.runblock;
+}
+
+//The line of flush_line_write at its top, run until the host stops it at the given slice
+static Dense abi_line(u32 host_stop_slice)
+{
+	machine_reset(ENGINE_JIT);
+
+	Dense d = flush_line_write(0x8C020000);
+
+	R(8) = 0;		//2^32 passes
+	R(12) = G_leaf;
+	R(13) = G_data;
+	R(14) = d.top;
+	machine_set_pc(d.top);
+	machine_set_sr(SR_MD);
+
+	knobs.host_stop_slice = host_stop_slice;
+
+	return d;
+}
+
+//One case: what the wrappers counted, and that every call gave the registers back
+static void abi_case(const char* what, bool ran, u32 mainloop_calls, u32 runblock_calls)
+{
+	check(ran && abi.mainloop_calls >= mainloop_calls && abi.runblock_calls >= runblock_calls && abi.bad_calls == 0,
+		"%s: x19-x29, d8-d15 and sp came back as they were from %u calls of Mainloop and %u of RunBlock (%u did not%s%s)",
+		what, abi.mainloop_calls, abi.runblock_calls, abi.bad_calls, abi.bad_calls ? ": " : "", abi.first_bad);
+}
+
+static void gate_abi()
+{
+	ngen_features features = { };
+	rdv_ngen->GetFeatures(&features);
+
+	//the loop entered with the cpu stopped: the poll leaves it at once
+	{
+		abi_line(0);
+		abi_on();
+		Sh4cntx.CpuRunning = 0;
+		rdv_ngen->Mainloop(sh4_dyna_rcb);
+		abi_off();
+
+		abi_case("Mainloop entered with the cpu stopped", true, 1, 0);
+	}
+
+	//a host stop at a slice end: the loop ends at its poll behind the slice end
+	{
+		abi_line(6);
+		abi_on();
+		MachineStop s = machine_resume();
+		abi_off();
+
+		abi_case("the blocks of a line that writes r0-r7 and fr0-fr9, to a host stop", !s.debugger && counters.slices >= 6 && R(0) != 0, 1, 0);
+	}
+
+	//a pause latched at a slice end, and the resumes behind it
+	{
+		abi_line(30);
+		knobs.pause_every = 4;
+		abi_on();
+
+		u32 pauses = 0;
+		for (;;)
+		{
+			MachineStop s = machine_resume();
+
+			if (!s.debugger)
+				break;
+			pauses += s.cause == StopCause::Pause;
+		}
+		abi_off();
+
+		abi_case("pauses latched at slice ends, each resumed, to a host stop", pauses >= 5, pauses + 1, 0);
+	}
+
+	//the loop entered with the slice used up: the end of the slice comes first
+	{
+		abi_line(5);
+		rdv_ngen->SetSliceCyclesLeft(-7);
+		abi_on();
+		MachineStop s = machine_resume();
+		abi_off();
+
+		abi_case("Mainloop entered with the slice used up (-7 cycles left), to a host stop", !s.debugger && counters.slices >= 5, 1, 0);
+	}
+
+	if (!features.DebugChecks)
+	{
+		note("the recompiler has no native debugger checks: no case of a check, a flow report, a block's rest or RunBlock");
+		return;
+	}
+}
+#endif
+
+
 const Gate gates[] = {
 	{ "b1", "B1 exact pc and registers at a hit: block start, mid-block, delay slot", gate_b1 },
 	{ "b2", "B2 resume exempts once; hit counts in a loop; time at the loop exit", gate_b2 },
@@ -3639,6 +3902,9 @@ const Gate gates[] = {
 	{ "arm", "page discards on arming, blocks over two pages, category mask, breakpoints added in a stop", gate_arm },
 	{ "event", "an event breakpoint on the vblank of the machine: at a slice end, in a SLEEP wait, with an interrupt request", gate_event },
 	{ "threads", "the recompiler of a new emulator thread: the code region of the process, prepared once, and an empty code cache in it", gate_threads },
+#if HOST_CPU == CPU_ARM64
+	{ "abi", "arm64: x19-x29, d8-d15 and sp given back by the main loop and RunBlock, through each of their exits", gate_abi },
+#endif
 #if defined(_WIN32)
 	{ "unwind", "Windows: a stop of a check walked by the system's unwinder through the check stub, the block and the main loop", gate_unwind },
 #endif
