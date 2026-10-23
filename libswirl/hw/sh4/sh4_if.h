@@ -456,7 +456,7 @@ enum {
 	// SLEEP handler inside a block (a JIT that sets the bit closes every span, the FP registers included, in
 	// front of the SLEEP fallback). Without it the context is complete only after Loop() returned.
 	// A backend states the bit itself when it meets all of this; none does by default. The interpreter and the
-	// x64 JIT do; the arm64 JIT does not. Whatever reads SH4 state inside
+	// x64 and arm64 JITs do. Whatever reads SH4 state inside
 	// UpdateSystem() reads it only under the bit (the debugger's slice hook, the sound regression harness), so
 	// its output for a backend changes at the point where that backend starts to report the bit.
 	SH4DBG_CTX_AT_SLICE = 2,

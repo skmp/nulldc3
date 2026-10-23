@@ -66,9 +66,7 @@
 #	makes debugger.sound.neutral.<name>.<jit|interp>: the mode neutral of soundlines.py on the
 #	guest, with N = 2000 and V = 90. The debugger at work (the session <filter> of the selftests, whose test
 #	never returns true) leaves the sound line and the state hash at 90 vblanks as they are without it, and says
-#	every EXPECT text in a line of its own. On an arm64 host a .jit test that nulldc_a64_known_limits() of
-#	../../selftest/CMakeLists.txt lists is a known limit of the arm64 recompiler: "KNOWN LIMIT (A64), NOT RUN:
-#	<cause>", counted as skipped; its .interp twin runs.
+#	every EXPECT text in a line of its own.
 #
 
 set(nulldc_sound_ticks 2000)
@@ -76,8 +74,7 @@ set(nulldc_sound_ticks_2ndmix 40000)
 
 # The function runs in the scope of its caller, a sibling of this directory: it uses what
 # tests/debugger/guest/CMakeLists.txt sets (Python3_EXECUTABLE, nulldc_guest_emulator, nulldc_guest_skip,
-# nulldc_guest_missing, nulldc_guest_env), nulldc_tests_path and nothing this file sets; and the functions
-# nulldc_a64_known_limit and nulldc_a64_register of tests/debugger/selftest, which the tests project adds first
+# nulldc_guest_missing, nulldc_guest_env), nulldc_tests_path and nothing this file sets
 function(nulldc_sound_neutral name)
   cmake_parse_arguments(ARG "" "SELFTEST;TIMEOUT" "EXPECT;CONFIG" ${ARGN})
 
@@ -93,18 +90,9 @@ function(nulldc_sound_neutral name)
 
     if(nulldc_guest_skip)
       nulldc_add_skipped_test(${test} "${nulldc_guest_skip}")
-      nulldc_a64_register(${test} skip)
       continue()
     elseif(nulldc_guest_missing)
       nulldc_add_missing_data_test(${test} "${nulldc_guest_missing}")
-      nulldc_a64_register(${test} skip)
-      continue()
-    endif()
-
-    # a known limit of the arm64 recompiler on an arm64 host (nulldc_a64_known_limits, ../../selftest)
-    nulldc_a64_known_limit(${test} limit)
-    if(limit)
-      nulldc_a64_register(${test} limit "${limit}")
       continue()
     endif()
 
@@ -123,7 +111,6 @@ function(nulldc_sound_neutral name)
     add_test(NAME ${test} COMMAND ${command})
     # soundlines.py has a watchdog per run of the emulator, this is the one behind it
     set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT "${nulldc_guest_env}")
-    nulldc_a64_register(${test} run)
   endforeach()
 endfunction()
 
