@@ -55,6 +55,7 @@
 #include "nulldc_version.h"
 #include "cfg/cfg.h"
 #include "hw/sh4/sh4_if.h"
+#include "hw/sh4/sh4_interpreter.h"
 #include "hw/sh4/sh4_mem.h"
 #include "hw/sh4/sh4_opcode_list.h"
 #include "hw/sh4/sh4_sched.h"
@@ -2583,6 +2584,16 @@ BOUNDED_GUEST_TEST(core_reset, "core.reset")
 			"the tables are what they were: the breakpoint that had stopped, the disabled one, the watch and the muted category (%s)", tick["breakpoints"].dump().c_str());
 
 		CheckArm7(tick, false, "behind the reset");
+
+		// The slice in progress belongs to the machine before the reset: the reset leaves the SH4's slice counter
+		// full (SuperH4Backend::ResetSlice), so that the machine behind it begins at the start of a slice
+		{
+			emu::Sh4EngineInfo info = { };
+			const bool known = emu::GetSh4Engine(&info);
+
+			Check(known && info.sliceCyclesLeft == SH4_TIMESLICE, "and its slice counter is full: %d cycles of a slice of %d left (%s)", info.sliceCyclesLeft,
+				SH4_TIMESLICE, known ? info.backend : "no engine");
+		}
 
 		// the machine runs behind its reset: the boot stops at the entry again
 		rs.stop0 = stop.stopId;
