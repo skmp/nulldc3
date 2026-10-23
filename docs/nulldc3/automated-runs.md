@@ -136,7 +136,12 @@ and the tests `debugger.sound.*`.
 
 * No X11 window is created, no display is opened, no GL context exists. The process needs neither `DISPLAY` nor
   anything else from its environment (it runs under `env -i`): its files are in the directory of the executable,
-  or in the one of `--portable <dir>`; only `--shared` reads `HOME` and `XDG_*`.
+  or in the one of `--portable <dir>`; only `--shared` reads `HOME` and `XDG_*`. Started from an AppImage (its
+  runtime sets `APPIMAGE` and `APPDIR`, and the executable lies below `APPDIR`) the directory of the executable is
+  the one that holds the `.AppImage` file; an `APPIMAGE` that another AppImage left in the environment of a program
+  outside its `APPDIR` changes nothing. An automated run of the AppImage on a machine without FUSE sets
+  `APPIMAGE_EXTRACT_AND_RUN=1` (the runtime extracts it into `$TMPDIR` and removes the copy at the end; the files
+  are still beside the `.AppImage`).
 * The thread that would draw the user interface starts the program of the command line and waits. What the emulator
   thread queues for the user interface (the frames) runs on the emulator thread itself, at the point where it is
   queued: the guest never waits for another thread, and nothing another thread does reaches the guest.
@@ -395,9 +400,9 @@ bash is 1024 bytes and does not do it). `tests/system` and `tests/perf` set it f
 ## `--help` and `--version`
 
 `--help` prints the usage text and exits with code 0, without opening a display or reading the config, and without
-making or choosing a directory. `--version` does the same with the line `nullDC <version>`, the last on stdout (the
-Linux build prints three lines of its own setup in front of it, the personality and the page size, as it does for
-`--help`; the macOS build prints its line of the page size on stderr, and the version's line is its stdout alone):
+making or choosing a directory (the Linux build prints three lines of its own setup in front of it, the personality
+and the page size). `--version` does the same with the line `nullDC <version>`, its whole stdout on every system (the
+Linux build answers it before its setup, the macOS build prints its line of the page size on stderr):
 the version the build made from git, `3.0.0-pre+g<h>` (the first 10 characters of the commit) until a tag `v<T>` is
 reachable, `<T>` on the tag, `.dirty` or `+dirty` behind it when a tracked file had changed
 (`nulldc3/README.md` has the rule). A script that has a build directory and not the binary reads the same string

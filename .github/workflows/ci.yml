@@ -1,0 +1,263 @@
+name: CI
+
+# Pull requests build and test the emulator on Linux x86_64 and arm64, Windows x86_64 and macOS arm64, and make its
+# release files (artifacts, 7 days). A push of a tag v* does the same and makes the GitHub Release of the files (the
+# job release, the only one that can write). A dispatch, given the tag it checks against, runs what a pull request
+# runs and creates nothing. Pushes to branches start nothing. Every job's work is a committed script of nulldc3/ci/
+# (README.md, "CI"); this file provisions, calls them and moves their files.
+on:
+  pull_request:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The tag the release files are checked against (release-check), e.g. v3.0.0-pre. Nothing is created.'
+        type: string
+        required: true
+      require_ui_tag:
+        description: 'The embedded UI has to be the tagged one (its version the base exactly).'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The UI bundle every release file embeds: npm ci and build:native in the submodule devtools/
+  ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # the whole history and its tags (the versions are made from the tags v*); no job pushes with git, so no
+      # checkout keeps the token
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: devtools/package-lock.json
+      - run: nulldc3/ci/linux.sh ui --ui devtools --fetch-tags --out "$RUNNER_TEMP/dist-native"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-native
+          path: ${{ runner.temp }}/dist-native/
+          if-no-files-found: error
+          retention-days: 7
+
+  linux-x86_64:
+    needs: ui
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: devtools/package-lock.json
+      - run: nulldc3/ci/linux.sh deps
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-linux-x86_64-gcc13-${{ hashFiles('CMakeLists.txt', 'nulldc3/cmake/**', 'tests/**/CMakeLists.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-linux-x86_64-gcc13-${{ hashFiles('CMakeLists.txt', 'nulldc3/cmake/**', 'tests/**/CMakeLists.txt') }}-
+            ccache-linux-x86_64-gcc13-
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist-native
+          path: ${{ runner.temp }}/dist-native
+      - run: nulldc3/ci/linux.sh build --dist "$RUNNER_TEMP/dist-native" --work "$RUNNER_TEMP/nulldc3-ci" --out "$RUNNER_TEMP/release-files"
+      - run: nulldc3/ci/linux.sh test ci --ui devtools --work "$RUNNER_TEMP/nulldc3-ci"
+      - run: nulldc3/ci/appimage.sh --build "$RUNNER_TEMP/nulldc3-ci/release" --dist "$RUNNER_TEMP/dist-native" --ui devtools --work "$RUNNER_TEMP/nulldc3-ci" --out "$RUNNER_TEMP/release-files"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nulldc3-linux-x86_64
+          path: ${{ runner.temp }}/release-files/
+          if-no-files-found: error
+          retention-days: 7
+
+  linux-arm64:
+    needs: ui
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: devtools/package-lock.json
+      - run: nulldc3/ci/linux.sh deps
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-linux-arm64-gcc13-${{ hashFiles('CMakeLists.txt', 'nulldc3/cmake/**', 'tests/**/CMakeLists.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-linux-arm64-gcc13-${{ hashFiles('CMakeLists.txt', 'nulldc3/cmake/**', 'tests/**/CMakeLists.txt') }}-
+            ccache-linux-arm64-gcc13-
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist-native
+          path: ${{ runner.temp }}/dist-native
+      - run: nulldc3/ci/linux.sh build --dist "$RUNNER_TEMP/dist-native" --work "$RUNNER_TEMP/nulldc3-ci" --out "$RUNNER_TEMP/release-files"
+      - run: nulldc3/ci/linux.sh test ci --ui devtools --work "$RUNNER_TEMP/nulldc3-ci"
+      - run: nulldc3/ci/appimage.sh --build "$RUNNER_TEMP/nulldc3-ci/release" --dist "$RUNNER_TEMP/dist-native" --ui devtools --work "$RUNNER_TEMP/nulldc3-ci" --out "$RUNNER_TEMP/release-files"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nulldc3-linux-arm64
+          path: ${{ runner.temp }}/release-files/
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-x86_64:
+    needs: ui
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      # every file byte for byte as committed (the tree's .gitattributes says so too)
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: devtools/package-lock.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist-native
+          path: ${{ runner.temp }}/dist-native
+      # Windows PowerShell 5.1, as on the Windows machines the script is run on by hand
+      - run: .\nulldc3\ci\windows.ps1 -Mode ci -Dist "$env:RUNNER_TEMP\dist-native" -Ui devtools -Work "$env:RUNNER_TEMP\nulldc3-ci" -Out "$env:RUNNER_TEMP\release-files"
+        shell: powershell
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nulldc3-windows-x86_64
+          path: ${{ runner.temp }}/release-files/
+          if-no-files-found: error
+          retention-days: 7
+
+  macos-arm64:
+    needs: ui
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: devtools/package-lock.json
+      - run: brew install ninja ccache
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-macos-arm64-appleclang-${{ hashFiles('CMakeLists.txt', 'nulldc3/cmake/**', 'tests/**/CMakeLists.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-macos-arm64-appleclang-${{ hashFiles('CMakeLists.txt', 'nulldc3/cmake/**', 'tests/**/CMakeLists.txt') }}-
+            ccache-macos-arm64-appleclang-
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist-native
+          path: ${{ runner.temp }}/dist-native
+      - run: nulldc3/ci/macos.sh ci --ccache --dist "$RUNNER_TEMP/dist-native" --ui devtools --work "$RUNNER_TEMP/nulldc3-ci" --out "$RUNNER_TEMP/release-files"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nulldc3-macos-arm64
+          path: ${{ runner.temp }}/release-files/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Pull requests and dispatches: the four release files checked, and what the job release would run printed
+  # (release.sh check, which creates nothing). Skipped on the push of a tag.
+  release-check:
+    if: github.event_name != 'push'
+    needs: [ui, linux-x86_64, linux-arm64, windows-x86_64, macos-arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: nulldc3-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/release-files
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist-native
+          path: ${{ runner.temp }}/dist-native
+      - name: Check the release files
+        env:
+          # the inputs of a dispatch; empty and false on a pull request
+          TAG: ${{ inputs.tag }}
+          REQUIRE_UI_TAG: ${{ inputs.require_ui_tag == true && 'true' || 'false' }}
+        run: nulldc3/ci/release.sh check --dir "$RUNNER_TEMP/release-files" --ui-info "$RUNNER_TEMP/dist-native/bundle-info.json" --out "$RUNNER_TEMP/release-notes" --tag "$TAG" --require-ui-tag "$REQUIRE_UI_TAG"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-notes
+          path: ${{ runner.temp }}/release-notes/
+          if-no-files-found: error
+          retention-days: 7
+
+  # The push of a tag v* alone: the GitHub Release of the platform jobs' files (release.sh publish: a draft, its
+  # assets checked, then published). Never needs release-check, which is skipped on the push of a tag.
+  release:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [ui, linux-x86_64, linux-arm64, windows-x86_64, macos-arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: nulldc3-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/release-files
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist-native
+          path: ${{ runner.temp }}/dist-native
+      - name: Publish the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: nulldc3/ci/release.sh publish --dir "$RUNNER_TEMP/release-files" --ui-info "$RUNNER_TEMP/dist-native/bundle-info.json" --out "$RUNNER_TEMP/release-notes"

@@ -49,6 +49,8 @@ set(nulldc_system_cases
   "dirs.portable:"
   "dirs.shared:"
   "dirs.errors:"
+  "dirs.appimage:"
+  "dirs.appimage.inherited:"
 )
 
 find_package(Python3 COMPONENTS Interpreter)

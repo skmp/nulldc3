@@ -33,6 +33,13 @@ if(CMAKE_HOST_WIN32)
   set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
 endif()
 
+# Every command of the build is printed unless the configure line says -DCMAKE_VERBOSE_MAKEFILE=OFF (CI's release
+# builds, for a log of a reasonable size). A cache entry made here, in front of project(), which would cache CMake's
+# own default (off) otherwise; a value of the configure line, or of an earlier configure, is kept
+if(NOT DEFINED CMAKE_VERBOSE_MAKEFILE)
+  set(CMAKE_VERBOSE_MAKEFILE ON CACHE BOOL "Print every command of the build (-DCMAKE_VERBOSE_MAKEFILE=OFF: not)")
+endif()
+
 # the macOS shell is Objective-C and Objective-C++ (nulldc3/apple)
 if(CMAKE_HOST_APPLE)
   project(${TNAME} LANGUAGES C CXX OBJC OBJCXX)
@@ -42,7 +49,6 @@ endif()
 
 set(DEBUG_CMAKE ON)
 
-set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 set(nulldc_root_path  "${CMAKE_CURRENT_SOURCE_DIR}")

@@ -17,8 +17,7 @@
 #	                 shows where stdout cannot be read); for --help both the usage text (cl_test.cpp). Needs no data.
 #	version.binary   the emulator under test (NULLDC_EMULATOR, else the one the system tests build) prints
 #	                 "nullDC <version>" for --version, <version> what version.cmake makes of the tree now, as the
-#	                 last line of its stdout, with nothing in front of it but the three setup lines of the Linux
-#	                 build (binary.cmake; on macOS the line is alone): a binary of another commit fails (one not
+#	                 whole of its stdout (binary.cmake): a binary of another commit fails (one not
 #	                 built again since a commit). The system tests' emulator is configured again at every build of this project
 #	                 (tests/system/build_emulator.cmake), so with it this test cannot tell a version made at
 #	                 configure time from one made at the build; version.build_time can, in every configuration.

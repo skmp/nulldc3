@@ -417,6 +417,15 @@ static void refuse_other_page_size()
 }
 #endif
 
+// The refusal above alone (nothing on every other host): linux-dist/main.cpp answers --version before
+// common_linux_setup() prints its lines, and refuses a kernel with other pages first, whatever the command line
+void common_linux_check_pages()
+{
+#if HOST_OS == OS_LINUX && HOST_CPU == CPU_ARM64
+	refuse_other_page_size();
+#endif
+}
+
 void common_linux_setup()
 {
 #if HOST_OS == OS_LINUX && HOST_CPU == CPU_ARM64

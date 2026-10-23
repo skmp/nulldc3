@@ -36,7 +36,7 @@ libswirl/jit/backend/x64/x64_regalloc.h | This file is part of reicast. | licenc
 libswirl/jit/backend/x64/x64_regalloc.h | reicast is free software: you can redistribute it and/or modify | licence | the file's GPL header
 libswirl/jit/backend/x64/x64_regalloc.h | reicast is distributed in the hope that it will be useful, | licence | the file's GPL header
 libswirl/jit/backend/x64/x64_regalloc.h | along with reicast.  If not, see <https://www.gnu.org/licenses/>. | licence | the file's GPL header
-libswirl/linux-dist/main.cpp | reicast directories of before (~/.reicast, the XDG ones named reicast) are not read. | legacy-dirs | names the old directories, which are not read
+libswirl/linux-dist/main.cpp | The reicast directories of before (~/.reicast, the XDG ones named reicast) | legacy-dirs | names the old directories, which are not read
 libswirl/oslib/audiobackend_coreaudio.cpp | This is part of the Reicast project, please consult the | licence | the file's licence header
 libswirl/reios/descrambl.cpp | Adapted by Stefanos Kornilios Mitsis Poiitidis (skmp) for reicast | credit | the author's credit
 nulldc3/apple/AppDelegate.h | This file is part of reicast-osx | header | the macOS source's provenance header

@@ -154,7 +154,8 @@ if(CASE STREQUAL "hashes")
 elseif(CASE STREQUAL "pages")
   # The refusal of linux/common.cpp, the first thing the start does on Linux arm64: NULLDC_TEST_PAGE_SIZE stands
   # for the kernel's page size there. A kernel of 16 or 64 KiB pages ends the start with the line and 1; the
-  # kernel's own 4 KiB, given or not, starts and answers --version
+  # kernel's own 4 KiB, given or not, starts and answers --version with its one line (linux-dist/main.cpp answers it
+  # before the setup prints its lines, and after the refusal)
   set(keys --portable "${WORK}/portable" --config config:Headless=yes , audio:backend=none , config:Dreamcast.RTC=946684800)
   file(MAKE_DIRECTORY "${WORK}/portable")
   foreach(size 16384 65536)
@@ -180,8 +181,8 @@ elseif(CASE STREQUAL "pages")
     if(NOT "${started-${name}_rc}" STREQUAL "0")
       problem("4096 (${name}): exit status ${started-${name}_rc}, not 0")
     endif()
-    if(NOT "${started-${name}_out}" MATCHES "\nnullDC [^\n]+\n$")
-      problem("4096 (${name}): stdout does not end in the version line: \"${started-${name}_out}\"")
+    if(NOT "${started-${name}_out}" MATCHES "^nullDC [^\n]+\n$")
+      problem("4096 (${name}): stdout is not the version line alone: \"${started-${name}_out}\"")
     endif()
     if("${started-${name}_err}" MATCHES "this build needs")
       problem("4096 (${name}): the start was refused: ${started-${name}_err}")

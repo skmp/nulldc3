@@ -70,7 +70,9 @@ nulldc3 --shared /path/to/your/image.gdi
 .SH "FILES"
 
 Without \fB--portable\fR and \fB--shared\fR the files are in the directory of the executable (the directory of
-the file a symbolic link to it points at). The layout is the same in every directory:
+the file a symbolic link to it points at). Started from an AppImage
+(\fBnulldc3-\fIversion\fB-linux-\fIarch\fB.AppImage\fR), whose files are a read-only image, they are in the
+directory that holds the AppImage file instead. The layout is the same in every directory:
 
 .IP
 emu.cfg, the configuration

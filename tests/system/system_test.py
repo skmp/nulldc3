@@ -8,7 +8,8 @@
 One case per invocation, exit code 0 when it passes. README.md has the cases. Every run of the emulator keeps
 its files in a directory of its own below --work (--portable <run>/portable), has an empty environment (no
 DISPLAY: the runs are headless), a core file limit of 1 byte and a wall-clock watchdog that kills it and fails
-the case. The cases dirs.* run it without --portable as well, and with --shared.
+the case. The cases dirs.* run it without --portable as well, and with --shared, and dirs.appimage* as an AppImage
+starts it.
 """
 
 import argparse
@@ -921,6 +922,91 @@ def case_dirs_shared(h):
     check(not os.path.exists(os.path.join(top, 'bin', 'emu.cfg')), 'a --shared run wrote beside the executable', run)
 
 
+def appimage_scratch(h, name):
+    """scratch() with a stand-in for a mounted AppImage: mnt/, its AppDir (mnt/usr/bin/nulldc3, a copy of the
+    emulator, the directory made read-only as the runtime's mount is) and dist/nulldc3-test.AppImage, the file a user
+    downloaded (its content plays no part). Returns the directory, the copy in mnt/, the environment of scratch() and
+    the AppDir as --work spells it (through the link of work.link: the emulator has to resolve it)."""
+    top, binary, env = scratch(h, name)
+    seed(top, LEGACY_CONFIGS + SHARED_CONFIGS, LEGACY_DATAS + SHARED_DATAS)
+    inside = os.path.join(top, 'mnt', 'usr', 'bin', 'nulldc3')
+    os.makedirs(os.path.dirname(inside))
+    shutil.copy2(binary, inside)
+    os.makedirs(os.path.join(top, 'dist'))
+    with open(os.path.join(top, 'dist', 'nulldc3-test.AppImage'), 'wb') as f:
+        f.write(b'a stand-in for an AppImage\n')
+    for directory in ('mnt/usr/bin', 'mnt/usr', 'mnt'):
+        os.chmod(os.path.join(top, directory), 0o555)
+    return top, inside, env, os.path.join(h.work, name, 'mnt')
+
+
+def appimage_unlock(top):
+    for directory in ('mnt', 'mnt/usr', 'mnt/usr/bin'):
+        os.chmod(os.path.join(top, directory), 0o755)
+
+
+def case_dirs_appimage(h):
+    """Inside an AppImage: with APPIMAGE set and the executable below APPDIR, as the AppImage's runtime starts it from
+    its read-only mount, the files are in the directory that holds the AppImage file, and nowhere else (not in the
+    mount, not in the working directory, HOME or the XDG directories), and nothing of the other places is read. APPDIR
+    is given through a symbolic link (the emulator compares it with every link resolved), and the run starts the
+    executable by APPDIR's path. With APPIMAGE a symbolic link to the AppImage file, the directory is the one of the
+    file the link points at, as it is for the executable itself."""
+    top, inside, env, appdir = appimage_scratch(h, 'appimage.dirs')
+    try:
+        image = os.path.join(top, 'dist', 'nulldc3-test.AppImage')
+        env = dict(env, APPIMAGE=image, APPDIR=appdir, OWD=os.path.join(top, 'cwd'), ARGV0=image)
+        before = listing(top)
+        run = guest_run(h, 'appimage', os.path.join(appdir, 'usr', 'bin', 'nulldc3'), os.path.join(top, 'cwd'), env)
+        check_clean(run, 'guest-exit')
+        check_reads_its_own(run)
+        check_dirs_line(run, os.path.join(top, 'dist'))
+        check_new(run, top, before, ['dist/' + name for name in RUN_FILES], 'a run inside an AppImage')
+        check(sorted(os.listdir(run.directory)) == ['log.txt'], 'the run wrote into its working directory', run)
+
+        # APPIMAGE a symbolic link in another directory: the directory of the file it points at
+        os.makedirs(os.path.join(top, 'links'))
+        link = os.path.join(top, 'links', 'nulldc3.AppImage')
+        os.symlink(os.path.join('..', 'dist', 'nulldc3-test.AppImage'), link)
+        for name in RUN_FILES:
+            os.remove(os.path.join(top, 'dist', name))
+        before = listing(top)
+        run = guest_run(h, 'appimage_link', os.path.join(appdir, 'usr', 'bin', 'nulldc3'), os.path.join(top, 'cwd'),
+                        dict(env, APPIMAGE=link, ARGV0=link))
+        check_clean(run, 'guest-exit')
+        check_reads_its_own(run)
+        check_dirs_line(run, os.path.join(top, 'dist'))
+        check_new(run, top, before, ['dist/' + name for name in RUN_FILES], 'APPIMAGE a symbolic link')
+    finally:
+        appimage_unlock(top)
+
+
+def case_dirs_appimage_inherited(h):
+    """APPIMAGE and APPDIR that another AppImage left in the environment (a program started from an AppImage passes
+    them on): the executable lies outside that APPDIR, and the files stay in the directory of the executable, nowhere
+    else. Also with APPIMAGE alone, and with an APPDIR whose name is the start of the executable's directory's name
+    without being a directory above it (bin/ and bi/)."""
+    top, binary, env = scratch(h, 'inherited.dirs')
+    seed(top, LEGACY_CONFIGS + SHARED_CONFIGS, LEGACY_DATAS + SHARED_DATAS)
+    os.makedirs(os.path.join(top, 'other', 'mnt', 'usr', 'bin'))
+    shutil.copy2(binary, os.path.join(top, 'other', 'mnt', 'usr', 'bin', 'editor'))
+    other_image = os.path.join(top, 'other', 'editor.AppImage')
+    with open(other_image, 'wb') as f:
+        f.write(b'a stand-in for another AppImage\n')
+    os.makedirs(os.path.join(top, 'bi'))
+    for tag, extra in (('inherited', {'APPIMAGE': other_image, 'APPDIR': os.path.join(top, 'other', 'mnt')}),
+                       ('appimage_alone', {'APPIMAGE': other_image}),
+                       ('appdir_prefix', {'APPIMAGE': other_image, 'APPDIR': os.path.join(top, 'bi')})):
+        before = listing(top)
+        run = guest_run(h, tag, binary, os.path.join(top, 'cwd'), dict(env, **extra))
+        check_clean(run, 'guest-exit')
+        check_reads_its_own(run)
+        check_dirs_line(run, os.path.join(top, 'bin'))
+        check_new(run, top, before, ['bin/' + name for name in RUN_FILES], 'a run with %s' % ', '.join(sorted(extra)))
+        for name in RUN_FILES:
+            os.remove(os.path.join(top, 'bin', name))
+
+
 # The command lines that are refused: what follows the program on the command line (the headless keys and
 # guest_exit are in front, so that one taken by mistake starts a run, which writes), and the text of the message.
 # DIR is a directory that is not there, FILE a file, RO a directory that cannot be written, LONG a directory below
@@ -1112,6 +1198,8 @@ CASES = {
     'dirs.portable': case_dirs_portable,
     'dirs.shared': case_dirs_shared,
     'dirs.errors': case_dirs_errors,
+    'dirs.appimage': case_dirs_appimage,
+    'dirs.appimage.inherited': case_dirs_appimage_inherited,
 }
 
 
