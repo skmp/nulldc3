@@ -173,7 +173,8 @@ struct NGenBackend
 	MainloopFnPtr_t Mainloop;
 
 	// Runs the block at this (executable) address once, then does what Mainloop does behind a block: the
-	// end-of-slice work if the slice ran out. The block is not in the block cache and is not linked to.
+	// end-of-slice work if the slice ran out. The block is not in the block cache, is not linked to and links
+	// nothing (RuntimeBlockInfo::temporary: a linking backend ends it by storing its next pc and returning here).
 	// Only with ngen_features::DebugChecks, 0 otherwise
 	RunBlockFnPtr_t RunBlock = 0;
 

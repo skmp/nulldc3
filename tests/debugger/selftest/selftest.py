@@ -26,8 +26,8 @@ cannot be set up, goes on with the interpreter and says "Using MCPU Interpreter"
 Recompiler". The driver of a session says first what the SH4 runs on and what executes its breakpoints and steps,
 by the name debugger.describe gives it ("SelfTest: engine: the SH4 runs on ..., its breakpoints and steps on ..."):
 the SH4 on the engine of that line too, and on the recompiler sh4-debug-fallback with Debugger:ForceFallback=yes
-among the --config items and sh4-debug-native without it (on an x86-64 host, whose recompiler has native
-breakpoints; on another the recompiler has none and runs them on the fallback), on the interpreter
+among the --config items and sh4-debug-native without it (on an x86-64 or an arm64 host, whose recompilers have
+native breakpoints; on another host a recompiler would have none and run them on the fallback), on the interpreter
 sh4-debug-native, which the key does not change. Behind that line the emulator says once that this is the engine
 its configuration asks for ("SelfTest: engine.asked: note: ..."; when it is not, the line is a failed check). A run
 that was made on another engine fails, and says which engine it found and which one was asked for.
@@ -65,9 +65,9 @@ DEBUG_ENGINES = ('sh4-debug-native', 'sh4-debug-fallback')
 # dbg_selftest_emu.cpp; a FAILED line of it when not, which no_failures() finds)
 SESSION_ASKED = re.compile(r'^SelfTest: engine\.asked: note: the engine of the session is the one its configuration asks for: ', re.M)
 
-# The recompiler of an x86-64 host executes breakpoints and steps itself (SH4DBG_NATIVE, hw/sh4/sh4_if.h); the one
-# of an arm64 host does not, and runs them on the interpreter fallback with or without Debugger:ForceFallback
-NATIVE_RECOMPILER = platform.machine().lower() in ('x86_64', 'amd64')
+# The recompilers of x86-64 and arm64 hosts execute breakpoints and steps themselves (SH4DBG_NATIVE, hw/sh4/sh4_if.h);
+# on a host of another kind the expectation is the interpreter fallback, with or without Debugger:ForceFallback
+NATIVE_RECOMPILER = platform.machine().lower() in ('x86_64', 'amd64', 'arm64', 'aarch64')
 
 
 class Failed(Exception):
@@ -170,7 +170,7 @@ def debug_engine_asked(args):
     if forced_fallback(args):
         return 'sh4-debug-fallback', 'the recompiler (config:Dynarec.Enabled=yes) with Debugger:ForceFallback=yes'
     if NATIVE_RECOMPILER:
-        return 'sh4-debug-native', 'the recompiler (config:Dynarec.Enabled=yes) of an x86-64 host, without Debugger:ForceFallback'
+        return 'sh4-debug-native', 'the recompiler (config:Dynarec.Enabled=yes) of an %s host, without Debugger:ForceFallback' % platform.machine()
     return 'sh4-debug-fallback', 'the recompiler (config:Dynarec.Enabled=yes) of a %s host, which has no native breakpoints' % platform.machine()
 
 

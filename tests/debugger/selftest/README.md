@@ -37,9 +37,9 @@ asks for: the driver says first what executes the breakpoints and steps of the S
 breakpoints and steps on sh4-debug-native`, `dbg_selftest.cpp`), and `selftest.py` compares both halves of that
 line with what it asked for: the SH4 on the engine of `--engine`, and `sh4-debug-fallback` on the recompiler with
 `Debugger:ForceFallback=yes` among the `CONFIG` items (`arm7.fallback`, `writes.fallback`), `sh4-debug-native` on
-the recompiler without it (on an x86-64 host, whose recompiler executes them itself; the recompiler of another host
-has none and reports the fallback, which is then what is asked for), `sh4-debug-native` on the interpreter, with the
-key or without it. A failure says the engine found and the one asked for. Up to f640f21a no test looked:
+the recompiler without it (on an x86-64 or an arm64 host, whose recompilers execute them themselves; on a host of
+another kind a recompiler would have none and report the fallback, which would then be what is asked for),
+`sh4-debug-native` on the interpreter, with the key or without it. A failure says the engine found and the one asked for. Up to f640f21a no test looked:
 `arm7.fallback` and `writes.fallback` passed on an emulator that ignored the key (the mutant `nofallback` of the M2
 gate). `startpaused` has no session, and checks the SH4 alone.
 
