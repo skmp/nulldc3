@@ -1,8 +1,9 @@
 # debugger.sh4bp: SH4 code breakpoints and steps in the active backend
 
 The gates of the breakpoint mechanism that need no emulator thread. The mechanism is the code the emulator
-runs: `libswirl/debugger/dbg_sh4.cpp` with the `dbg_sh4_*` helpers, the decoder, the x64 backend with its main
-loop and block manager, the interpreter, and the interpreter fallback of `hw/sh4/dyna/driver.cpp`. Around it
+runs: `libswirl/debugger/dbg_sh4.cpp` with the `dbg_sh4_*` helpers, the decoder, the recompiler of the host (the x64
+backend on x86-64, the arm64 backend on arm64) with its main loop and block manager, the interpreter, and the
+interpreter fallback of `hw/sh4/dyna/driver.cpp`. Around it
 stands a small machine (`machine.h`): RAM behind memory handlers, a time base that counts slices, the SH4's
 own interrupt controller with one request line, one debugger event (the vblank), and a stand-in for run
 control (`dbg::emu`) whose park context is the test itself.
@@ -15,16 +16,22 @@ ctest --test-dir <build dir>            # one test per gate: debugger.sh4bp.b1 .
 ```
 
 The directory also works as a part of the tests project (`add_subdirectory(debugger/sh4bp)` in
-`tests/CMakeLists.txt`). It needs an x86-64 host with the SH4 recompiler, Linux or Windows; elsewhere the tests are
-skipped. On Windows `b11` says `SKIPPED` (it counts host instructions with Linux's performance counters), and the
+`tests/CMakeLists.txt`). It needs a host with the SH4 recompiler: x86-64, Linux or Windows, or arm64, Linux or macOS;
+elsewhere the tests are skipped. On Windows and on macOS `b11` says `SKIPPED` (it counts host instructions with
+Linux's performance counters; on Linux too where the kernel does not let a process count its own). On arm64 the
+suite links the arm64 backend with vixl, and has what the emulator has for it there (`stubs.cpp`): the flush of the
+caches over code the backend wrote, and on macOS the code region as MAP_JIT memory at the address of `SH4_TCB`, as
+`libswirl/linux/posix_vmem.cpp` maps it; a Mac that refuses that region makes every program of the suite say
+`SKIPPED: the code region: ...` with the request, the error and the distance, which ctest counts as a skip. The gate
+`abi` (arm64 only) holds what the main loop and RunBlock give a caller back. On Windows the
 suite has the emulator's code region with its unwind data (`libswirl/windows/win_jit_unwind.cpp`, handed the region
 by `stubs.cpp`) and its policy for a program that dies (no box, no crash report, 128 + the signal's number): at every
 stop `machine.cpp` walks the stack with the system's unwinder back to the machine, every gate checks that each of its
 walks came through, and the gate `unwind` (Windows only) that walks from stops of the recompiler's checks came through
 the check stub, the block and the main loop.
 
-The gates run on three engines, each on those it applies to: `jit` (the x64 backend, checks and steps native
-to it), `interpreter`, and `fallback` (the x64 backend with the debugger told to use the interpreter fallback,
+The gates run on three engines, each on those it applies to: `jit` (the recompiler of the host, checks and steps
+native to it), `interpreter`, and `fallback` (that recompiler with the debugger told to use the interpreter fallback,
 as the configuration key `Debugger:ForceFallback` does).
 
 ## The gates
@@ -58,6 +65,7 @@ holds the guest programs.
 | `arm` | What arming discards: a block that starts on the page in front of the address, the block of a branch whose slot is on the next page, nothing on other pages, nothing for a second breakpoint on an armed address. Two breakpoints on one address report the lowest id. The category mask stops and lets pass without a block being compiled. A breakpoint added during a stop, in the stopped block, stops the resume. Breakpoints on two instructions in a row, and on a delayed branch together with its slot |
 | `event` | The machine's vblank event with an event breakpoint on it, which the selftest counts the vblanks of a booted guest with: a stop where the slice of every vblank ends, with the cause and the id, and the state of a run behind them; none with the gate of the event closed or the category muted. A vblank in a SLEEP wait cuts the wait short and leaves the pc on the SLEEP, which is executed again; an interrupt that is accepted on the way out of that stop returns behind the SLEEP |
 | `unwind` | Windows only: a breakpoint at the first instruction of a block, in its middle and on the slot of a `bra`, on the jit: the stop of the check is walked by the system's unwinder from the debugger's latch through `dbg_sh4_Check`, the check stub, the block and the main loop back to the machine. The stub's frame at its call is the callee's home space and the refund, 40 bytes below the return address into the block, which is the frame of a block: what the unwind data of the code region describes for every pc that is not the main loop's or RunBlock's |
+| `abi` | arm64 only, as `unwind` is Windows-only: the registers a caller keeps (`x19`-`x29`, `sp` and the low 64 bits of `v8`-`v15`, `d8`-`d15`, which the AAPCS64 makes a callee give back) come back from the main loop and RunBlock of the arm64 backend through each way they end. A thunk loads canaries into them, calls the entry and writes what they hold when it returns; wrappers of it take the place of both entries (`rdv_ngen`) while the machine runs a line whose instructions write `r0`-`r7` and `fr0`-`fr9`, so that every host register of the blocks holds a guest register (the blocks write `s8`-`s15`, which clears the rest of `v8`-`v15`). Cases: the loop entered with the cpu stopped, a host stop at a slice end, pauses latched at slice ends, the loop entered with the slice used up, a check that stops in a block, steps (RunBlock) of which one ends the slice, a step-out whose flow report stops, a block whose code hands its rest over (that exit, and RunBlock for the rest) |
 | `threads` | Not of the breakpoint mechanism: what the recompiler of a new emulator thread starts with, on the suite's machine because its stand-in for the host counts what the recompiler asks of it. Every emulator thread makes its backend objects anew, and a process has as many emulator threads as its host stops and starts the machine: 256 objects behind the first. The host is asked to prepare the code region once, for the first of them (asked at every start, Linux gives the same pages again, and Windows a new region of 10 MB near the program every time, with room for some two hundred). Every object has the code cache where the first had it, with the stubs of the code generator at its start, nothing behind them and no block in the tables; and the workload run on it ends in the state of the first object's run, with the same blocks in as many bytes of code |
 
 Not here, because they need the emulator: the park loop itself and its arbitration with the host, a step over

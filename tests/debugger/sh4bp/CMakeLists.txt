@@ -74,13 +74,10 @@ else()
   return()
 endif()
 
-# The arm64 recompiler without native debugger checks yet (A64's first step): the gates but abi are skipped there.
-# On arm64 a program that the host refuses its code region says so (stubs.cpp): sh4bp_add_test gives the tests that
+# On arm64 a program that the host refuses its code region says so (stubs.cpp): sh4bp_refusal gives the tests that
 # start one the regular expression of that line
-set(sh4bp_native_skip "")
 set(sh4bp_refused "")
 if(${HOST_CPU} EQUAL ${CPU_A64})
-  set(sh4bp_native_skip "the sh4bp gates need a backend with native SH4 debugger checks (DebugChecks)")
   set(sh4bp_refused "SKIPPED: the code region")
 endif()
 
@@ -279,18 +276,6 @@ add_executable(sh4bp_test
 )
 target_link_libraries(sh4bp_test PRIVATE nulldc_sh4bp)
 
-# sh4bp_skipped(<test> <out>): <out> is true when the test is registered as skipped for the reason of
-# sh4bp_native_skip
-function(sh4bp_skipped test out)
-  if(sh4bp_native_skip AND NOT test STREQUAL "debugger.sh4bp.abi")
-    add_test(NAME ${test} COMMAND ${CMAKE_COMMAND} -E echo "SKIPPED: ${sh4bp_native_skip}")
-    set_tests_properties(${test} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
-    set(${out} TRUE PARENT_SCOPE)
-  else()
-    set(${out} FALSE PARENT_SCOPE)
-  endif()
-endfunction()
-
 # sh4bp_refusal(<test>): a test whose program the host can refuse its code region (arm64) counts that as a skip
 function(sh4bp_refusal test)
   if(sh4bp_refused)
@@ -299,10 +284,6 @@ function(sh4bp_refusal test)
 endfunction()
 
 foreach(gate ${sh4bp_gates})
-  sh4bp_skipped(debugger.sh4bp.${gate} skipped)
-  if(skipped)
-    continue()
-  endif()
   add_test(NAME debugger.sh4bp.${gate} COMMAND sh4bp_test ${gate})
   set_tests_properties(debugger.sh4bp.${gate} PROPERTIES TIMEOUT 300)
   sh4bp_refusal(debugger.sh4bp.${gate})
@@ -325,13 +306,10 @@ add_executable(sh4bp_selftest
 )
 target_link_libraries(sh4bp_selftest PRIVATE nulldc_sh4bp)
 
-sh4bp_skipped(debugger.sh4bp.selftest skipped)
-if(NOT skipped)
-  add_test(NAME debugger.sh4bp.selftest
-    COMMAND ${CMAKE_COMMAND} -DSELFTEST=$<TARGET_FILE:sh4bp_selftest> -P "${CMAKE_CURRENT_SOURCE_DIR}/selftest_compare.cmake")
-  set_tests_properties(debugger.sh4bp.selftest PROPERTIES TIMEOUT 600)
-  sh4bp_refusal(debugger.sh4bp.selftest)
-endif()
+add_test(NAME debugger.sh4bp.selftest
+  COMMAND ${CMAKE_COMMAND} -DSELFTEST=$<TARGET_FILE:sh4bp_selftest> -P "${CMAKE_CURRENT_SOURCE_DIR}/selftest_compare.cmake")
+set_tests_properties(debugger.sh4bp.selftest PROPERTIES TIMEOUT 600)
+sh4bp_refusal(debugger.sh4bp.selftest)
 
 # The gates on the booted guest: sessions of the tests sh4bpboot against sessions of their twins sh4bpbase
 foreach(boot ${sh4bp_boots})
@@ -341,10 +319,6 @@ foreach(boot ${sh4bp_boots})
     set(idleskip off)
   endif()
 
-  sh4bp_skipped(debugger.sh4bp.boot.${boot} skipped)
-  if(skipped)
-    continue()
-  endif()
   add_test(NAME debugger.sh4bp.boot.${boot}
     COMMAND ${CMAKE_COMMAND} -DSELFTEST=$<TARGET_FILE:sh4bp_selftest> -DENGINE=${engine} -DIDLESKIP=${idleskip}
       -P "${CMAKE_CURRENT_SOURCE_DIR}/selftest_boot.cmake")
@@ -380,13 +354,10 @@ target_link_libraries(sh4bp_cost_on PRIVATE nulldc_sh4bp)
 add_executable(sh4bp_cost_off cost.cpp stubs.cpp "${nulldc_core_path}/debugger/dbg_selftest_sh4bp_guest.inc")
 target_link_libraries(sh4bp_cost_off PRIVATE nulldc_sh4bp_off)
 
-sh4bp_skipped(debugger.sh4bp.b11 skipped)
-if(NOT skipped)
-  add_test(NAME debugger.sh4bp.b11
-    COMMAND ${CMAKE_COMMAND} -DCOST_ON=$<TARGET_FILE:sh4bp_cost_on> -DCOST_OFF=$<TARGET_FILE:sh4bp_cost_off>
-      -P "${CMAKE_CURRENT_SOURCE_DIR}/b11_compare.cmake")
-  set_tests_properties(debugger.sh4bp.b11 PROPERTIES TIMEOUT 600 SKIP_REGULAR_EXPRESSION "SKIPPED:")
-endif()
+add_test(NAME debugger.sh4bp.b11
+  COMMAND ${CMAKE_COMMAND} -DCOST_ON=$<TARGET_FILE:sh4bp_cost_on> -DCOST_OFF=$<TARGET_FILE:sh4bp_cost_off>
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/b11_compare.cmake")
+set_tests_properties(debugger.sh4bp.b11 PROPERTIES TIMEOUT 600 SKIP_REGULAR_EXPRESSION "SKIPPED:")
 
 
 ## Windows: the policy for a program that dies ##

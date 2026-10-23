@@ -1,6 +1,7 @@
 /*
 	The gates. Each one names the gate of the design it stands for (B1 to B14) and runs for every engine it
-	applies to: the x64 backend, the interpreter, and the x64 backend with the interpreter fallback forced.
+	applies to: the recompiler of the host (the x64 backend on x86-64, the arm64 backend on arm64), the interpreter,
+	and the recompiler with the interpreter fallback forced.
 */
 #include "gates.h"
 #include "machine.h"
@@ -2035,7 +2036,8 @@ static void gate_dense()
 	//behind it (flush_line_write). One such check adds the call, both halves of the flush and the tail of the
 	//checks to its block; the budget's worth of them, with one tail, has to stay within the 16 KiB that the backend
 	//states. The register set is the calling convention's: 6 general and 4 xmm registers with System V, 8 and 10
-	//with Windows' (x64_regalloc.h), so the budget of one is no bound for the other
+	//with Windows' (x64_regalloc.h), so the budget of one is no bound for the other; on arm64 8 general and 8 FP
+	//registers (arm64_regalloc.h)
 	{
 		u32 bytes[2];
 
@@ -2074,6 +2076,8 @@ static void gate_dense()
 		const u32 one = bytes[1] - bytes[0];
 #if defined(_WIN32)
 		const u32 tail = 11;	//the third argument is in r8d: its mov has a REX prefix
+#elif HOST_CPU == CPU_ARM64
+		const u32 tail = 12;	//the end of the block into w2 (movz, movk) and the branch to the check stub
 #else
 		const u32 tail = 10;
 #endif
@@ -2292,7 +2296,8 @@ static void gate_dense()
 	{
 		//a line of double precision arithmetic: every instruction is a call, around which the System V backend
 		//saves xmm8-xmm11. On Windows the callee keeps xmm6-xmm15 and such a call is a few bytes: there the line is
-		//of ftrv, about a hundred bytes of code each
+		//of ftrv, about a hundred bytes of code each. On arm64 the callee keeps the registers of the blocks too, and
+		//the most code an instruction that costs no cycles compiles to is ftrv's, 52 bytes: there the line is of ftrv
 		const u32 top = 0x8C020000;
 		const u32 n = 500;
 		const u64 slices = 12;
@@ -2302,6 +2307,9 @@ static void gate_dense()
 			machine_reset(ENGINE_JIT);
 
 #if defined(_WIN32)
+			static const u16 ops[] = { 0xF1FD /*ftrv xmtrx, fv0*/, 0xF5FD /*ftrv xmtrx, fv4*/, 0xF9FD /*ftrv xmtrx, fv8*/, 0xFDFD /*ftrv xmtrx, fv12*/ };
+			const u32 fpscr = 0x00040001;	//single precision
+#elif HOST_CPU == CPU_ARM64
 			static const u16 ops[] = { 0xF1FD /*ftrv xmtrx, fv0*/, 0xF5FD /*ftrv xmtrx, fv4*/, 0xF9FD /*ftrv xmtrx, fv8*/, 0xFDFD /*ftrv xmtrx, fv12*/ };
 			const u32 fpscr = 0x00040001;	//single precision
 #else
@@ -2355,7 +2363,7 @@ static void gate_dense()
 		MachineState base = doubles(0, 0, &bytes);
 
 		check(bytes > 16 * 1024 + 2048, "a block of %u %s instructions has %u bytes of host code, more than the 16 KiB that a compile waits for", n,
-#if defined(_WIN32)
+#if defined(_WIN32) || HOST_CPU == CPU_ARM64
 			"ftrv",
 #else
 			"double precision",
@@ -3874,6 +3882,76 @@ static void gate_abi()
 	{
 		note("the recompiler has no native debugger checks: no case of a check, a flow report, a block's rest or RunBlock");
 		return;
+	}
+
+	//a check that stops, in a block behind writes of every register: the check stub's exit
+	{
+		Dense d = abi_line(0);
+		bps({ d.top + 18 * 2 });
+		abi_on();
+		MachineStop s = machine_resume();
+		abi_off();
+
+		abi_case("a check that stops in a block (the check stub's exit)", is_bp(s, 1, d.top + 18 * 2), 1, 0);
+	}
+
+	//steps: RunBlock, its exit behind the block; and a step that uses the slice up, RunBlock's end of the slice
+	{
+		Dense d = abi_line(0);
+		abi_on();
+		MachineStop s1 = machine_step();
+		const u64 slices = counters.slices;
+		rdv_ngen->SetSliceCyclesLeft(1);
+		MachineStop s2 = machine_step();
+		abi_off();
+
+		abi_case("two steps, the second of which ends the slice (RunBlock, its exit and its end of the slice)",
+			is_step(s1, d.top + 2) && is_step(s2, d.top + 4) && counters.slices == slices + 1, 0, 2);
+	}
+
+	//A step-out from the leaf the line calls: the flow report of its return stops (that exit). From the stop at the
+	//leaf's entry the rest of its block is owed and runs outside the block cache, so the report is made in RunBlock;
+	//with the pc written in that stop nothing is owed (b10), and the report is made in a block of the main loop
+	for (bool written : { false, true })
+	{
+		Dense d = abi_line(0);
+		bps({ G_leaf });
+		abi_on();
+		MachineStop a = machine_resume();
+		bps({});
+		if (written)
+			machine_set_pc(G_leaf);
+		const u32 mainloop_calls = abi.mainloop_calls, runblock_calls = abi.runblock_calls;
+		MachineStop b = machine_step_out();
+		abi_off();
+
+		const bool ok = is_bp(a, 1, G_leaf) && b.debugger && b.cause == StopCause::Step && b.pc == d.call + 4
+			&& (written ? abi.mainloop_calls == mainloop_calls + 1 && abi.runblock_calls == runblock_calls
+			            : abi.runblock_calls == runblock_calls + 1);
+
+		abi_case(written ? "a step-out from the leaf the line calls, the pc written at the stop: the flow report of its return stops in "
+		                   "a block of the main loop (that exit)"
+		                 : "a step-out from the leaf the line calls: the flow report of its return stops in the rest of the leaf's block, "
+		                   "which RunBlock runs (that exit)",
+			ok, written ? 2 : 1, written ? 0 : 1);
+	}
+
+	//the code of a block that ends in front of its rest (more armed and muted instructions than the budget): that
+	//exit, and RunBlock for the rest
+	{
+		Dense d = dense_start(ENGINE_JIT, 0x8C020000, features.DebugCheckBudget + 40, true, 0);
+
+		machine_set_sr(SR_MD);
+		dense_arm(d, features.DebugCheckBudget + 40);
+		dbg::sh4::SetActiveMask(0);
+		knobs.host_stop_slice = 12;
+
+		abi_on();
+		MachineStop s = machine_resume();
+		abi_off();
+
+		abi_case("a block whose code hands its rest over, to a host stop (that exit, and RunBlock for the rest)",
+			!s.debugger && dense_blocks().with_rest != 0, 2, 1);
 	}
 }
 #endif
