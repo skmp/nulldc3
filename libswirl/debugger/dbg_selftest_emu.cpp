@@ -264,6 +264,16 @@ struct {
 	u64 lastTime = 0;
 	u32 pc = 0, spc = 0, ssr = 0, srStatus = 0;
 	bool sawLatch = false;				// the callback ran under the stop latch
+
+	// SH4 time at the call (Sh4Time), and what it did from one call to the next inside SLEEP waits: a call there
+	// comes SH4_TIMESLICE behind the one before it, and more when guest code was charged in between, at least the
+	// block of the SLEEP (on a recompiler, which charges a block in front of its instructions). sh4TimeValid: the
+	// call before was made in this run of the guest (ProbeNewRun clears it at a stop)
+	u64 sh4Time = 0;
+	bool sh4TimeValid = false;
+	u64 sleepCalls = 0;					// calls inside a SLEEP wait with a call before them in the same run
+	u64 sleepCharged = 0;				// of them, more than SH4_TIMESLICE behind the call before
+	u64 sleepShort = 0;					// of them, less than SH4_TIMESLICE behind it
 	u32 mxcsr = 0;
 
 	// the first slice that saw a pause asked for, since the test cleared it
@@ -294,6 +304,17 @@ void ProbeRaise()
 	DBG_EVENT(EV_DEBUGGER_NOTE, "selftest event %u", probe.raised);
 }
 
+// SH4 time, as the debugger reads it (dc.timing.SH4_CYCLES, dbg_regs.cpp): the scheduler's time and what the SH4 has
+// used of its slice, the slice counter of the backend that ran the guest last
+u64 Sh4Time()
+{
+	emu::Sh4EngineInfo info = { };
+
+	emu::GetSh4Engine(&info);
+
+	return sh4_sched_now64() + SH4_TIMESLICE - info.sliceCyclesLeft;
+}
+
 int ProbeTick(void*, int, int, int)
 {
 	Sh4Context& c = Ctx();
@@ -304,6 +325,20 @@ int ProbeTick(void*, int, int, int)
 	probe.spc = c.spc;
 	probe.ssr = c.ssr;
 	probe.srStatus = c.sr.status;
+
+	const u64 sh4_time = Sh4Time();
+
+	if (g_in_sleep && probe.sh4TimeValid)
+	{
+		probe.sleepCalls++;
+		if (sh4_time > probe.sh4Time + SH4_TIMESLICE)
+			probe.sleepCharged++;
+		else if (sh4_time < probe.sh4Time + SH4_TIMESLICE)
+			probe.sleepShort++;
+	}
+
+	probe.sh4Time = sh4_time;
+	probe.sh4TimeValid = true;
 
 	if (g_stop_latched)
 		probe.sawLatch = true;
@@ -407,6 +442,7 @@ void ProbeOn()
 	probe.raised = 0;
 	probe.asked = false;
 	probe.sawLatch = false;
+	probe.sh4TimeValid = false;
 
 	sh4_sched_request(probe.id, 1);
 }
@@ -787,6 +823,7 @@ struct {
 
 	// sums over the cycles of a mode
 	u32 bad_cause, bad_id, bad_state, bad_flags, bad_time, bad_accept, bad_latency, bad_leave, bad_seq;
+	u32 bad_sh4time, sh4time_compared;
 	u32 pended, cuts, progress, waited;
 	u64 max_slices;
 	double max_ms, min_ms;
@@ -808,6 +845,8 @@ void PauseBegin(const emu::RunState& stop)
 	pz.n = 0;
 	pz.last_stop = stop.stopId;
 	pz.bad_cause = pz.bad_id = pz.bad_state = pz.bad_flags = pz.bad_time = pz.bad_accept = pz.bad_latency = pz.bad_leave = pz.bad_seq = 0;
+	pz.bad_sh4time = pz.sh4time_compared = 0;
+	probe.sleepCalls = probe.sleepCharged = probe.sleepShort = 0;
 	pz.pended = pz.cuts = pz.progress = pz.waited = 0;
 	pz.max_slices = 0;
 	pz.max_ms = 0;
@@ -898,6 +937,20 @@ bool PauseStop(const emu::RunState& stop)
 	if (c.pc != (g_sleep_cut ? probe.pc - 2 : probe.pc) || c.spc != probe.spc || c.ssr != probe.ssr || c.sr.status != probe.srStatus)
 		pz.bad_accept++;
 
+	// SH4 time as well: the slice counter the probe read in the UpdateSystem of the latch is the one the loop was
+	// left with (stored in front of that UpdateSystem, and kept). A SLEEP whose wait the latch ended is executed
+	// again behind the latch, as often as the slice has room for (its UpdateSystem returns at once, no time passes
+	// for the scheduler): there the counter moves on, and the time is not compared
+	if (!g_sleep_cut)
+	{
+		pz.sh4time_compared++;
+		if (Sh4Time() != probe.sh4Time)
+			pz.bad_sh4time++;
+	}
+
+	// the SH4 time of the next run is compared with that run's calls only
+	probe.sh4TimeValid = false;
+
 	// slices that went by with the request there to see: none when it is latched in the first of them
 	u64 slices = probe.pauseSeen ? probe.calls - probe.pauseSeenAt : 0;
 
@@ -984,6 +1037,32 @@ bool PauseStop(const emu::RunState& stop)
 	Check(pz.bad_seq == 0, "%s: the listener saw Running and Parked in turns, %zu states, all on the emulator thread", name, list.size());
 	Check(pz.bad_time == 0, "%s: emulated time at the park is the time at the latch, and no scheduler callback ran in between (%u of %u)", name, pz.bad_time, n);
 	Check(pz.bad_accept == 0, "%s: no interrupt was accepted and nothing executed between the latch and the park (%u of %u)", name, pz.bad_accept, n);
+
+	if (pz.sh4time_compared != 0)
+		Check(pz.bad_sh4time == 0, "%s: SH4 time at the park is the time read in the UpdateSystem of the latch (%u of %u differ; %u stops ended a SLEEP wait and are not compared)",
+			name, pz.bad_sh4time, pz.sh4time_compared, n - pz.sh4time_compared);
+	else
+		Note("%s: every stop ended a SLEEP wait: SH4 time is not compared", name);
+
+	if (pz.mode == PM_SLEEP_TMU)
+	{
+		// The block that holds the SLEEP is charged in front of the call of its handler, which calls UpdateSystem:
+		// the first UpdateSystem of a wait comes more than a slice behind the one before it. A recompiler that
+		// did not store its counter for the handler would show the time of its last slice end there, exactly a
+		// slice behind. The interpreter charges an instruction behind it, and is not held to it
+		emu::Sh4EngineInfo info = { };
+		emu::GetSh4Engine(&info);
+
+		const bool recompiler = strcmp(info.backend, "interpreter") != 0 && !info.fallbackLoop;
+
+		if (recompiler)
+			Check(probe.sleepCharged != 0 && probe.sleepShort == 0,
+				"%s: on the recompiler SH4 time inside a SLEEP wait has what the guest was charged: %llu of %llu calls of UpdateSystem in waits come more than a slice behind the call before them, %llu less than a slice",
+				name, (unsigned long long)probe.sleepCharged, (unsigned long long)probe.sleepCalls, (unsigned long long)probe.sleepShort);
+		else
+			Check(probe.sleepShort == 0, "%s: SH4 time inside a SLEEP wait: %llu calls of UpdateSystem in waits, none less than a slice behind the call before them (%llu more)",
+				name, (unsigned long long)probe.sleepCalls, (unsigned long long)probe.sleepCharged);
+	}
 	Check(pz.bad_leave == 0, "%s: a resume goes on at the pc of the stop, or at the handler of the interrupt it owed, with nothing latched (%u of %u)", name, pz.bad_leave, n);
 
 	if (pz.mode == PM_SPIN || pz.mode == PM_BUSY_TMU)

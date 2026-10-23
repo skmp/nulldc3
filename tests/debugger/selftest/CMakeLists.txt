@@ -209,6 +209,13 @@ nulldc_debugger_selftest(writes.fallback SELFTEST writes ENGINES jit CONFIG Debu
 nulldc_debugger_selftest(writes.smc SELFTEST smcwrites ENGINES jit CONFIG config:Dynarec.SmcCheckLevel=-1
                          ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
 
+# The store queues with the MMU off (libswirl/debugger/dbg_selftest_sqw.cpp): a program of the test sets QACR0 and
+# QACR1 to area 3 and sends 32 bytes through SQ0 and 32 through SQ1 with a pref each; the 64 bytes are in main memory
+# and nothing around them changed, compared with the values written. Then the store queue function of the context,
+# which the recompiler's blocks call for their pref, called by the test as they call it: the same. On the JIT and
+# on the interpreter
+nulldc_debugger_selftest(sqw)
+
 # What sessions of those have to agree on, and the forced fallback and idleskip off: sessions.py of that
 # directory, whose sessions are headless too
 set(test debugger.selftest.sh4bp.sessions)
