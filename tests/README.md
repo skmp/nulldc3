@@ -82,7 +82,7 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses, RTE with a delay slot that reads what it restores, loads of FPSCR, TRAPA, FTRC at the edges of its range and of NaNs, FMAC on operands that show how often it rounds) | none |
 | `sh4.directed.dynarec.canonical` | `sh4.directed.dynarec` on a dynarec that calls the canonical helpers of the shil opcodes (`CANONICAL_TEST`, `sh4_dynarec/README.md`), against the same baseline | none |
 | `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them, the host rounding mode of every FPSCR.RM, the host FP mode of a thread that runs the CPU, the exception registers of TRAPA | none |
-| `debugger.sh4bp.*` | SH4 code breakpoints and steps in the active backend: `libswirl/debugger/dbg_sh4.cpp`, the decoder, the x64 backend with its main loop and block manager, the interpreter and the interpreter fallback, on a machine of the suite's own with a stand-in for run control. Where a breakpoint stops and with what registers, that stops, pauses and steps leave the time of a run alone, steps, step over and step out, addresses armed while the guest runs and in every instruction of a block, what the mechanism costs a guest that uses none of it, what the recompiler of a new emulator thread starts with (the code region of the process, prepared once, and an empty code cache), and the selftest of the emulator (`Debugger:SelfTest=sh4bp`) on that machine (`debugger/sh4bp/README.md` has the gates). x86-64 hosts only, Linux and Windows; on Windows also `debugger.sh4bp.unwind` (a stop of a check walked by the system's unwinder through the check stub, the block and the main loop), and every gate checks the walks of its stops | none |
+| `debugger.sh4bp.*` | SH4 code breakpoints and steps in the active backend: `libswirl/debugger/dbg_sh4.cpp`, the decoder, the recompiler of the host (the x64 backend, or the arm64 one) with its main loop and block manager, the interpreter and the interpreter fallback, on a machine of the suite's own with a stand-in for run control. Where a breakpoint stops and with what registers, that stops, pauses and steps leave the time of a run alone, steps, step over and step out, addresses armed while the guest runs and in every instruction of a block, what the mechanism costs a guest that uses none of it, what the recompiler of a new emulator thread starts with (the code region of the process, prepared once, and an empty code cache), and the selftest of the emulator (`Debugger:SelfTest=sh4bp`) on that machine (`debugger/sh4bp/README.md` has the gates). x86-64 hosts, Linux and Windows, and arm64 hosts, Linux and macOS; on Windows also `debugger.sh4bp.unwind` (a stop of a check walked by the system's unwinder through the check stub, the block and the main loop), and every gate checks the walks of its stops; on arm64 also `debugger.sh4bp.abi` (the registers a caller keeps, given back by the main loop and RunBlock through each of their exits) | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | hand-written cases: ADC, SBC and RSC at the edges with the carry clear and set, the logical operations with a ROR by a register, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2, the register behind them and M read back, what a reset of the ARM writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
@@ -136,9 +136,9 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `debugger.contract.slow` | the slow-client rule: a client that has stopped reading and is 10 MiB of ticks behind is queued none of the periodic ticks of 3 s, every tick that a request caused, and a full tick next | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.contract.hash.off` `.hash.noclient`, each with `.interp` | 2ndmix for 600 vblanks, twice: the same state hash with no `Debugger:` key and with `Debugger:Enabled=no` (and no server without the key: the default of an automated run); the same with the server on and no client and with the server off | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.contract.hash.idlebp` `.interp` | the same state hash with a client connected and a muted breakpoint on a function 2ndmix calls in every frame (the runner's `--idle-breakpoint`), and with the server off | `2ndmix.elf` of `NULLDC_ELF_DIR`, a dreamcast-devtools checkout with `node_modules`, npm |
-| `debugger.contract.hash.listening` `.interp` | the same state hash with a client that describes itself at the `StartPaused` stop, lets the run begin and then only receives until the run ends, and with the server off. The periodic tick is a full one every 20 ms for this run (`Debugger:TickMs=20`, `Debugger:FullTickEvery=1`): every register of the device tree, which from milestone M2 on is every device, is read on the emulator thread some tens of times while 2ndmix runs its 600 vblanks. The client has to have got ten full running ticks at least, and no stop | `2ndmix.elf` of `NULLDC_ELF_DIR` |
+| `debugger.contract.hash.listening` `.interp` | the same state hash with a client that describes itself at the `StartPaused` stop, lets the run begin and then only receives until the run ends, and with the server off. The periodic tick is a full one every 20 ms for this run (`Debugger:TickMs=20`, `Debugger:FullTickEvery=1`): every register of the device tree, which from milestone M2 on is every device, is read on the emulator thread some tens of times while 2ndmix runs its 600 vblanks. The client has to have got ten full running ticks at least, none of its running ticks saying `registersStale`, and no stop | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.contract.hash.listening.guest` `.interp` | the same on the sounding guest of the tree, whose AICA works: its registers, its channels and the interrupt controller of the ARM7 are read while the guest plays | none |
-| `debugger.contract.hash.listening.rule` | what these four take for a full running tick, on ticks that are made up: every path that has registers, and every path but `dc.sh4.cpu` in a tick that says `registersStale`, which is every running tick of a recompiler whose SH4 context is not complete where a running machine is read (not the x64 one, so no run on an x64 host has such a tick). No emulator is run | none |
+| `debugger.contract.hash.listening.rule` | what these four take for a full running tick, on ticks that are made up: every path that has registers, and every path but `dc.sh4.cpu` in a tick that says `registersStale`, which is every running tick of a recompiler whose SH4 context is not complete where a running machine is read (neither the x64 one nor the arm64 one, so no run of the tests has such a tick, and the four refuse one). No emulator is run | none |
 | `debugger.guest.dsptest.files` | the sounding guest of the tree (`debugger/guest/dsptest`: a bare-metal SH4 program with an ARM7 program and a DSP program inside it): its eight committed files are those of its manifest `SHA256SUMS`, and what `gen.sh` makes of the three sources, byte for byte (`gen.sh --check`). On Windows `gen.sh`, a bash script, is not run (`bash` there is WSL's launcher), and the test has to say so | none; an sh-elf binutils, and an arm-eabi binutils or clang, for the second half |
 | `debugger.sound.lines.dsptest.jit` `.interp` | the sound line of the guest (`--config config:Debug.AicaHash=2000`, headless, `docs/nulldc3/automated-runs.md`) on the JIT and on the interpreter: two runs print one line, it has `ticks=2000`, and its `samples` is none of the 2001 hashes of silence (`debugger/guest/dsptest/README.md` has the script, `soundlines.py`, and every test of these rows) | none |
 | `debugger.sound.engines.dsptest` | the line of the JIT and the line of the interpreter agree in `samples`, `regs`, `arm7`, `ticks`, `cycles` and `dsp`: everything the guest's SH4 does to the sound falls between the same two ticks of the AICA on both | none |
@@ -192,7 +192,8 @@ captures.
 The emulator has an SH4 recompiler for x86-64 hosts and one for arm64 hosts, an ARM7 recompiler for arm64 hosts
 that no build has in this round (`FEAT_AREC` is none on every host: the ARM7 runs on its interpreter everywhere),
 and its interpreters on every host; its DSP is the one core of `libswirl/hw/aica/dsp_core` on every host; it does not configure for 32-bit x86 and arm hosts. Of the recompilers the
-tests here run the x86-64 backend. `-DTARGET_NO_REC=ON` builds the emulator without a recompiler on any host. A
+tests here run the backend of the host: the sh4bp suite and the emulator-driven tests on x86-64 and arm64 hosts, the
+SH4 dynarec and FPU suites on x86-64 hosts only. `-DTARGET_NO_REC=ON` builds the emulator without a recompiler on any host. A
 generic host, one whose processor `nulldc3/cmake/config.cmake` has no name for, gets that build without the fault
 handler, so without nvmem; on an x86-64 machine `-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=<such a name>`
 configures it. The system tests take such a binary with `-DNULLDC_EMULATOR=`. On a `TARGET_NO_REC` build every case
@@ -338,16 +339,15 @@ directories of your own for the rest of a run as well (ctest, the scripts, `npm 
   directory without one for ctest keeps `aica.dsp.wasm.devtools` from asking `~/emsdk` (it then says that the
   committed module is not compared with a fresh build).
 
-What is skipped on macOS (arm64), with its reason (118 of the 331 tests; every other one runs):
+What is skipped on macOS (arm64), with its reason (81 of the 340 tests; every other one runs):
 
 | tests | reason |
 |---|---|
-| `system.*`, `system.hle.*` (63) | the Linux-only system-test harness |
-| `debugger.sh4bp.*` (29) | the sh4bp gates need an x86-64 build with the SH4 recompiler |
+| `system.*`, `system.hle.*` (67) | the Linux-only system-test harness |
 | `sh4.singlestep.dynarec`, `sh4.directed.dynarec*`, `sh4.differential`, `sh4.directed.differential`, `sh4.fpu.*` (9) | they run the blocks of the x64 backend |
 | `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` (3) | no emcc (or `NULLDC_EMCC=OFF`) |
+| `debugger.sh4bp.b11` (1) | it counts host instructions with the performance counters of Linux (`perf_event_open`) and says `SKIPPED` elsewhere |
 | `debugger.sound.runner` (1) | its stand-ins for the emulator are scripts that the host runs by their first line (`#!`): a Linux host |
-| the known limits of the arm64 recompiler's debugger (13) | `KNOWN LIMIT (A64), NOT RUN`: below, "Known limits of the arm64 recompiler's debugger (A64)" |
 
 The objdump oracles of `debugger/disasm` run where the binutils are: `arm-none-eabi-objdump` of Homebrew
 (`brew install arm-none-eabi-binutils`), and `sh-elf-objdump` where a KallistiOS toolchain is at
@@ -355,22 +355,22 @@ The objdump oracles of `debugger/disasm` run where the binutils are: `arm-none-e
 is. `macos.hashes.jit` holds the state hashes of the arm64 recompiler to the Mac's own references (a hash is good for
 one host: nothing compares the Mac's lines or hashes with Linux's).
 
-**The arm64 recompiler and the debugger's arm64 rules** (design 2.2.8, 2.3.5). Its breakpoints and steps run on the
-interpreter fallback, with or without `Debugger:ForceFallback` (`sh4-debug-fallback`); its running ticks say
-`registersStale` and leave out `dc.sh4.cpu`; and it restarts its slice counter at every entry of its loop, so that a
-pause, a step or a stop of the host moves SH4 time by less than a slice. The harnesses expect the fallback engine
-there (`NATIVE_RECOMPILER`), `debugger.selftest.emurun.pauses` runs on the interpreter only on a host that is not
-x86-64, and S04 of the contract gates is recorded, not gated, on the recompiler of an arm64 host, with and without
-`--fallback` (PL-D78; `debugger/contract/README.md`): `contract.py` passes a gate whose runner failed S04 alone, on
-its `SH4_CYCLES` checks only, and prints `S04: recorded (PL-D78): <detail>`; the interpreter is gated in full.
-Thirteen targets on the recompiler meet those rules and fail, on the Mac and on Linux arm64 alike: they are the known
-limits of the arm64 recompiler's debugger, registered as such on every arm64 host (below).
+**The arm64 recompiler and the debugger** (A64, design 2.3.5). The arm64 recompiler has the debugger's native
+support, as the x86-64 one has it: its blocks make the debugger's checks and flow reports and it steps through
+RunBlock (`sh4-debug-native`; `Debugger:ForceFallback=yes` gives the interpreter fallback, `sh4-debug-fallback`), its
+context is complete wherever a running machine is read (no running tick says `registersStale`), and it keeps its
+slice counter when its loop is left, testing it in front of a block's charge as the x64 recompiler and the fallback
+do, so that a pause, a step or a stop of the host moves no slice end. The harnesses expect the native engine there
+(`NATIVE_RECOMPILER`), `debugger.selftest.emurun.pauses` runs on both engines and S04 of the contract gates is gated in
+full, as on every host. The sh4bp suite runs on the arm64 backend (`debugger/sh4bp/README.md`), with `abi`, the
+registers its main loop and RunBlock give a caller back; on the Mac its code region is MAP_JIT memory at the address
+of `SH4_TCB`, as the emulator's.
 
 ## On Linux arm64
 
 The project builds natively on an arm64 Linux host (Ubuntu 24.04 on aarch64, GCC 13, CMake and Ninja of the
 distribution) with the configure line of Linux x86_64, and `tests/system` builds its emulators there as on Linux
-x86_64: the arm64 SH4 recompiler (`libswirl/jit/backend/arm64`, its debug engine `sh4-debug-fallback`), no ARM7
+x86_64: the arm64 SH4 recompiler (`libswirl/jit/backend/arm64`, its debug engine `sh4-debug-native`), no ARM7
 recompiler (the ARM7 runs on its interpreter, as on every host), `-ffp-contract=off` (`nulldc3/cmake/config.cmake`).
 The emulator is built for 4 KiB pages: on a kernel with 16 or 64 KiB pages it refuses to start, with
 `nulldc3: this build needs 4 KiB pages; this kernel uses <n> KiB` on stderr and exit status 1
@@ -381,8 +381,10 @@ recompiler on Linux to the references of `linux_arm64/linux_arm64.cmake` (the ar
 of its own), and `linux_arm64.pages.refused` the refusal. Their runs are headless, without `DISPLAY` and
 `WAYLAND_DISPLAY`, with a core file size limit of 1 byte (as `common/emurun.py` starts an emulator on a POSIX host, so
 that a crash is not piped to the system's core handler, apport or systemd-coredump), and neither test starts an
-emulator before a shell run the same way has shown that envelope. The harnesses expect the debugger's arm64 rules
-there as on the Mac (S04 of the contract gates recorded on the recompiler and the forced fallback, PL-D78).
+emulator before a shell run the same way has shown that envelope. The arm64 recompiler and the debugger are as on the
+Mac (above): the native engine, S04 gated in full, the sh4bp suite on the arm64 backend; there `b11` counts host
+instructions where the kernel lets a process count its own (`/proc/sys/kernel/perf_event_paranoid` of 2 or less) and
+says `SKIPPED` with the kernel's refusal otherwise.
 
 The objdump oracles of `debugger/disasm` need `sh-elf-objdump` and `arm-eabi-objdump` (`-DSH_OBJDUMP=`,
 `-DARM_OBJDUMP=`), and fail without them on Linux. An `sh-elf-objdump` for an arm64 host has to be built with
@@ -391,39 +393,13 @@ The objdump oracles of `debugger/disasm` need `sh-elf-objdump` and `arm-eabi-obj
 `bf`, `bt/s` and `bf/s` with a negative displacement 512 bytes too far (`debugger.disasm.sh4_objdump`: 512
 unexplained encodings).
 
-What is skipped on Linux arm64, with its reason (58 of the 321 tests; every other one runs):
+What is skipped on Linux arm64, with its reason (16 of the 330 tests; every other one runs):
 
 | tests | reason |
 |---|---|
-| `debugger.sh4bp.*` (29) | the sh4bp gates need an x86-64 build with the SH4 recompiler |
 | `sh4.singlestep.dynarec`, `sh4.directed.dynarec*`, `sh4.differential`, `sh4.directed.differential`, `sh4.fpu.*` (9) | they run the blocks of the x64 backend |
 | `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` (3) | no emcc |
 | `system.vmem.none`, `system.vmem.taken`, and the two of `system.hle.*` (4) | they say `SKIPPED` where the host gives no unprivileged user and mount namespace (`unshare -rm`), as Ubuntu 24.04's AppArmor restricts them by default |
-| the known limits of the arm64 recompiler's debugger (13) | `KNOWN LIMIT (A64), NOT RUN`: below |
-
-## Known limits of the arm64 recompiler's debugger (A64)
-
-The arm64 SH4 recompiler has no native debugger support (design 2.3.5: the x86-64 recompiler has it; a later
-package, A64, gives it to the arm64 one). Thirteen targets fail on it for that, and on an arm64 host, macOS and Linux,
-they are registered as known limits (the owner's decision of 2026-10-22): each prints
-`KNOWN LIMIT (A64), NOT RUN: <cause>` and ctest counts it as skipped. Their twins on the interpreter (`.interp`) run on
-every host, and on every host that is not arm64 the targets themselves run as they always did.
-
-| target | cause |
-|---|---|
-| `debugger.selftest.emu`, `debugger.selftest.regs`, `debugger.selftest.core` | the arm64 recompiler keeps the SH4's registers in host registers inside a slice and stores its context only at the slice's end: the SH4's registers of a running tick are stale (`registersStale`), and what the checks read of the SH4's context while the machine runs, or at a slice end, is not the machine's (`emu.pause`: the pc of the context at the park is not the one at the latch; `regs.tick` and `core.tick`: a running full tick has no `dc.sh4.cpu`; `core.tables`, `core.writes`: a watch and a register write of the running SH4) |
-| `debugger.selftest.hostcycles`, `debugger.selftest.writesrun.neutral` | the arm64 recompiler starts its slice counter anew at every entry of its loop: a stop and its resume move SH4 time by up to a slice (PL-D78's S04), and the run the debugger stopped and resumed does not end in the state hash of the run nobody touched |
-| `debugger.sound.neutral.hitresume.jit`, `.steps.jit`, `.hoststop.jit`, `.dsp.hitresume.jit`, `.dsp.steps.jit`, `.dsp.hoststop.jit`, `.sgc.running.jit`, `.sgc.paused.jit` (8) | the same as the line above: the state hash at 90 vblanks of the run with the session is not the one of the run without it (its `sh4` part); the sound line at 2000 ticks is |
-
-The list is `nulldc_a64_known_limits()` of `debugger/selftest/CMakeLists.txt`: whole target names, each a run of the
-SH4 on the recompiler with a twin on the interpreter, and the cause of each; `nulldc_debugger_selftest` and
-`nulldc_sound_neutral` (`debugger/guest/dsptest/CMakeLists.txt`) register them. `debugger.a64.knownlimits` checks the
-registration on every host, deciding from `CMAKE_SYSTEM_PROCESSOR` by itself whether the host is arm64: every entry is
-such a target, its twin is registered to run, on an arm64 host the target is a known limit and on any other host it is
-registered to run, and nothing else is a known limit. On the Mac the thirteen failed in every run of MACb's gate with
-the same lines, on Linux arm64 in LA64's, and passed on the interpreter; nothing else of the debugger's tests fails on
-the arm64 recompiler. When A64 has given the recompiler its native debugger support, an entry leaves the list with
-the change that makes its target pass there.
 
 ## Layout
 

@@ -73,8 +73,8 @@ they check, on a command line that is refused before anything runs). The output 
 `NULLDC_MACRUN`, set for the directories behind this one, is what `version.binary` (`tests/version`) starts the
 emulator through on macOS.
 
-The arm64 recompiler of the Mac has known debugger limits: thirteen targets of the emulator-driven tests fail on it for
-causes of that recompiler, and are registered on every arm64 host as `KNOWN LIMIT (A64), NOT RUN: <cause>`, which
-ctest counts as skipped, while their `.interp` twins run (`tests/README.md`, "Known limits of the arm64 recompiler's
-debugger (A64)"). On Linux arm64 the same recompiler's state hashes are held by `linux_arm64.hashes.jit`
-(`tests/linux_arm64`), whose references equal this test's.
+The arm64 recompiler of the Mac has the debugger's native support, as the x86-64 one has it (A64): the
+emulator-driven tests run on it with nothing registered as a known limit, and the sh4bp suite runs on the arm64
+backend, its code region MAP_JIT memory at the address of `SH4_TCB` (`tests/README.md`, "On macOS"). On Linux arm64
+the same recompiler's state hashes are held by `linux_arm64.hashes.jit` (`tests/linux_arm64`), whose references equal
+this test's.
