@@ -166,7 +166,7 @@ rule belongs to fail.
 ## Checks in compiled code
 
 What a check costs the x64 backend in host code, and why no set of armed addresses can make a block too large
-for it. `debugger.sh4bp.dense` measures and tests all of it.
+for it; the arm64 backend's numbers are at the end of each point. `debugger.sh4bp.dense` measures and tests all of it.
 
 - **A check** is 15 bytes in its block: two arguments (the address of the instruction, the cycles a stop gives
   back) and a call. The call goes to a tail of 10 bytes (11 on Windows, whose third argument register is `r8d`)
@@ -181,6 +181,11 @@ for it. `debugger.sh4bp.dense` measures and tests all of it.
   bytes each in an integer line and 42 in a floating point line, the flushes included. A check in front of which
   every host register was written and behind which every one is read again adds 301 bytes (the call, 276 and the
   tail), 522 on Windows (the call, 496 and the tail): `dense` holds the budget's worth of those within 16 KiB.
+  On arm64 a check is 16 bytes (the address in two instructions, the refund in one, the call), the tail 12 (the
+  block end in two, the branch to the stub), and the stub keeps the refund and the return address into the block in
+  one pair on the stack; the flush is at most 128 bytes (8 general and 8 FP host registers, one `str` and one `ldr`
+  each). Measured there: one check adds 28 bytes, 113 on consecutive instructions 26 each in both lines, and a
+  check between writes of every register 156 (the call, 128 and the tail).
 - **A block holds at most 56 checks** (`ngen_features::DebugCheckBudget`: 16 KiB over the 291 bytes a check
   can take), 31 on Windows (over 523). The decoder decodes a block to its end whatever is armed: its boundaries and its cost are those
   of the block without a check. When the block has more checks than that, the backend compiles the
@@ -191,13 +196,21 @@ for it. `debugger.sh4bp.dense` measures and tests all of it.
   instruction only, so the split is not visible to the guest. The rest is compiled each time it runs: a
   block with more than 56 armed instructions is slow, not different. A compile leaves nothing on the heap
   (the register allocator frees the spans of a block when the block compiler goes), so a block that is
-  compiled on every pass does not make the process grow.
+  compiled on every pass does not make the process grow. On arm64 a block holds at most 113 checks (16 KiB less the
+  tail, over the 144 bytes of a check and its flush).
 - **Code that does not fit** into what is left of the code cache is given up by the backend, which writes with
   the free space as its bound. The cache is emptied and the block compiled again; code that an empty cache
   has no room for is made of fewer instructions, down to one. (`dense` makes such a block of 500 double precision
   instructions, each a call around which the System V backend saves `xmm8`-`xmm11`; on Windows, where the callee
   keeps `xmm6`-`xmm15` and such a call is a few bytes, of 500 `ftrv`.) That last step moves a block end, and time
-  with it: no block of a guest comes near it in a cache of 10 MiB.
+  with it: no block of a guest comes near it in a cache of 10 MiB. On arm64 the line is of 500 `ftrv` too (52 bytes
+  each, the most code an instruction that costs no cycles compiles to there, 26028 bytes in all), and the backend's
+  test of the room it has is strict: vixl grows a buffer that is full with `realloc`, which in the code cache would
+  be a crash, so the compile stops in front of the op whose code, with everything behind the last op and vixl's
+  pools, might not fit. No such line has the code behind its first 121 instructions that the bound on the rest of a
+  block of the other hosts asks for (more than 18 KiB + 2048 bytes), so on arm64 `dense` measures what that bound
+  stands for: the block of the first 113 instructions leaves room for a compile to begin behind it, and the rest's
+  compile there is given up and the cache emptied for it.
 
 ## The cost when nothing is armed
 

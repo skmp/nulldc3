@@ -2302,7 +2302,9 @@ static void gate_dense()
 		const u32 n = 500;
 		const u64 slices = 12;
 
-		auto doubles = [&](u32 cache_left, u32 armed, u32* most_bytes)
+		//rest_block_bytes, clears (arm64): the host code of the block at the top that hands its rest over, 0 if there is
+		//none, and how often the driver emptied the code cache in the run (counters.cache_clears)
+		auto doubles = [&](u32 cache_left, u32 armed, u32* most_bytes, u32* rest_block_bytes = nullptr, u64* clears = nullptr)
 		{
 			machine_reset(ENGINE_JIT);
 
@@ -2352,6 +2354,18 @@ static void gate_dense()
 
 			*most_bytes = dense_blocks().most_bytes;
 
+			if (rest_block_bytes)
+			{
+				*rest_block_bytes = 0;
+
+				for (RuntimeBlockInfo* blk : all_blocks)
+					if (blk->addr == top && blk->dbg_rest_pc != 0)
+						*rest_block_bytes = blk->host_code_size;
+			}
+
+			if (clears)
+				*clears = counters.cache_clears;
+
 			if (s.debugger)
 				st.pc = 0;
 
@@ -2384,11 +2398,32 @@ static void gate_dense()
 		//code of the rest, which is compiled outside the block cache
 		const u32 first_part = bytes / n * (budget + 8);
 
+#if HOST_CPU == CPU_ARM64
+		//arm64: the most code an instruction that costs no cycles compiles to is ftrv's, 52 bytes, and a block holds
+		//500 instructions: no such line has the code behind its first budget + 8 instructions that the bound of the
+		//other hosts asks for (more than 18 KiB + 2048 bytes: 54 bytes an instruction with a budget of 113). What the
+		//bound stands for is measured instead: the block of the first instructions, the one that hands its rest over,
+		//leaves room for a compile to begin behind it (16 KiB), and the rest's compile there is given up, so the code
+		//cache is emptied for it
+		u32 first_bytes = 0;
+		u64 clears = 0;
+
+		s = doubles(16 * 1024 + 2048 + first_part, budget + 40, &bytes_armed, &first_bytes, &clears);
+
+		const u32 left = 16 * 1024 + 2048 + first_part;
+		const u32 behind = first_bytes != 0 && first_bytes < left ? left - first_bytes : 0;
+
+		check(s == base && first_part < 14 * 1024 && behind >= 16 * 1024 && clears != 0,
+			"and with %u bytes left, which the rest of the block does not fit into when it is compiled: the block of its first %u instructions takes %u bytes, "
+			"%u are left behind it, room for a compile to begin, and the rest's compile there is given up, the code cache emptied %llu times (%s)",
+			left, budget, first_bytes, behind, (unsigned long long)clears, str(s));
+#else
 		s = doubles(16 * 1024 + 2048 + first_part, budget + 40, &bytes_armed);
 
 		check(s == base && first_part < 14 * 1024 && bytes - first_part > 18 * 1024 + 2048,
 			"and with %u bytes left, which the rest of the block does not fit into when it is compiled (%u bytes of the block's %u are behind its first %u instructions) (%s)",
 			16 * 1024 + 2048 + first_part, bytes - first_part, bytes, budget + 8, str(s));
+#endif
 	}
 
 	//A code cache that has no room for the code of a block when it is empty: the block is made of fewer
