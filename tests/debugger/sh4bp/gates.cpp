@@ -9,6 +9,7 @@
 
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_interpreter.h"
+#include "hw/sh4/sh4_interrupts.h"
 #include "hw/sh4/sh4_opcode_list.h"
 #include "hw/sh4/dyna/blockmanager.h"
 #include "hw/sh4/dyna/ngen.h"
@@ -777,6 +778,22 @@ static void gate_b5()
 		s = machine_step();
 		check(is_step(s, G_irq) && Sh4cntx.spc == G_sleep_after && counters.slices == 7,
 			"%s: a step on SLEEP with an interrupt on the way ends at the handler after %llu slices", en, (unsigned long long)counters.slices);
+
+		//An instruction that unmasks an interrupt the device requests (ldc r0, sr): the interrupt is accepted
+		//behind it, in front of the next instruction, so the step that executes it ends at the handler. The block
+		//of the step ends with the instruction's interrupt check (an interrupt end), and is left behind it
+		machine_reset(e);
+		machine_write16(G_buffer, 0x400E);		//ldc r0, sr
+		machine_write16(G_buffer + 2, 0x7001);	//add #1, r0
+		machine_set_sr(SR_MD_MASK);
+		R(0) = SR_MD;
+		machine_set_pc(G_buffer);
+		SetInterruptPend(sh4_IRL_9);
+
+		s = machine_step();
+		check(is_step(s, G_irq) && Sh4cntx.spc == G_buffer + 2 && counters.slices == 0,
+			"%s: a step over an ldc that unmasks an interrupt the device requests ends at the handler, the interrupt accepted behind the ldc (stop at %08X, spc %08X)",
+			en, s.pc, Sh4cntx.spc);
 	}
 }
 
@@ -871,7 +888,7 @@ static void gate_b6()
 */
 static void gate_b7()
 {
-	u32 where[ENGINE_COUNT][12];
+	u32 where[ENGINE_COUNT][13];
 
 	for (Engine e : all_engines)
 	{
@@ -997,6 +1014,29 @@ static void gate_b7()
 		s = machine_step_out();
 		at[9] = s.pc;
 		check(is_step(s, back) && (Sh4cntx.sr.status & 0x10000000) == 0, "%s: step out of an interrupt handler stops where the interrupt was taken (%08X)", en, back);
+
+		//step out of an interrupt handler whose device asks again before its rte: the return from exception lets
+		//the new request in. The rte reports in front of its interrupt check, which is made all the same when the
+		//report stops: the stop latch holds the acceptance back and it is owed (hw/sh4/sh4_interrupts.cpp). The
+		//step-out stops where the interrupt was taken, and the next step takes the interrupt first: it ends at the
+		//handler's first instruction
+		machine_reset(e);
+		machine_set_sr(SR_MD);
+		machine_set_pc(G_waitmain);
+		knobs.irq_period = 3;
+		bps({ G_irq_rte });
+		MachineStop at_rte = machine_resume();
+		bps({ });
+		knobs.irq_period = 0;
+		back = Sh4cntx.spc;
+		const u32 handled = machine_read32(G_irqcnt);
+		SetInterruptPend(sh4_IRL_9);
+		s = machine_step_out();
+		at[12] = s.pc;
+		MachineStop next = machine_step();
+		check(is_bp(at_rte, 1, G_irq_rte) && is_step(s, back) && is_step(next, G_irq) && Sh4cntx.spc == back && machine_read32(G_irqcnt) == handled,
+			"%s: step out of an interrupt handler whose device asks again before its rte stops where the interrupt was taken (%08X), and the next step takes the interrupt the rte owes: it ends at the handler (%08X, spc %08X)",
+			en, s.pc, next.pc, Sh4cntx.spc);
 
 		//a stop for another reason ends a pending step-out
 		machine_reset(e);
