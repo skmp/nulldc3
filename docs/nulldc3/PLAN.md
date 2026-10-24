@@ -62,12 +62,13 @@ track.
   option). What remains: the x64 and arm64 JITs and the interpreter (a future riscv64 build starts from the
   interpreter).
   New work targets x86_64 and arm64; since the platform round both are built and tested: x86_64 on Linux (here) and on
-  Windows (MSVC, the Windows host), arm64 on macOS (the owner's Mac) and on Linux (an arm64 host, and CI's
-  `ubuntu-24.04-arm` runner). **Release targets** (the owner, 2026-10-19; `PLATFORM-ROUND.md` 1.3 item 3): Linux an
-  AppImage only, x86_64 and arm64, portable (the folder that holds the AppImage; no `.deb`, no per-user default);
-  Windows a zip with `nulldc3.exe` (x86_64, the static CRT, a console program); macOS an ad-hoc signed `nulldc3.app` in
-  a zip (arm64 only; no Developer ID, no notarization). Not released: Windows on arm64, macOS x86_64 (kept
-  source-consistent and unbuilt).
+  Windows (MSVC, the Windows host), arm64 on macOS (the owner's Mac) and on Linux (an arm64 host); CI's
+  `ubuntu-24.04-arm` and `macos-26` jobs (CIe) are to build and test them from the round's two PRs on, whose runs are
+  the first (none was read when the round's gate ended). **Release targets** (the owner, 2026-10-19; `PLATFORM-ROUND.md`
+  1.3 item 3): Linux an AppImage only, x86_64 and arm64, portable (the folder that holds the AppImage; no `.deb`, no
+  per-user default); Windows a zip with `nulldc3.exe` (x86_64, the static CRT, a console program); macOS an ad-hoc
+  signed `nulldc3.app` in a zip (arm64 only; no Developer ID, no notarization). Not released: Windows on arm64, macOS
+  x86_64 (kept source-consistent and unbuilt).
   **B64 is done (merged 2026-10-08).** Its findings for the later ports: the interpreter-only build (`-DTARGET_NO_REC=ON`) and
   the generic host path (any 64-bit processor name CMake does not know as x86_64 / arm64) now build and boot; the generic path
   does not apply FPSCR.RM/DN to the host yet (`SetFloatStatusReg`: a BIOS boot ends in a different hash there), nothing in

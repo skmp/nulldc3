@@ -35,14 +35,15 @@ A.3 "J1 as built"). No question was opened.
 has not received the SH4 FPU fast-tier fixes; it is kept source-consistent only. Package A64 (design 6.3) needs a
 machine that builds and runs it. No recommendation beyond: not before M1. Open because there is no such host yet.
 
-**Answered by the platform round (2026-10-19 to 2026-10-24):** the owner's Mac (an Apple M2, macOS), an arm64 Linux
-host the owner made available on 2026-10-22, and CI. The platform round (`PLATFORM-ROUND.md`) builds and runs the
-arm64 JIT on the Mac (packages MACa and MACb), on the arm64 host (LA64, natively: Ubuntu 24.04, GCC 13) and in CI on
-GitHub's `ubuntu-24.04-arm` and `macos-26` runners (CIe). Its package A64, added at the owner's word before the round's
-gate, gave the arm64 JIT the debugger's native checks, its kept slice counter and its context at the slice end
-(design 2.3.5; `PLATFORM-ROUND.md` 2.15, PL-D86) on those hosts: the engine there is `sh4-debug-native`, and the
-contract gates M1 to M3 pass in full on every engine of both arm64 systems. The SH4 FPU fast-tier fixes of the arm64
-JIT and the arm64 ARM7 recompiler stay in PLAN's backlog (PL-D46). The question is closed.
+**Answered by the platform round (2026-10-19 to 2026-10-24):** the owner's Mac (an Apple M2, macOS), an arm64 Linux host
+the owner made available on 2026-10-22, and CI. The platform round (`PLATFORM-ROUND.md`) builds and runs the arm64 JIT
+on the Mac (packages MACa and MACb) and on the arm64 host (LA64, natively: Ubuntu 24.04, GCC 13); CI's jobs on GitHub's
+`ubuntu-24.04-arm` and `macos-26` runners (CIe) are to build and test it from the round's two PRs on, whose runs are the
+first (none was read when the round's gate ended). Its package A64, added at the owner's word before the round's gate,
+gave the arm64 JIT the debugger's native checks, its kept slice counter and its context at the slice end (design 2.3.5;
+`PLATFORM-ROUND.md` 2.15, PL-D86) on those hosts: the engine there is `sh4-debug-native`, and the contract gates M1 to
+M3 pass in full on every engine of both arm64 systems. The SH4 FPU fast-tier fixes of the arm64 JIT and the arm64 ARM7
+recompiler stay in PLAN's backlog (PL-D46). The question is closed.
 
 **Q13. The config section** (project owner). The keys stay under `Debugger:` for now (decision 27). When PLAN track 10
 defines the settings model the section can be renamed with an alias for the old keys, or kept. It is decided with the

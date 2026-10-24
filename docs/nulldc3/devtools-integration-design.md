@@ -962,8 +962,8 @@ de-duplication: the same request twice gives two ids); when several match, the l
 **Requirements on SH4 code breakpoints and steps (every backend; observable behaviour).**
 
 - R1 — *What runs.* A breakpoint and a step are executed by the backend that runs the guest. On a backend that reports
-  `SH4DBG_NATIVE` (2.3.4 l; the interpreter and, where the System V calling convention is used, the x64 JIT) nothing
-  changes engine because a breakpoint is listed, armed or hit, or for a step.
+  `SH4DBG_NATIVE` (2.3.4 l; the interpreter and the x64 and arm64 JITs: on Windows since W64b, on arm64 since A64)
+  nothing changes engine because a breakpoint is listed, armed or hit, or for a step.
 - R2 — *Guest memory* is never modified to implement a breakpoint (no opcode patching).
 - R3 — *Cost when unused.* With nothing armed, a JIT's compiled code and dispatcher contain no added instruction; the
   only cost is one load and branch per *decoded* instruction. The interpreter runs its unmodified loop.
@@ -1017,9 +1017,10 @@ interpreter, which is native.
 #### 2.3.4 The mechanism: breakpoints and steps in the active backend
 
 This section implements D1. It is implemented and merged for the interpreter and the x64 JIT (package E4b, on the park
-loop of E4a), and **the mechanism as built is the specification**: where the code and this text differ, the code and its
-gates (2.3.6) are right and this text is corrected. The prototype that preceded it and its results are Appendix C; the
-specification with the full code walk is `docs/nulldc3/sh4-breakpoints-spec.md` in the emulator repository; the call
+loop of E4a) and for the arm64 JIT (package A64 of the platform round, `PLATFORM-ROUND.md` 2.15), and **the mechanism
+as built is the specification**: where the code and this text differ, the code and its gates (2.3.6) are right and this
+text is corrected. The prototype that preceded it and its results are Appendix C; the specification with the full code
+walk is `docs/nulldc3/sh4-breakpoints-spec.md` in the emulator repository; the call
 sites of run control are tabulated in `tests/debugger/sh4bp/README.md`. Line references below are `libswirl/...` at the
 upstream base `34a62ea8` and locate the code the mechanism was added to.
 
