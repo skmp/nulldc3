@@ -1,8 +1,8 @@
 # Track 1 — devtools integration: design
 
 > **This copy.** `docs/nulldc3/devtools-integration-design.md` is the repository's copy of the working document
-> `TRACK1-DESIGN.md`, revision 3. The text below names its companion documents by their working names; in
-> `docs/nulldc3/` they are:
+> `TRACK1-DESIGN.md`, revision 3, brought to the platform round at its end (package PLG, 2026-10-24). The text below
+> names its companion documents by their working names; in `docs/nulldc3/` they are:
 >
 > | Named below | In `docs/nulldc3/` |
 > | --- | --- |
@@ -12,13 +12,14 @@
 > | `PLAN.md`, `agents/nulldc3/PLAN.md` | `PLAN.md` |
 > | `M2-ROUND.md` | `devtools-integration-m2-round.md` |
 > | `M3-ROUND.md` | `devtools-integration-m3-round.md` |
+> | `PLATFORM-ROUND.md` | `platform-round.md` |
 > | `TRACK1-DESIGN.v2.md` | not copied: revision 2 is the earlier text of this file, in its history (`git log -- docs/nulldc3/devtools-integration-design.md`) |
 >
 > `TRACK1-DESIGN.v1.md` (the draft) and `design-v3-check-r3.json` were never part of this repository. Other paths of
 > the form `agents/nulldc3/...` point into the working area outside it (`docs/nulldc3/README.md`).
 
 Status: v3 — decisions of 2026-10-09 and 2026-10-10 folded in; implementation contract; milestones M1, M2 and M3
-complete (M3: the round's gate M3G, 2026-10-19). Supersedes v2
+complete (M3: the round's gate M3G, 2026-10-19); the platform round complete (its gate PLG, 2026-10-24). Supersedes v2
 (`TRACK1-DESIGN.v2.md`), which superseded DRAFT v1 (`TRACK1-DESIGN.v1.md`). Owner of this file: the orchestrator.
 
 What revision 3 is. Since v2 most of this design was implemented and independently verified. Revision 3 brings the text
@@ -44,8 +45,15 @@ switches, the UI as the submodule `devtools/`) and package D1 were built and mer
 (M3G) passed: **milestone M3 is complete**. The text is brought to the cut by the 43 rows of its section 8 and to what
 the round built, with the departures the integrator accepted and the known limits the verifiers found (Appendix A.3,
 "M3 as built"; 2.3.7 items 25 to 30). After M3G the design, the decisions and the frozen headers cite `M3-ROUND.md` for
-header revision 7 (its section 2), for the M3 tree and for the guest's DSP program (its section 6). What comes next is
-the cut of M4.
+header revision 7 (its section 2), for the M3 tree and for the guest's DSP program (its section 6). Then the platform
+round was cut (`PLATFORM-ROUND.md`: the rebrand, the icons, the versions, Windows, macOS, Linux arm64, CI and releases;
+it was the contract wherever it and this text differed), built, verified and merged, with package A64 (the arm64
+recompiler's native debugger: 2.3.5, 6.3) added to it at the owner's word before its gate, and its gate (PLG) passed:
+the text is brought to the round by the 16 rows of the cut's Appendix D (D4, D7, D10; 2.3.4 f and g, 2.3.5, 2.3.7
+items 31 to 33; 3.1; 5.4 to 5.8; 6.3; Appendix B), as A64 left the tree where a row was written before A64 (rows 1,
+3, 8 and 13). After PLG the design and the frozen headers cite `PLATFORM-ROUND.md` for header revision 8 (its 2.3;
+H8-5 A64's), for the version string (its 5.1) and for the platform decisions (PL-D1 ...). What comes next is the cut
+of M4.
 
 Inputs: the reader reports in `agents/nulldc3/understand/` (cited, not re-derived): `devtools-protocol.md` (wire spec of
 protocol v2), `devtools-mock.md`, `devtools-panels-debugger.md`, `devtools-panels-tools.md`, `devtools-build.md`,
@@ -78,11 +86,17 @@ Decisions in force (project owner and design owner; everything below is written 
   burst, also while the guest holds the ARM7 (W3).
 - **D3 — performance figures** are taken with the hardware GL renderers or the `none` renderer, never the reference
   software renderers, and state their renderer.
-- **D4 — naming.** New surfaces say nullDC 3.0.0. The tree is not mass-renamed (binary `devcast`, config directory
-  `reicast`, existing identifiers stay).
+- **D4 — naming.** New surfaces say nullDC 3.0.0, and where they show a version it is the build's (3.1). The tree was
+  renamed by the platform round (`PLATFORM-ROUND.md` 2.5, PL-D9 to PL-D13): the binary is `nulldc3` (PLAN's N1), the
+  platform shell `reicast/` is `nulldc3/`, and the names that said reicast say nulldc (`nulldc_init`, `nulldc_term`,
+  `nulldc_root_path`, `NULLDC_VERSION`, `NULLDC_S`, the Lua module `nulldc3`); "reicast" stays only as history (the
+  licences, credits, provenance notes, the documents that record history, git history), and `rebrand.names` holds it.
+  Names derived from reicast that do not say it stay (`rc_serialize`, `reios`, `reprof`).
 - **D5 — commits.** Packages commit on local branches and push nothing; after every milestone the integrator pushes
   `skmp/nulldc3` of both repositories and opens review PRs into `main`, the UI's first (the owner, 2026-10-16); nothing is
-  merged by the integrator.
+  merged by the integrator. The platform round ends the same way and then, after the owner's two merges and with the
+  owner's go, with the annotated tags `v3.0.0-pre` of both repositories, the UI's first at the commit the emulator's
+  gitlink names (`PLATFORM-ROUND.md` section 7); CI makes the two Releases from the tags (6 of the cut).
 - **D6 — the shared interfaces are frozen**: the API of E1 and E2, which started first (Appendix B), and the headers E0
   delivered. Header revisions 2 and 3 are part of the contract (Appendix B). Revision 4 is comment-only, changed no
   declaration and is applied; its list is kept as the record in `DESIGN-V3-OPEN.md`. Revision 5 came with package J1
@@ -91,8 +105,10 @@ Decisions in force (project owner and design owner; everything below is written 
   the new frozen header `dbg_arm7.h`, and the comments M2 changes. Revision 7 came with the cut of the M3 round
   (`M3-ROUND.md` section 2, package R7): the declarations of the DSP's run control and of the SGC capture, the new frozen
   headers `dbg_dsp.h` and `dbg_sgc.h`, the datapath of `DspDebugState`, the channels' outputs of `AicaChannelDebug`, the
-  comments M3 changes; the forcing names removed. A declaration changes only by an explicit, listed approval of the
-  integrator.
+  comments M3 changes; the forcing names removed. Revision 8 came with the platform round (`PLATFORM-ROUND.md` 2.3,
+  packages RB, VTe and A64): comment-only, the names of the entry points (`nulldc_init`, `nulldc_term`), the paused
+  title's version and the arm64 JIT's `CtxAtSlice` (H8-5). A declaration changes only by an explicit, listed approval of
+  the integrator.
 - **D7 — targets.** Desktop only (Linux, Windows, macOS), plus wasm later. Processors: x86_64 and arm64 now; later a
   wasm32 build with its own JIT, possibly riscv64. There are no 32-bit native builds, no cached-SHIL `cpp` backend and no
   libretro core. What exists: the x64 and arm64 JITs and the interpreter. New code stays clean for a 32-bit address space
@@ -100,7 +116,16 @@ Decisions in force (project owner and design owner; everything below is written 
   parts), and the interpreter-only generic host path stays buildable. The tree is at this since PLAN package
   P-desktop (merged): what it builds for is desktop Linux, Windows and macOS on x86_64 and arm64, the generic host
   path, and the emscripten scaffolding the wasm build starts from; every other target, host and build switch is
-  gone from it (6.3).
+  gone from it (6.3). **The release targets** (the owner's decision of 2026-10-19, `PLATFORM-ROUND.md` 1.3 item 3):
+  Linux an AppImage only, x86_64 and arm64, portable (the folder that holds the AppImage is its portable folder; no
+  `.deb`, no per-user default); Windows a zip with `nulldc3.exe` (x86_64); macOS an ad-hoc signed `nulldc3.app` in a zip
+  (arm64 only). Since the platform round all four are built and tested on their systems (Windows with MSVC, W64a and
+  W64b; macOS with AppleClang, MACa and MACb; Linux arm64 natively, LA64) and made by CI on pull requests and tags
+  (CIe, 6.3). arm64 is built on Linux and macOS since that round, the SH4 recompiler with the debugger's native
+  checks since its package A64 (`sh4-debug-native`, 2.3.5; until A64 the SH4 fallback engine was its debug engine),
+  and with no ARM7 recompiler (`FEAT_AREC` none on every host, `PLATFORM-ROUND.md` PL-D46: the ARM7 runs on its
+  interpreter; the arm64 ARM7 recompiler is unsafe on Apple silicon as written and stays unbuilt, PLAN's backlog).
+  macOS x86_64 stays source-consistent and unbuilt.
 - **D8 — the server is the control surface, not only a debugger** (PLAN track 10). It works with no game loaded, nothing in
   it assumes that a client is a debugging session, and its configuration keys stay under `Debugger:` for now (2.11). The
   emulator's own imgui GUI, its game list and save / load states are leaving the product; what this design says about
@@ -111,8 +136,16 @@ Decisions in force (project owner and design owner; everything below is written 
   config key (`config:Dynarec.Enabled=no`) remains for tests and is not shown.
 - **D10 — every emulator run of a test, a gate or an agent is headless** (`config:Headless=yes`,
   `docs/nulldc3/automated-runs.md`), and agent runs keep to the machine limits: one workflow at a time, `ninja -j8`,
-  `ctest -j4`, at most 4 emulator processes. `config:Headless` exists on Linux only; the Windows run of 5.8, and any
-  run on macOS until headless exists there, have a window.
+  `ctest -j4`, at most 4 emulator processes. `config:Headless` exists on Linux, Windows (W64a) and macOS (MACa) since
+  the platform round: no window, no Dock icon, no dialog of any kind. Windows has a no-dialog policy for every run
+  (`PLATFORM-ROUND.md` PL-D34: the error mode, WER without UI, the CRT's handlers, a vectored fatal handler, no
+  `__debugbreak` without a debugger), Darwin ends a fatal signal of an automated run with `_exit(128+N)` so that no
+  crash report is written (PL-D45), and both print Linux's fatal line, `fault_handler: unhandled <SIG> at address <a>,
+  pc <p>, not a guest memory fault: terminating`, with 128 + the signal's number (PL-D35). On the remote systems every
+  program of an automated run on Windows runs inside `nulldc3-winrun` (`tests/winrun`: an error mode, a job object, a
+  private desktop, a timeout), and every emulator run on the Mac goes through `tests/macos/macrun.py` under the sandbox
+  profile that denies the window server (PL-D69; `docs/nulldc3/automated-runs.md`). The window items of the Windows
+  run (5.8) and of the window sessions are the owner's, by hand (PL-D40).
 
 Terms: an **in-band error** is a successful JSON-RPC response whose result is `{"error":{"code":n,"message":"..."}}`; a
 **JSON-RPC error** is a response with a top-level `error` member. Which one a method uses is fixed per method (3.5).
@@ -127,7 +160,7 @@ The web UI talks to a server inside the emulator and every panel shows real stat
 | Milestone | Content | Gate | State |
 | --- | --- | --- | --- |
 | M0 | devtools hygiene: lint/typecheck/test/build green, real scripts, versions, docs; a fresh clone builds without Rust; the wasm-transport build keeps building | `npm run check` = lint + typecheck + test:run + contract (mock, `--milestone M1`; `--milestone M2` since F3a) + build:native + build:wasm | done (`check` runs `build:wasm` and the contract as the M1 gate since the devtools round, 4.1) |
-| M1 | protocol v3 (schema, client, mock module) and the contract runner. Emulator: transport and embedded UI, lifetime states and park loop, SH4 debugging (registers, memory, disassembly, run / pause / step / over / out, native code breakpoints, event breakpoints, watches, callstack, event log), the reduced M1 device tree (2.8), all three targets listed. Frontend: endpoint selection and reconnect; disassembly follows the PC and memory refetches when `stopId` changes; per-target defaults from `targets`; results of `control.*` shown; `reason` and `notice` in the toolbar; error boundary per dock panel; device-tree panel rework; notices for unsupported targets | the contract gate M1 (5.5.3) passes against the mock and against the emulator: scenarios S01-S14, S19, S20 on the mock, S00-S15, S19, S20 on the emulator; pure-module tests; the in-emulator selftests in ctest (`debugger.selftest.*`, the session `regs` among them), which include the breakpoint and step gates of 2.3.6 (B11 is `debugger.sh4bp.b11` in the pure suite); Windows gate (5.8) | **done: M1 is complete.** The core (E5, 6.1) is verified and merged: the M1 gate passes against the emulator on the JIT, on the interpreter and with the forced fallback, 18 scenarios passed, 0 partial, 0 not applicable each, and against the mock, 16 of 16; 187 ctest targets pass. The Windows gate is met in the form 5.8 gives it (a syntax-only compile and a review); the real MSVC build comes before the first push and the Windows run is package W64 (6.3) |
+| M1 | protocol v3 (schema, client, mock module) and the contract runner. Emulator: transport and embedded UI, lifetime states and park loop, SH4 debugging (registers, memory, disassembly, run / pause / step / over / out, native code breakpoints, event breakpoints, watches, callstack, event log), the reduced M1 device tree (2.8), all three targets listed. Frontend: endpoint selection and reconnect; disassembly follows the PC and memory refetches when `stopId` changes; per-target defaults from `targets`; results of `control.*` shown; `reason` and `notice` in the toolbar; error boundary per dock panel; device-tree panel rework; notices for unsupported targets | the contract gate M1 (5.5.3) passes against the mock and against the emulator: scenarios S01-S14, S19, S20 on the mock, S00-S15, S19, S20 on the emulator; pure-module tests; the in-emulator selftests in ctest (`debugger.selftest.*`, the session `regs` among them), which include the breakpoint and step gates of 2.3.6 (B11 is `debugger.sh4bp.b11` in the pure suite); Windows gate (5.8) | **done: M1 is complete.** The core (E5, 6.1) is verified and merged: the M1 gate passes against the emulator on the JIT, on the interpreter and with the forced fallback, 18 scenarios passed, 0 partial, 0 not applicable each, and against the mock, 16 of 16; 187 ctest targets pass. The Windows gate was met in the form 5.8 gave it then (a syntax-only compile and a review); the real MSVC build and the Windows run came with the platform round (W64a, W64b; 5.8, 6.3) |
 | M2 | ARM7 step / breakpoints (resumable sound burst); memory writes; register writes for the SH4 and the ARM7; reset; the full register tables (SB, PVR, AICA common and channels, GD-ROM, maple) read-only in the device tree; the generic register panel and the panel ids `sh4-registers`, `arm7-registers`; toolbar run control with hotkeys | contract gate M2 in its two runs (5.5.3); sound lines identical before / after with the sounding guest, and with the debugger in use on it (5.6); `npm run check` with the mock's M2 gate, and the e2e suite | **done: M2 is complete.** The round's gate (M2G, 2026-10-15) ran on `devcast` `6fe01759` with the UI at `d59336b` and emulators that carry its bundle (`ui` of `debugger.describe` is `3.0.0-pre+d59336b`): the M2 gate passes against the emulator on the JIT, the interpreter and the forced fallback (19 scenarios passed, 0 partial, 0 not applicable each) and its second run against the sounding guest (2 passed, both notes); the 259 ctest targets are green twice, none skipped; the sound lines of the guest and of 2ndmix equal those of the tree before E6b, and the state hashes of 5.7 those of the tree before the round, in the five builds; `npm run check` and the e2e suite pass in a fresh clone; the smoke spec passes against a headless emulator on the guest (5.4, 5.6, 5.7, 5.1) |
 | M3 (on the T5.0 core, wired into the AICA by the round) | SGC capture; DSP single-step / breakpoints / disassembly on the one C++ DSP core; playground runs the emscripten build of the same core and loads its program from the live emulator | contract gate M3 in its two runs (5.5.3) and the M2 gate's second run on the changed guest; sound lines and state hashes identical before / after, with the DSP test ELF and with the debugger at work on its DSP; the lines that the DSP program moves justified by the caique model (5.6); the AICA clocked whatever ARMRST says, held by the `held` targets (5.6); the playground's module equal to the native core (`aica.dsp.wasm.devtools`); `npm run check` with the mock's M3 gate, the e2e suite, the smoke spec; speed measured and reported (5.7) | **done: M3 is complete.** The round's gate (M3G, 2026-10-19) ran on `devcast` `9fbc988a` (its documents behind it, on the branch `skmp/nulldc3-m3g`) with the UI at `066fcbc` and emulators that carry its bundle (`ui` of `debugger.describe` is `3.0.0-pre+066fcbc`): run 1 of the M3 gate passes against the emulator on the JIT, the interpreter and the forced fallback (20 scenarios passed, 0 partial, 0 not applicable each), run 2 against the sounding guest on the JIT and the interpreter (S00, S17, S21: 3 passed with the note `sgc: captured with the arm7 held`; `--only S00,S21`: 2 passed with the note `dsp: stepped with the arm7 held`), and the M2 gate's second run on the changed guest (2 passed, both notes); the 307 ctest targets are green twice, none skipped; the sound lines of the guest and of 2ndmix and the guest's exit state hash equal B4's (12 of 12 entries, the default build and `-DNULLDC_DEBUGGER=OFF`), and so do the state hashes of 5.7 (38 of 38 rows, 2ndmix 600 in the five builds); `npm run check` (735 unit tests passed, 1 skipped; the four contract runs on the mock OK) and the e2e suite (401 passed, 1 skipped: the smoke spec, run on its own against the emulator) pass in a fresh clone of the UI; the smoke spec passes against a headless emulator on the guest; ThreadSanitizer of the sessions `dsp` and `sgc` and of the contract runs on the guest (interpreter) gives no report; speed is measured and reported (5.7) |
 | M4 | Holly: CORE inspector fed by an emulator capture, TA inspector, table panels (TLB / SQ / OC-RAM, caches), TA / CORE event-breakpoint controls in the inspectors | contract gate M4 (adds S18) | to do |
@@ -163,8 +196,8 @@ it is D8.
 | Save / load state, the game list | PLAN track 10 | no protocol method, now or later in this track: both leave the product with the imgui GUI. The "guest state replaced" hook (2.2.1) stays for when states return |
 | Writes of device registers (system bus, PVR, SH4 on-chip modules, AICA, RTC, GD-ROM, maple) | 4.4 ("edit through `state.setRegister`"), `M2-ROUND.md` M2-Q1, `M3-ROUND.md` M3-Q3 | not in M2 or M3: the rows are read-only (`-32013`). Each needs its write semantics stated; every device's write table comes with M4 (the owner's answer to `M3-ROUND.md` M3-Q3, "Move to M4"; package E9 states the AICA's with the others) |
 | A user-facing choice of SH4 engine | D9 | none. `dc.timing.SH4_BACKEND` and `SH4_DEBUG_ENGINE` say what executed |
-| Native SH4 breakpoints in the arm64 JIT backend, and in the x64 JIT on Windows before the run of 5.8 | D1 | interpreter fallback with a notice (2.3.5); a backend leaves it when it implements the items of 2.3.5 |
-| ARM7 native breakpoints on hosts with the ARM7 JIT (arm64) | D1 | interpreter fallback with a notice (2.5.3) |
+| Native SH4 breakpoints in the arm64 JIT backend | D1 | done in the platform round: the arm64 JIT has them since package A64 (2.3.5; `sh4-debug-native` on the Mac and on Linux arm64), the x64 JIT on Windows since W64b (5.8). A new JIT port uses the interpreter fallback with a notice until it implements the items of 2.3.5 |
+| ARM7 native breakpoints on hosts with the ARM7 JIT (arm64) | D1 | interpreter fallback with a notice (2.5.3); no build has an ARM7 JIT since the platform round (`PLATFORM-ROUND.md` PL-D46), so the fallback is not reached |
 | SH4 simulator panel | route `/tool/sh4-sim` | M5 |
 
 ## 2. Architecture (emulator side)
@@ -680,11 +713,11 @@ The armed SH4 breakpoint set used by the backends is owned by (E); other threads
   calls `Stop()`.
 - `Dreamcast_impl::Term()` never runs with a live emulator thread: `StopAndWait()` records `HOST_STOP | HOST_WAITS`, stops
   the cpu and joins the thread, without L, before `sh4_cpu->Term()`.
-- `dbg::Init()` is called at the end of `reicast_init()`; `dbg::Term()` at the start of `reicast_term()`, before the GUI
+- `dbg::Init()` is called at the end of `nulldc_init()`; `dbg::Term()` at the start of `nulldc_term()`, before the GUI
   (and with it the machine) is destroyed. `dbg::Term()` stops the server, ends (C) and joins both — where `dbg::Init`
   left them running: with no server enabled, or one that could not be started, there is neither (2.11) —; a call
   that (C) is waiting for is given up. A parked emulator thread is released by the stop request that
-  `reicast_term()` makes right behind it (`virtualDreamcast->StopAndWait()`), while the globals that thread uses are
+  `nulldc_term()` makes right behind it (`virtualDreamcast->StopAndWait()`), while the globals that thread uses are
   still valid.
 - A guest soft reset during a step, the ESC key while parked and the menu key while parked therefore take the paths of
   2.2.4 instead of a `verify` abort or a lost callback.
@@ -730,10 +763,14 @@ that, not the debugger.
 #### 2.2.8 Backends without a complete context at the slice hook
 
 A backend reports `SH4DBG_CTX_AT_SLICE` (2.3.4 l) when `Sh4cntx` is complete, pc included, whenever it calls
-`UpdateSystem()`: at a slice end, and from the SLEEP handler inside a block. The interpreter and the x64 JIT report it
-(the x64 JIT's epilogue has written the pc between two blocks, and the register allocator flushes in front of the SLEEP
-fallback). The arm64 JIT does not: it keeps the next PC in a host register across the call, so `Sh4cntx.pc` is stale
-there. On such a backend running ticks omit the path `dc.sh4.cpu` and set `executionState.registersStale: true` (2.9),
+`UpdateSystem()`: at a slice end, and from the SLEEP handler inside a block. The interpreter and the x64 and arm64 JITs
+report it (the x64 JIT's epilogue has written the pc between two blocks, and the register allocator flushes in front of
+the SLEEP fallback; the arm64 JIT since package A64 of the platform round, whose slice end stores the pc it goes to into
+the context in front of `UpdateSystem()`: header revision 8, H8-5). Until A64 the arm64 JIT did not: it kept the next PC
+in a host register across the call, so `Sh4cntx.pc` was stale there, and its running ticks said `registersStale` on the
+Mac and on Linux arm64 (2.3.7 item 18). No backend of the tree lacks the bit since; what follows is the rule for one
+that does (a new port), held against a stand-in on every host (`debugger.contract.hash.listening.rule`, 5.4). On such a
+backend running ticks omit the path `dc.sh4.cpu` and set `executionState.registersStale: true` (2.9),
 SH4 callstacks are not built while running (`state.getCallstack {sh4}` answers `frames: []`), and watches on
 `dc.sh4.cpu.*` evaluate to `"n/a"` while running. The context is valid after `Run()` returns, and writes only ever happen
 there; `registersStale` never appears in a paused tick. Whatever else reads SH4 state inside `UpdateSystem()` reads it
@@ -759,9 +796,10 @@ only under the bit (the sound regression harness, 5.6).
 - A selftest session (5.3) makes the same start park at the first `Park()` of every emulator thread while it is active,
   except for the threads that the selftest of `dbg::emu` starts itself.
 - While (E) is parked the window shows the last swapped frame; it is not repainted and shows no OSD. Entering a stop,
-  the park loop sets the window title to `nullDC 3.0.0 [paused by debugger]` (`os_SetWindowText`) where it is not on the
-  window already: at the first stop of a thread, and when the running machine has written its frame rate there since.
-  The title stays until the running machine writes its frame rate again. The emulator thread makes no window call
+  the park loop sets the window title to `nullDC <version> [paused by debugger]` (`os_SetWindowText`), `<version>` being
+  the build's version string (`NULLDC_VERSION`, 3.1; header revision 8, H8-4), where it is not on the window already:
+  at the first stop of a thread, and when the running machine has written its frame rate there since. The title stays
+  until the running machine writes its frame rate again. The emulator thread makes no window call
   behind its stop callback (the thread of the user interface may be waiting for it there, and a title call waits for
   that thread on some hosts). The UI thread never blocks on a parked emulator thread. Headless there is no window and
   the call does nothing.
@@ -970,10 +1008,11 @@ de-duplication: the same request twice gives two ids); when several match, the l
 - R15 — *Step preconditions.* An odd PC, an unreadable PC, an undefined opcode and an illegal slot instruction make a
   step fail with an error (2.3.2); they do not hang or end the process.
 
-The interpreter and the x64 JIT satisfy R1-R15 with the mechanism of 2.3.4 (gates of 2.3.6). The arm64 JIT, and the x64
-JIT in Windows builds until the run of 5.8, use the fallback of 2.3.5 until they implement the mechanism; what the
-fallback does not meet (R1, R12 and, until the backend's counter persists, R13) is stated there and in the tick's
-`notice`. A new host port (wasm32, riscv64) starts on the interpreter, which is native.
+The interpreter and the x64 and arm64 JITs satisfy R1-R15 with the mechanism of 2.3.4 (gates of 2.3.6). The x64 JIT in
+Windows builds until W64b and the arm64 JIT until A64 (both of the platform round) used the fallback of 2.3.5; a JIT
+that does not implement the mechanism uses it, and what the fallback does not meet (R1, R12 and, until the backend's
+counter persists, R13) is stated there and in the tick's `notice`. A new host port (wasm32, riscv64) starts on the
+interpreter, which is native.
 
 #### 2.3.4 The mechanism: breakpoints and steps in the active backend
 
@@ -1128,9 +1167,10 @@ counter into `Sh4Context`.
 
 **f. Address identity.** The mask `0x1FFFFFFF` (`DBG_SH4_ADDR_MASK`; the complete rule, MMU builds included, is
 `dbg::sh4::MaskAddr`) is applied in the armed set (stored masked), the decoder query, the helper lookup, the exemption
-and temporary breakpoints. The page discard uses the block manager's own index, `(addr & RAM_MASK) / REI_PAGE_SIZE`,
-which is the same for every mirror; ROM at `0x00000000 + X` and RAM at `0x0C000000 + X` stay different addresses (aliasing
-between areas only causes extra discards). The PC a stop reports is the address the running block was compiled for:
+and temporary breakpoints. The page discard finds its blocks through the block manager's own index, `(addr & RAM_MASK) /
+REI_PAGE_SIZE`, which is the same for every mirror, and discards those that overlap the address's 4 KiB page (R4; g);
+ROM at `0x00000000 + X` and RAM at `0x0C000000 + X` stay different addresses (aliasing between areas only causes extra
+discards). The PC a stop reports is the address the running block was compiled for:
 blocks are looked up by `fpcb[(addr >> 1) & FPCB_MASK]`, so a block compiled as `0x8C..` also runs for `0xAC..`, and the
 reported PC can be another mirror of the instruction than the one the guest jumped to. The JIT does not run in
 `WITH_MMU` builds today; the MMU rule of 2.3.3 concerns the interpreter.
@@ -1142,7 +1182,13 @@ block, because the SLEEP fallback loops on `UpdateSystem`; that is why the hook 
 the whole enabled set and diffs it against the armed set: each key that becomes armed or stops being armed updates the
 masked set, the page bitmap and `dbg_sh4_armed`, and calls `DebugDiscardPage(addr)` of the active backend
 (`sh4_cpu->DebugBackend()`); the JIT forwards it to `bm_DiscardAddrPage(addr)`, which copies
-`page_blocks[(addr & RAM_MASK) / REI_PAGE_SIZE]` and discards each block.
+`page_blocks[(addr & RAM_MASK) / REI_PAGE_SIZE]` and discards each block of it that overlaps the 4 KiB page of the
+address, in every mirror, and nothing else (R4). Where the block manager's page is 4 KiB that is every block of the
+list; where it is 16 KiB (`REI_PAGE_SIZE` on Apple silicon) the list holds the blocks of four such pages, and only those
+that overlap the address's page go (package A64 of the platform round, `7c025c83`: until then the whole 16 KiB list
+went,
+which `debugger.sh4bp.arm` showed on the Mac). The memory writer's discard without the virtual memory layout steps by
+4 KiB through each page it unprotects for the same reason (2.7), and so does the sh4bp suite's guest load.
 
 - Complete: `bm_AddBlock` enters a block in the list of every page between its first and last byte, so the page's list
   holds every block that contains the address, including blocks that start on the previous page and blocks that contain
@@ -1350,36 +1396,46 @@ struct NGenBackend   { ... RunBlockFnPtr_t RunBlock;                     // 0 wi
 ```
 
 The two helpers that generated code calls are `extern "C"` and `DYNACALL`. The interpreter reports both capability bits;
-the x64 JIT sets `CtxAtSlice`, and `DebugChecks` with `DebugCheckBudget` in builds with the debugger where the System V
-calling convention is used (not `_WIN32`: 5.8). The arm64 JIT sets none of them. The debugger-side state behind these
+the x64 JIT sets `CtxAtSlice`, and `DebugChecks` with `DebugCheckBudget` in builds with the debugger, on Windows too
+since
+W64b of the platform round (5.8); the arm64 JIT sets the same since A64 of that round (its budget 113, 2.3.5). The
+debugger-side state behind these
 functions — the armed set and its page bitmap, the exemption, the owed remainder, temporary breakpoints, step-out state —
 lives in `dbg_sh4.cpp`; run control reaches it through `dbg_sh4.h` (6.1, contract 9).
 
 #### 2.3.5 The backends, and the fallback
 
 Three SH4 engines exist (D7): the interpreter, the x64 JIT and the arm64 JIT. A JIT backend sets
-`ngen_features::DebugChecks` when it implements all of the following. The x64 JIT does, except in Windows builds until
-the run of 5.8 has passed; the arm64 JIT does not yet (it cannot be built or run on the development machine; it is kept
-source-consistent).
+`ngen_features::DebugChecks` when it implements all of the following. The x64 JIT does, on Linux and, since package W64b
+of the platform round (`PLATFORM-ROUND.md` PL-D38), on Windows, where the gates of 2.3.6 passed on the Windows host
+with the check stub's shadow space and the Windows flush budget (5.8): it reports `sh4-debug-native` on both. The arm64
+JIT does too, since package A64 of the platform round (`PLATFORM-ROUND.md` 2.15, PL-D86), on macOS and on Linux arm64,
+where the gates of 2.3.6 run since then: it reports `sh4-debug-native`, and `sh4-debug-fallback` only with
+`Debugger:ForceFallback=yes` ("The arm64 JIT in the platform round", below).
 
-| Item | x64 (2.3.4) | arm64 (to do) |
+| Item | x64 (2.3.4) | arm64 (A64, as built) |
 | --- | --- | --- |
-| `shop_dbg_check` | c | same shape; the flush comes from the shared `regalloc.h` |
-| leave without time advance | `jmp mainloop_exit` | store `next_pc`, branch to the end of the main loop (needs a global label) |
-| refund | `add [cycle_counter]` | `add w27` in the stop path |
-| counter survives (`KeepsSlice()`) | static initialisation | `w27` loaded from / stored to the context at loop entry / exit |
-| `RunBlock` | generated thunk | the block must end by returning to the thunk, not by linking (`RelinkBlock`; `rdv_LinkBlock` would chain it) |
-| step-out report | epilogue (j) | in `RelinkBlock` for call / ret / intr ends, before the link or lookup |
-| check budget | 56 per block, rest outside the cache | its own bound, or 0 if its blocks cannot grow too large |
-| `Sh4cntx.pc` at a stop | the helper writes it | same (the PC lives in `w29` between blocks, 2.2.8) |
+| `shop_dbg_check` | c | four instructions per check (the pc and the refund in `w0` / `w1`, a call of the block's tail); one tail per block with checks (the block's end in `w2`), one check stub at the start of the code cache; the flush comes from the shared `regalloc.h` |
+| leave without time advance | `jmp mainloop_exit` | the stub leaves through the main loop's one exit, without the end of the slice and without storing `w29` over the pc the helper wrote |
+| refund | `add [cycle_counter]` | the stub adds it to `w27` and stores the counter |
+| counter survives (`KeepsSlice()`) | static initialisation | a process-static counter, loaded into `w27` at every entry of `Mainloop` and `RunBlock` and stored at every exit and in front of every `UpdateSystem` the generated code makes (the end of a slice, SLEEP's handler) |
+| `RunBlock` | generated thunk | generated at `Init` with the main loop's frame (`x19-x30`, `d8-d15` whole) and exit; a temporary block is charged without a test, stores its next pc at every end and branches to `RunBlock`'s tail (the counter's test, the end of the slice, the exit); it links nothing and nothing links it (a `verify` in `rdv_LinkBlock` and `DynaRBI::Relink`) |
+| step-out report | epilogue (j) | in front of `relink_offset`, behind the store of the pc, for call / ret / intr ends; an RTE's `UpdateINTC` made before the exit on a stop |
+| check budget | 56 per block, rest outside the cache | 113 per block (16 KiB less the tail, over a check and its worst flush); the rest of a block over it through `rdv_BlockRest`, never linked; a compile that does not fit into what is left of the code cache gives the block up (`block->code` 0, the cache as it was) |
+| `Sh4cntx.pc` at a stop | the helper writes it | same; the end of a slice stores the pc (`w29`, which every static and conditional block end sets to its target) into the context (2.2.8) |
 
-The arm64 JIT tests the counter at block *entry* and restarts the block after an interrupt (`rdv_DoInterrupts`); a check
-stop is independent of that path. It also has to be brought to the SH4 FPU fast-tier fixes before its results can be
-compared with the interpreter's; both are work for a host that can build it.
+Since A64 the arm64 JIT also takes the x64 slice model (PL-D86): a block's prologue tests the counter in front of its
+charge, so a slice ends behind the block that used it up, as on x64 and in the fallback loop (a block whose test finds
+the counter spent is dispatched again behind the end of the slice, never charged and not run); `intc_sched` and
+`rdv_DoInterrupts` left the arm64 path. Until A64 it tested the counter at block *entry* in front of the charge of the
+block that overdrew it and restarted the block after an interrupt. Every arm64 slice end moved with it, and so did its
+state hashes (5.7). It still lacks the SH4 FPU fast-tier fixes (PLAN's backlog): its results are held to its own
+references, not compared with the interpreter's.
 
-**Fallback** — only for a JIT backend that does not report `SH4DBG_NATIVE` (the arm64 JIT; the x64 JIT on Windows until
-5.8; later, a new JIT port until it implements the items above), and for the test key `Debugger:ForceFallback=yes`,
-which makes the debugger treat the active JIT as such a backend (it has no effect on the interpreter):
+**Fallback** — only for a JIT backend that does not report `SH4DBG_NATIVE` (none in the tree since the platform round:
+the x64 JIT on Windows was one until W64b, the arm64 JIT until A64; later, a new JIT port until it implements the items
+above), and for the test key `Debugger:ForceFallback=yes`, which makes the debugger treat the active JIT as such a
+backend (it has no effect on the interpreter):
 
 ```cpp
 void SuperH4_impl::Run() {
@@ -1414,7 +1470,9 @@ void SuperH4_impl::Run() {
   meet R13, and every exit and re-entry of its loop — a pause, a service excursion, a switch to or from the fallback
   loop — moves SH4 time by less than one slice (documented). `SliceCyclesLeft()` reports the counter that the guest code
   executed last was charged to, so `dc.timing.SH4_CYCLES` does not go back across a step or a switch on a backend that
-  keeps its counter.
+  keeps its counter. Every JIT of the tree keeps it since A64 (the arm64 JIT restarted it until then: there a step
+  could take `SH4_CYCLES` back by less than a slice, and S04 was recorded, not gated, by `PLATFORM-ROUND.md` PL-D78,
+  5.5.4).
 - What the fallback cannot match is arithmetic: the interpreter's FPU paths differ from the JIT's (devcast-fpu.md). So
   while the fallback loop is selected, and in the tick of a fallback step, `executionState.notice` is
   `"SH4 runs on the interpreter while breakpoints are armed (JIT backend <name> has no native breakpoints): FPU results can differ from a run without breakpoints"`
@@ -1427,15 +1485,35 @@ void SuperH4_impl::Run() {
   `Park()` of the first thread of a machine (`dbg::emu::GetSh4Engine`), so a `debugger.describe` made at the
   `StartPaused` stop carries the capability.
 
+**The arm64 JIT in the platform round** (MACb on the Mac and LA64 on Linux arm64 met it; A64 made it native). MACb
+and LA64 built and ran it without the items of the table and with two properties more: it kept the next pc in a host
+register across `UpdateSystem()` (no `SH4DBG_CTX_AT_SLICE`, 2.2.8), so its running ticks said `registersStale` and
+left out `dc.sh4.cpu`; and it started its slice counter anew at every entry of its loop, so that a pause, a step or a
+host stop moved SH4 time by less than a slice (446 cycles back in the step S04 makes, on both arm64 systems). Its
+breakpoints and steps came from the fallback, with or without `Debugger:ForceFallback`; S04 was recorded there by
+PL-D78's rule of `contract.py` (5.5.4), and thirteen targets that read the running SH4's context or compared a stopped
+and resumed run's state hash with an untouched one (`debugger.selftest.emu`, `.regs`, `.core`, `.hostcycles`,
+`.writesrun.neutral` and the eight `debugger.sound.neutral.*.jit`) were registered on every arm64 host as `KNOWN LIMIT
+(A64)` (the owner's decision of 2026-10-22). At the owner's request A64 was added to the round before its gate and gave
+the JIT the items of the table and the x64 slice model in two steps (the kept counter, the prologue's test in front of
+the charge, the pc stored at every slice end, `CtxAtSlice`, the frame that saves `d8-d15` whole; then the native
+checks, `RunBlock`, temporary blocks and the budget). Since then the thirteen targets pass on every arm64 host, their
+list, `debugger.a64.knownlimits` and PL-D78's rule are gone, the sh4bp suite runs on arm64 Linux and macOS (2.3.6) and
+the contract gates pass in full there on all three engines (5.4).
+
 #### 2.3.6 Gates for 2.3.3 to 2.3.5
 
 The gates exist in two places and both run in ctest (5.2, 5.3).
 
-- `tests/debugger/sh4bp/` — the mechanism as the emulator compiles it (`dbg_sh4.cpp`, the decoder, the x64 backend with
-  its main loop and block manager, the interpreter, the fallback) around a small machine of the suite's own, with a
-  stand-in for run control whose park context is the test itself. Tests `debugger.sh4bp.<gate>`, on three engines, each
-  on those it applies to: `jit`, `interpreter`, `fallback` (the x64 backend with the fallback forced). x86-64 hosts
-  only. Its README has every gate, the measured costs and the call-site table. The two stand-ins of that directory
+- `tests/debugger/sh4bp/` — the mechanism as the emulator compiles it (`dbg_sh4.cpp`, the decoder, the recompiler of
+  the host with its main loop and block manager, the interpreter, the fallback) around a small machine of the suite's
+  own, with a stand-in for run control whose park context is the test itself. Tests `debugger.sh4bp.<gate>`, on three
+  engines, each on those it applies to: `jit`, `interpreter`, `fallback` (that recompiler with the fallback forced).
+  Hosts with an SH4 recompiler: x86-64 (Linux, and Windows since W64b of the platform round) and, since A64 of that
+  round, arm64 (Linux and macOS; the gate `abi`, arm64 only, holds what `Mainloop` and `RunBlock` give a caller back,
+  through every exit; `unwind` is Windows-only; `b11` counts with Linux's `perf_event_open` and says `SKIPPED` on
+  Windows, on macOS, and on a Linux kernel that does not let a process count). Its README has every gate, the measured
+  costs and the call-site table. The two stand-ins of that directory
   for the emulator's slice end (`machine.cpp`, `cost.cpp`) keep the latch test in front of the attention word: the
   cost of B11 was measured on that form. The emulator tests the attention word first (2.2.3), and the README's
   "Per slice" paragraph says that the stand-ins differ in this, instead of claiming the emulator's order for them.
@@ -1488,7 +1566,8 @@ every entry) the booted-guest tests of the engines that the rule belongs to fail
 #### 2.3.7 Known limits and risks of the mechanism
 
 The known limits of the debugger, the M2 round's among them (items 14 to 24: the writes, the ARM7's run control, the
-neutrality of an exit in a debugger stop).
+neutrality of an exit in a debugger stop), the M3 round's (items 25 to 30) and the platform round's (items 31 to 33:
+what the first runs on Windows, the Mac and Linux arm64 showed, and what A64's verifiers left).
 
 1. **Guest threads and stack-level conditions.** Step over and step out identify "the same activation" by `R15`; a
    kernel-aware thread id is not available. Documented in the UI help: a function that does not return by `RTS` (a tail
@@ -1502,6 +1581,8 @@ neutrality of an exit in a debugger stop).
    `M2-ROUND.md` M2-D41).
 3. **Stop + resume costs a compile** (2.3.4 c). Hit counts, conditions and log points must be answered in the helper.
 4. **Linking backends** (arm64) need a non-linking block end for temporary blocks; until then they use the fallback.
+   Done for arm64 by A64 of the platform round: a temporary block stores its next pc at every end and branches to
+   `RunBlock`'s tail, links nothing and is linked from nothing (2.3.5).
 5. **Order against the timing tracks.** The mechanism is in the tree before PLAN T3.0 / T3.2 edit the decoder's cost
    code, the x64 prologue and the interpreter loop. Those tracks keep: the running cost is sampled in front of each
    instruction; a `DecodeLimits::cycles` override is honoured after all cost post-processing; the counter survives loop
@@ -1516,14 +1597,17 @@ neutrality of an exit in a debugger stop).
    empties the code cache, so that a resume agrees with a step behind a PC written into another mirror or onto a boot
    ROM address (`M2-ROUND.md` M2-D42); a guest that changes mirror by itself is as before (PLAN's backlog: a block cache
    with the address in its key).
-7. **Not run:** the arm64 backend's native items, and the ARM7's fallback and its notice (2.5.3; kept
-   source-consistent by reading, M2), with M3's rule that the notice follows an ARM7 suspension only
-   (`NoteArm7Fallback`, `M3-ROUND.md` M3-D24: on this x86-64 build there is no ARM7 recompiler, so a notice behind any
-   suspension cannot be told from the rule here); the arm64 deletions of the DSP recompiler (read, M3-D14);
-   `debugger.contract.hash.listening*` on an arm64 host; an arcade board (`dc.gdrom`
-   reading `"n/a"` there is by reading); MMU builds; the emitted x64 code with the Windows calling convention
-   (`STACK_ALIGN` 40, argument registers), which follows the existing `WIN32_ONLY` conventions of `rec_x64.cpp` and is
-   covered by 5.8. Until then `DebugChecks` is off in Windows builds.
+7. **Not run:** the ARM7's fallback and its notice (2.5.3; kept source-consistent by reading, M2), with M3's rule that
+   the notice follows an ARM7 suspension only (`NoteArm7Fallback`, `M3-ROUND.md` M3-D24): no build has an ARM7
+   recompiler since the platform round (`FEAT_AREC` is none on arm64 hosts too, `PLATFORM-ROUND.md` PL-D46; the arm64
+   one stays unbuilt, PLAN's backlog), so a notice behind any suspension cannot be told from the rule on any host; an
+   arcade board (`dc.gdrom` reading `"n/a"` there is by reading); MMU builds. **Run since the platform round:** the
+   arm64 builds without the DSP recompiler (M3-D14), on the Mac and on Linux arm64; the arm64 backend's native items
+   (A64: the gates of 2.3.6 on both arm64 systems, `debugger.sh4bp.abi` for its frame);
+   `debugger.contract.hash.listening*`
+   on both arm64 systems, green; the emitted x64 code with the Windows calling convention (`STACK_ALIGN` 40, argument
+   registers, the check stub's shadow space), by the gates of 2.3.6 on the Windows host (W64b, 5.8), behind which
+   `DebugChecks` is on in Windows builds.
 8. **More than 56 armed instructions in one block** have the rest of the block compiled on every pass (2.3.4 c): correct
    but slow (2ndmix with 819 armed, muted addresses in its hottest blocks: 10.7 times the host instructions). A handful
    of breakpoints costs nothing.
@@ -1594,7 +1678,10 @@ neutrality of an exit in a debugger stop).
 18. **On a recompiler without `SH4DBG_CTX_AT_SLICE` (arm64)** the tick behind a write to a running target says
     `registersStale`, although the context is complete in the service excursion in which it is built. Not seen on
     x86-64, where the rule "a tick that says `registersStale` is full without `dc.sh4.cpu`" is held against a stand-in
-    (the x64 recompiler built without `CtxAtSlice`, `debugger.contract.hash.listening.rule`, 5.4).
+    (the x64 recompiler built without `CtxAtSlice`, `debugger.contract.hash.listening.rule`, 5.4). Seen on the arm64
+    recompiler in the platform round until A64 (MACb: `registersStale: true` in a running tick on the Mac, 2.3.5); since
+    A64 the arm64 recompiler states `CtxAtSlice` too (2.2.8), no backend of the tree sends such a tick, and the modes
+    `hash-listening` refuse a running tick that says `registersStale` on every host and engine.
 19. **Two FPSCR properties are held by reading only:** a write that changes none of PR, SZ and the rounding mode resets
     nothing, and a changed rounding mode resets the code cache.
 20. **The exit line in the tick of a latched stop.** When a check of the ARM7 or an event breakpoint latches a stop in
@@ -1638,6 +1725,26 @@ neutrality of an exit in a debugger stop).
 30. **A 32 MiB binary frame is copied once more by the transport**: `net::Server` puts the header in front of the
     payload by copying it, so peak memory is briefly about three times 32 MiB, and a `std::bad_alloc` there, or in
     the deferred answer, escapes `HandleText` / `TakeNotice` to `std::terminate` (E8b's verifiers). PLAN's backlog.
+31. **"Boot BIOS" with no BIOS copied in ends `nulldc3.app` on macOS** (`EXC_BREAKPOINT` in `os_DebugBreak()`; the
+    owner's run of MACb's `try` bundle, 2026-10-22): a crash of the windowed start, outside the debugger. By A64's
+    reading reios boots `0xAC008300` from RAM filled with `0xFF`, and the opcode `0xFFFF` reaches the `die` of
+    `cpu_iNimp`, on every engine. The owner decided to fix it after the round (PLAN's backlog). An automated run ends a
+    fatal signal with Linux's line and `_exit(128+N)` instead (D10).
+32. **Targets that flaked once in the platform round** and passed when run again; none concerns the emulator a user
+    runs: on the Mac's loopback `debugger.net.test_e2e` (all 16 MiB reached a peer that does not read, `test_e2e.cpp`
+    line 306: now and then in MACa's and MACb's runs) and `debugger.contract.m2.guest.interp` (S16's reset not seen
+    within 5000 ms, once in three full runs under `ctest -j4`; LA64), which `nulldc3/ci/macos.sh` runs once more when
+    they are the only failures of a run, and says so; on the arm64 host `debugger.selftest.hostcycles` (its rate window
+    on a busy host; A64); on the Windows host `debugger.selftest.emurun.pauses.interp` (its `SelfTest:` line spliced
+    into a guest console line; A64).
+33. **What A64's verifiers left** (`PLATFORM-ROUND.md` I.12): mutants of the arm64 recompiler that stayed green and were
+    judged by reading (the room a compile keeps for `CheckBlock` and for a pending literal pool; five equivalents); the
+    `-DNULLDC_DEBUGGER=OFF` build measured about 1.3 % slower on the arm64 host after A64 (`speed_pct` medians 663 to
+    654; the default build and the Mac unchanged); `emu.fp` of `debugger.selftest.emu` is x86-64 only (it reads
+    MXCSR), so on arm64 nothing holds the host FP mode across the park, while `dbg_sh4_Check` runs C++ code with the
+    guest's FPCR (`sh4_host_fp_resync`). The store-queue write with the MMU off on the arm64 recompiler
+    (`do_sqw_nommu_area_3`), which LA64's verifier found reached by no test, is held since A64 by
+    `debugger.selftest.sqw` and `.sqw.interp` on every host.
 
 ### 2.4 Time while debugging
 
@@ -1798,15 +1905,16 @@ sample.
   clocked and a check to come; it is used only by a check at that PC; it is ended by the first check, by a change of
   `dbg_arm7_armed` to or from 0 and by a burst that finds the ARM7 held; a step-over on a `BL` and a step-out arm it for
   the PC they are asked from.
-- On hosts where the ARM7 runs through the interpreter (every x86-64 build) this is native: what is debugged is what
-  runs. Where the selected ARM7 backend is the recompiler (arm64 with it enabled) the debug loop is an interpreter
+- On hosts where the ARM7 runs through the interpreter (every x86-64 build, and every build since the platform round)
+  this is native: what is debugged is what runs. Where the selected ARM7 backend is the recompiler (arm64 with it
+  enabled; no build has one since the platform round, `PLATFORM-ROUND.md` PL-D46) the debug loop is an interpreter
   fallback on the same context (all JIT state lives in `ctx->regs` between `Run` calls, so no backend swap is needed):
   timing differs while the debug loop is in use: while a breakpoint of the ARM7 is **active** (enabled, its category in
   the active mask), a temporary breakpoint exists or a step is armed. Ticks then carry the `notice` `"ARM7 runs on the
   interpreter fallback: timing differs"` (`NOTICE_ARM7_FALLBACK`); the notice is also in the stop that ends a step, a
   resume or a run in which the debug loop executed, since a step and a temporary breakpoint disarm before their stop is
-  published. The ARM7 tiers of PLAN track 6 replace the cost tables on both paths; what they keep is the shape above (one
-  flag test per sample, the check after `StepIrq`).
+  published. The ARM7 tiers of PLAN track 6 replace the cost tables on both paths; what they keep is the shape above
+  (one flag test per sample, the check after `StepIrq`).
 - `control.step {arm7}` executes one ARM7 instruction and never publishes `running`. With a burst suspended: in the park
   context, the stop at the check behind the instruction (the next instruction, a branch target, a vector); if the
   instruction was the last of the burst, at the burst's end with none suspended. With no burst suspended: the park
@@ -2103,7 +2211,7 @@ default; that is the emulator's choice, not contract, and the runner does not ch
 
 | Path (parent) | Registers (emulator) | Events | Actions | From |
 | --- | --- | --- | --- | --- |
-| `dc` | `SYSCLK` (text), `BUILD` (text, `nullDC 3.0.0 <git revision>`) | `dc.system.reset`, `dc.system.state`, `dc.debugger.engine`, `dc.debugger.note` | — | M1 |
+| `dc` | `SYSCLK` (text), `BUILD` (text, `nullDC <version>`, the build's version string of 3.1) | `dc.system.reset`, `dc.system.state`, `dc.debugger.engine`, `dc.debugger.note` | — | M1 |
 | `dc.sh4` (`dc`) | — | `dc.sh4.interrupt`, `dc.sh4.exception` | — | M1 |
 | `dc.sh4.cpu` (`dc.sh4`) | **normative:** `PC PR SR GBR VBR MACH MACL SSR SPC SGR DBR FPSCR FPUL`, `R0..R15`, `R0_BANK..R7_BANK` (the bank of R0..R7 that is not selected), `FR0..FR15`, `XF0..XF15` (raw 32 bits); all width 32, in this order | — | `sh4-disassembly`, `sh4-memory`; `sh4-registers` from M2 | M1 |
 | `dc.sh4.pbus` (`dc.sh4`) | — | — | — | M1 |
@@ -2405,7 +2513,8 @@ HTTP and WebSocket rules (implemented by E1):
 - The upgrade additionally requires `Origin` to be absent, or to parse as `http(s)://<host>[:port]` with `<host>` exactly
   (case-insensitive) in the same list; the literal `null` is rejected.
 - Static files, in order: `WebRoot`, the embedded bundle, the built-in page (it says where to get the UI and names
-  nullDC 3.0.0). A path that is not found falls back to `index.html` only when its last segment has no file extension;
+  the build: `<title>nullDC <version> debugger</title>`, `<version>` the build's version string of 3.1). A path that is
+  not found falls back to `index.html` only when its last segment has no file extension;
   otherwise 404. `index.html` is sent with `Cache-Control: no-cache`, hashed assets (`assets/*`) with
   `max-age=31536000, immutable`. MIME table: html, js, css, json, wasm (`application/wasm`), png, svg, ico, ttf, woff2,
   map. Every response carries `X-Content-Type-Options: nosniff`. Embedded files are stored gzip-compressed and sent with
@@ -2424,10 +2533,14 @@ HTTP and WebSocket rules (implemented by E1):
 Embedding the UI (`debugger.cmake` with `cmake/dbg_webui.cmake` at configure time and `cmake/dbg_webui_embed.cmake` at
 build time; as built):
 - Every build of the UI (`build:native`, `build:wasm`) ends by writing `bundle-info.json` into its output directory
-  (`scripts/bundle-info.ts`): `{version, protocol, gitRev, files: [{path, bytes, sha256}]}`. `version` is the
-  `package.json` version, followed by `+<git describe --tags --always --dirty>` when the build runs in a git checkout;
-  `protocol` is the UI's `PROTOCOL_VERSION`; `gitRev` is the full commit hash, with `-dirty` when the tree had changes,
-  and `""` without git; both strings are limited to the characters the embed script accepts
+  (`scripts/bundle-info.ts`): `{version, protocol, gitRev, files: [{path, bytes, sha256}]}`. `version` is the UI's
+  version by the rule both repositories share since the platform round (`PLATFORM-ROUND.md` 5.1, package VCu;
+  `scripts/version.ts`): the base `3.0.0-pre` of `package.json`, made `3.0.0-pre+g<h>` (`<h>` the first 10 characters
+  of the commit) while no tag `v*` is reachable, `3.0.0-pre` on the tag `v3.0.0-pre`, `3.0.0-pre+<N>.g<h>` N commits
+  after it, with `.dirty` (`+dirty` on the tag) behind a tracked change, and `<base>+nogit` outside a checkout (before
+  VCu it was the base followed by `+<git describe --tags --always --dirty>`); `protocol` is the UI's
+  `PROTOCOL_VERSION`; `gitRev` is the full commit hash, with `-dirty` when the tree had changes, and `""` without git;
+  both strings are limited to the characters the embed script accepts
   (`[A-Za-z0-9_.+~:/ -]`, others replaced by `_`); `files` lists every file of the directory but hidden ones and
   `bundle-info.json` itself, sorted, with lower-case hex hashes.
 - Cache variable `NULLDC_DEVTOOLS_DIST`: a `dist-native` directory; empty (the default) for auto-detection of
@@ -2535,7 +2648,7 @@ schemas, and `ConformanceSchemas`, the strict copy the runner uses.
 Params: `{ protocol?: number, client?: string }`. Result:
 
 ```ts
-{ emulator: { name: "nullDC", version: "3.0.0", build: "native" },
+{ emulator: { name: "nullDC", version: string, build: "native" },   // version: the build's version (below)
   protocol: 3,                 // always; an integer
   ui: string,                  // always: "none" or the version of the embedded bundle
   capabilities: string[],      // always (possibly empty)
@@ -2579,6 +2692,12 @@ loaded program); the last column is what the emulator sends in M1. `stepping` fo
   form is the tick: `notice` and `dc.timing`. There is no `"dsp-forced"`: forcing was never built, and F4a removed the
   capability from the UI's schema (2.5.5).
 - `deviceTree` is 2.8.
+- `emulator.version` is the build's version string (`nulldc_version()`, made at build time from the tag, the commits
+  since it and a dirty tree by the rule of `PLATFORM-ROUND.md` 5.1, package VTe): `3.0.0-pre+g<h>` (`<h>` the first 10
+  characters of the commit) until the tag `v3.0.0-pre` exists, `3.0.0-pre` on it, `3.0.0-pre+<N>.g<h>` after it,
+  `.dirty` or `+dirty` behind a tracked change, `3.0.0-pre+nogit` without git. It is what `--version` prints behind
+  `nullDC `, and it was the literal `"3.0.0"` until the platform round. `ui` is the embedded bundle's version by the
+  same rule (2.11).
 - In `NoMachine` the result is the static tree with every register value `"n/a"`, and the two engine capabilities are
   absent.
 - `debugger.describe` may be sent any number of times on one connection (a client asks again after a describe that
@@ -2856,7 +2975,9 @@ Delivered: the lint fixes of devtools-build.md; eslint ignores; `tsconfig` cover
 `build` (= build:native), `typecheck`, `test:run`, `check`; the generated DSP wasm glue committed so a fresh clone
 type-checks and builds without Rust (`build:dspsim` stayed for regeneration until M3, where F4b made it the emscripten
 build of the emulator's core, 4.5); version from `package.json`
-(`3.0.0-pre`, followed by `+<git describe>` in a checkout), never "unknown"; README and in-app docs describe the real
+(`3.0.0-pre`, followed by `+<git describe>` in a checkout until the platform round, whose package VCu gave it the rule
+of 2.11, `PLATFORM-ROUND.md` 5.1: `3.0.0-pre+g<h>` until the tag `v3.0.0-pre`), never "unknown"; README and in-app docs
+describe the real
 scripts and protocol; Dockerfile / fly.toml use the real scripts (they deploy only the mock demo); CI runs `npm ci` and
 `npm run check` on Node 22, and a second job runs the e2e suite. No dependency major bumps.
 
@@ -3301,9 +3422,12 @@ Rules for every run in this section (D10): every emulator run is headless (`conf
 `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`), the real-time clock pinned, a core size limit of 1 byte and a watchdog, as
 `tests/system` does it. Agent runs keep to the machine limits: one workflow at a time, `ninja -j8`, one build at a time,
 `ctest -j4`, at most 4 emulator processes, no load generators, one sanitizer configuration at a time. `config:Headless`
-exists on Linux only (the tests that need it are skipped on other hosts). The only runs that may open a window are the
-window checklist of E4a (`tests/debugger/selftest/window_checklist.sh`, not a ctest test) and the Windows run of 5.8
-(and a run on macOS, should one be made before headless exists there).
+exists on Linux, Windows and macOS since the platform round (D10): on Windows every program of an automated run runs
+inside `nulldc3-winrun` (a private desktop, a job, the error mode), on the Mac every emulator run goes through
+`tests/macos/macrun.py` under its sandbox profile, and the harnesses start their programs through the shared run
+helper `tests/common/emurun.py` (5.4). The only runs that may open a window are the window checklist of E4a
+(`tests/debugger/selftest/window_checklist.sh`, not a ctest test) and the window items of 5.8, both the owner's by hand
+(`PLATFORM-ROUND.md` PL-D40).
 
 ### 5.1 devtools
 
@@ -3362,7 +3486,7 @@ allowed E5 was not needed. S12 holds the behaviour in the gate.
 
 ### 5.3 In-emulator selftest
 
-`devcast -config Debugger:SelfTest=<filter> <game>` runs the registered tests on the emulator thread against the live
+`nulldc3 --config Debugger:SelfTest=<filter> <game>` runs the registered tests on the emulator thread against the live
 machine, prints one line per check and per test (`SelfTest: <test>: PASS, <n> checks` / `FAIL, ...`; last line
 `SelfTest: <p> passed, <f> failed`), and ends the process with 0 (every selected test passed) or 1 (also when the filter
 selects nothing). The filter is a comma-separated list; an item selects the test of that name and every test whose name
@@ -3585,7 +3709,7 @@ The M3 round (`M3-ROUND.md`; `tests/debugger/selftest/README.md` has every test)
   it runs under reios, no BIOS; starts the ARM7; has `.symtab`; entry `0x8C010000`):
 
   ```
-  devcast -config config:Headless=yes , audio:backend=none , config:Dreamcast.RTC=946684800 , \
+  nulldc3 --config config:Headless=yes , audio:backend=none , config:Dreamcast.RTC=946684800 , \
                   Debugger:Enabled=yes , Debugger:Port=0 , Debugger:Required=yes , Debugger:StartPaused=yes \
           2ndmix.elf
   ```
@@ -3683,7 +3807,9 @@ The M3 round (`M3-ROUND.md`; `tests/debugger/selftest/README.md` has every test)
     `Debugger:FullTickEvery=1` and one `control.runUntil` behind the describe (a run listened to from its first
     instruction needs the `StartPaused` stop), leaves the state hash what it is with the server off, although every
     full tick reads every device; a tick that says `registersStale` is full without `dc.sh4.cpu` (the rule, shown on
-    made-up ticks: on x86-64 no engine sends a stale tick). The targets that start Python from the tree run it with
+    made-up ticks: no engine sends a stale tick on x86-64, nor on arm64 since A64 of the platform round, and the
+    modes refuse one from either engine on every host since then). The targets that start Python from the tree run it
+    with
     `PYTHONDONTWRITEBYTECODE=1`, so that a test run leaves the source tree as it was (EXe). The tests project has 259
     targets at the end of the M2 round. `hash.listening` needs ten full ticks, which a host four times faster might
     not give in 600 vblanks: it can fail a correct server, never pass a broken one.
@@ -3707,9 +3833,33 @@ The M3 round (`M3-ROUND.md`; `tests/debugger/selftest/README.md` has every test)
     `NULLDC_EMULATOR_TA_HLE`); the option is not given to the tests project, where it replaces the bundle of
     `tests/debugger/net`. The UI checkout an emulator gate runs with (`NULLDC_DEVTOOLS_DIR`) is a commit the integrator
     names, the last verified UI head (`M2-ROUND.md` section 4).
-- The contract tests run on the emulator the system tests build (`<build>/system/emulator/devcast`, or
+- The contract tests run on the emulator the system tests build (`<build>/system/emulator/nulldc3`, or
   `NULLDC_EMULATOR`), as the selftests do; no embedded bundle is needed: S15 passes on the built-in page. The first
   item of this recipe is for a run by hand against the UI.
+- **The run helper, and the gates on Windows, macOS and Linux arm64** (the platform round; `PLATFORM-ROUND.md` PL-D5,
+  PL-D69). The harnesses — `tests/debugger/selftest/selftest.py`, `tests/debugger/contract/contract.py`,
+  `tests/debugger/guest/dsptest/soundlines.py`, `tests/debugger/sh4bp/sessions.py` — start every program through one
+  helper, `tests/common/emurun.py` (W64b; its Darwin branch MACb; `harness.emurun` holds every branch on every host):
+  the environment of a run (nothing of the caller's but the sanitizers' options; on Windows `SystemRoot` and `TEMP` in
+  the run's directory, on macOS `TMPDIR` there), the program itself inside `nulldc3-winrun` on Windows (its path in
+  `NULLDC_WINRUN`, which the tests project passes: a harness there starts nothing without it), through
+  `tests/macos/macrun.py` on macOS, and on another POSIX host directly with a core file size limit of 1 byte; the end of
+  a run (on Windows the job, on macOS a SIGTERM to `macrun.py`, which kills everything below it); output read without
+  the `\r` of a `\r\n`; no POSIX shell on Windows. `tests/system`, the Linux-only system-test harness, is not ported
+  (the owner's decision) and builds no emulator there: the tests project takes `-DNULLDC_EMULATOR=` (`tests/README.md`,
+  "On Windows", "On macOS"). **A gate on those systems** is every target that runs green twice, with the skipped listed
+  with their reasons and numbers (PL-D5: on Linux x86_64 "none skipped" holds, on the others the owner's decisions skip
+  the Linux-only harness and what needs an x86-64 build). The skip lists and their counts, as the platform round's gate
+  (PLG) measured them, are in `tests/README.md`: on Windows 77 of 349 (the Linux-only system-test harness 67, the four
+  objdump oracles, the three emcc tests, `cfg.log_file`, `debugger.sound.runner`, `debugger.sh4bp.b11`); on macOS 81 of
+  340 (the Linux-only harness 67, the x64 backend's blocks 9, the three emcc tests, `debugger.sh4bp.b11`,
+  `debugger.sound.runner`); on Linux arm64 16 of 330 (the x64 backend's blocks 9, the three emcc tests, the four `vmem`
+  system tests that skip themselves where unprivileged user namespaces are refused). The contract gates M1 to M3 run
+  there with Linux's numbers: M1 18 passed, M2 19 and M3's run 1 20 on the JIT, the interpreter and the forced fallback,
+  M2's guest run 2 and M3's two guest runs 3 and 2 with their notes on the JIT and the interpreter (on the arm64
+  recompiler since A64; until then S04 was recorded there, 5.5.4). In CI (`.github/workflows/ci.yml`, CIe) the same
+  tests run with the data that public repositories give (PL-D58: no 2ndmix, hello or RTL checkout), and the job
+  summaries list the skipped with their reasons.
 
 ### 5.5 Contract invariants and scenarios
 
@@ -3749,7 +3899,7 @@ the profile's factor); the server may send other ticks in between. The time boun
 | S01 | describe | result valid, every issue reported; `protocol == 3`; `targets` present; the first notification after the response is a full tick; the same for a describe with `{}` and with `{protocol: 2}`; paths unique and lower case; register names unique per node and upper case; the values of the tree formatted as I4; `actions` within `PanelId`; no empty arrays; every target's `pcPath` / `pcRegister` is in the tree; the normative columns of 3.1 for every listed target; of 2.8: the M1 paths, their parents, their actions, the anchor registers (the three of the targets, and `dc.aica.arm7` `ENABLED` with width 1 when `arm7` is listed), the register list of `dc.sh4.cpu`, `dc.holly.core.vblank` among the events, and the width of each of the thirteen registers of `dc.aica.dsp` (2.8: `STEP` 8, `MDEC_CT` 16, `RBP` 16, `RBL` 8 and the nine of M3) that it lists. Under a milestone gate also: `sh4`, `arm7` and `dsp` are listed, and the capabilities of the milestone are advertised (M1: `event-breakpoints`, `callstack`); under M3 also `targets[dsp].stepping === true` and the nine registers of M3 (`ACC` to `MIXS_BANK`) present on `dc.aica.dsp` with their widths |
 | S02 | pause | `control.pause {target: "sh4"}` (what the UI sends) returns `{}`; a paused tick within 2 s with `reason: "pause"`, a new `stopId` and no `breakpointId`; a further pause for each of `sh4`, `arm7`, `dsp` — listed by the server or not — returns `{}` and changes nothing; a pause with another string as target is in-band `-32602` |
 | S03 | resume | `control.runUntil` returns `{}`; running tick within 1 s, `stopId` unchanged; at least 2 more running ticks within 1.5 s; `dc.timing.SH4_CYCLES` differs between them; a full running tick within 2 s of the resume (the default `TickMs` and `FullTickEvery`, with which the gates are run: 5.5.3); three watches kept through the running phase are listed in every running tick: on `dc.timing.sh4_cycles` (its value moves), on the SH4 PC (`"n/a"` under `registersStale`), and on a register of a path outside the base paths that has a value at the stop before the resume — some registers are `"n/a"` always, 2.8 — (a value, not `"n/a"`, in every running tick); a second `runUntil` returns `{}` and changes nothing |
-| S04 | step | paused; step to a line that is not control flow and does not follow a delayed branch (at most 64 steps; none found fails). `control.step {sh4}`: a paused tick with a new `stopId` and `reason: "step"`, and no running tick in between; `dc.timing.SH4_CYCLES` does not decrease, and increases unless PC1 is an exception vector (a deferred interrupt can end the step before an instruction runs, 2.3.2); PC1 == PC0+2 or PC1 is an exception vector. One step may end at a vector. The step after it starts at the handler's first instruction with `SR.BL` set and cannot be interrupted: **a second step in a row that ends at a vector fails S04**, whichever steps of the scenario the two are, and the step the runner then makes from the next plain line has to show PC1 == PC0+2. `control.stepOver` on a line that is not a call behaves as a step: it too may end at a vector, as long as it is not the second step in a row that does. `control.stepOut`: `{}`, a running tick within 1 s (the step out follows completed steps, so nothing is deferred there and it is not complete at a vector, 2.3.2); a stop within 5 s has reason `step` or carries a `breakpointId`; otherwise the runner pauses. `control.step {sh4}` while running: in-band `-32003`. Mock: PC1 is the next address of its loop |
+| S04 | step | paused; step to a line that is not control flow and does not follow a delayed branch (at most 64 steps; none found fails). `control.step {sh4}`: a paused tick with a new `stopId` and `reason: "step"`, and no running tick in between; `dc.timing.SH4_CYCLES` does not decrease, and increases unless PC1 is an exception vector (a deferred interrupt can end the step before an instruction runs, 2.3.2); PC1 == PC0+2 or PC1 is an exception vector. One step may end at a vector. The step after it starts at the handler's first instruction with `SR.BL` set and cannot be interrupted: **a second step in a row that ends at a vector fails S04**, whichever steps of the scenario the two are, and the step the runner then makes from the next plain line has to show PC1 == PC0+2. `control.stepOver` on a line that is not a call behaves as a step: it too may end at a vector, as long as it is not the second step in a row that does. `control.stepOut`: `{}`, a running tick within 1 s (the step out follows completed steps, so nothing is deferred there and it is not complete at a vector, 2.3.2); a stop within 5 s has reason `step` or carries a `breakpointId`; otherwise the runner pauses. `control.step {sh4}` while running: in-band `-32003`. Mock: PC1 is the next address of its loop. Gated in full on every host and engine (on the arm64 recompiler since A64 of the platform round; between MACb and A64 it was recorded there, not gated, by `PLATFORM-ROUND.md` PL-D78: 5.5.4) |
 | S05 | breakpoint hit | paused; step until the lines at PC and PC+2 are both not control flow (at most 64 steps); add a code breakpoint at PC+2 with `kind` and `enabled` given; a tick within 1 s lists it with a new id N; the same request again gives a second id; resume; within 2 s a paused tick with `breakpointId == N` (the lower id), `reason: "breakpoint"`, PC == PC+2; a later paused tick of the same stop (provoked by adding a watch) repeats `breakpointId`, `reason` and `stopId`; after `breakpoints.remove {N}` the paused ticks of that stop carry no `breakpointId` |
 | S06 | mute | same construction; set `sh4.muted`; a tick echoes it in `categories`; resume; the running tick of the resume within 1 s, then only running ticks for 600 ms — no paused tick in the window, and nothing else is asked of it: no number of ticks —; pause; unmute. Repeat with `arm7.soloed` (not hit), and with `sh4.soloed` (hit). Two requests of one key each leave the other keys alone; a request with an unknown key returns `{}` and changes nothing |
 | S07 | toggle, remove, event breakpoints | a disabled breakpoint is not hit (as S06: the running tick of the resume, then no paused tick for 600 ms). **Re-enabling:** at a stop taken after the target has run past its start-up (the pause that ends the first part of this scenario; not the anchor of S00, where the program has not installed its vector base), read `VBR` from `dc.sh4.cpu`; add a code breakpoint at the interrupt entry `VBR + 0x600`, which every program with interrupts enabled reaches at each vblank; resume and see it hit; disable it; resume and see the target run through at least two further vblank events (a disabled event breakpoint on `dc.holly.core.vblank` puts them in the event log); enable it; require the hit within 2 s. A target that takes no interrupt in the window (the first hit does not come) makes the scenario **partial**. Remove deletes; removing again and toggling an unknown id return in-band `-32602`. Event breakpoints: every event the tree lists accepts a breakpoint (added disabled, with `kind`, listed, removed); none stops while disabled; an enabled one on `dc.holly.core.vblank` (added without `kind` and `enabled`) gives a paused tick with `reason: "event"` and its id within 2 s. The table takes 1024 breakpoints (filled with disabled event breakpoints) and refuses the next one with in-band `-32602` |
@@ -3867,13 +4017,24 @@ as left behind.
 - The half of S11's pairing in which `ENABLED` reads 0, and the no-wrap rule of a memory slice, are held by the gate
   from F3a on: the pairing is an invariant of every paused tick (the anchor stop has `ENABLED` 0), and S09 asks across
   `addressMax`. (Until then the selftests of the core held them alone: `core.guest`, `core.tick`.)
-- `registersStale` appears only on a backend without `SH4DBG_CTX_AT_SLICE`, which is the arm64 JIT (2.2.8): on the
-  development machine no emulator run shows it, and its rules (I5, I6, S03) are held on the mock alone until a
-  host for arm64 exists.
+- `registersStale` appears only on a backend without `SH4DBG_CTX_AT_SLICE` (2.2.8): none in the tree since package
+  A64 of the platform round (the arm64 JIT was one until then). Its rules (I5, I6, S03) are held on the mock and against
+  the stand-in of `debugger.contract.hash.listening.rule` on every host. Between MACb and A64 the contract gates ran on
+  the Mac and on the arm64 Linux host, whose running ticks said `registersStale`, and the runner held the rules against
+  the emulator there (0 invariant violations in every gate); since A64 the modes `hash-listening` refuse a running tick
+  that says it, on every host and engine.
 - The 16-client limit is the transport's (`tests/debugger/net`).
 - `dc.timing.SH4_CYCLES` across a step (S04) holds on a backend that keeps its slice counter across `Loop()`; behind one
   that restarts its slice a switch of loops can move it by less than a slice (2.3.5), and S04 is then not a gate for
-  that backend's fallback.
+  that backend's fallback. Every JIT of the tree keeps its counter since A64, and S04 is gated in full on every host
+  and engine. **Between MACb and A64** the arm64 recompiler restarted its counter, and its runs with and without
+  `--fallback` were that fallback (`CaptureEngine` in `dbg_emu.cpp` set `engine.fallback` there either way), so S04
+  was recorded there, not gated, by a rule in `run_runner` of `tests/debugger/contract/contract.py` (`PLATFORM-ROUND.md`
+  PL-D78): on an `arm64` or `aarch64` host, a JIT runner result whose only failed scenario was S04, failing on one of
+  its `dc.timing.SH4_CYCLES` step checks by less than `SH4_TIMESLICE` (448), passed the target with `S04: recorded
+  (PL-D78): <details>`, held on made-up summaries by `debugger.contract.s04.rule`. Measured: 446 cycles back in the
+  step, in every recorded S04 on the Mac and on Linux arm64. A64 removed the rule, its test and its target with the
+  kept counter (PL-D86); the UI's runner was never changed for it.
 - M3 (`M3-ROUND.md` 3.1): what an SGC record holds beyond its layout, its flags and its level (the emulator's selftests
   hold it: `sgc.layout`, 5.3); whether a capture's data is stale when its count is right; what the DSP computes (J1 to
   J3 of `M3-ROUND.md` 5.2 hold it: the core against caique, the emulator's wiring of the core, the guest's program
@@ -3887,7 +4048,8 @@ as left behind.
 
 Built in round 1 (E3, `hw/aica/aica_hash.h/.cpp`), before the sound burst is touched.
 
-- `-config config:Debug.AicaHash=<N>`: the emulator folds every sample pair handed to the audio stream, and at each AICA
+- `--config config:Debug.AicaHash=<N>`: the emulator folds every sample pair handed to the audio stream, and at each
+  AICA
   tick (32 samples) the `0x8000` bytes of the AICA register file, what the sound CPU writes into a save state and (on a
   backend with `SH4DBG_CTX_AT_SLICE`; on any other it stays the offset basis) the SH4 PC, `R0..R15`, `PR`, `SR` and
   `FPSCR`, and (from W1 of the M3 round) the DSP core's state blob (`AicaDsp::SaveState`, `StateSize()` bytes), into
@@ -4014,6 +4176,19 @@ Built in round 1 (E3, `hw/aica/aica_hash.h/.cpp`), before the sound burst is tou
   no data path of the tests project names one, and no package since E5 has run one. With the server
   on and no client the only costs are the attention-word test per slice, the latch test in `UpdateINTC()`, the event
   byte tests, and `dbg_sh4_WantsCheck` at decode time (gate B11).
+- **Hashes per host** (the platform round; `PLATFORM-ROUND.md` 4.3, PL-D3, PL-D83). A state hash or a sound line is good
+  for one build on one host (5.6), so the platform round held one baseline, P0 (RB's, equal to M3's B4: 38 rows of state
+  hashes, 12 sound lines), taken again on its commit by every package and compared on Linux x86_64 only, where every
+  package's gate kept it identical. On other hosts the hashes are reported, not compared with P0: on the Windows host
+  both engines end in Linux's hashes in every field (W64a, 16 runs; again at PLG); on the Mac and on Linux arm64 the
+  interpreter's equal Linux's, and the arm64 recompiler's are its own, the same on both, which `macos.hashes.jit` and
+  `linux_arm64.hashes.jit` hold as the one pair of references in the tree (a host whose recompiler computes otherwise
+  needs references of its own): since A64 (`PLATFORM-ROUND.md` PL-D86, the owner's acceptance of 2026-10-23) the guest
+  at 90 vblanks `6a1e1008459e6ab3`, equal to the x64 recompiler's, and 2ndmix at 600 `56bd7274490f91aa`; until A64,
+  whose slice model moved every arm64 slice end, they were `c9bb6e60601ab606` and `6ab1933550d37163`. The shipped
+  binaries meet P0 too (PL-D83): the release AppImage's binary (Release, the prefix map, the embedded UI) runs P0's
+  default rows (2ndmix 600 and 4000, hello 300, the guest 90, both engines) equal to P0, in CIe's gate and in PLG's (at
+  PLG: the 10 rows of P0's default build equal and its 6 sound lines identical).
 - With an SH4 breakpoint listed but never hit, the state is identical too (R5 and R13 on a real workload): the runner
   mode `--idle-breakpoint <address|symbol>` (4.2) connects at the `StartPaused` stop, mutes the `sh4` category, adds a
   breakpoint on a hot address — one the program reaches in every frame (below) —, resumes and stays connected until
@@ -4058,9 +4233,11 @@ Built in round 1 (E3, `hw/aica/aica_hash.h/.cpp`), before the sound burst is tou
   vblanks and hello 300 on both engines (24 comparisons, none different, the `-DHAS_TA_LLE=OFF` build among them);
   the emitted x64 code of a 600-vblank run is the same instruction for instruction once host addresses are named
   by symbol; and speed did not move (`tests/perf`, the `none` renderer: within 1 %, inside the run-to-run spread).
-- Sanitizer runs, as E5, J1 and their verifiers made them. **The build recipe:** the tree's `reicast/cmake/config.cmake`
-  overwrites `CMAKE_C_FLAGS` and `CMAKE_CXX_FLAGS`, so sanitizer flags go into `CMAKE_<LANG>_FLAGS_<CONFIG>` (for
-  example `CMAKE_CXX_FLAGS_RELWITHDEBINFO`). A build that was given them in `CMAKE_CXX_FLAGS` links the sanitizer's
+- Sanitizer runs, as E5, J1 and their verifiers made them. **The build recipe:** the tree's `nulldc3/cmake/config.cmake`
+  overwrites `CMAKE_C_FLAGS` and `CMAKE_CXX_FLAGS` with GCC and Clang (with MSVC it appends to CMake's defaults since
+  the platform round, `PLATFORM-ROUND.md` PL-D32), so sanitizer flags go into `CMAKE_<LANG>_FLAGS_<CONFIG>` (for
+  example `CMAKE_CXX_FLAGS_RELWITHDEBINFO`), or into the name of the compiler as the M3 round's scripts give them. A
+  build that was given them in `CMAKE_CXX_FLAGS` links the sanitizer's
   library, instruments nothing and reports nothing; whoever makes such a run counts the compile lines that carry
   the flag first (389 of 389 in J1's build). A ThreadSanitizer build cannot run the x64 JIT at all (it ends
   at `recSh4 Init`, before any debugger code runs), so every ThreadSanitizer statement of this design is about the
@@ -4072,7 +4249,8 @@ Built in round 1 (E3, `hw/aica/aica_hash.h/.cpp`), before the sound burst is tou
   leak check finds a leak in `reios_loadElf` on a run that exits normally. Those are the tree's, outside the
   debugger.
 - Limits of what the tests of E5 can reach on the development machine: `registersStale` and `no-game` over a socket
-  (5.5.4); a real MSVC build (5.8). (The bound of 256 watches was one until M2: the M2 tree has 2,940 registers, the
+  (5.5.4); a real MSVC build (5.8: made since the platform round, on the Windows host and in CI). (The bound of 256
+  watches was one until M2: the M2 tree has 2,940 registers, the
   M3 tree 2,949, and `core.tables` and S08 reach it since E7b.)
 - **The gate of a package, from M2 on** (`M2-ROUND.md` A.0): five builds — the default, `-DNULLDC_DEBUGGER=OFF`,
   `-DTARGET_NO_REC=ON`, `-DHAS_TA_LLE=OFF`, and the generic host (an unknown `CMAKE_SYSTEM_PROCESSOR`, as package
@@ -4135,48 +4313,50 @@ Built in round 1 (E3, `hw/aica/aica_hash.h/.cpp`), before the sound burst is tou
 
 ### 5.8 Windows
 
-A Windows build (MSVC or the appveyor recipe, x64 only) is a gate for E1 and E5: Winsock include order, `ws2_32`,
-`/permissive-`, the brace-initialised embed arrays. (The CI recipes that package P-desktop kept, for Windows x64,
-Linux x64 and macOS, are stale as they stand in the tree — the AppVeyor one names a solution file that is not there
-any more —, and a CI package settles them; until then "the appveyor recipe" means its CMake line.) It cannot be made on the Linux machine, and nothing is pushed, so
-no CI makes it. **E5 therefore merges on two checks that the development machine can make, and the real MSVC build is
-made before the first push:**
-- a syntax-only compile of the package files with the MinGW-w64 cross compiler the development machine has, made as
-  the header review of E0 made it: `-std=c++20 -fsyntax-only -fno-operator-names`, the tree's Windows definitions
-  (`HOST_OS`, `HOST_CPU`, `FEAT_*`) on the command line, a shim directory for the header names whose case differs
-  (`<Windows.h>`); the scripts of that review are under `agents/nulldc3/e0/review-build/`. That compiler is an i686
-  one and the tree has no MinGW configuration (no MinGW build is a target), and package B64 has since removed the
-  32-bit host branches: a file that a tree header, not the package file itself, keeps from compiling that way is
-  named in the hand-over and reviewed instead;
-- a review of every package file against the MSVC rules of section 2 (among them: nothing that needs
-  `-fpermissive`, the `<Windows.h>` macro names, `json.hpp` before any tree header, no socket header above
-  `dbg_net`).
+**As built** (the platform round: `PLATFORM-ROUND.md` 2.8 and 2.9, packages W64a, W64b and W64c, which are this
+design's W64). The emulator and the tests project build with MSVC, x64 only (Visual Studio 2026, MSVC 14.51, on the
+Windows host; in CI the runner image's newest MSVC, `windows-2025`): CMake's defaults kept and extended (`/EHsc /GR /W3
+/utf-8 /bigobj /Zc:__cplusplus /permissive-`), the static CRT (no redistributable), `/Z7`, an 8 MB stack as Linux
+threads have, `/CETCOMPAT:NO` (the recompiler leaves its main loop without `ret`), `/OPT:NOICF` (PL-D32;
+`nulldc3/cmake/config.cmake`); CHD's LZMA and FLAC codecs and the 7z and zip archives are built (PL-D33); picoTCP (the
+modem) stays GCC/Clang-only. `nulldc3.exe` is a console program (PL-D31) with the `.rc`'s icon group and version
+resource (`FILEVERSION` `X,Y,Z,N`, the version string in `FileVersion` and `ProductVersion`, `CompanyName` "nullDC
+Team"). The ABI and memory fixes (PL-D37): `Mainloop` and `RunBlock` save XMM6-15, the virtual memory layout is made
+through placeholders (`VirtualAlloc2` / `MapViewOfFile3`, found at run time; Windows 10 1803 or later), the unwind
+table is registered over the prepared code region, `_mm_setcsr` sets the host FP mode, and the check stub has its
+shadow space and the Windows flush budget (W64b). What MSVC refused elsewhere was fixed in compile-only portability
+fixes (PL-D68, each listed in W64a's report), and two runtime defects only MSVC showed were fixed with tests: the
+interpreter's NaN, which MSVC folded into a quiet constant, is read at run time (`fixNaN`), and `test_guard`'s
+`longjmp` no longer unwinds through generated code (`PLATFORM-ROUND.md` I.5). Headless, the no-dialog policy and the
+fatal line: D10 and `docs/nulldc3/automated-runs.md`, "Windows".
 
-As made for E5 (merged on these two): with the i686 compiler `dbg_symbols.cpp` compiles, and the other five files
-(`dbg_core.cpp`, `dbg_main.cpp`, `dbg_events.cpp`, `dbg_callstack.cpp`, `dbg_selftest_core.cpp`) are stopped by a tree
-header and not by themselves — `libswirl/build.h` refuses 32-bit x86 hosts since B64 —, so those five were reviewed
-against the MSVC rules; the review found a `std::min` call that a `min` macro could take and a local named `small`,
-and both are fixed. Beyond the gate, the same syntax-only compile with clang for the target `x86_64-w64-mingw32` and
-the MinGW-w64 headers passes for all six files, also behind `winsock2.h`, `windows.h`, `windowsx.h`, `objbase.h` and
-`rpcndr.h`. The package files compile without `-fpermissive` (g++ and clang++, with `-pedantic-errors`). The real
-MSVC build is still to be made, before the first push.
+**The gates passed on the Windows host** (W64b, W64c; again at the platform round's gate, PLG, on its merged tree): the
+three builds (default, `-DNULLDC_DEBUGGER=OFF`, `-DTARGET_NO_REC=ON`); the tests project inside an outer
+`nulldc3-winrun` (every program it starts runs inside one too), every target that runs green twice and the skipped
+listed with their reasons (PL-D5; `tests/README.md`, "On Windows": 349 targets, 272 passed and 77 skipped, twice); the
+contract gates M1 to M3 on the JIT, the interpreter and the forced fallback with Linux's numbers, the selftests
+(`debugger.selftest.hostcycles` among them: J1's bound of thread starts is gone on Windows too), the sh4bp gates B1 to
+B14 but B11 (its counters are Linux's `perf_event_open`), the sound tests. The x64 JIT sets `DebugChecks` in Windows
+builds since W64b (`sh4-debug-native`, PL-D38: the gates of 2.3.6 passed there). The state hashes of 16 runs on the
+Windows host equal Linux's in every field (W64a; a hash is good for one build on one host, 5.7, so this is reported, not
+gated).
 
-E4b adds a Windows *run*: the check, the stop path and the `RunBlock` thunk have only executed with the System V ABI
-(2.3.7 item 7). Until gates B1 to B4 have passed on a Windows x64 build, the x64 backend does not set `DebugChecks` in
-Windows builds (it is compiled that way) and Windows uses the fallback with its notice; M1 itself needs only the Windows
-build, in the form above. E4a adds one item to that run: pause, then close the window, with the debugger parked and with a pause pending
-(on Windows the title call of the park loop is a sent message that waits for the UI thread). This run has a window:
-`config:Headless` exists on Linux only, and it is the one exception besides E4a's checklist to the rule of D10. The
-run needs a Windows host and is package W64 (6.3); it is no gate of M1 or of E5. Until it has been made, x64 on
-Windows uses the interpreter fallback with its notice, as it is compiled today.
+**By hand, the owner's** (PL-D40: no agent opens a window on the owner's desktop): the windowed start (the icon in the
+title bar, the task bar and Alt-Tab; Explorer's Properties, Details: the version and "nullDC Team"), About, a game,
+E4a's item — pause with the debugger from the UI, then close the window, with the debugger parked and with a pause
+pending (on Windows the title call of the park loop is a sent message that waits for the UI thread) —, and the window
+sessions of 6.1.2. The list per system is in the emulator PR of the platform round.
 
-J1 adds an item to that run: **the Windows bound of thread starts.** Until J1 the recompiler asked the host for its
-code region at every start of an emulator thread, and on Windows each such call maps a new region of 10 MB near the
-program and none is freed, with room for some two hundred: a process could start its emulator thread about two
-hundred times. Since J1 the region is prepared once per process (2.3.7 item 9), which removes the bound — by
-reading only, since no Windows host has run it. W64 runs it: `debugger.selftest.hostcycles`, whose check of where
-the stubs stand fails on Windows if the fix is lost. A host with a display also runs the window sessions for the
-item of 6.1.2.
+**History.** Until the platform round no Windows build had been made. E5 merged on two checks the development machine
+could make: a syntax-only compile of its files with the MinGW-w64 cross compiler (`-std=c++20 -fsyntax-only
+-fno-operator-names`, the tree's Windows definitions on the command line, a shim directory for `<Windows.h>`; the
+scripts of E0's header review, `agents/nulldc3/e0/review-build/`), which `dbg_symbols.cpp` passed and five files could
+not reach past `libswirl/build.h` (no 32-bit hosts since B64), and a review of every file against the MSVC rules of
+section 2, which found a `std::min` call a `min` macro could take and a local named `small`. Until the gates of 2.3.6
+had run on a Windows x64 build the x64 backend did not set `DebugChecks` there and Windows used the fallback with its
+notice (E4b); J1's fix of the code region over thread starts (2.3.7 item 9) was correct on Windows by reading only.
+The CI recipes P-desktop had kept (AppVeyor, Azure, Wercker) were reicast's and stale, and went with the platform
+round's rebrand; the emulator's CI is the platform round's (CIe).
 
 ## 6. Work packages and file ownership
 
@@ -4210,8 +4390,29 @@ Rules:
   (E8a) and the SGC capture with the binary path (E8b) are merged on `skmp/nulldc3` (head `9fbc988a`, which moves the
   submodule `devtools/` to the UI's head; 307 ctest targets); the UI packages F4a to F4d are on the UI's `skmp/nulldc3`
   (head `066fcbc`). The round's gate, M3G: passed (2026-10-19), on `devcast` `9fbc988a` (its documents behind it, on the branch `skmp/nulldc3-m3g`) with the UI at `066fcbc` and emulators that carry its bundle (`ui` of `debugger.describe` is `3.0.0-pre+066fcbc`): run 1 of the M3 gate passes against the emulator on the JIT, the interpreter and the forced fallback (20 scenarios passed, 0 partial, 0 not applicable each), run 2 against the sounding guest on the JIT and the interpreter (S00, S17, S21: 3 passed with the note `sgc: captured with the arm7 held`; `--only S00,S21`: 2 passed with the note `dsp: stepped with the arm7 held`), and the M2 gate's second run on the changed guest (2 passed, both notes); the 307 ctest targets are green twice, none skipped; the sound lines of the guest and of 2ndmix and the guest's exit state hash equal B4's (12 of 12 entries, the default build and `-DNULLDC_DEBUGGER=OFF`), and so do the state hashes of 5.7 (38 of 38 rows, 2ndmix 600 in the five builds); `npm run check` (735 unit tests passed, 1 skipped; the four contract runs on the mock OK) and the e2e suite (401 passed, 1 skipped: the smoke spec, run on its own against the emulator) pass in a fresh clone of the UI; the smoke spec passes against a headless emulator on the guest; ThreadSanitizer of the sessions `dsp` and `sgc` and of the contract runs on the guest (interpreter) gives no report; speed is measured and reported (5.7).
-  **Next:** the cut of M4 (E9, F5). W64 and A64 wait for their hosts (a Windows host; a host for arm64). What is left
-  for the next emulator package is 6.1.2 and PLAN's backlog of the M3 round.
+- **The platform round is complete** (`PLATFORM-ROUND.md`; 6.3): its packages VCu (the UI's version, `.gitattributes`,
+  its CI and Release; the UI's `skmp/nulldc3` = `7b88410`), RB, IC, VTe, W64a, W64b, W64c, MACa, MACb, LA64, CIe and A64
+  (added at the owner's word before the gate: the arm64 recompiler's native debugger, 2.3.5) are merged on
+  `skmp/nulldc3` (`12069163`, 327 ctest targets on Linux x86_64), with header revision 8 (H8-1 to H8-4; H8-5 A64's). The
+  round's gate, PLG (2026-10-24), with the UI at `7b88410` and emulators that carry its bundle (`ui` of
+  `debugger.describe` is `3.0.0-pre+g7b88410915`): on Linux x86_64, at the documents' head, the M1 gate 18 passed, M2 19
+  and M3 20 on the JIT, the interpreter and the forced fallback (0 partial, 0 not applicable), M2's guest run 2 and M3's
+  two guest runs 3 and 2 with their notes on the JIT and the interpreter; the 327 ctest targets green twice, none
+  skipped; P0's 38 rows and 12 sound lines identical in the five builds; ThreadSanitizer of the guest's contract runs
+  and of the sessions `dsp` and `sgc` (interpreter): no report; `npm run check` (793 unit tests passed, 1 skipped; the
+  four contract runs on the mock OK) and the e2e suite (401 passed, 1 skipped: the smoke spec, run on its own against
+  the emulator) in a fresh clone of the UI; the smoke spec against a headless emulator with the bundle; the x86_64
+  AppImage made by `appimage.sh` (its five licences, its smoke run) and its binary on P0's default rows, equal. On the
+  merged tree `12069163`: the Windows host 349 targets green twice (272 passed, 77 skipped with their reasons), the
+  contract gates with Linux's numbers on every engine, the zip of `windows.ps1` (its entries, its smoke run through
+  `nulldc3-winrun`, its version resource: `3.0.0.0`, the version strings, "nullDC Team"); the Mac 340 targets green
+  twice (259 passed, 81 skipped), the canary in both shapes, the contract gates with Linux's numbers on every engine,
+  the 30 sh4bp targets, `macos.hashes.jit` on A64's references, the zip of `macos.sh` (unpacked with `ditto`, `codesign
+  --verify`, its smoke run through `macrun.py`); the arm64 Linux host 330 targets green twice (314 passed, 16 skipped),
+  the contract gates in full on every engine, `linux_arm64.hashes.jit` and `.pages.refused`, the arm64 AppImage and its
+  smoke run. No crash report on any system. Both workflows pass `actionlint`, and neither repository's tracked files
+  name a machine of the project. **Next:** the cut of M4 (E9, F5). What is left for the next emulator package is 6.1.2
+  and PLAN's backlog of the M3 round and of the platform round.
 
 ### 6.1 Emulator, round 1 (M1)
 
@@ -4578,11 +4779,17 @@ packages F3a to F3d of 6.2, the leftovers EXe and EXu, and the gate M2G, with th
 package of it was built, verified and merged (rows R6 to M2G below; the rows E6 and E7 were cut into them). **The M3
 round is done**: it was cut in `M3-ROUND.md` (header revision 7, the emulator packages R7, W1, W2, W3, G, E8a, E8b, the
 UI packages F4a to F4d of 6.2, and the gate M3G), and every package of it was built, verified and merged (rows R7 to
-M3G below; the row E8 was cut into them, and the wiring of the T5.0 core with them). Then E9 for M4, from a cut of its
-own. **W64**, the Windows run with the
-real MSVC build that 5.8 asks for before the first push, waits for a Windows host, and **A64** for a host that builds
-and runs arm64. What the packages so far left for the next one is 6.1.2, and for M2 the known limits of 2.3.7 (items
-14 to 24) and the answers of `M2-ROUND.md` 6.2.
+M3G below; the row E8 was cut into them, and the wiring of the T5.0 core with them). **The platform round is done**:
+it was cut in `PLATFORM-ROUND.md` (the owner's decisions of 2026-10-19: the rebrand, the icons, the versions from the
+tag `v3.0.0-pre`, Windows, macOS, Linux arm64, CI and releases; header revision 8), and its packages VCu, RB, IC, VTe,
+W64a, W64b, W64c, MACa, MACb, LA64, CIe and A64 were built, verified and merged (rows VCu to A64 below), with the gate
+PLG on Linux, the Windows host, the Mac and the arm64 Linux host (row PLG). **W64**, the Windows run with the real MSVC
+build that 5.8 asked for, is done as W64a and W64b; **A64**, the arm64 SH4 recompiler's native checks, is done as the
+platform round's A64, added before its gate at the owner's word; the arm64 ARM7 recompiler and the SH4 FPU fast-tier
+fixes of the arm64 JIT that the row named with it stay in PLAN's backlog (PL-D46). Then E9 for M4, from a cut of its
+own. What the packages so far left for the next one is 6.1.2, for M2 the known limits of 2.3.7 (items 14 to 24) and
+the answers of `M2-ROUND.md` 6.2, and for the platform round the known limits of 2.3.7 (items 31 to 33) and PLAN's
+backlog of the round.
 
 | Pkg | Content | Owns | Must not touch | Depends on | Gate |
 | --- | --- | --- | --- | --- | --- |
@@ -4602,8 +4809,20 @@ and runs arm64. What the packages so far left for the next one is 6.1.2, and for
 | **E8b** SGC capture, memory binary, the binary path (**done**, merged as `c0d39a91`; `91c678a5` comment fixes) | `M3-ROUND.md` 3.9: `dbg_sgc.cpp`, the kept outputs, the three methods and the deferred response in `dbg_core.cpp`, the two cancels, the transport's two bounds, the session `sgc`, `sgcn.*`, the contract modes `m3` and `m3dsp` | as 3.9 | as 3.9 | E8a | 307 ctest targets; the contract gate M3 (`m3` 20 passed on three engines, `m3dsp` 3 and `m3dsp21` 2 with their notes on two); lines and hashes identical to B4 with captures; ThreadSanitizer of the session and the guest's contract runs, no report |
 | **M3G** the gate (integrator) | `M3-ROUND.md` 3.11: the contract gate M3 in its two runs and the M2 gate's second run on the changed guest, against emulators that carry the UI's bundle; the sound lines and state hashes against B4; every ctest target twice; `npm run check` and the e2e suite in a fresh clone; ThreadSanitizer; the smoke spec; speed measured and reported; this text brought to the cut (its section 8); the two review PRs | the documents | — | everything above | **passed** (2026-10-19): on `devcast` `9fbc988a` (its documents behind it, on the branch `skmp/nulldc3-m3g`) with the UI at `066fcbc` and emulators that carry its bundle (`ui` of `debugger.describe` is `3.0.0-pre+066fcbc`): run 1 of the M3 gate passes against the emulator on the JIT, the interpreter and the forced fallback (20 scenarios passed, 0 partial, 0 not applicable each), run 2 against the sounding guest on the JIT and the interpreter (S00, S17, S21: 3 passed with the note `sgc: captured with the arm7 held`; `--only S00,S21`: 2 passed with the note `dsp: stepped with the arm7 held`), and the M2 gate's second run on the changed guest (2 passed, both notes); the 307 ctest targets are green twice, none skipped; the sound lines of the guest and of 2ndmix and the guest's exit state hash equal B4's (12 of 12 entries, the default build and `-DNULLDC_DEBUGGER=OFF`), and so do the state hashes of 5.7 (38 of 38 rows, 2ndmix 600 in the five builds); `npm run check` (735 unit tests passed, 1 skipped; the four contract runs on the mock OK) and the e2e suite (401 passed, 1 skipped: the smoke spec, run on its own against the emulator) pass in a fresh clone of the UI; the smoke spec passes against a headless emulator on the guest; ThreadSanitizer of the sessions `dsp` and `sgc` and of the contract runs on the guest (interpreter) gives no report; speed is measured and reported (5.7) |
 | **E9** M4 | `state.getTable`, `state.captureHolly`; writes of system bus, PVR and SH4 on-chip module registers (each with its write semantics stated, `M2-ROUND.md` M2-Q1), and of the AICA's registers with the body of `AICA::DebugWriteReg` (the owner's answer to `M3-ROUND.md` M3-Q3: every device's write table in one design step), the snapshots of maple and the SPG | `dbg_core.cpp`, `hw/pvr/`, the capture hook in `rend/refsw2/` | `hw/sh4/`, `hw/arm7/` | M3 | contract gate M4 |
-| **A64** arm64 native checks | the items of 2.3.5 in `jit/backend/arm64`, and the SH4 FPU fast-tier fixes there | `jit/backend/arm64/` | everything else | a host that builds and runs arm64 | the gates of 2.3.6 on that host; `tests/debugger/sh4bp` ported to it |
-| **W64** the Windows run | gates B1-B4 and the E4a item of 5.8 on a Windows x64 build; then `DebugChecks` in Windows builds. Until it has run, x64 on Windows uses the interpreter fallback with its notice. Also for this run: the real MSVC build (5.8), J1's item (more than two hundred thread starts in one process: `debugger.selftest.hostcycles`), and with a display the window sessions (6.1.2) | the `_WIN32` guard in `rec_x64.cpp` | everything else | a Windows host | 5.8 |
+| **W64** the Windows run (**done as W64a and W64b of the platform round**, with W64c behind them; rows below) | gates B1-B4 and the E4a item of 5.8 on a Windows x64 build; then `DebugChecks` in Windows builds. Also for this run: the real MSVC build (5.8), J1's item (more than two hundred thread starts in one process: `debugger.selftest.hostcycles`), and with a display the window sessions (6.1.2). Done: the MSVC build (W64a), the gates of 2.3.6 and `DebugChecks` on Windows (W64b, PL-D38), `debugger.selftest.hostcycles` on the Windows host (W64b, W64c); the E4a item and the window sessions are the owner's by hand (PL-D40) | the `_WIN32` guard in `rec_x64.cpp` | everything else | a Windows host | 5.8 |
+| **VCu** the UI's version, line endings and CI (the UI repository's package of the platform round; **done**, `skmp/nulldc3` of the UI = `7b88410`, 10 commits on `3cf8b15`) | `PLATFORM-ROUND.md` 2.4: `scripts/version.ts` (the rule of 5.1 of the cut; 2.11 here), `.gitattributes` with `* -text`, the UI's workflow on pull requests and tags with its Release (`release-files.ts pack`, `check`, `publish`) | as 2.4 | the emulator | M3 | `npm run check` (793 unit tests passed, 1 skipped; the contract runs on the mock), e2e 401 passed, 1 skipped; the version cases 16 of 16 in scratch repositories; the emulator's 307 targets with the pin moved there |
+| **RB** the rebrand (**done**, merged as `60bce5b7`, head `c893e925`, 30 commits) | `PLATFORM-ROUND.md` 2.5: `reicast/` becomes `nulldc3/` in a commit of pure moves (55 renames at R100), the names of PL-D9 (D4), reicast's dead files out (PL-D14), header revision 8's H8-1 to H8-3 (Appendix B), P0 taken, `rebrand.names` | as 2.5 | as 2.5 | VCu, the pin moved | 308 ctest targets; P0 38 of 38 rows equal to B4 |
+| **IC** the icons (**done**, merged as `c2f8ce03`, head `01b3ca10`) | `PLATFORM-ROUND.md` 2.6: the approved art in `nulldc3/icon/`, the standard-library generator of the `.ico` (7 PNG entries), the `.icns` (10 PNG elements) and the X11 icon data, its check target; the X11 window's `_NET_WM_ICON` and `WM_CLASS` | as 2.6 | as 2.6 | RB | 310 ctest targets (`icons.generated`, `icons.x11`); P0 equal |
+| **VTe** the emulator's version (**done**, merged as `2ac231ac`, head `e5a4fd2f`) | `PLATFORM-ROUND.md` 2.7: the version made at build time (`nulldc3/cmake/version.cmake`, `<build>/generated/nulldc3_version.h`, read by `libswirl/version.cpp` alone), every reader of it (3.1, 2.2.9, 2.8, 2.11), `--version`, header revision 8's H8-4 | as 2.7 | as 2.7 | IC | 314 ctest targets; P0 equal; a new commit recompiles `version.cpp` alone |
+| **W64a** the MSVC build and Windows headless (**done**, merged as `7543be6b`, head `eb29a4a8`) | `PLATFORM-ROUND.md` 2.8: the MSVC build (the static CRT, CMake's defaults extended, PL-D32), the `.rc` with the icon and the version, Windows headless with the no-dialog policy and Linux's fatal line (D10), the ABI fixes (XMM6-15 in `Mainloop` and `RunBlock`, the vmem placeholders, the unwind table, `_mm_setcsr`), `nulldc3-winrun`, the portable C++ suites on the Windows host | as 2.8 | as 2.8 | VTe | Linux 314 targets, P0 equal, the compile commands unchanged; the Windows host: the probe on its private desktop first, three builds, the headless report `windows=0`, the state hashes of 16 runs equal to Linux's |
+| **W64b** the gates on Windows (**done**, merged as `fb5049b5`, head `f2b234a9`) | `PLATFORM-ROUND.md` 2.9: the harnesses' run helper `tests/common/emurun.py` (5.4), the selftests, the sound tests and the contract gates M1 to M3 on the Windows host; the check stub's shadow space and the Windows flush budget, `DebugChecks` on Windows (2.3.5, PL-D38) | as 2.9 | as 2.9 | W64a | Linux 317 targets; the Windows host 335 targets twice inside an outer `nulldc3-winrun`, the contract gates with Linux's numbers, the JIT on `sh4-debug-native` |
+| **W64c** the selftests on Windows (**done**, merged as `963353d9`, head `1d413b3c`; added by the integrator behind W64b) | the selftests' naps for fractions of a millisecond on Windows (`dbg_selftest_nap`), `dsp_playground`'s CR LF, the crash policy in the remaining test programs | as its brief | — | W64b | Linux 318 targets; the Windows host 340 targets green twice (73 platform skips, no open defect) |
+| **MACa** the macOS bundle and macOS headless (**done**, merged as `af2acc83`, head `ad179a62`) | `PLATFORM-ROUND.md` 2.10: the bundle made by CMake (`Info.plist.in`, `org.emudev.nulldc3`, the `.icns`, the licences, the ad-hoc signature by a stamp step, PL-D42), the Xcode project gone, macOS headless decided after `nulldc_init` (PL-D43), the `printf` macro gone, `tests/macos/macrun.py` and its sandbox profile, the portable C++ suites on the Mac | as 2.10 | as 2.10 | W64c | Linux 318 targets; the Mac: the canary first (the window server denied), three bundles, headless `app=0 windows=0`, the interpreter's hashes equal to Linux's |
+| **MACb** the gates on the Mac (**done**, merged as `7c87d517`, head `47878491`) | `PLATFORM-ROUND.md` 2.11: `emurun.py`'s Darwin branch, the harnesses, selftests, sound tests and contract gates on the Mac; S04's arm64 rule in `contract.py` (PL-D78); `macos.hashes.jit` | as 2.11 | as 2.11 | MACa | Linux 319 targets; the Mac 330 targets twice (212 passed, 105 platform skips, the 13 targets that became the known limits of the arm64 recompiler's debugger, which A64 ended, 2.3.5); the contract gates with S04 recorded on the recompiler |
+| **LA64** Linux arm64 (**done**, merged as `58273bfa`, head `59be3df4`; natively on the arm64 host) | `PLATFORM-ROUND.md` 2.12 (its brief's revision 4): the arm64 SH4 recompiler built and run on Linux, the 4 KiB page rule, `linux_arm64.hashes.jit` and `.pages.refused`, the known limits registered on every arm64 host (`debugger.a64.knownlimits`; gone with A64) | as its brief | as its brief | MACb | Linux x86_64 320 targets; the arm64 host 321 targets twice (263 passed, 58 skipped), the recompiler's hashes equal to the Mac's |
+| **CIe** the emulator's CI and its release files (**done**, merged as `31dafee9`, head `2f936d71`) | `PLATFORM-ROUND.md` 2.13: `nulldc3/ci/` (`linux.sh`, `appimage.sh`, `windows.ps1`, `macos.sh`, `release.sh`, `hygiene.py`, `check_workflows.py`), `.github/workflows/ci.yml` (pull requests, tags `v*`, dispatch; `release` alone with `contents: write`), the AppImage's portable directory (PL-D51), the licences in every release file (PL-D80), `ci.hygiene`, `ci.workflows`, `ci.scripts` | as 2.13 | as 2.13 | LA64 | 327 ctest targets; the scripts on the three systems in `ci` and `full` mode; the release AppImage's binary on P0's default rows equal to P0 |
+| **A64** the arm64 recompiler's native debugger (**done**, merged as `12069163`, head `7c025c83`; a package of the platform round, added at the owner's word of 2026-10-23 before its gate, `PLATFORM-ROUND.md` 2.15) | in two steps: the x64 slice model on arm64 (PL-D86: the slice counter kept across `Loop()` and tested in front of a block's charge, the pc stored at every slice end, `SH4DBG_CTX_AT_SLICE` stated, `Mainloop`'s one frame with `d8-d15` whole), which ended the thirteen known limits and S04's arm64 rule (PL-D78); then the items of 2.3.5 in `jit/backend/arm64` (the native checks, `SH4DBG_NATIVE`, `RunBlock`, temporary blocks that never link, the budget and the rest of a block), so that the engine is `sh4-debug-native` on arm64; the sh4bp suite on arm64 (`abi` new); `debugger.selftest.sqw` for the store-queue write with the MMU off; the arm64 recompiler's state-hash references taken anew; header revision 8's H8-5; `bm_DiscardAddrPage` to R4's 4 KiB rule on 16 KiB hosts (2.3.4 g; the integrator extended its Owns). Not in it, though this row named them before the platform round: the SH4 FPU fast-tier fixes of the arm64 JIT and **the arm64 ARM7 recompiler** (`PLATFORM-ROUND.md` PL-D46: unsafe on Apple silicon as written; with it the ARM7's fallback and notice of 2.5.3 would run for the first time), both in PLAN's backlog | `jit/backend/arm64/`, the tests and harness lines its brief names, `bm_DiscardAddrPage` and the guest load of `dbg_selftest_sh4bp.cpp` (by extension) | everything else | CIe | Linux x86_64 327 targets, P0 38 of 38 equal, compile commands unchanged; the arm64 host 330 targets (314 passed, 16 skipped), the Mac 340 (259 passed, 81 skipped), the Windows host 349 in `full` mode (272 passed, 77 skipped); the contract gates M1 18, M2 19, M3 20 on all three engines on both arm64 hosts, no `S04: recorded`, no `KNOWN LIMIT`; the 30 sh4bp targets on both arm64 hosts |
+| **PLG** the platform round's gate (integrator) | `PLATFORM-ROUND.md` 2.14: the gate on Linux, the Windows host, the Mac and the arm64 host, the release files made here and their binary against P0, the hygiene of both repositories, this text brought to the round (its Appendix D), the two PR texts; the PRs and the tags by the integrator outside the package (section 7 of the cut) | the documents | — | everything above | **passed** (2026-10-24): the Linux part at the documents' head and the Windows host's, the Mac's and the arm64 host's at the merged tree `12069163`, with the UI at `7b88410` (`ui` `3.0.0-pre+g7b88410915`): the contract gates M1 18, M2 19, M3 20 passed on three engines on every system, M2's guest run 2 and M3's guest runs 3 and 2 with their notes; ctest Linux 327 targets twice, none skipped, the Windows host 349 (77 skipped), the Mac 340 (81 skipped), the arm64 host 330 (16 skipped); P0 38 of 38 rows, 12 sound lines; ThreadSanitizer, no report; `npm run check` and e2e in a fresh clone; the smoke spec; the x86_64 and arm64 AppImages, the Windows zip with its version resource and the macOS zip, each with its smoke run; the release AppImage's binary equal to P0 on its default rows; `actionlint` and the hygiene of both repositories with the owner's patterns, clean | |
 | **J1** the run flag and the code cache (**done**: branch `skmp/nulldc3-j1`, 14 commits, head `ab97adbb`, merged as `c0c81436`; two verification rounds, three read-only reviewers beside the first) | as delivered: `Sh4Context::CpuRunning` is an `AtomicU32` (`oslib/atomic_u32.h`, new; not `std::atomic<u32>`, which cannot stand there: 2.3.7 item 10) with the place, size and meaning it had, every reader and writer of the word says its memory order, and the generated code of both JITs is unchanged; every backend object starts with an empty code cache, and the code region is prepared once per process (2.3.7 item 9); `IsRunning()` is one word of the machine, `SuperH4_impl::thread_live` (2.2.5, 2.3.7 item 12: the fix round of the verification); the three items that 6.1.2 then had | the declaration of `CpuRunning` in `hw/sh4/sh4_if.h` — a declaration change of a frozen header, made as header revision 5 (Appendix B) —, the uses of the word under `hw/sh4/` and `jit/`, the start of the code cache. **Touched outside this row, accepted by the integrator:** two statements in `libswirl.cpp` (the one word set in `Resume()` and cleared where the thread takes its stop callback); under `libswirl/debugger/` the new selftest `dbg_selftest_hostcycles.cpp`, one probe statement in `dbg_selftest_emu.cpp`, the reworded `g_parked` comment of `debugger.h` (header revision 5), and the `dbg_symbols.cpp` change of 6.1.2; the cache fix in `hw/sh4/dyna/driver.cpp`, where the cache and `LastAddr` live, not in `jit/backend/x64/` (which got a `verify`); `oslib/atomic_u32.h` and its include line in `types.h` | `libswirl/debugger/` but for comments that name the word (see the column before for what was accepted there); the block manager's handling of self-modifying code (untouched) | M1 merged | **passed**: 190 ctest targets, twice green (the 187 of before, `debugger.selftest.hostcycles[.interp]` and `debugger.sh4bp.threads`); the gates of 2.3.6 and the state hashes of 5.7 unchanged, the emitted x64 code the same instruction for instruction; ThreadSanitizer runs of the session `emu`, of `hostcycles` and of the M1 gate on the interpreter without a report of any kind; 2200 host stop / start cycles in one process without a cache clear (600 in ctest); no slowdown; arm64 kept source-consistent by reading (no host builds it). Not run: Windows (5.8, W64) and the window sessions (6.1.2) |
 | **P-desktop** desktop targets only (**done**; a PLAN package, not of this track: listed for what it changes here; branch `skmp/nulldc3-p-desktop`, 18 commits, merged as `5ac00392`) | every target, host and build switch that is not a desktop one is removed from the tree (147 files deleted, 43 modified, 13,600 lines). What the tree builds for: desktop Linux, Windows and macOS on x86_64 and arm64, the generic host path (`-DTARGET_NO_REC=ON`, an unknown processor), and the emscripten scaffolding the wasm build starts from. For this design: `NULLDC_DEBUGGER` has one default (2), D7 describes the tree, and no section names a removed target any more | the build files, `libswirl/build.h` and the conditionals of removed targets across the tree | third-party directories; renderer, audio and input backends not tied to a removed target (later packages) | M1 merged | passed: the 187 ctest targets of that time, twice green; the default build and the builds with `-DHAS_TA_LLE=OFF`, `-DTARGET_NO_REC=ON`, `-DNULLDC_DEBUGGER=OFF` and for a generic host each compile; the state hashes of 2ndmix unchanged in each; every translation unit preprocesses to the text it had, but for three unused declarations in the GUI. Nothing for Windows, macOS or arm64 was compiled (no host) |
 
@@ -5080,7 +5299,7 @@ decision above or by the implementation, or is not a design matter):
 | a statement on Chromium's local-network check for a page from another origin | panels verifier | browser policy, not protocol; the client's error text lists it among the causes |
 | the leftovers package B64 listed (unreachable switches of removed targets, a CI recipe of one, helpers without callers, sources no build lists) | B64 verifier | not this design: PLAN package P-desktop, which is done and removed them (6.3) |
 | a file of pinned determinism hashes that a test reads, so that "the hashes equal the baseline" is a gate | verifier of the corrections of 6.1.1 | the suite compares runs with each other on purpose: a deliberate fix of behaviour then needs no baseline edit (5.7: no hash is stored in the tree) |
-| the tests project generates `libswirl/version.h` in the build directory (as built it writes the ignored file into the source tree, so a worktree that must not change cannot be built from) | verifier of the corrections of 6.1.1 | not a design matter; noted for the build work |
+| the tests project generates `libswirl/version.h` in the build directory (as built it writes the ignored file into the source tree, so a worktree that must not change cannot be built from) | verifier of the corrections of 6.1.1 | not a design matter; noted for the build work. **Done by VTe of the platform round**: no build writes into the source tree any more; the version is `<build>/generated/nulldc3_version.h`, made at build time and read by `libswirl/version.cpp` alone (`PLATFORM-ROUND.md` 5.2, PL-D75), and `libswirl/version.h` and its template are gone |
 
 ## Appendix B. APIs of the started packages, and the header revisions (frozen)
 
@@ -5159,6 +5378,7 @@ and the debug accessors of the `hw/` headers; and, from revision 6, `dbg_arm7.h`
 | 5 | J1 (branch `skmp/nulldc3-j1`, merged) | applied: one declaration and one comment. `hw/sh4/sh4_if.h`: `Sh4Context::CpuRunning` is declared as an `AtomicU32` (it was `volatile u32`), with a comment that says who writes and reads the word and in which order; nothing else of the file changed, and the word keeps its offset and its size (pinned by a `static_assert`). `debugger.h`: the comment of `g_parked` no longer gives the terms of `IsRunning()`, which is one word of the machine; this supersedes H1 of revision 4. Both texts are quoted below |
 | 6 | R6, the cut of the M2 round (merged as `af1f1d8c`; `f6949750` made two of its comments ASCII; EXe reworded three sentences, comment text only) | six declarations — the ARM7 block of `debugger.h`, `SetArm7Breakpoints`, `OnSoundStop`, `TargetSteps` (`dbg_emu.h`), `dbg_arm7.h` (new, frozen from this revision), `SoundCPU::DebugIsRecompiler` — and the comments H6-10 to H6-42; texts in `M2-ROUND.md` section 2. No existing signature changed and no enumerator was added. A frozen comment carries no character outside ASCII. The three sentences EXe reworded (H6-19 in `debugger.h`, H6-33 in `dbg_regs.h`, H6-35 in `dbg_mem.h`) say that the ARM7 has no part in an owed resume, and the thread rule of `Write()` as `Read()` has it ("(E) in the park context, or a thread that holds L while no emulator thread exists"); the cut's section 2 has the same text. Next candidates of the same kind: H6-32's "Values" paragraph and the file comment of `dbg_mem.h` on `Write()`; the step out of the ARM7 that knows the mode it was asked in (2.3.7 item 21) |
 | 7 | R7, the cut of the M3 round (merged as `b921699b`; the clauses of 2.6 of the cut went with W2, W3 and E8b, each in the commit that ended the state they described) | the DSP block and the SGC block of `debugger.h`, `SetDspBreakpoints` (`dbg_emu.h`), `dbg_dsp.h` and `dbg_sgc.h` (new, frozen from this revision), `DspDebugState` with the DSP's datapath (`hw/aica/dsp.h`), the channels' outputs of `AicaChannelDebug` (`hw/aica/aica_mmio.h`); removed: `NOTICE_DSP_FORCED` and the row `EV_DEBUGGER_DSP_FORCED`; the comments M3 changes (the burst in its phases, the DSP's checks and the end of a sample, the capture, the two bounds of `dbg_net.h`). Texts in `M3-ROUND.md` section 2. No existing signature changed; no enumerator was added to `ErrorCode`, `StopCause`, `Target`, `Category`, `CallClass`, the bounds or the event table. Frozen text is ASCII |
+| 8 | the platform round (`PLATFORM-ROUND.md` 2.3): RB (H8-1 to H8-3, in the commit that renamed the entry points, `7b38efcf`), VTe (H8-4, in the commit that made the paused title carry the version, `11e407cc`) and A64 (H8-5, in the commit that stated `CtxAtSlice` on arm64, `e363a5d8`) | comment-only, `debugger.h` and `hw/sh4/sh4_if.h`, no declaration changed: the comment of `Init()` says "at the end of nulldc_init()" (H8-1); the comment of `Term()` says "at the start of nulldc_term()" (H8-2) and "(nulldc_term)" (H8-3) where they said `reicast_init()` / `reicast_term()`; the bullet "Parks while a debugger stop is in force" of the park loop says the window title becomes "nullDC <version> [paused by debugger]", `<version>` being the build's version string (`NULLDC_VERSION`), where it said "nullDC 3.0.0 [paused by debugger]" (H8-4); in `sh4_if.h` the comment of `SH4DBG_CTX_AT_SLICE` says "The interpreter and the x64 and arm64 JITs do." where it said "The interpreter and the x64 JIT do; the arm64 JIT does not." (H8-5). The texts of H8-1 to H8-4 are fixed in the cut's 2.3, H8-5's in A64's brief (item 16). Frozen text is ASCII |
 
 Header revision 5, as the tree has it. In `libswirl/hw/sh4/sh4_if.h`, inside `Sh4Context`, in place of
 `volatile u32 CpuRunning;`:
@@ -5190,7 +5410,8 @@ as it was):
 // host UI.
 ```
 
-No revision is pending. The next one comes with the cut of M4.
+No revision is pending. The next one comes with the cut of M4 (a declaration a compiler refused in a frozen header
+would have been revision 9 in the platform round, `PLATFORM-ROUND.md` 2.2: none was).
 
 ## Appendix C. The SH4 mechanism: prototype and results
 
@@ -5221,7 +5442,8 @@ JIT and in the interpreter.
 
 What the prototype did not cover has since been built and gated — the park protocol of 2.2 around the stop (E4a), the
 step preconditions and the fallback (E4b) — or has left the tree (the arm32, x86 and cpp backends, B64). Still not run:
-the arm64 backend's native items, MMU builds, the Windows ABI path of the emitted code (2.3.7 item 7). The prototype's
+MMU builds (2.3.7 item 7); the arm64 backend's native items and the Windows ABI path of the emitted code have run since
+the platform round (A64, W64b). The prototype's
 pause left a SLEEP wait intact; rule M-8 of Appendix A.2 keeps that property, and the merged code is measured to keep
 it (2.4).
 
