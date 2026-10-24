@@ -11,6 +11,9 @@
 #include "types.h"
 #include "sh4_core.h"
 #include "sh4_interrupts.h"
+#if BUILD_COMPILER == COMPILER_VC
+#include <xmmintrin.h>	// _mm_setcsr (SetFloatStatusReg)
+#endif
 
 
 Sh4RCB* p_sh4rcb;
@@ -77,15 +80,16 @@ void SetFloatStatusReg()
         
         //Correct rounding is required by some games (SOTB, etc)
 #if BUILD_COMPILER == COMPILER_VC
-        if (FPSCR_RM_ZERO(fpscr))  //if round to 0 , set the flag
-            _controlfp(_RC_CHOP, _MCW_RC);
-        else
-            _controlfp(_RC_NEAR, _MCW_RC);
-        
-        if (fpscr.DN)     //denormals are considered 0
-            _controlfp(_DN_FLUSH, _MCW_DN);
-        else
-            _controlfp(_DN_SAVE, _MCW_DN);
+            // MXCSR whole, as the branch below writes it with ldmxcsr: the same mode by construction
+            u32 temp=0x1f80;	//no flush to zero && round to nearest
+
+            if (FPSCR_RM_ZERO(fpscr))  //if round to 0 , set the flag
+                temp|=(3<<13);
+
+            // SH7091: with DN = 1 a denormal is zero as an operand and as a result (programming manual 6.2.3): DAZ and FTZ
+            if (fpscr.DN)
+                temp|=(1<<15)|(1<<6);
+            _mm_setcsr(temp);
 #else
 
     #if HOST_CPU==CPU_X64

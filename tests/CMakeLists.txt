@@ -1,9 +1,31 @@
 cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
 find_program(CCACHE_FOUND ccache)
-if (CCACHE_FOUND AND NOT CMAKE_HOST_WIN32)
+# macOS: through ccache only when asked, -DNULLDC_CCACHE=ON. A ccache that cannot start there (Homebrew's, after an
+# upgrade took a library it links) ends every compile in dyld's abort, and every abort leaves a crash report in
+# ~/Library/Logs/DiagnosticReports; CCACHE_DISABLE=1 cannot help, ccache reads it once it has started
+if(CMAKE_HOST_APPLE)
+  option(NULLDC_CCACHE "macOS: compile and link through the ccache on the PATH" OFF)
+endif()
+if (CCACHE_FOUND AND NOT CMAKE_HOST_WIN32 AND (NOT CMAKE_HOST_APPLE OR NULLDC_CCACHE))
   set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
   set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
+endif()
+
+# Windows (MSVC): the static runtime and the debug information in the objects (/Z7), as the emulator has them
+# (CMakeLists.txt of the tree); also for the suites that are projects of their own, through the policy default.
+# The default build type is RelWithDebInfo there too: CMake's MSVC platform makes it Debug in project(), where the
+# test behind project() below no longer sees an empty one.
+if(CMAKE_HOST_WIN32)
+  if(NOT DEFINED CMAKE_BUILD_TYPE AND NOT DEFINED CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type")
+  endif()
+  if(POLICY CMP0141)	# CMake 3.25
+    cmake_policy(SET CMP0141 NEW)
+    set(CMAKE_POLICY_DEFAULT_CMP0141 NEW)
+  endif()
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
 endif()
 
 project(nulldc-tests CXX)
@@ -129,6 +151,25 @@ function(nulldc_add_missing_data_test name reason)
 endfunction()
 
 
+## The version ##
+#
+#	nulldc3/cmake/version.cmake runs at every build, as it does for the emulator (nulldc3/README.md), and writes
+#	generated/nulldc3_version.h, nulldc3-version.txt and nulldc3-version.cmake into this build directory when their
+#	text changes. The library that holds cfg/cl.cpp (--version) compiles libswirl/version.cpp and version_title.cpp
+#	and is built after this step (nulldc_add_version_sources, common/libswirl.cmake). The project of
+#	tests/debugger/net, added below, has a step of its own with another target name.
+#
+
+add_custom_target(nulldc_tests_version
+  COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${nulldc_root_path}" "-DOUTPUT_DIR=${CMAKE_BINARY_DIR}"
+          -P "${nulldc_root_path}/nulldc3/cmake/version.cmake"
+  BYPRODUCTS "${CMAKE_BINARY_DIR}/generated/nulldc3_version.h" "${CMAKE_BINARY_DIR}/nulldc3-version.txt"
+             "${CMAKE_BINARY_DIR}/nulldc3-version.cmake"
+  COMMENT "The version of nullDC (tests)"
+  VERBATIM)
+set(NULLDC_VERSION_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated")
+
+
 ## The debugger's suites ##
 #
 #	The modules of the debugger that link without the emulator have their suites in tests/debugger. Each is a
@@ -170,3 +211,10 @@ add_subdirectory(debugger/contract)
 add_subdirectory(debugger/guest)
 add_subdirectory(aica_dsp)
 add_subdirectory(devtools)
+add_subdirectory(rebrand)
+add_subdirectory(icons)
+add_subdirectory(windows)
+add_subdirectory(macos)
+add_subdirectory(linux_arm64)
+add_subdirectory(version)
+add_subdirectory(ci)

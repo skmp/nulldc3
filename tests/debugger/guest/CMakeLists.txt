@@ -12,6 +12,22 @@
 #	    nulldc_guest_emulator    the emulator binary its tests run
 #	    nulldc_guest_skip        empty, or the reason why no emulator can be run: a test is then registered
 #	                             as skipped (nulldc_add_skipped_test)
+#	    nulldc_guest_missing     empty, or the reason why the emulator is missing (macOS: NULLDC_EMULATOR not
+#	                             given, or naming no file): a test is then one whose data is missing
+#	                             (nulldc_add_missing_data_test)
+#	    nulldc_guest_env         the ENVIRONMENT of a test that runs a script: PYTHONDONTWRITEBYTECODE=1, and on
+#	                             Windows NULLDC_WINRUN, the nulldc3-winrun every program of the script runs inside
+#	                             (tests/common/emurun.py): the one of NULLDC_WINRUN, or the one tests/windows builds
+#
+#	On Windows tests/system builds no emulator: NULLDC_EMULATOR is nulldc3.exe of an emulator build, and without it
+#	the tests are skipped with that reason.
+#
+#	On macOS tests/system builds no emulator either: NULLDC_EMULATOR is the executable of an emulator build's bundle,
+#	<build>/nulldc3.app/Contents/MacOS/nulldc3, and without it, or with one that names no file, the tests are tests
+#	whose data is missing (failures with NULLDC_TESTS_REQUIRE_DATA), and the configure says so. There the scripts
+#	start the emulator, and every other program, through tests/macos/macrun.py (tests/common/emurun.py): the sandbox
+#	profile that denies the window server, the Dock and LaunchServices, a session of its own, a timeout, TMPDIR in
+#	the run's directory.
 #
 #	and from the project: nulldc_tests_path, nulldc_add_skipped_test, nulldc_add_missing_data_test and the
 #	cache variables (NULLDC_ELF_DIR, NULLDC_TESTS_REQUIRE_DATA, ...).
@@ -29,17 +45,44 @@ find_package(Python3 COMPONENTS Interpreter)
 set(nulldc_guest_skip "")
 if(NOT NULLDC_SYSTEM_TESTS AND NOT NULLDC_EMULATOR)
   set(nulldc_guest_skip "NULLDC_SYSTEM_TESTS is OFF and no NULLDC_EMULATOR is given: there is no emulator to run")
-elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX})
-  set(nulldc_guest_skip "headless mode is there on Linux hosts only")
+elseif(${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT NULLDC_EMULATOR)
+  set(nulldc_guest_skip
+      "no NULLDC_EMULATOR is given, and on Windows tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<nulldc3.exe of an emulator build>")
+elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX} AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT ${HOST_OS} EQUAL ${OS_DARWIN})
+  set(nulldc_guest_skip "headless mode is there on Linux, Windows and macOS hosts only")
 elseif(NOT Python3_Interpreter_FOUND)
   set(nulldc_guest_skip "no python3 to run the scripts of tests/debugger/guest with")
+endif()
+
+# macOS: the emulator is the one of NULLDC_EMULATOR, which has to name a file (nulldc_guest_missing: the reason)
+set(nulldc_guest_missing "")
+if(NOT nulldc_guest_skip AND ${HOST_OS} EQUAL ${OS_DARWIN})
+  if(NOT NULLDC_EMULATOR)
+    set(nulldc_guest_missing
+        "no NULLDC_EMULATOR is given, and on macOS tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  elseif(NOT EXISTS "${NULLDC_EMULATOR}" OR IS_DIRECTORY "${NULLDC_EMULATOR}")
+    set(nulldc_guest_missing
+        "NULLDC_EMULATOR names no file (\"${NULLDC_EMULATOR}\"): configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  endif()
+  if(nulldc_guest_missing)
+    message(WARNING "tests/debugger/guest: ${nulldc_guest_missing}")
+  endif()
 endif()
 
 if(NULLDC_EMULATOR)
   set(nulldc_guest_emulator "${NULLDC_EMULATOR}")
 else()
   # what tests/system builds, every time the project is built
-  set(nulldc_guest_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
+  set(nulldc_guest_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3${CMAKE_EXECUTABLE_SUFFIX}")
+endif()
+
+set(nulldc_guest_env PYTHONDONTWRITEBYTECODE=1)
+if(${HOST_OS} EQUAL ${OS_WINDOWS})
+  if(NULLDC_WINRUN)
+    list(APPEND nulldc_guest_env "NULLDC_WINRUN=${NULLDC_WINRUN}")
+  else()
+    list(APPEND nulldc_guest_env "NULLDC_WINRUN=$<TARGET_FILE:nulldc3_winrun>")
+  endif()
 endif()
 
 # CONFIGURE_DEPENDS: a directory that is added to a tree whose build is configured already is found at the next

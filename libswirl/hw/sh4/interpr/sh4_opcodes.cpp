@@ -1314,7 +1314,8 @@ INLINE void DYNACALL do_sqw(u32 Dest)
 }
 
 void DYNACALL do_sqw_mmu(u32 dst) { do_sqw<true>(dst); }
-#if HOST_CPU != CPU_ARM64
+// the arm64 recompiler has its own (jit/backend/arm64/rec_arm64.cpp); an arm64 build without it takes this one
+#if HOST_CPU != CPU_ARM64 || FEAT_SHREC == DYNAREC_NONE
 //yes, this micro optimization makes a difference
 extern "C" void DYNACALL do_sqw_nommu_area_3(u32 dst,u8* sqb)
 {

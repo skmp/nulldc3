@@ -1,19 +1,21 @@
 # Tests of the sound generator of the AICA and of the settings of the sound regression harness from the
 # emulator's own translation units. They are compiled with the definitions and flags of the emulator build
-# (reicast/cmake/config.cmake), which is why this is a directory of its own: they stay out of the table tests.
+# (nulldc3/cmake/config.cmake), which is why this is a directory of its own: they stay out of the table tests.
 # What the units reference from the rest of the emulator is in aica_test.cpp; the DSP core the generator sends to
 # is linked. NULLDC_DEBUGGER is not defined: the events of the generator compile to nothing.
 
-list(APPEND CMAKE_MODULE_PATH "${DEVCAST_DIR}/reicast/cmake")
+list(APPEND CMAKE_MODULE_PATH "${nulldc_root_path}/nulldc3/cmake")
 include(config)
 
 add_executable(aica_test aica_test.cpp "${LIBSWIRL_DIR}/hw/aica/sgc_if.cpp" "${LIBSWIRL_DIR}/hw/aica/aica_hash.cpp"
   "${LIBSWIRL_DIR}/hw/aica/dsp_core/aica_dsp_core.cpp")
-target_include_directories(aica_test PRIVATE "${LIBSWIRL_DIR}" "${LIBSWIRL_DIR}/deps" "${DEVCAST_DIR}")
+target_include_directories(aica_test PRIVATE "${LIBSWIRL_DIR}" "${LIBSWIRL_DIR}/deps" "${nulldc_root_path}")
 target_compile_features(aica_test PRIVATE cxx_std_20)	# as the emulator target
 
 if(${HOST_OS} EQUAL ${OS_WINDOWS})
   target_include_directories(aica_test PRIVATE "${LIBSWIRL_DIR}/deps/dirent")
+  # the policy of the tests project for a program that dies (tests/common/win_policy.cpp: no box, no crash report, one line and 128 + the signal's number)
+  target_sources(aica_test PRIVATE "${nulldc_root_path}/tests/common/win_policy.cpp")
 endif()
 
 if(REGS_SANITIZE AND NOT MSVC)

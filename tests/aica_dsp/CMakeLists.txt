@@ -201,9 +201,14 @@ else()
 
   target_sources(aica_dsp_cases PRIVATE $<TARGET_OBJECTS:nulldc_caique_replay>)
 
-  # What the sounding guest's DSP program computes on the model, for the mode oracle of its runner
+  # What the sounding guest's DSP program computes on the model, for the mode oracle of its runner. On Windows with
+  # the policy of the tests project for a program that dies (../common/win_policy.cpp: no box, no crash report;
+  # common.guard.windows holds it on this program)
   add_executable(aica_dsp_guest_oracle guest_oracle_main.cpp)
   target_link_libraries(aica_dsp_guest_oracle PRIVATE nulldc_aica_dsp_caique)
+  if(WIN32)
+    target_sources(aica_dsp_guest_oracle PRIVATE "${nulldc_tests_path}/common/win_policy.cpp")
+  endif()
 endif()
 
 
@@ -213,7 +218,12 @@ endif()
 #	guest, N = 2000, on the emulator the system tests build (<build dir>/system/emulator, or NULLDC_EMULATOR), with
 #	aica_dsp_guest_oracle: the field dsp of the line of a copy of the guest whose sends to the DSP are 0 is what
 #	the core and the caique model compute in lockstep on the guest's writes and schedule. They need the caique
-#	checkout, as the other tests of the model, and the emulator, as the tests of tests/debugger/guest
+#	checkout, as the other tests of the model, and the emulator, as the tests of tests/debugger/guest. On Windows
+#	tests/system builds no emulator (NULLDC_EMULATOR is nulldc3.exe of an emulator build), and the emulator and the
+#	tool run inside nulldc3-winrun (tests/common/emurun.py; NULLDC_WINRUN, or the one tests/windows builds). On macOS
+#	NULLDC_EMULATOR is the executable of an emulator build's bundle, <build>/nulldc3.app/Contents/MacOS/nulldc3:
+#	without it, or with one that names no file, the tests are tests whose data is missing; the emulator and the tool
+#	run through tests/macos/macrun.py there (tests/common/emurun.py)
 #
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -221,16 +231,43 @@ find_package(Python3 COMPONENTS Interpreter)
 set(nulldc_oracle_skip "")
 if(NOT NULLDC_SYSTEM_TESTS AND NOT NULLDC_EMULATOR)
   set(nulldc_oracle_skip "NULLDC_SYSTEM_TESTS is OFF and no NULLDC_EMULATOR is given: there is no emulator to run")
-elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX})
-  set(nulldc_oracle_skip "headless mode is there on Linux hosts only")
+elseif(${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT NULLDC_EMULATOR)
+  set(nulldc_oracle_skip
+      "no NULLDC_EMULATOR is given, and on Windows tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<nulldc3.exe of an emulator build>")
+elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX} AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT ${HOST_OS} EQUAL ${OS_DARWIN})
+  set(nulldc_oracle_skip "headless mode is there on Linux, Windows and macOS hosts only")
 elseif(NOT Python3_Interpreter_FOUND)
   set(nulldc_oracle_skip "no python3 to run tests/debugger/guest/dsptest/soundlines.py with")
+endif()
+
+# macOS: the emulator is the one of NULLDC_EMULATOR, which has to name a file (nulldc_oracle_missing: the reason)
+set(nulldc_oracle_missing "")
+if(NOT nulldc_oracle_skip AND ${HOST_OS} EQUAL ${OS_DARWIN})
+  if(NOT NULLDC_EMULATOR)
+    set(nulldc_oracle_missing
+        "no NULLDC_EMULATOR is given, and on macOS tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  elseif(NOT EXISTS "${NULLDC_EMULATOR}" OR IS_DIRECTORY "${NULLDC_EMULATOR}")
+    set(nulldc_oracle_missing
+        "NULLDC_EMULATOR names no file (\"${NULLDC_EMULATOR}\"): configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  endif()
+  if(nulldc_oracle_missing)
+    message(WARNING "tests/aica_dsp: ${nulldc_oracle_missing}")
+  endif()
 endif()
 
 if(NULLDC_EMULATOR)
   set(nulldc_oracle_emulator "${NULLDC_EMULATOR}")
 else()
-  set(nulldc_oracle_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
+  set(nulldc_oracle_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3${CMAKE_EXECUTABLE_SUFFIX}")
+endif()
+
+set(nulldc_oracle_env PYTHONDONTWRITEBYTECODE=1)
+if(${HOST_OS} EQUAL ${OS_WINDOWS})
+  if(NULLDC_WINRUN)
+    list(APPEND nulldc_oracle_env "NULLDC_WINRUN=${NULLDC_WINRUN}")
+  else()
+    list(APPEND nulldc_oracle_env "NULLDC_WINRUN=$<TARGET_FILE:nulldc3_winrun>")
+  endif()
 endif()
 
 foreach(engine jit interp)
@@ -238,6 +275,8 @@ foreach(engine jit interp)
 
   if(nulldc_oracle_skip)
     nulldc_add_skipped_test(${test} "${nulldc_oracle_skip}")
+  elseif(nulldc_oracle_missing)
+    nulldc_add_missing_data_test(${test} "${nulldc_oracle_missing}")
   elseif(NOT NULLDC_HAVE_CAIQUE)
     nulldc_add_missing_data_test(${test} "${NULLDC_CAIQUE_MISSING}")
   else()
@@ -246,9 +285,8 @@ foreach(engine jit interp)
                      --emulator "${nulldc_oracle_emulator}" --work "${CMAKE_BINARY_DIR}/debugger/guest/work/${test}"
                      --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf" --ticks 2000
                      --mode oracle --engine ${engine} --oracle $<TARGET_FILE:aica_dsp_guest_oracle>)
-    # soundlines.py has a watchdog per run of the emulator and of the tool, this is the one behind it. Python
-    # writes no bytecode into the source tree
-    set_tests_properties(${test} PROPERTIES TIMEOUT 900 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+    # soundlines.py has a watchdog per run of the emulator and of the tool, this is the one behind it
+    set_tests_properties(${test} PROPERTIES TIMEOUT 900 ENVIRONMENT "${nulldc_oracle_env}")
   endif()
 endforeach()
 
@@ -379,4 +417,20 @@ else()
       nulldc_add_skipped_test(${test} "the emcc is not in an emsdk, or the PATH has no sh outside the directories with an emcc")
     endforeach()
   endif()
+endif()
+
+
+## On Windows ##
+#
+#	Every program of this directory has the policy of the tests project for a program that dies
+#	(../common/win_policy.cpp: no box, no crash report, one line and 128 + the signal's number); the guest oracle
+#	has it where it is made, above
+#
+
+if(WIN32)
+  foreach(program aica_dsp_api aica_dsp_bench aica_dsp_emu aica_dsp_wasm_trace aica_dsp_diff aica_dsp_cases)
+    if(TARGET ${program})
+      target_sources(${program} PRIVATE "${nulldc_tests_path}/common/win_policy.cpp")
+    endif()
+  endforeach()
 endif()

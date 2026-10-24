@@ -148,6 +148,6 @@ extern unique_ptr<GDRomDisc> g_GDRDisc;
 
 
 // TODO: rename these
-int reicast_init(int argc, char* argv[]);
-void reicast_ui_loop();
-void reicast_term();
+int nulldc_init(int argc, char* argv[]);
+void nulldc_ui_loop();
+void nulldc_term();

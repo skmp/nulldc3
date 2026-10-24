@@ -18,6 +18,16 @@ program of `NULLDC_ELF_DIR` instead of the guest of this directory.
 
 Every run keeps its files in a directory of its own under the work directory (`--portable <dir>`) and has an empty
 environment (no display), the real-time clock pinned, a core size limit of 1 byte and a watchdog, as in `tests/system`.
+The script starts every program through `tests/common/emurun.py`, the run helper of the harnesses, and reads the
+output through it (a `\r` in front of a `\n` is not part of a line). On Windows the environment of a run is
+`SystemRoot` (Winsock does not start without it) and `TEMP` and `TMP` in the run's directory, and the emulator runs
+inside `nulldc3-winrun` (its path in `NULLDC_WINRUN`, which the tests project passes): there `-DNULLDC_EMULATOR=` is
+`nulldc3.exe` of an emulator build, since `tests/system` builds none, and the tests are skipped without it. On macOS
+the environment of a run is `TMPDIR` in the run's directory, and the emulator runs through `tests/macos/macrun.py`
+(the sandbox profile that denies the window server, the Dock and LaunchServices, or the one a long step runs under; a
+session of its own): there `-DNULLDC_EMULATOR=` is `<build>/nulldc3.app/Contents/MacOS/nulldc3` of an emulator
+build, and without it, or with one that names no file, the tests are tests whose data is missing.
+`debugger.selftest.log.rule` holds the checks of the script on made-up output whose lines end in `\n` and in `\r\n`.
 
 **Every run is made on the engine it asks for.** `--engine jit` is `config:Dynarec.Enabled=yes`, `--engine interp`
 is `=no`; the emulator takes the first for a wish and says `Using MCPU Recompiler` or `Using MCPU Interpreter`, and
@@ -27,9 +37,9 @@ asks for: the driver says first what executes the breakpoints and steps of the S
 breakpoints and steps on sh4-debug-native`, `dbg_selftest.cpp`), and `selftest.py` compares both halves of that
 line with what it asked for: the SH4 on the engine of `--engine`, and `sh4-debug-fallback` on the recompiler with
 `Debugger:ForceFallback=yes` among the `CONFIG` items (`arm7.fallback`, `writes.fallback`), `sh4-debug-native` on
-the recompiler without it (on an x86-64 host, whose recompiler executes them itself; the recompiler of another host
-has none and reports the fallback, which is then what is asked for), `sh4-debug-native` on the interpreter, with the
-key or without it. A failure says the engine found and the one asked for. Up to f640f21a no test looked:
+the recompiler without it (on an x86-64 or an arm64 host, whose recompilers execute them themselves; on a host of
+another kind a recompiler would have none and report the fallback, which would then be what is asked for),
+`sh4-debug-native` on the interpreter, with the key or without it. A failure says the engine found and the one asked for. Up to f640f21a no test looked:
 `arm7.fallback` and `writes.fallback` passed on an emulator that ignored the key (the mutant `nofallback` of the M2
 gate). `startpaused` has no session, and checks the SH4 alone.
 
@@ -41,8 +51,9 @@ recompiler without breakpoints of its own, `sh4-debug-native` otherwise. It says
 `SelfTest: engine.asked: note: the engine of the session is the one its configuration asks for: ...`, or fails a
 check, and then the session (`SelfTest: engine.asked: FAILED: the configuration asks for ...; the session runs ...`);
 the summary counts it only when it fails. `selftest.py` requires the note. That is what holds the sessions of
-`debugger.selftest.sh4bp.sessions` to their engines: their runner, `tests/debugger/sh4bp/selftest.sh`, asks for
-the engines by configuration and looks at the exit code of a session, not at what it says.
+`debugger.selftest.sh4bp.sessions` to their engines: their runner, `tests/debugger/sh4bp/sessions.py` (the port of
+`selftest.sh` of that directory), asks for the engines by configuration and looks at the exit code of a session, not
+at what it says.
 
 **No wait without a bound.** The sessions `arm7`, `dsp`, `writes` and `core`, and the tests `arm7n.*`, `dspn.*` and
 `writesrun.neutral`, give every wait for a stop a bound, one constant of their file (`kBoundMs`: 30 s in
@@ -77,7 +88,7 @@ test starts. Headless, nothing else plays the host.
 |---|---|
 | `debugger.selftest.emu` `.interp` | the session `emu`, the nineteen tests below |
 | `emu.machine` | before the guest has run: the lifetime is Running, the park context holds the stop latch, the engine is known, run control without a stop is refused, a `CC_EXEC` call for a running thread is answered at once |
-| `emu.pause` | 2000 pauses of a loop, 1000 of a loop with interrupts, 300 of a guest that waits in SLEEP, each asked for by another thread and resumed at once: every stop is a pause with the next stop id, `GetRunState` is the stop, the listener saw Running and Parked in turns on the emulator thread; emulated time at the park is the time at the latch, no scheduler callback ran, nothing executed and no interrupt was accepted in between; an interrupt that the latch held back is accepted by the resume; a pause is latched at the first slice end that has the request; a request first seen inside a SLEEP wait is taken behind the wait. A SLEEP wait that nothing ends (interrupts masked, the slices of the wait made slow): the pause is latched in the wait once it is 250 ms old, with the pc on the SLEEP |
+| `emu.pause` | 2000 pauses of a loop, 1000 of a loop with interrupts, 300 of a guest that waits in SLEEP, each asked for by another thread and resumed at once: every stop is a pause with the next stop id, `GetRunState` is the stop, the listener saw Running and Parked in turns on the emulator thread; emulated time at the park is the time at the latch, no scheduler callback ran, nothing executed and no interrupt was accepted in between; an interrupt that the latch held back is accepted by the resume; a pause is latched at the first slice end that has the request; a request first seen inside a SLEEP wait is taken behind the wait. SH4 time (`sh4_sched_now64() + SH4_TIMESLICE - SliceCyclesLeft()`, as `dc.timing.SH4_CYCLES` reads it) at every park that did not cut a SLEEP wait is the time the probe read in the `UpdateSystem` of the latch: a backend that did not store its slice counter in front of that `UpdateSystem` fails. In the SLEEP waits with interrupts, on the recompiler, some calls of `UpdateSystem` inside waits come more than a slice behind the call before them (the block of the SLEEP was charged in front of its handler) and none less: one that did not store its counter for SLEEP's handler shows exactly a slice there (the interpreter, which charges an instruction behind it, is held to "none less" only). A SLEEP wait that nothing ends (interrupts masked, the slices of the wait made slow): the pause is latched in the wait once it is 250 ms old, with the pc on the SLEEP |
 | `emu.events` | before anybody has set the active mask no category is active: the event of an event breakpoint is raised and nothing stops. Then an event breakpoint, with the event raised by a scheduler callback of the test: in a SLEEP wait in the slice that raised the interrupt the wait is for (the wait is cut, the acceptance is owed, the resume accepts it and it returns behind the SLEEP), in a SLEEP wait with nothing pending (the SLEEP is executed again), with the pc written during such a stop, in a loop, together with a pause request (one stop, the event's). Each time the scheduler stopped in the call that raised the event. Two breakpoints on the event report the lower id. With the category inactive, and with the gate of the event closed, nothing stops |
 | `emu.calls` | a call of each class for a running thread (`CC_READ` in the slice hook; `CC_TABLE` and `CC_WRITE` in the park context, in a service excursion that publishes nothing; `CC_EXEC` -32003) and for a parked one (all four in the park loop; a resume armed by a call, a second one refused; a `CC_EXEC` call that waited in the queue across the resume: -32003). 800 calls of four threads run one at a time |
 | `emu.cancel` | a closure that keeps the emulator thread for 2.6 s is waited for; a `CC_READ` and a `CC_TABLE` call behind it are given up after 2 s with -32000 and never run: their closures use memory the callers free when the call has returned, which ASan would see |
@@ -98,7 +109,8 @@ test starts. Headless, nothing else plays the host.
 | `debugger.selftest.emuexit.running` `.pending` `.parked` (and `.interp`) | the guest returns to the BIOS while running, with a pause asked for in the same slice, and the exit hook is called while parked: a headless run ends there, exit code 0, `reason=guest-exit` |
 | `debugger.selftest.emurun.reads` (and `.interp`) | 2ndmix for 600 vblanks with another thread reading guest state through `CC_READ` calls for the whole run: the state hash of the exit line is that of the same run without a session, part for part |
 | `debugger.selftest.emurun.pending` (and `.interp`) | the same with a pause asked for in the very slice that ends the run: the run ends, with that hash |
-| `debugger.selftest.emurun.pauses` (x86-64 hosts) `.interp` | the same with 150 pauses, each resumed at once: that hash. On the interpreter and the x64 recompiler: a pause is exact on a backend whose slice counter is the same after its loop was left and entered again |
+| `debugger.selftest.emurun.pauses` `.interp` | the same with 150 pauses, each resumed at once: that hash. On the interpreter and on the recompilers of x86-64 and arm64 hosts: a pause is exact on a backend whose slice counter is the same after its loop was left and entered again, and whose loop is left with nothing owed |
+| `debugger.selftest.sqw` `.interp` | the session `sqw`, its one test `sqw.nommu` (`libswirl/debugger/dbg_selftest_sqw.cpp`): a program of the test, written at the start stop, sets QACR0 and QACR1 to area 3, writes 32 bytes into SQ0 and 32 into SQ1 and sends each with a `pref`; at the pause behind it the 64 bytes are in main memory, compared with the values written (never with another engine's run), and the 32 bytes in front of them and the 64 behind are as they were. Then the store queue function of the context (`do_sqw_nommu_area_3` with the host's layout of guest memory), which the recompiler's blocks call for their `pref`, is called by the test as they call it, for both queues: the same. On the JIT the guest has to have run on the recompiler's own loop |
 | `debugger.selftest.emuhang.parked` | a session that stays parked at its start, with `Exit.AfterVblanks=5`: 4 s later the process is still there and has printed no exit line. Emulated time stands still while the thread is parked, so no `Exit.*` key ends such a run |
 | `debugger.selftest.startpaused` | the same for `Debugger:StartPaused=yes` without a session, with the server enabled (`Debugger:Enabled=yes`, `Debugger:Port=0`: without it the key is a configuration error) and no client: the start park waits without limit |
 
@@ -410,7 +422,8 @@ mechanism on the park loop of the emulator. They boot `2ndmix.elf` of `NULLDC_EL
 | `debugger.selftest.sh4bp` `.interp` | the session `sh4bp`: the gates B1 to B14 (none for B11) |
 | `debugger.selftest.sh4bpboot` `.interp` | the session `sh4bpboot`: B3, B6 and B7 on the booted guest, every check of its own |
 | `debugger.selftest.sh4bpbase` `.interp` | the session `sh4bpbase`: the baselines of those runs |
-| `debugger.selftest.sh4bp.sessions` | `tests/debugger/sh4bp/selftest.sh`: the sessions of `sh4bp` on the JIT, on the interpreter and on the JIT with the interpreter fallback forced agree on registers, step traces and time; the runs of the booted guest are in the state of their baselines, on those three and on the JIT and the fallback with idleskip off |
+| `debugger.selftest.sh4bp.sessions` | `tests/debugger/sh4bp/sessions.py`, the port of `selftest.sh` of that directory: the sessions of `sh4bp` on the JIT, on the interpreter and on the JIT with the interpreter fallback forced agree on registers, step traces and time; the runs of the booted guest are in the state of their baselines, on those three and on the JIT and the fallback with idleskip off |
+| `debugger.selftest.sh4bp.sessions.rule` | `sessions.py --rule`, no emulator: its comparisons on made-up sessions; every key they hold, changed in one session, fails the run, a key they do not hold leaves it alone, and the repeats on the booted guest go as their rule says |
 
 ## Host stop / start cycles
 

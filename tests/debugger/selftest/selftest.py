@@ -6,7 +6,9 @@
 
 The emulator is run as tests/system runs it: its files in a directory of its own under the work directory
 (--portable), an empty environment (no display), a core file size limit of 1 byte, and a watchdog. The
-real-time clock is pinned. README.md has the modes:
+real-time clock is pinned. On Windows the environment has SystemRoot and TEMP and TMP of the run's directory, and the
+emulator runs inside nulldc3-winrun (tests/common/emurun.py, which starts every program of this script and reads
+what it prints). README.md has the modes:
 
     session     --config Debugger:SelfTest=<filter>: exit code 0 and the summary line of the driver, nothing failed
     guest-exit  a session whose guest returns to the BIOS: the run ends with its exit line, reason guest-exit
@@ -14,6 +16,9 @@ real-time clock is pinned. README.md has the modes:
                 the two exit lines have the same state hash, part for part
     parked      the run stays parked: after --hold seconds the process is still there and has printed no exit
                 line. It is killed, and that is a pass
+    log-rule    what the checks of the other modes make of the output of a run, on outputs that are made up, with
+                lines that end in \n and in \r\n: no emulator is run, and --emulator is not asked for. The made-up
+                outputs are written under --work, as everything this script writes: nothing into the caller's TEMP
 
 Every run has to be made on the engine it was asked for, and a run with a session on the SH4 debug engine as well.
 The emulator takes config:Dynarec.Enabled=yes for a wish: a build without a recompiler, or one whose recompiler
@@ -21,8 +26,8 @@ cannot be set up, goes on with the interpreter and says "Using MCPU Interpreter"
 Recompiler". The driver of a session says first what the SH4 runs on and what executes its breakpoints and steps,
 by the name debugger.describe gives it ("SelfTest: engine: the SH4 runs on ..., its breakpoints and steps on ..."):
 the SH4 on the engine of that line too, and on the recompiler sh4-debug-fallback with Debugger:ForceFallback=yes
-among the --config items and sh4-debug-native without it (on an x86-64 host, whose recompiler has native
-breakpoints; on another the recompiler has none and runs them on the fallback), on the interpreter
+among the --config items and sh4-debug-native without it (on an x86-64 or an arm64 host, whose recompilers have
+native breakpoints; on another host a recompiler would have none and run them on the fallback), on the interpreter
 sh4-debug-native, which the key does not change. Behind that line the emulator says once that this is the engine
 its configuration asks for ("SelfTest: engine.asked: note: ..."; when it is not, the line is a failed check). A run
 that was made on another engine fails, and says which engine it found and which one was asked for.
@@ -32,11 +37,15 @@ import argparse
 import os
 import platform
 import re
-import resource
 import shutil
 import subprocess
 import sys
-import time
+
+# the run helper of the harnesses; nothing is written into the source tree for it
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'common'))
+
+import emurun  # noqa: E402
 
 RTC_PIN = 946684800
 
@@ -56,13 +65,18 @@ DEBUG_ENGINES = ('sh4-debug-native', 'sh4-debug-fallback')
 # dbg_selftest_emu.cpp; a FAILED line of it when not, which no_failures() finds)
 SESSION_ASKED = re.compile(r'^SelfTest: engine\.asked: note: the engine of the session is the one its configuration asks for: ', re.M)
 
-# The recompiler of an x86-64 host executes breakpoints and steps itself (SH4DBG_NATIVE, hw/sh4/sh4_if.h); the one
-# of an arm64 host does not, and runs them on the interpreter fallback with or without Debugger:ForceFallback
-NATIVE_RECOMPILER = platform.machine().lower() in ('x86_64', 'amd64')
+# The recompilers of x86-64 and arm64 hosts execute breakpoints and steps themselves (SH4DBG_NATIVE, hw/sh4/sh4_if.h);
+# on a host of another kind the expectation is the interpreter fallback, with or without Debugger:ForceFallback
+NATIVE_RECOMPILER = platform.machine().lower() in ('x86_64', 'amd64', 'arm64', 'aarch64')
 
 
 class Failed(Exception):
     pass
+
+
+def read_log(path):
+    """What a run printed, as lines that end with \\n (a \\r in front of one is not part of the line)."""
+    return emurun.read_text(path)
 
 
 def check(ok, what, log=None):
@@ -100,24 +114,15 @@ class Run:
         return command
 
     def start(self, keys):
-        # nothing of the environment but the options of the sanitizers: the directory is the one of --portable
-        env = {}
-        for name in ('ASAN_OPTIONS', 'UBSAN_OPTIONS', 'TSAN_OPTIONS', 'LSAN_OPTIONS'):
-            if name in os.environ:
-                env[name] = os.environ[name]
-
-        def limits():
-            # a crash is not piped to a core handler (WSL2 runs it for any other limit)
-            resource.setrlimit(resource.RLIMIT_CORE, (1, resource.getrlimit(resource.RLIMIT_CORE)[1]))
-
+        # nothing of the environment but the options of the sanitizers (on Windows also what Windows needs, in the
+        # directory of the run): the directory is the one of --portable
         self.cmdline = self.command(keys)
         self.out = open(self.log_path, 'wb')
-        self.process = subprocess.Popen(self.cmdline, cwd=self.dir, env=env, stdin=subprocess.DEVNULL,
-                                        stdout=self.out, stderr=subprocess.STDOUT, preexec_fn=limits)
+        self.process = emurun.start(self.cmdline, self.args.watchdog, cwd=self.dir, env=emurun.environment(self.dir),
+                                    stdout=self.out, stderr=subprocess.STDOUT)
 
     def read(self):
-        with open(self.log_path, 'rb') as f:
-            self.log = f.read().decode('utf-8', 'replace')
+        self.log = read_log(self.log_path)
         return self.log
 
     def wait(self, seconds):
@@ -132,8 +137,7 @@ class Run:
         return True
 
     def kill(self):
-        self.process.kill()
-        self.process.wait()
+        self.code = emurun.kill(self.process)
         self.out.close()
         self.read()
 
@@ -166,7 +170,7 @@ def debug_engine_asked(args):
     if forced_fallback(args):
         return 'sh4-debug-fallback', 'the recompiler (config:Dynarec.Enabled=yes) with Debugger:ForceFallback=yes'
     if NATIVE_RECOMPILER:
-        return 'sh4-debug-native', 'the recompiler (config:Dynarec.Enabled=yes) of an x86-64 host, without Debugger:ForceFallback'
+        return 'sh4-debug-native', 'the recompiler (config:Dynarec.Enabled=yes) of an %s host, without Debugger:ForceFallback' % platform.machine()
     return 'sh4-debug-fallback', 'the recompiler (config:Dynarec.Enabled=yes) of a %s host, which has no native breakpoints' % platform.machine()
 
 
@@ -292,12 +296,71 @@ def mode_parked(args):
     print('still parked after %.1f s, no exit line: the run was killed' % args.hold)
 
 
+# The made-up output of log-rule: a session on the engine it asks for, behind the lines of the emulator
+RULE_LOG = (
+    'nullDC 3.0.0-pre\n'
+    '%(says)s\n'
+    'SelfTest: engine: %(engine)s\n'
+    'SelfTest: engine.asked: note: the engine of the session is the one its configuration asks for: made up\n'
+    'SelfTest: emu.made.up: ok: a test of the session ran\n'
+    'SelfTest: 7 passed, 0 failed\n'
+    'nulldc-exit: reason=guest-exit vblanks=12 hash=0123456789abcdef sh4=1 sched=2 ram=3 vram=4 aram=5 arm7=6\n'
+)
+
+
+def mode_log_rule(args):
+    """What the checks of the modes make of the output of a run: the engine of the session by the names of its line,
+    the summary, the exit line and its last field, on outputs that are made up. Every line ends in \\n, and in a
+    second copy in \\r\\n, as a program whose stdout is in text mode writes it on Windows: the reading of the output
+    has to give the same fields for both, or the names of the engine and the last field of a line would end in a
+    \\r that no check expects. No emulator is run. The outputs are written into <work>/made-up and removed behind
+    the checks."""
+    work = os.path.join(args.work, 'made-up')
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work)
+    cases = 0
+    try:
+        for engine in ('jit', 'interp'):
+            args.engine = engine
+            args.config = []
+            wanted, _ = debug_engine_asked(args)
+            said = 'the SH4 runs on %s, its breakpoints and steps on %s' % (
+                'the recompiler (x64)' if engine == 'jit' else 'the interpreter', wanted)
+            text = RULE_LOG % {'says': ENGINE_SAYS[engine], 'engine': said}
+            for ending in ('\n', '\r\n'):
+                path = os.path.join(work, 'log-%s-%d.txt' % (engine, len(ending)))
+                with open(path, 'wb') as f:
+                    f.write(text.replace('\n', ending).encode('utf-8'))
+
+                class Made:
+                    pass
+                run = Made()
+                run.log = read_log(path)
+                what = 'the output of a session on %s with lines that end in %s' % (ENGINE_NAMES[engine], repr(ending))
+                try:
+                    found = check_engine(args, run, True)
+                except Failed as failure:
+                    raise Failed('%s: %s' % (what, failure))
+                check(found == said, '%s: the engine line is read as %r, not %r' % (what, found, said))
+                lines = selftest_lines(run.log)
+                check(re.match(r'SelfTest: (\d+) passed, (\d+) failed$', lines[-1]) is not None,
+                      '%s: the summary is read as %r' % (what, lines[-1]))
+                line = exit_line(run.log)
+                check(line is not None and line.get('reason') == 'guest-exit' and line.get('arm7') == '6',
+                      '%s: the exit line is read as %r' % (what, line))
+                cases += 1
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    print('%d made-up outputs of a session, with lines that end in \\n and in \\r\\n: the engine, the summary and the exit line '
+          'read the same from both' % cases)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--emulator', required=True)
-    parser.add_argument('--work', required=True)
+    parser.add_argument('--emulator', default='', help='every mode but log-rule')
+    parser.add_argument('--work', required=True, help='the directory of everything the script writes')
     parser.add_argument('--selftest', default='')
-    parser.add_argument('--mode', default='session', choices=('session', 'guest-exit', 'same-hash', 'parked'))
+    parser.add_argument('--mode', default='session', choices=('session', 'guest-exit', 'same-hash', 'parked', 'log-rule'))
     parser.add_argument('--engine', default='jit', choices=('jit', 'interp'))
     parser.add_argument('--guest', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'emu_guest.bin'))
     parser.add_argument('--config', action='append', default=[], help='section:key=value, for every run')
@@ -308,8 +371,22 @@ def main():
     parser.add_argument('--keep', action='store_true', help='keep the work directory of a run that passed')
     args = parser.parse_args()
 
-    args.emulator = os.path.abspath(args.emulator)
     args.work = os.path.abspath(args.work)
+    if args.mode == 'log-rule':
+        # nothing is run, and nothing is written but the made-up outputs under --work
+        try:
+            mode_log_rule(args)
+        except Failed as failure:
+            print('FAIL: %s' % failure)
+            return 1
+        print('PASS')
+        return 0
+
+    if not args.emulator:
+        parser.error('the following arguments are required: --emulator')
+
+    # nulldc3 is nulldc3.exe on Windows
+    args.emulator = emurun.executable(os.path.abspath(args.emulator))
     args.guest = os.path.abspath(args.guest)
 
     if not os.path.isfile(args.emulator):

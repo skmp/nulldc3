@@ -5,7 +5,7 @@
 
 
 #include "types.h"
-#include "version.h"
+#include "nulldc_version.h"
 #include "gui.h"
 #include "imgui/imgui.h"
 #include "gui_partials.h"
@@ -58,20 +58,18 @@ void gui_welcome(ImFont* font64) {
 	
 	ImGui::SetWindowFontScale(1);
 	float scale = CalcScreenScale("nullDC");
+	// the version whole, as the build made it (3.0.0-pre, 3.0.0-pre+g<h>, ...), no wider than the screen
+	const char* version = nulldc_version();
+	float version_scale = scale / 3.5f;
+	if (CalcScreenScale(version) < version_scale)
+		version_scale = CalcScreenScale(version);
 
 	ImGui::SetWindowFontScale(scale);
 
 	DrawTextCentered("nullDC");
-	
-		string ver = REICAST_VERSION;
-	auto ver_numeric = ver.substr(0, ver.find_last_of("-"));
-	auto ver_hash = "(" + ver.substr(ver.find_last_of("-") + 2) + ")";
 
-	ImGui::SetWindowFontScale(scale / 3.5);
-	DrawTextCentered(ver_numeric.c_str());
-	
-	ImGui::SetWindowFontScale(scale / 6);
-	DrawTextCentered(ver_hash.c_str());
+	ImGui::SetWindowFontScale(version_scale);
+	DrawTextCentered(version);
 
 	ImGui::End();
 	ImGui::PopFont();

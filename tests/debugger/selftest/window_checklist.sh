@@ -42,6 +42,15 @@ work=$(readlink -f "$work")
 xsend="$work/xsend"
 ${CC:-cc} -O1 -o "$xsend" "$here/xsend.c" -lX11 || { echo "xsend.c did not build"; exit 2; }
 
+# the window title while the debugger holds the machine: "nullDC <version> [paused by debugger]", the version
+# being the build's, which --version prints as "nullDC <version>", its one line on stdout
+version=$("$bin" --version)
+case "$version" in
+"nullDC "?*) ;;
+*) echo "$bin --version did not say the version (\"$version\")"; exit 2 ;;
+esac
+PAUSED="$version [paused by debugger]"
+
 # keycodes of the X server, and where the buttons of the menu are in a window of 640 x 480
 KEY_TAB=23; KEY_ESC=9
 LOAD="238 164"; SAVE="401 164"; RESTART="238 280"; EXIT="401 280"
@@ -129,7 +138,7 @@ checklist() {
 	# run 1: the menu and its buttons
 	if start 1; then
 		if [ "$session" = parked ]; then
-			[ "$("$xsend" title $win)" = "nullDC 3.0.0 [paused by debugger]" ] && pass "the window title says that the debugger paused" || bad "the window title says that the debugger paused"
+			[ "$("$xsend" title $win)" = "$PAUSED" ] && pass "the window title says that the debugger paused" || bad "the window title says that the debugger paused"
 		fi
 
 		if menu "the menu key stops the machine and opens the menu"; then
@@ -281,7 +290,7 @@ reset_and_exit() {
 
 # title_twice: the title says that the debugger paused at the second stop of a thread as at its first
 title_twice() {
-	local paused="nullDC 3.0.0 [paused by debugger]" n
+	local paused="$PAUSED" n
 
 	session=twice
 	if start 1; then

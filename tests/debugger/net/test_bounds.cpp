@@ -18,6 +18,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#ifdef _WIN32
+#include <timeapi.h>
+#pragma comment(lib, "winmm.lib")
+#endif
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -279,6 +283,11 @@ static void TestBinaryBound(Server& server, Recorder& rec, int port) {
 }
 
 int main() {
+#ifdef _WIN32
+	// The slow reader and the ticker sleep 1 ms and 40 ms: with Windows' default timer of 15.6 ms the client read
+	// fifteen times slower than it means to, and the ticks overran the bound of text behind the binary message
+	timeBeginPeriod(1);
+#endif
 	Recorder rec;
 	Server server;
 	Options options;

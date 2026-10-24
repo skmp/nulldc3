@@ -172,10 +172,10 @@ struct BSC_impl: Sh4ModBsc {
     }
     
     virtual void serialize(void** data, unsigned int* total_size) {
-        REICAST_S(BSC_PDTRA);
+        NULLDC_S(BSC_PDTRA);
     }
     virtual void unserialize(void** data, unsigned int* total_size) {
-        REICAST_US(BSC_PDTRA);
+        NULLDC_US(BSC_PDTRA);
     }
 };
 

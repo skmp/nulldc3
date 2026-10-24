@@ -528,32 +528,32 @@ struct SoundCPU_impl : SoundCPU {
 
 	void serialize(void** data, unsigned int* total_size)
 	{
-		REICAST_S(ctx.aica_interr);
-		REICAST_S(ctx.aica_reg_L);
-		REICAST_S(ctx.e68k_out);
-		REICAST_S(ctx.e68k_reg_L);
-		REICAST_S(ctx.e68k_reg_M);
+		NULLDC_S(ctx.aica_interr);
+		NULLDC_S(ctx.aica_reg_L);
+		NULLDC_S(ctx.e68k_out);
+		NULLDC_S(ctx.e68k_reg_L);
+		NULLDC_S(ctx.e68k_reg_M);
 
-		REICAST_SA(ctx.regs, RN_ARM_REG_COUNT);
-		REICAST_S(ctx.armIrqEnable);
-		REICAST_S(ctx.armFiqEnable);
-		REICAST_S(ctx.armMode);
-		REICAST_S(ctx.enabled);
+		NULLDC_SA(ctx.regs, RN_ARM_REG_COUNT);
+		NULLDC_S(ctx.armIrqEnable);
+		NULLDC_S(ctx.armFiqEnable);
+		NULLDC_S(ctx.armMode);
+		NULLDC_S(ctx.enabled);
 	}
 
 	void unserialize(void** data, unsigned int* total_size)
 	{
-		REICAST_US(ctx.aica_interr);
-		REICAST_US(ctx.aica_reg_L);
-		REICAST_US(ctx.e68k_out);
-		REICAST_US(ctx.e68k_reg_L);
-		REICAST_US(ctx.e68k_reg_M);
+		NULLDC_US(ctx.aica_interr);
+		NULLDC_US(ctx.aica_reg_L);
+		NULLDC_US(ctx.e68k_out);
+		NULLDC_US(ctx.e68k_reg_L);
+		NULLDC_US(ctx.e68k_reg_M);
 
-		REICAST_USA(ctx.regs, RN_ARM_REG_COUNT);
-		REICAST_US(ctx.armIrqEnable);
-		REICAST_US(ctx.armFiqEnable);
-		REICAST_US(ctx.armMode);
-		REICAST_US(ctx.enabled);
+		NULLDC_USA(ctx.regs, RN_ARM_REG_COUNT);
+		NULLDC_US(ctx.armIrqEnable);
+		NULLDC_US(ctx.armFiqEnable);
+		NULLDC_US(ctx.armMode);
+		NULLDC_US(ctx.enabled);
 	}
 };
 

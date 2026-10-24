@@ -17,6 +17,8 @@
 	#include <TargetConditionals.h>
     #include <dlfcn.h>
     #include <util.h>
+	#include <sys/sysctl.h>
+	#include "utils/run_control.h"
 #endif
 #if FEAT_HAS_SERIAL_TTY
     #include <sys/stat.h>
@@ -51,26 +53,6 @@
 #define fault_printf(...)
 
 #if !defined(TARGET_NO_EXCEPTIONS)
-
-#if HOST_OS == OS_DARWIN
-void sigill_handler(int sn, siginfo_t * si, void *segfault_ctx) {
-	
-    rei_host_context_t ctx;
-    context_from_segfault(&ctx);
-    
-	unat pc = (unat)ctx.pc;
-#if FEAT_SHREC != DYNAREC_NONE
-	bool dyna_cde = (pc>(unat)CodeCache) && (pc<(unat)(CodeCache + CODE_SIZE));
-#else
-	bool dyna_cde = false;
-#endif
-	
-	printf("SIGILL @ %lx -> %p was not in vram, dynacode:%d\n", pc, si->si_addr, dyna_cde);
-	
-	//printf("PC is used here %08X\n", pc);
-    kill(getpid(), SIGABRT);
-}
-#endif
 
 #define TRAP_STACK_SIZE (1024 * 1024)
 
@@ -157,6 +139,9 @@ static const char* fault_signal_name(int sn)
 	case SIGSEGV: return "SIGSEGV";
 	case SIGBUS: return "SIGBUS";
 	case SIGILL: return "SIGILL";
+	case SIGTRAP: return "SIGTRAP";
+	case SIGABRT: return "SIGABRT";
+	case SIGFPE: return "SIGFPE";
 	default: return "signal";
 	}
 }
@@ -201,6 +186,15 @@ static void fatal_error(int sn, siginfo_t* si, void* segfault_ctx)
 		}
 	}
 
+#if HOST_OS == OS_DARWIN
+	// An automated run (headless, or with a key that ends the run: run control) ends here, with the exit status a
+	// process that the signal ends has on Linux, 128 + the signal, by an exit: on macOS every process that a signal
+	// ends leaves a crash report in ~/Library/Logs/DiagnosticReports (PL-D45). A run with a person in front of it
+	// dies of the signal below, and its crash report is that person's.
+	if (!fault_blocks && runctl_automated())
+		_exit(128 + sn);
+#endif
+
 	signal(sn, SIG_DFL);
 
 	// The signal is blocked while its handler runs and is delivered when the handler returns. Without it a
@@ -210,13 +204,12 @@ static void fatal_error(int sn, siginfo_t* si, void* segfault_ctx)
 		raise(sn);
 }
 
-#if HOST_OS != OS_DARWIN
-// SIGBUS and SIGILL are never a guest memory fault here
+// SIGBUS and SIGILL are never a guest memory fault here; on Darwin SIGBUS can be one, and SIGILL, SIGTRAP, SIGABRT
+// and SIGFPE are never
 static void fatal_signal_handler(int sn, siginfo_t* si, void* segfault_ctx)
 {
 	fatal_error(sn, si, segfault_ctx);
 }
-#endif
 
 static void fault_handler (int sn, siginfo_t * si, void *segfault_ctx)
 {
@@ -323,11 +316,18 @@ static void install_fault_handler(void)
 
 	libc_sigaction(SIGSEGV, &act, &segv_oact);
 #if HOST_OS == OS_DARWIN
-    //this is broken on osx/ios/mach in general
+    // a write to a page that is mapped read-only is a SIGBUS on macOS (an access to no page a SIGSEGV): both can be
+    // guest memory faults
     libc_sigaction(SIGBUS, &act, &segv_oact);
-    
-    act.sa_sigaction = sigill_handler;
+
+    // the fatal signals: in an automated run the line and 128 + the signal by an exit, no crash report
+    // (fatal_error). A breakpoint instruction is SIGTRAP there: __builtin_trap(), and what a debugger that is
+    // attached takes before it becomes a signal
+    act.sa_sigaction = fatal_signal_handler;
     libc_sigaction(SIGILL, &act, &segv_oact);
+    libc_sigaction(SIGTRAP, &act, &segv_oact);
+    libc_sigaction(SIGABRT, &act, &segv_oact);
+    libc_sigaction(SIGFPE, &act, &segv_oact);
 #else
 	act.sa_sigaction = fatal_signal_handler;
 	libc_sigaction(SIGBUS, &act, &segv_oact);
@@ -351,8 +351,34 @@ double os_GetSeconds()
 }
 
 #if HOST_OS != OS_LINUX
+#if HOST_OS == OS_DARWIN
+// A debugger traces this process (P_TRACED of the kernel's view of it)
+static bool debugger_attached()
+{
+	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+	struct kinfo_proc info;
+	size_t size = sizeof(info);
+	memset(&info, 0, sizeof(info));
+	if (sysctl(mib, 4, &info, &size, nullptr, 0) != 0)
+		return false;
+	return (info.kp_proc.p_flag & P_TRACED) != 0;
+}
+#endif
+
+// What die() and verify() end in, after their "Fatal error : ..." or "Verify Failed" line on stdout (msgboxf). On
+// Darwin, in an automated run with no debugger attached, the process ends itself with 133 (128 + SIGTRAP, as Linux
+// ends there), with no fault_handler line and no crash report (PL-D35, PL-D45); otherwise a breakpoint, for a
+// debugger, or a SIGTRAP
 void os_DebugBreak()
 {
+#if HOST_OS == OS_DARWIN
+	if (runctl_automated() && !debugger_attached())
+	{
+		fflush(stdout);
+		fflush(stderr);
+		_exit(128 + SIGTRAP);
+	}
+#endif
 	__builtin_trap();
 }
 #endif
@@ -368,8 +394,44 @@ void linux_fix_personality() {
 void linux_rpi2_init() {
 }
 
+#if HOST_OS == OS_LINUX && HOST_CPU == CPU_ARM64
+// The page of an arm64 Linux kernel is 4, 16 or 64 KiB, as the kernel was configured (Asahi Linux and the Raspberry
+// Pi 5's own kernel have 16 KiB). The build is made for one, REI_PAGE_SIZE (stdclass.h: 4 KiB on Linux), which the
+// guest memory's mirrors, the write protection of its pages and the fault handler's trap page are laid out in. On a
+// kernel with other pages the build refuses to start, before it sets anything up: one line on stderr, exit status 1
+// (PL-D52). NULLDC_TEST_PAGE_SIZE=<bytes> in the environment is taken for the kernel's page size here, and nowhere
+// else: the test hook that shows the refusal on a kernel with 4 KiB pages (tests/linux_arm64)
+static void refuse_other_page_size()
+{
+	long page = sysconf(_SC_PAGESIZE);
+	const char* test_page = getenv("NULLDC_TEST_PAGE_SIZE");
+	if (test_page != nullptr && test_page[0] != 0)
+		page = strtol(test_page, nullptr, 10);
+
+	if (page == REI_PAGE_SIZE)
+		return;
+
+	fflush(stdout);
+	fprintf(stderr, "nulldc3: this build needs %d KiB pages; this kernel uses %ld KiB\n", REI_PAGE_SIZE / 1024, page / 1024);
+	_exit(1);
+}
+#endif
+
+// The refusal above alone (nothing on every other host): linux-dist/main.cpp answers --version before
+// common_linux_setup() prints its lines, and refuses a kernel with other pages first, whatever the command line
+void common_linux_check_pages()
+{
+#if HOST_OS == OS_LINUX && HOST_CPU == CPU_ARM64
+	refuse_other_page_size();
+#endif
+}
+
 void common_linux_setup()
 {
+#if HOST_OS == OS_LINUX && HOST_CPU == CPU_ARM64
+	refuse_other_page_size();
+#endif
+
 	linux_fix_personality();
 	linux_rpi2_init();
 
@@ -378,7 +440,12 @@ void common_linux_setup()
 	
 	settings.profile.run_counts=0;
 	
+#if HOST_OS == OS_DARWIN
+	// on stderr: this runs before the command line is read, and --version answers with its one line on stdout
+	fprintf(stderr, "Linux paging: %ld %08X %08X\n",sysconf(_SC_PAGESIZE),REI_PAGE_SIZE,REI_PAGE_MASK);
+#else
 	printf("Linux paging: %ld %08X %08X\n",sysconf(_SC_PAGESIZE),REI_PAGE_SIZE,REI_PAGE_MASK);
+#endif
 
 #if !defined(TARGET_EMSCRIPTEN)
 	verify(REI_PAGE_MASK==(sysconf(_SC_PAGESIZE)-1));

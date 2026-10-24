@@ -1,7 +1,7 @@
 # Tests
 
 A standalone CMake project. Every suite but one compiles the libswirl translation units it tests (with the
-emulator's own definitions and flags, from `reicast/cmake/config.cmake`) and links them against stubs for the
+emulator's own definitions and flags, from `nulldc3/cmake/config.cmake`) and links them against stubs for the
 rest. The system tests run the emulator itself, which the project builds for them.
 
 The suites of `debugger/` are CMake projects of their own, with their own flags, which this project adds: "The
@@ -73,13 +73,16 @@ The build includes two builds of the emulator for the system tests, about a minu
 | test | what it runs | data |
 |---|---|---|
 | `common.selftest` | the harness on itself, and the properties of `hw/mem/_vmem` the suites lean on (unaligned accesses end in the handler, constant address lookups return the handlers that are mapped and their context) | none |
+| `harness.emurun` | `common/emurun.py`, how the harnesses of the tests start the emulator and node on every host (`common/emurun_test.py`): the environment of a run (POSIX: the sanitizers' options alone; Windows: `SystemRoot`, `TEMP` and `TMP` in the run's directory, nothing of the profile) and of a program that is not the emulator (the caller's; on Windows with `TEMP`, `TMP` and npm's cache in the run's directory), `nulldc3.exe` for `nulldc3`, output read without the `\r` of a `\r\n`, every program inside `nulldc3-winrun` on Windows and none without it, `npm.cmd`, no POSIX shell on Windows; that the four harnesses start no program but through it, each with an environment of it, and name neither the host nor the caller's environment to it; the environments `debugger/contract/contract.py` (`runner_env`) and `debugger/guest/dsptest/soundlines.py` (`tool_run`) build for their tools, built as on a Windows host for a caller with a `TEMP`, `TMP` and npm cache of its own: `TEMP`, `TMP` and npm's cache of their run, nothing of the caller's; a program started through it on this host, as the emulator and as a tool: on Windows inside `nulldc3-winrun` on a desktop of its own, the program it left running ended with the job; and `selftest.py --mode log-rule` writing under its `--work` alone | python3 |
+| `common.guard.windows` | Windows only: the policy of the tests project for a program that dies (`common/win_policy.cpp`: no box, no crash report, one line and 128 + the signal's number), which every program of the project has (`common.policy.windows`): `common_selftest`, `disasm_test`, `sh4bp_test` and `aica_dsp_guest_oracle` each made to fault eight ways before `main`, through `nulldc3-winrun`, each way taken by one handler of the policy, which its line names (an access violation and a divide by zero: the vectored handler; `abort()`: the SIGABRT handler; a C++ exception and a breakpoint: the filter; an invalid parameter and a pure virtual call: their handlers; a fault on a stack that cannot be searched: the vectored handler, as nothing else can; 139, 134, 136, 134, 133, 134, 134, 139, no window), and no new entry of them in the crash-report places of the profile, listed by name before and after (`common/guard_windows.cmake`) | none |
+| `common.policy.windows` `.catches` | Windows only: the policy for a program that dies is in every program the tests project builds: the mark of `common/win_policy.cpp` read in the file of every executable target, found by a walk of the project's directories once all of them are made (`common/policy_windows.cmake`), but `nulldc3-winrun`, the runner the others run inside; and a program built without it, `common_policy_absent`, is told from the others (`.catches`: the check on `common_selftest` and that program fails and names it alone) | none |
 | `sh4.singlestep.interp` | every single-step vector through the SH4 interpreter, gated on `sh4_singlestep/baseline.txt` | `vendor/sh4-tests` |
 | `sh4.singlestep.dynarec` | every single-step vector through the SH4 dynarec (decoder, shil, x64 backend), gated on `sh4_dynarec/baseline_singlestep.txt` | `vendor/sh4-tests` |
 | `sh4.differential` | interpreter against dynarec from the initial state of every vector, gated on `sh4_dynarec/baseline_differential.txt` | `vendor/sh4-tests` |
 | `sh4.directed.interp` `sh4.directed.dynarec` `sh4.directed.differential` | the three above on the hand-written vectors of `sh4_directed` (carry, borrow, overflow, compares at the edges, delayed branches with a delay slot that changes what the branch uses, RTE with a delay slot that reads what it restores, loads of FPSCR, TRAPA, FTRC at the edges of its range and of NaNs, FMAC on operands that show how often it rounds) | none |
 | `sh4.directed.dynarec.canonical` | `sh4.directed.dynarec` on a dynarec that calls the canonical helpers of the shil opcodes (`CANONICAL_TEST`, `sh4_dynarec/README.md`), against the same baseline | none |
 | `sh4.core` | the SH4 on the emulator's own CPU object (`SuperH4_impl`): the registers a reset leaves and the host FP mode that goes with them, the host rounding mode of every FPSCR.RM, the host FP mode of a thread that runs the CPU, the exception registers of TRAPA | none |
-| `debugger.sh4bp.*` | SH4 code breakpoints and steps in the active backend: `libswirl/debugger/dbg_sh4.cpp`, the decoder, the x64 backend with its main loop and block manager, the interpreter and the interpreter fallback, on a machine of the suite's own with a stand-in for run control. Where a breakpoint stops and with what registers, that stops, pauses and steps leave the time of a run alone, steps, step over and step out, addresses armed while the guest runs and in every instruction of a block, what the mechanism costs a guest that uses none of it, what the recompiler of a new emulator thread starts with (the code region of the process, prepared once, and an empty code cache), and the selftest of the emulator (`Debugger:SelfTest=sh4bp`) on that machine (`debugger/sh4bp/README.md` has the gates). x86-64 hosts only | none |
+| `debugger.sh4bp.*` | SH4 code breakpoints and steps in the active backend: `libswirl/debugger/dbg_sh4.cpp`, the decoder, the recompiler of the host (the x64 backend, or the arm64 one) with its main loop and block manager, the interpreter and the interpreter fallback, on a machine of the suite's own with a stand-in for run control. Where a breakpoint stops and with what registers, that stops, pauses and steps leave the time of a run alone, steps, step over and step out, addresses armed while the guest runs and in every instruction of a block, what the mechanism costs a guest that uses none of it, what the recompiler of a new emulator thread starts with (the code region of the process, prepared once, and an empty code cache), and the selftest of the emulator (`Debugger:SelfTest=sh4bp`) on that machine (`debugger/sh4bp/README.md` has the gates). x86-64 hosts, Linux and Windows, and arm64 hosts, Linux and macOS; on Windows also `debugger.sh4bp.unwind` (a stop of a check walked by the system's unwinder through the check stub, the block and the main loop), and every gate checks the walks of its stops; on arm64 also `debugger.sh4bp.abi` (the registers a caller keeps, given back by the main loop and RunBlock through each of their exits) | none |
 | `arm7.vendor` | the 45 self-checking programs of arm7di-tests-dreamcast on the ARM7 interpreter: no error bit, the pinned final registers, and a core that executes nothing must fail | `vendor/arm7di-tests-dreamcast` |
 | `arm7.directed` | hand-written cases: ADC, SBC and RSC at the edges with the carry clear and set, the logical operations with a ROR by a register, MUL and MLA with Rd == Rm and C behind their S forms, SWI and the undefined instruction trap with their return, the FIQ handshake of the AICA, also with an ARMRST in the middle of it, and what SCILV0-2, the register behind them and M read back, what a reset of the ARM writes and what it leaves, what a sound CPU holds before its first reset and what a reset of the machine leaves of the interrupt controller | none |
 | `arm7.wren7.vendor` `arm7.wren7.qemu_diff` `arm7.wren7.mulsem` `arm7.wren7.bringup` | console jobs of wren7-rtl on the ARM7 interpreter, against what a Dreamcast answered | a wren7-rtl checkout with its ARM programs built |
@@ -87,15 +90,27 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `cfg.overrides` | the config store and the command line parser on a config file of their own: a value `--config` gave is in effect for the run and is not what a save of the settings writes to `emu.cfg`, a changed one is written, and a read-only store (the automated runs) writes nothing | none |
 | `cfg.log_file` | `cl_LogToFile` of the command line parser, what the Windows switch `--log` does with stdout and stderr: one file, made empty first, with every line of both streams in the order they were written and none lost when the process ends without a flush (a child process that ends with `_exit`); a log that cannot be opened leaves the streams as they were | none |
 | `runctl.guest_exit.*` | `utils/run_control.cpp` on the config store, with stand-ins for the machine and the user interface, one process per run (`window`: no key, `key`: `Exit.OnGuestExit`, `vblanks`: `Exit.AfterVblanks`, `seconds`: `Exit.AfterSeconds`, `headless`): a guest program that returns to the BIOS ends every run but the first, with `reason=guest-exit` on the exit line and the user interface stopped, and leaves the first to its window | none |
-| `system.*` | the emulator binary of the default build, headless: `--help`, the keys that end a run and the line it prints, the pinned RTC with its keys in section `config` and in the section of a game, `emu.cfg` left alone, the directory a run keeps its files in (the one of the executable, `--portable <dir>`, `--shared`) and every command line that is refused, what a fatal fault and a signal that is sent do and that the faults of the guest are still handled, programs that boot under reios on the JIT and on the interpreter with their serial output, the software renderer into a PNG, a run that is repeated and has to end in the same state hash every time, emulators started together that each get the memory of their layout, a run on the JIT without the layout, and the speed script of `tests/perf` on one of them (`system/README.md` has the list, and what a deterministic run takes) | none, or the programs of `NULLDC_ELF_DIR` |
+| `system.*` | the emulator binary of the default build, headless: `--help`, the keys that end a run and the line it prints, the pinned RTC with its keys in section `config` and in the section of a game, `emu.cfg` left alone, the directory a run keeps its files in (the one of the executable, the one that holds an AppImage, `--portable <dir>`, `--shared`) and every command line that is refused, what a fatal fault and a signal that is sent do and that the faults of the guest are still handled, programs that boot under reios on the JIT and on the interpreter with their serial output, the software renderer into a PNG, a run that is repeated and has to end in the same state hash every time, emulators started together that each get the memory of their layout, a run on the JIT without the layout, and the speed script of `tests/perf` on one of them (`system/README.md` has the list, and what a deterministic run takes) | none, or the programs of `NULLDC_ELF_DIR` |
 | `system.hle.*` | the same on the emulator built with `-DHAS_TA_LLE=OFF` | none, or the programs of `NULLDC_ELF_DIR` |
 | `devtools.commit` | the UI checkout the tests are given (`NULLDC_DEVTOOLS_DIR`) is at the commit the repository pins for its submodule `devtools/`, when both are git checkouts; it says what it compared | `NULLDC_DEVTOOLS_DIR` |
 | `devtools.commit_check` | the script of `devtools.commit` on repositories made for the test: a UI at the commit the tree pins passes and says so; one at another commit fails and names both; a tree without the gitlink fails; a UI directory that is no git checkout or not the top of one, and a tree that is no git checkout, are not compared and pass | git |
 | `devtools.lookup` | where the tests look for the UI when they are given none (`devtools/lookup.cmake`), on scratch layouts of a tree and a checkout beside it: an uninitialised submodule (an empty directory), one without `node_modules`, one with `node_modules` as a file and one with half of what is needed are passed over for the checkout beside the tree; a complete submodule is taken first; with neither the look-up is empty | none |
+| `rebrand.names` | the tree says the name of the emulator it was forked from only as history: every line of a tracked text file that has the name, in any case (`git grep -I -i -n`), and every tracked file whose name has it, is allowed by an entry of `rebrand/allowed.txt`, a whole path (the licence files, `docs/nulldc3/**`, the test's own files) or a row of path and line pattern, and every row still finds its line; an occurrence no entry allows and a row whose line is gone fail and are named (`rebrand/README.md` has the format and how a package changes a row). Skipped when the tree is not a git checkout | git, the tree as a git checkout |
+| `icons.generated` | `nulldc3/icon/make_icons.py --check`: the eleven approved PNGs of `nulldc3/icon/png/` are inputs it accepts (the PNG signature, every chunk's CRC, only IHDR, IDAT and IEND, the size the name says, 8-bit RGBA, not interlaced, image data that inflates to exactly the image's rows, the five row filters), the three files it makes from them (`nulldc3/windows/nulldc3.ico`, `nulldc3/apple/nulldc3.icns`, `libswirl/linux-dist/x11_icon.h`) are byte for byte the committed ones, and the committed `.ico` and `.icns` are well formed (count, sizes, offsets, lengths, a PNG at every offset); it writes nothing, and names each file that differs or is broken (`nulldc3/icon/README.md` has how the files are made). Skipped without python3 | python3 |
+| `icons.x11` | `x11_icon_cardinals()` (`libswirl/linux-dist/x11_icon.cpp`, no X11 header), what the X11 window gets as its `_NET_WM_ICON`, without a display: 24,652 values, the header's `uint32_t` values zero-extended to `unsigned long` (each below 2^32, as Xlib's format 32 needs), the blocks of 16, 24, 32, 48, 64 and 128 px with their width and height, the 64-bit FNV-1a of the values equal to the header's constant, the corners' alpha 0 from 24 px up and at most 12 at 16 px (the approved small art is antialiased into its corners), the centre opaque | none |
+| `version.derive` | `nulldc3/cmake/version.cmake`, the rule that makes the emulator's version at every build, on git repositories the test makes below its build directory (`version/derive.cmake`; every tag is made there, none in a repository of the tree): on the tag `v3.0.0-pre` (`3.0.0-pre`), two commits after it (`3.0.0-pre+2.g<h>`), dirty by a changed, a staged and a deleted tracked file (`+dirty`, `.dirty`) and not by untracked and ignored files, no tag reachable (`3.0.0-pre+g<h>`), the tags `foo`, `release-1` and `vnext` passed over also when they are nearer than the version tag, a tag whose describe output does not read as `v<T>-<N>-g<hash>` taken as none, a later tag `v3.0.1` over the base `3.0.0-pre` (`3.0.1`, numbers `3,0,1,0`), a worktree (its own HEAD), the repository as a submodule and its superproject (a submodule at another commit or with a changed file makes it dirty, one with an untracked file does not), a shallow clone through a `file://` URL (`+g<h>` with the full clone's `<h>`), a copy without `.git` and one inside another repository (`+nogit`), no git on the `PATH` (`+nogit`), `GIT_DIR` of another repository in the environment; in every case the full hash, the dirty flag, the three files (the header's defines, no `#include` or `#pragma` in it) and `<h>` as the first 10 hexadecimal digits of `git rev-parse HEAD`; a second run with nothing new rewrites none of the files; a base that is missing or no version stops it; through the script's own functions the derived forms for N = 0, 5, 65535, 65536 and 70000 (capped at 65535) and twelve describe outputs of other forms | git |
+| `version.build_time` | the version is made when the emulator is built, not when it is configured (`version/build_time.cmake`): a clone of the tree as it is now (`git clone --shared` at its `HEAD`, the tracked files the tree has changed since copied over and committed), configured once with `-DNULLDC_DEVTOOLS_DIST=OFF`, its target `nulldc3_version` built, an empty commit, the target built again; after each build `nulldc3-version.txt` is what `version.cmake` makes of the clone then and the header's `NULLDC_GIT_HASH` its `git rev-parse HEAD` (after the commit the new `<h>`), CMake did not run again (`CMAKE_PROJECT_INCLUDE` counts the configures) and `git status --porcelain --ignored` of the clone is empty; nothing is compiled. A version made at configure time, or made again by a configure that depends on `.git`, fails, whatever emulator the tests ask | git; the tree a git checkout |
+| `version.cl` | `--version` of `cfg/cl.cpp`, without the emulator (`version/cl_test.cpp`, on `nulldc_cfg`): `ParseCommandLine` returns `rv_cli_finish`, stdout is exactly `nullDC <version>` and a line end, `<version>` being `nulldc_version()`, and `cl_FinishText()` is that same text (what the Windows build shows where stdout cannot be read once the process has ended); for `--help` stdout and `cl_FinishText()` are the usage text; a refused command line leaves `cl_FinishText()` empty | none |
+| `version.binary` | the emulator under test (`NULLDC_EMULATOR`, else the one the system tests build) exits with 0 for `--version`, and its stdout is the one line `nullDC <version>`, `<version>` what `version.cmake` makes of the tree when the test runs, with nothing in front of it on any system (the Linux build answers `--version` before `common_linux_setup()` prints its lines; on macOS the setup's `Linux paging:` goes to stderr): a binary of another commit fails (one not built again since a commit) (`version/binary.cmake`). The system tests' emulator is configured again at every build of the tests (`system/build_emulator.cmake`), so with it this test cannot tell a version made at configure time; `version.build_time` can. With `NULLDC_EMULATOR` an emulator built again after a commit without a configure, it sees that too. Skipped when there is no emulator to ask | the emulator |
+| `ci.hygiene` | `nulldc3/ci/hygiene.py` on the tree: no tracked file names a home directory of Linux, macOS or Windows, a path of WSL's network or drive mounts, a private IPv4 address or a `.local` host name, but the lines a row of `nulldc3/ci/hygiene-allow.txt` allows with its reason, and every row still allows a line (`ci/README.md`). Skipped when the tree is not a git checkout | git |
+| `ci.workflows` | `nulldc3/ci/check_workflows.py --self-test` on `.github/workflows/ci.yml`: the rules of the workflow that actionlint does not check (the triggers and inputs, no `dry_run`; read permissions but in `release`; `release` on the push of a tag alone and never needing `release-check`; `publish` in `release` alone; actions pinned by commit; no secret but the token; no environment dump; thin jobs) and each of its mutations caught; on Linux and macOS also `release_test.py`, `nulldc3/ci/release.sh` against a stand-in for `gh` in a scratch repository: `check` never calls it, `publish` creates a Release only on the push of a tag whose version, base, UI and configure lines agree (`ci/README.md`) | python3; git and cmake |
+| `ci.scripts` | `nulldc3/ci/zipcheck.py` (the Windows zip's entries as its central directory has them: no `\`, the folder's own entry, exactly the seven files below it) on zips made by the test, one as `tar.exe -a -c` makes it and six it has to refuse (among them Compress-Archive's `\` names); on Linux `nulldc3/ci/smoke.py` against a stand-in for the emulator: every run through `timeout(1)`, a debugger reply that is no JSON or of another shape the check's failure and not `smoke.py`'s end, SIGTERM or SIGHUP to `smoke.py` ending the run in progress first, and nothing of any run left (`ci/README.md`) | python3 |
 | `debugger.selftest.emu` `.interp` | the selftest of the debugger in the emulator (`nulldc3 --config Debugger:SelfTest=emu`, headless, on the emulator the system tests build; the SH4 on the JIT and, as `.interp`, on the interpreter): the emulator thread and run control, nineteen tests on a guest of the suite's own. Pauses, event breakpoints, calls of every class in every state, host stops against a parked thread, resets, guest exits, steps, the lifetime of the machine (`debugger/selftest/README.md` has every test of these rows) | none |
+| `debugger.selftest.nap` | the naps of the selftests of the debugger (`libswirl/debugger/dbg_selftest_nap.h`, `Debugger:SelfTest=nap`, a machine test on the JIT): naps of 50 ms last never less and at most 25 ms more and take at most 5 ms of the thread's CPU time; naps of 100 us to 1.5 ms are never shorter, their median at most 400 us longer, and those of a millisecond or more are not spun whole. On a POSIX host a nap is `std::this_thread::sleep_for`, and the medians of 40 naps of each request through `NapUs` and as many through `std::this_thread::sleep_for`, one after the other, are within 50 us of each other; on Windows, whose `sleep_for` lasts a tick of the system timer (15.6 ms), a high-resolution waitable timer and a spin of its last 500 us, and the test holds the way without that timer too | none |
 | `debugger.selftest.core` `.interp` | the session `core`: the core of the debugger (`libswirl/debugger/dbg_core.cpp`, `dbg_events.cpp`, `dbg_symbols.cpp`, `dbg_callstack.cpp`) against the live machine, in a session without a server. Eight tests: `core.events` (the event log: 200 entries, ids that ascend and stay, the oldest dropped, a message cut to its bound, nothing logged and no argument evaluated with the gates closed, the direct append), `core.opcodes` (for all 65536 encodings the disassembler reports an instruction exactly where the opcode table executes one, but for the reios trap `0x085B`, whose line is `.word 0x085b ! reios trap`), `core.tables` (breakpoint and watch ids from 1 and never used twice, the bounds of 1024 breakpoints, 64 expressions and 256 characters, and of 256 watches, which a watch on every register of the tree reaches: of its 46 calls each that fits is taken whole and each that would pass the bound is refused whole; the order of the checks of `breakpoints.add`, the breakpoints of each processor handed to that processor alone, watch resolution without regard to case, duplicates, all-or-nothing, the category of a breakpoint, the active mask for mute, solo and no client, the event gates), `core.tick` (the JSON of ticks and of describe: no `null`, the required keys, every register list that of describe, values in their wire form, a full tick and the four base paths, watches on paths a tick does not carry, a symbol name and an event message with bytes that are no ASCII as `?`, the envelope errors, memory that does not wrap), `core.guest` (on the booted program: a step on the reios trap runs the boot, the entry resolves to a symbol, the SH4 call stack, the ARM7 call stack against `dc.aica.arm7.ENABLED` held in reset and running, `breakpointId` in the ticks of a stop until its breakpoint is removed, an event and a code breakpoint under mute), `core.lifetime` (with a thread that plays the host and sends what a client sends: the machine stopped, its guest exited, the machine gone and made again: reason, a new `stopId` for each, `registers: {}` and a tree of `"n/a"` without a machine, bookkeeping in every state, -32001 and -32002), `core.reset` (`control.reset` at the stop of a breakpoint: one more stop, reason `reset`, no `Running` and no breakpoint named, the PC of the SH4 the one a reset leaves, the breakpoints, watches and categories kept, no tick of its own; and while the machine runs: `{}`, nothing published, and the machine boots again into a breakpoint on its entry), `core.writes` (`state.writeMemory`, `state.setRegister` and `state.editWatch` by parameter, by the order of their own errors, in-band, and by lifetime, -32001 and -32002 behind -32602 and in front of every error of a method's own; a path, a name or a watch expression with a NUL in it is none of the tree; the text of a value, of which the low bits of any length count; five capabilities besides the engine's; `flags.writable` in describe on the 109 registers that have a writer and on none of a tick; one tick behind every accepted write, of the stop it was made in; writes served while the machine runs, with a running tick behind them, never -32003) | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.selftest.regs` `.interp` | the session `regs`, fifteen tests: the registers of the device tree, guest memory for the debugger and the device accessors against the live machine, that reading changes nothing, and `dc.aica.arm7.ENABLED` (0 while the ARM7 is held in reset, 1 while it is clocked) where the booted program holds and releases the ARM7. The rows of the devices (milestone M2) at states the tests make up, a value of its own in every word a row reads: `regs.rows.sb` (the system bus rows against a guest read and against the value each slot was given; a write-only register reads `"n/a"` whatever its slot holds; `SB_MST`, which nothing assigns, reads 0), `regs.rows.pvr` (the PVR's register file against a guest read), `regs.rows.aica` (the fields of the common block against the emulator's own struct; the 2479 fields of the register file as the accessor delivers them, as the state was made, and against guest reads of the channel words; `AR`, `VREG`, `MIEMP`, `MOEMP` and the loop flag as a read delivers them; `SCILV0-2`, `SCIRE` and `MCIRE` `"n/a"` while the file holds a value; `L` and `M` what `SoundCPU::DebugGetInterrupt` says, in four states of the controller), `regs.rows.gdrom` (the rows of `dc.gdrom` against the drive's snapshot in 24 made-up states, whose state and disc type are enumerators of their enums, and the clock), `regs.rows.pure` (every register read a hundred times: the save state of every device and the PVR's register file as they were, also with a channel's loop flag set, which a guest read of the status clears), `regs.tick` (a full tick with no breakpoint and no watch listed is at most 192 KiB; the time the emulator thread takes to build one is printed) | `2ndmix.elf` of `NULLDC_ELF_DIR` |
-| `debugger.selftest.sh4bp` `.sh4bpboot` `.sh4bpbase`, each with `.interp`; `debugger.selftest.sh4bp.sessions` | the gates of the SH4 breakpoints and steps on the park loop of the emulator, on the booted guest and with its baselines; and that sessions on the JIT, on the interpreter and on the JIT with the interpreter fallback forced agree on registers, step traces and time (`debugger/sh4bp/README.md`) | `2ndmix.elf` of `NULLDC_ELF_DIR` |
+| `debugger.selftest.sh4bp` `.sh4bpboot` `.sh4bpbase`, each with `.interp`; `debugger.selftest.sh4bp.sessions` | the gates of the SH4 breakpoints and steps on the park loop of the emulator, on the booted guest and with its baselines; and that sessions on the JIT, on the interpreter and on the JIT with the interpreter fallback forced agree on registers, step traces and time (`debugger/sh4bp/sessions.py`, the port of `selftest.sh`; `debugger/sh4bp/README.md`) | `2ndmix.elf` of `NULLDC_ELF_DIR` |
+| `debugger.selftest.sh4bp.sessions.rule`, `debugger.selftest.log.rule` | no emulator: the comparisons of `sessions.py` on made-up sessions (every key they hold, changed in one session, fails; a key they do not hold does not; the repeats on the booted guest go as their rule says), and the checks of `selftest.py` on made-up output of a session whose lines end in `\n` and in `\r\n` | python3 |
 | `debugger.selftest.emuexit.running` `.pending` `.parked`, each with `.interp` | a guest that returns to the BIOS while running, with a pause asked for and while parked ends a headless run, `reason=guest-exit` | none |
 | `debugger.selftest.arm7` `.interp` `.fallback` | the session `arm7`, forty-four tests on the sounding guest of the tree (`debugger/guest/dsptest`): the sound burst that the debugger suspends in front of an ARM7 instruction and runs on, the breakpoints and steps of the ARM7, and its register writer. What a burst is made of with the ARM7 clocked and held (32 time steps either way: the AICA is clocked whatever `ARMRST` says; in bursts that find the ARM7 held nothing of it executes, while the DSP and the channels run on, its timer's request is raised and latched, and the SH4's interrupt line follows the AICA); the context of the ARM7 as the debug loop leaves it; a breakpoint that stops inside a burst with no time passed behind it, the lowest id, the active mask, mirrors of the wave memory, the FIQ vector, the resume exemption and its edges, a resume and a step of the SH4 whose burst stops again, the SH4 in SLEEP; steps in a suspended burst, across a time step of the AICA, across the end of a burst, from a stop with no burst suspended (the SH4 runs to the next burst with the stop in force), complete at the FIQ vector, of the `msr` that lets a waiting FIQ in, with the ARM7 held (`-32012`, and a burst that finds it held), with a breakpoint on the instruction, with a breakpoint of the SH4 first, and a host stop, a guest exit, a guest reset and the two calls of the grace expiry during the wait of a step, whose leave is a resume for the SH4 (its exemption, the interrupt acceptance it owes); step over and step out; a reset, a host stop and a guest exit on a suspended burst, and each in the very tick in which a check suspends; a breakpoint hit while the host has stopped a machine whose SH4 sleeps; the interrupt acceptance behind a burst that was run on in the park context; events raised there; every accessor read twice; the registers written; the notice; the grace expiry. On the JIT, on the interpreter, and on the JIT with the interpreter fallback of the SH4 forced | none |
 | `debugger.selftest.dsp` `.interp` `.fallback` | the session `dsp`, thirty-one tests on the sounding guest of the tree, whose DSP program the guest loads: the run control of the DSP. Its DSP phase of every sample, also while the ARM7 is held, which the debug loop runs only while something of the DSP is armed (`SoundBurstDspCounts`); a breakpoint of the DSP, which is reached in every sample: it stops in front of its step with no time passed behind it, the lowest id, the active mask, the resume exemption (once; not behind a stop the DSP did not decide, nor with nothing to check; one armed at a leave ended at a change of `dbg_dsp_armed` to 0 and back, not by a burst that finds the ARM7 held), a resume stopping in front of the same step one sample later, with the ARM7 held (nothing of it executes); steps of the DSP, which never publish `Running`: in a suspended DSP phase, of step 127 to the end of its sample (the burst suspended there, `SOUND_BURST_SAMPLE`) and to the end of its burst (the tail once), from a stop with no burst suspended (the SH4 runs to the next burst, the step is step 0 of its first sample), from a stop of the ARM7 (the rest of its ARM phase, whose breakpoint comes first with its own cause), from the end of a sample, with the ARM7 held, with an SH4 breakpoint first, with a breakpoint on the step, and `-32004` for step over and step out; a step of the SH4 dropped by the breakpoint, a step of the ARM7 not; a reset, a host stop and a guest exit on a burst suspended in front of a DSP step and at the end of a sample, and each in the very tick in which a check of the DSP suspends; a host stop and a guest exit in the wait of a step of the DSP, which leave no step armed for the next thread, and a host stop at a breakpoint of the DSP whose owed resume arms nothing for the DSP; every accessor read twice at a stop in a DSP phase; the nine datapath rows of `dc.aica.dsp` through the steps of a sample; the grace expiry. On the JIT, on the interpreter, and on the JIT with the interpreter fallback of the SH4 forced | none |
@@ -121,10 +136,10 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `debugger.contract.slow` | the slow-client rule: a client that has stopped reading and is 10 MiB of ticks behind is queued none of the periodic ticks of 3 s, every tick that a request caused, and a full tick next | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.contract.hash.off` `.hash.noclient`, each with `.interp` | 2ndmix for 600 vblanks, twice: the same state hash with no `Debugger:` key and with `Debugger:Enabled=no` (and no server without the key: the default of an automated run); the same with the server on and no client and with the server off | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.contract.hash.idlebp` `.interp` | the same state hash with a client connected and a muted breakpoint on a function 2ndmix calls in every frame (the runner's `--idle-breakpoint`), and with the server off | `2ndmix.elf` of `NULLDC_ELF_DIR`, a dreamcast-devtools checkout with `node_modules`, npm |
-| `debugger.contract.hash.listening` `.interp` | the same state hash with a client that describes itself at the `StartPaused` stop, lets the run begin and then only receives until the run ends, and with the server off. The periodic tick is a full one every 20 ms for this run (`Debugger:TickMs=20`, `Debugger:FullTickEvery=1`): every register of the device tree, which from milestone M2 on is every device, is read on the emulator thread some tens of times while 2ndmix runs its 600 vblanks. The client has to have got ten full running ticks at least, and no stop | `2ndmix.elf` of `NULLDC_ELF_DIR` |
+| `debugger.contract.hash.listening` `.interp` | the same state hash with a client that describes itself at the `StartPaused` stop, lets the run begin and then only receives until the run ends, and with the server off. The periodic tick is a full one every 20 ms for this run (`Debugger:TickMs=20`, `Debugger:FullTickEvery=1`): every register of the device tree, which from milestone M2 on is every device, is read on the emulator thread some tens of times while 2ndmix runs its 600 vblanks. The client has to have got ten full running ticks at least, none of its running ticks saying `registersStale`, and no stop | `2ndmix.elf` of `NULLDC_ELF_DIR` |
 | `debugger.contract.hash.listening.guest` `.interp` | the same on the sounding guest of the tree, whose AICA works: its registers, its channels and the interrupt controller of the ARM7 are read while the guest plays | none |
-| `debugger.contract.hash.listening.rule` | what these four take for a full running tick, on ticks that are made up: every path that has registers, and every path but `dc.sh4.cpu` in a tick that says `registersStale`, which is every running tick of a recompiler whose SH4 context is not complete where a running machine is read (not the x64 one, so no run on an x64 host has such a tick). No emulator is run | none |
-| `debugger.guest.dsptest.files` | the sounding guest of the tree (`debugger/guest/dsptest`: a bare-metal SH4 program with an ARM7 program and a DSP program inside it): its eight committed files are those of its manifest `SHA256SUMS`, and what `gen.sh` makes of the three sources, byte for byte (`gen.sh --check`) | none; an sh-elf binutils, and an arm-eabi binutils or clang, for the second half |
+| `debugger.contract.hash.listening.rule` | what these four take for a full running tick, on ticks that are made up: every path that has registers, and every path but `dc.sh4.cpu` in a tick that says `registersStale`, which is every running tick of a recompiler whose SH4 context is not complete where a running machine is read (neither the x64 one nor the arm64 one, so no run of the tests has such a tick, and the four refuse one). No emulator is run | none |
+| `debugger.guest.dsptest.files` | the sounding guest of the tree (`debugger/guest/dsptest`: a bare-metal SH4 program with an ARM7 program and a DSP program inside it): its eight committed files are those of its manifest `SHA256SUMS`, and what `gen.sh` makes of the three sources, byte for byte (`gen.sh --check`). On Windows `gen.sh`, a bash script, is not run (`bash` there is WSL's launcher), and the test has to say so | none; an sh-elf binutils, and an arm-eabi binutils or clang, for the second half |
 | `debugger.sound.lines.dsptest.jit` `.interp` | the sound line of the guest (`--config config:Debug.AicaHash=2000`, headless, `docs/nulldc3/automated-runs.md`) on the JIT and on the interpreter: two runs print one line, it has `ticks=2000`, and its `samples` is none of the 2001 hashes of silence (`debugger/guest/dsptest/README.md` has the script, `soundlines.py`, and every test of these rows) | none |
 | `debugger.sound.engines.dsptest` | the line of the JIT and the line of the interpreter agree in `samples`, `regs`, `arm7`, `ticks`, `cycles` and `dsp`: everything the guest's SH4 does to the sound falls between the same two ticks of the AICA on both | none |
 | `debugger.sound.muted.dsptest.jit` `.interp` | "Disable Sound" mutes: with `config:aica.NoSound=yes` the line of the guest is its line without the key in every field but `samples`, and `samples` is the hash of 2000 * 32 pairs of zeroes, a pair for every sample, folded where the sample hands its pair to the audio stream; the run without the key sounds. The line holds the harness's fold: that the stream itself, the speed limit of the emulator, is handed a pair of zeroes in every sample is held by `aica.dsp.emu.state` (its check `nosound`), since no run with `audio:backend=none` shows it | none |
@@ -148,6 +163,22 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `aica.dsp.wasm` | the WebAssembly build of the AICA DSP core in node, through its loader and its C interface, against the core compiled for the host, on the same programs | emcc and node, skipped without them |
 | `aica.dsp.wasm.emsdk` `aica.dsp.wasm.noemcc` | the script that builds it, run by sh on a PATH without emcc: it builds with the emsdk in `EMSDK`, and says that it has no emcc when there is no emsdk | an emcc that is in an emsdk, and node; skipped otherwise |
 | `aica.dsp.wasm.devtools` | the DSP module the UI commits (`src/wasm/aica-dsp-core/` of `NULLDC_DEVTOOLS_DIR`) is this tree's core: its `PROVENANCE.json` has the fixed keys and names the two files beside it, byte for byte; the trace that `aica.dsp.wasm` replays is replayed on the UI's loader and wasm with every answer the native core's; and where the emcc `build.sh` uses (the `PATH`, else the emsdk of `EMSDK`, else `~/emsdk`) has the version `PROVENANCE.json` names, the two files are the bytes of a fresh `build.sh` of the tree | node and the UI checkout (`NULLDC_DEVTOOLS_DIR`); no emcc |
+| `windows.winrun.probe` | Windows only (`windows/README.md` has these): the probe of `nulldc3-winrun` (`winrun/README.md`) names its private desktop `winrun-<n>`, its visible window is in the list, the verdict is 125 | none |
+| `windows.winrun.detach` | Windows only: `nulldc3-winrun --detach` returns at once though its output is read through a pipe, and the copy runs the program to its end and writes its rc file | none |
+| `windows.headless.nowindow` | Windows only: the guest of the tree headless with `NULLDC_TEST_UI_REPORT=1`, through `nulldc3-winrun`: exit 0, the exit line, no window and no COM apartment window, the no-dialog policy read back (`wer`, `invparam`, `purecall`, `sigabrt`, `abort`) | the emulator |
+| `windows.fatal.segv` `.ill` `.trap` `.abort` `.div` `.stack` `.invparam` `.purecall` | Windows only: `NULLDC_TEST_FATAL=<kind>`: the `fault_handler` line and 128 + the signal (for `trap`, `die()`'s line, no `fault_handler` line, 133), no window, nothing new in the crash-report places | the emulator |
+| `windows.helpbox` | Windows only: the help/error box is shown only where the output cannot be read and the run is not headless: a pipe, `NUL`, a console of its own headless (exit 2, no window), a console of its own not headless (the box, on the private desktop) | the emulator |
+| `windows.abi.xmm` | Windows only: the x64 backend's `Mainloop` and `RunBlock` give `xmm6`-`xmm15` back (an Xbyak canary thunk, a machine of its own), and a stack walk from `UpdateSystem_INTC` through each comes to the thunk with the emulator's unwind data | none |
+| `windows.binary.stdout` `windows.exitcode` | Windows only: no `\r` in the emulator's stdout or stderr; headless with nothing to run exits with 1 | the emulator |
+| `windows.dsound.failed` | Windows only: DirectSound that fails (`NULLDC_TEST_DSOUND=fail`) is no sound, and the guest headless with the speed limit on still reaches its exit | the emulator |
+| `macos.sandbox.canary` | macOS only (`macos/README.md` has these): the canary of `macos/macrun.py` cannot reach the window server under it, and the kernel says that it is sandboxed and that the window server's lookup is denied; `macrun.py` applied the profile for a caller (ctest) without one, and ran under the caller's when ctest itself runs under a profile | none |
+| `macos.macrun.tree` | macOS only: the timeout of a long step, `macos/macrun.py --detach` around a ctest whose test runs `macrun.py` again around a sleeper (which that one starts in a session of its own): the step ends with 124, and the sleeper ends with it, though its `macrun.py` dies in the same sweep | none |
+| `macos.headless.nowindow` | macOS only: the guest of the tree headless with `NULLDC_TEST_UI_REPORT=1`, through `macrun.py`: exit 0 by an exit, the exit line, `nulldc-ui: app=0 windows=0` (no `NSApplication`), the ARM7 on the interpreter | the emulator |
+| `macos.fatal.segv` `.ill` `.trap` `.abort` | macOS only: `NULLDC_TEST_FATAL=<kind>`: the `fault_handler` line and 128 + the signal by an exit, not the signal (`segv` writes to address 16, a `SIGSEGV` at address `0x10` as on Linux: 139, 132, 134; for `trap`, `die()`'s line, no `fault_handler` line, 133), the stdout printed before the fault (stdout is line-buffered), nothing new in `~/Library/Logs/DiagnosticReports` | the emulator |
+| `macos.refused` | macOS only: a refused command line, not headless, with stderr to a pipe and to `/dev/null`, and headless: exit 2, no `NSApplication` (no alert), the reason on stderr where it goes | the emulator |
+| `macos.bundle.codesign` | macOS only: the emulator's `nulldc3.app`: its ad-hoc signature (`codesign --verify --strict --deep`), its `Info.plist` (`plutil -lint`, every key of the template, the version keys against the build's `nulldc3-version.cmake`), the icon and exactly the licences that match whether the build embeds the UI | the emulator |
+| `macos.build.ccache` | macOS only: neither the tests project's build nor the emulator's (`NULLDC_EMULATOR`'s) compiles through ccache unless its configure line has `-DNULLDC_CCACHE=ON`, and with it and a ccache found both do; read from their commands (`ninja -t commands`, or the `build.make` files), nothing is compiled | none |
+| `macos.icns.iconutil` | macOS only: Apple's `iconutil` reads `nulldc3/apple/nulldc3.icns` into its ten images, and makes an `.icns` of the approved PNGs (which elements it writes: the test's output) | none |
 
 The SH4 dynarec tests run on x86-64 hosts only. The wren7 tests need `-DNULLDC_WREN7_DIR=<path to wren7-rtl>`
 unless wren7-rtl sits next to the repository; `arm7/README.md` has what has to be built in it. The system tests
@@ -158,10 +189,12 @@ The `aica.dsp.diff.*` and `aica.dsp.case.*` tests (the `.emu` ones among them) a
 sits next to the repository; they compile its sample model and its DSP programs (C) from there and read its console
 captures.
 
-The emulator has an SH4 recompiler for x86-64 hosts and one for arm64 hosts, an ARM7 recompiler for arm64 hosts,
+The emulator has an SH4 recompiler for x86-64 hosts and one for arm64 hosts, an ARM7 recompiler for arm64 hosts
+that no build has in this round (`FEAT_AREC` is none on every host: the ARM7 runs on its interpreter everywhere),
 and its interpreters on every host; its DSP is the one core of `libswirl/hw/aica/dsp_core` on every host; it does not configure for 32-bit x86 and arm hosts. Of the recompilers the
-tests here run the x86-64 backend. `-DTARGET_NO_REC=ON` builds the emulator without a recompiler on any host. A
-generic host, one whose processor `reicast/cmake/config.cmake` has no name for, gets that build without the fault
+tests here run the backend of the host: the sh4bp suite and the emulator-driven tests on x86-64 and arm64 hosts, the
+SH4 dynarec and FPU suites on x86-64 hosts only. `-DTARGET_NO_REC=ON` builds the emulator without a recompiler on any host. A
+generic host, one whose processor `nulldc3/cmake/config.cmake` has no name for, gets that build without the fault
 handler, so without nvmem; on an x86-64 machine `-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=<such a name>`
 configures it. The system tests take such a binary with `-DNULLDC_EMULATOR=`. On a `TARGET_NO_REC` build every case
 passes but `guest_exit.jit`, `boot.2ndmix.jit`, `boot.hello.jit` and the three `vmem.*` cases, which have to see the
@@ -172,12 +205,12 @@ and their `.interp.` tests pass. The `debugger.selftest.*` and `debugger.contrac
 runs: on such a binary every one of them that asks for the JIT fails.
 
 Every test of this table but `common.selftest`, `sh4.core`, the `debugger.sh4bp.*`, `debugger.selftest.*` and
-`debugger.contract.*` tests, `cfg.overrides`, `cfg.log_file`, `runctl.guest_exit.*`, the system tests, the `devtools.*` tests, `aica.dsp.capi` and the `aica.dsp.wasm` tests is
+`debugger.contract.*` tests, `cfg.overrides`, `cfg.log_file`, `runctl.guest_exit.*`, the system tests, the `devtools.*` tests, `rebrand.names`, `icons.generated`, `icons.x11`, the `version.*` tests, the `ci.*` tests, `aica.dsp.capi` and the `aica.dsp.wasm` tests is
 gated on a baseline file, and ctest runs them with `--strict`: a count that is worse than its baseline fails, and
 so does one that is better, until the baseline is updated and committed. `common.selftest`, `sh4.core`, each
 `debugger.sh4bp.*` test, each `debugger.selftest.*` test, each `debugger.contract.*` test, `cfg.overrides`,
 `cfg.log_file`, each `runctl.guest_exit.*` test, each
-system test, each `devtools.*` test, `aica.dsp.capi`, `aica.dsp.wasm` and `aica.dsp.wasm.devtools` are lists of checks that all have to hold;
+system test, each `devtools.*` test, `rebrand.names`, `icons.generated`, `icons.x11`, `version.derive`, `version.build_time`, `version.cl`, `version.binary`, `ci.hygiene`, `ci.workflows`, `ci.scripts`, `aica.dsp.capi`, `aica.dsp.wasm` and `aica.dsp.wasm.devtools` are lists of checks that all have to hold;
 `aica.dsp.wasm.emsdk` and `aica.dsp.wasm.noemcc` are what the build script returns and prints.
 
 More about the suites:
@@ -193,10 +226,180 @@ More about the suites:
 * `debugger/contract/README.md`: the server of the emulator against the contract runner of the devtools UI, the
   grace period, the configuration errors, the slow-client rule and the state hashes, test by test; where the mock
   of the UI repository and the emulator's server differ,
+* `rebrand/README.md`: `rebrand.names`, the format of its allow list `rebrand/allowed.txt` and how a package
+  changes a row of it when it adds, moves, rewraps or deletes a line of history,
+* `ci/README.md`: `ci.hygiene`, `ci.workflows` and `ci.scripts`, the rules of the workflow, the stand-in test of
+  `release.sh` and the tests of `zipcheck.py` and `smoke.py`,
+* `../nulldc3/icon/README.md`: the icon files `icons.generated` checks, how they are made from the approved PNGs and
+  how to make them again,
 * `aica_dsp/README.md`: the AICA DSP core's tests, which of the console's captures are compared with the core
   directly and which through the caique model, and the tests of the core in the emulator's sound chip;
   `aica_dsp/KNOWN_FAILURES.md`: the three lines of a console report that depend on the console's timing, and the
   five of another that need a CPU's read in the DSP's latch, which the emulator does not wire.
+
+## On Windows
+
+The project builds with MSVC (Visual Studio 2026, its CMake and Ninja, from its developer prompt) the way it builds on
+Linux, RelWithDebInfo by default, with the static C runtime. Every program it runs there runs inside
+`nulldc3-winrun` (`winrun/README.md`): ctest itself runs inside one, the tests of `windows/` start the emulator
+through it, and the harnesses of the emulator-driven tests (`debugger/selftest`, `debugger/contract`,
+`debugger/guest`, the oracle of `aica_dsp`, `debugger/sh4bp/sessions.py`) start the emulator, the contract runner
+and their tools through another, inner one (`common/emurun.py`), and `debugger.disasm.dsptest` and
+`debugger.disasm.dsp_playground` run their scripts (and the `tsx.cmd`, `cmd.exe` and `node` behind them) inside one of
+their own, with `TEMP`, `TMP` and npm's cache in the build directory, so that no window or box of a test reaches the
+desktop and ending a run ends all of it. It does not stop crash reports; the programs' own policies do: the
+emulator's (`docs/nulldc3/automated-runs.md`), and the same for every program of the tests project,
+`common/win_policy.cpp`: every suite that links `common/test_guard.cpp` and every other program, which links the file
+itself (no box, no crash report, one line and 128 + the signal's number; `common.policy.windows` reads it in every
+program the project builds, `common.guard.windows` makes four of them fault). The harnesses give the programs that
+are not the emulator (the contract runner, the tools) `TEMP`, `TMP` and npm's cache in their run's directory; set
+`TEMP`, `TMP` and `npm_config_cache` to a directory of your own for the rest of a run as well (ctest, the scripts,
+`npm ci`), or they are the profile's.
+
+    set TEMP=<scratch dir>& set TMP=<scratch dir>& set npm_config_cache=<npm cache dir>
+    cmake -S tests -B <build dir> -G Ninja -DNULLDC_EMULATOR=<build>\nulldc3.exe -DNULLDC_ELF_DIR=<dir> ^
+          -DNULLDC_WREN7_DIR=<dir> -DNULLDC_CAIQUE_DIR=<dir> -DNULLDC_SHRIKE4_DIR=<dir> ^
+          -DNULLDC_DEVTOOLS_DIR=<UI checkout with node_modules> -DPython3_EXECUTABLE=<python.exe> ^
+          "-DNULLDC_NPM=C:/Program Files/nodejs/npm.cmd" -DNULLDC_TESTS_REQUIRE_DATA=ON
+    ninja -C <build dir>
+    nulldc3-winrun --timeout 5400 -- ctest --test-dir <build dir> -j 4 --output-on-failure
+
+- `NULLDC_EMULATOR`: `nulldc3.exe` of an emulator build (configured with `-DNULLDC_DEVTOOLS_DIST=OFF` for a gate).
+  `tests/system` builds no emulator on Windows: without it the emulator-driven tests are skipped, and say so.
+- `NULLDC_WINRUN`: the `nulldc3-winrun.exe` the tests start programs through; by default the one `windows/` builds.
+  The tests that run a harness have it in their environment, and a harness on Windows starts nothing without it.
+- `Python3_EXECUTABLE`: a Python of 3.9 or later; on Windows the `python.exe` of the PATH may be the Store's alias.
+- `NULLDC_NPM`: `npm.cmd` (the `npm` beside it is a shell script, which `CreateProcess` cannot start); found as
+  `npm.cmd` first when it is not given. The UI checkout (`NULLDC_DEVTOOLS_DIR`) has `npm ci` made on Windows, and the
+  contract runner runs from it against `127.0.0.1`.
+- The data: the sibling checkouts need only the files the suites read: 74 of caique-rtl (its sample model, its DSP
+  programs and their console captures), 120 of wren7-rtl (the job files of `model/tests`, `vendor/` and the ARM
+  programs of `build/hw`) and 12 of shrike4-rtl (the three headers of `sh4_fpu`, `tools/hw/fpdn/*.bin` and the console
+  records the vector suite reads), about 12 MB; and `2ndmix.elf` and `hello.elf` in `NULLDC_ELF_DIR`.
+
+What is skipped on Windows, with its reason (77 of the 349 tests; every other one runs, and the gate has no open
+defect):
+
+| tests | reason |
+|---|---|
+| `system.*`, `system.hle.*` (67) | the Linux-only system-test harness |
+| `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` (3) | no emcc |
+| `debugger.disasm.sh4_objdump` `.sh4_objdump_selftest`, `.arm7_objdump` `.arm7_objdump_selftest` (4) | no sh-elf-objdump / arm-eabi-objdump on this host (a skip of the platform also with `NULLDC_TESTS_REQUIRE_DATA`; on Linux a missing tool fails) |
+| `debugger.sh4bp.b11` (1) | it counts host instructions with the performance counters of Linux (`perf_event_open`) and says `SKIPPED` elsewhere |
+| `cfg.log_file` (1) | the test forks: POSIX hosts only |
+| `debugger.sound.runner` (1) | its stand-ins for the emulator are scripts that the host runs by their first line (`#!`): a Linux host |
+
+The selftests of the debugger run on Windows as on Linux: their naps for fractions of a millisecond go through
+`dbg::selftest::NapUs` (`libswirl/debugger/dbg_selftest_nap.h`), which is `std::this_thread::sleep_for` on a POSIX host
+and on Windows a high-resolution waitable timer and a spin of the last 500 us of a nap, asking for no resolution of
+the system timer: `std::this_thread::sleep_for` of Windows lasts a tick of that timer, 15.6 ms, whatever it is asked
+for, and `debugger.selftest.emu` outlasted its watchdog there. `debugger.selftest.nap` holds the naps.
+`disasm_test` writes its stdout in binary mode on Windows, each line ending in `\n` as on Linux, which is what
+`debugger.disasm.dsp_playground` takes apart. A build of `debugger/disasm` by itself has no `nulldc3-winrun` on
+Windows unless `-DNULLDC_WINRUN=` names one, and there `dsp_playground` is a skip of the platform
+(`debugger.disasm.standalone`).
+
+## On macOS
+
+The project builds with the AppleClang of Xcode and CMake and Ninja from Homebrew, as on Linux (macOS 11 or newer
+on Apple silicon). The emulator is the executable of an emulator build's bundle; `tests/system` builds none on macOS.
+Every emulator run the tests make there goes through `macos/macrun.py` (`macos/README.md`), under the sandbox profile
+`macos/no-windowserver.sb`, which denies the window server, the window manager, the Dock and LaunchServices: the
+tests of `macos/` and `version.binary` start the emulator through it, the harnesses of the emulator-driven tests
+(`debugger/selftest`, `debugger/contract`, `debugger/guest`, the oracle of `aica_dsp`, `debugger/sh4bp/sessions.py`)
+start the emulator, the contract runner and their tools through it (`common/emurun.py`: a session of its own, which
+`macrun.py` kills with everything below it when a harness ends the run; `TMPDIR` in the run's directory, and for the
+contract runner and the tools npm's cache there too), and so does ctest itself when it runs as a long step (inside it
+`macrun.py` finds its caller sandboxed and runs under that profile). Set `TMPDIR` and `npm_config_cache` to
+directories of your own for the rest of a run as well (ctest, the scripts, `npm ci`), and `EMSDK` (below).
+
+    cmake -S tests -B <build dir> -G Ninja -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3 \
+          -DNULLDC_ELF_DIR=<dir> -DNULLDC_WREN7_DIR=<dir> -DNULLDC_CAIQUE_DIR=<dir> \
+          -DNULLDC_DEVTOOLS_DIR=<UI checkout with node_modules> -DPython3_EXECUTABLE=/usr/bin/python3 \
+          -DNULLDC_TESTS_REQUIRE_DATA=ON
+    ninja -C <build dir>
+    python3 tests/macos/macrun.py --detach --log <file> --rc <file> --name ctest --work <dir> --timeout 5400 -- \
+          ctest --test-dir <build dir> -j 4 --output-on-failure
+
+- `NULLDC_EMULATOR`: `nulldc3.app/Contents/MacOS/nulldc3` of an emulator build (configured with
+  `-DNULLDC_DEVTOOLS_DIST=OFF` for a gate); `macos.bundle.codesign` checks the bundle around it. `tests/system`
+  builds no emulator on macOS: without it, or with one that names no file, every test that runs the emulator is a test
+  whose data is missing (a failure with `NULLDC_TESTS_REQUIRE_DATA`), and the configure says so.
+- `NULLDC_DEVTOOLS_DIR`: a checkout of the UI with `npm ci` made on the Mac (`node` and `npm` from Homebrew); the
+  contract runner runs from it against `127.0.0.1`.
+- ccache: on macOS neither the tests project nor the emulator compiles through ccache unless the configure line has
+  `-DNULLDC_CCACHE=ON` (a ccache that cannot start ends every compile in dyld's abort, and each abort leaves a crash
+  report); `macos.build.ccache` holds it for the tests project's build and for the emulator's.
+- `Python3_EXECUTABLE`: Xcode's `/usr/bin/python3` (3.9) is the one the round's scripts keep to.
+- The data: the same files of caique-rtl (74) and wren7-rtl (120) as on Windows, and `2ndmix.elf` and `hello.elf`;
+  shrike4-rtl is not needed (`sh4.fpu.*` is x86-64 only).
+- `NULLDC_EMCC` and `EMSDK`: the AICA DSP's WebAssembly tests look for an emsdk in `EMSDK` and in `~/emsdk`, and emcc
+  writes into the emsdk it runs from (its cache, and the bytecode of its Python, which it runs with `-E`). Where that
+  emsdk is not the run's to write into, `-DNULLDC_EMCC=OFF` skips the three that build with it, and `EMSDK` set to a
+  directory without one for ctest keeps `aica.dsp.wasm.devtools` from asking `~/emsdk` (it then says that the
+  committed module is not compared with a fresh build).
+
+What is skipped on macOS (arm64), with its reason (81 of the 340 tests; every other one runs):
+
+| tests | reason |
+|---|---|
+| `system.*`, `system.hle.*` (67) | the Linux-only system-test harness |
+| `sh4.singlestep.dynarec`, `sh4.directed.dynarec*`, `sh4.differential`, `sh4.directed.differential`, `sh4.fpu.*` (9) | they run the blocks of the x64 backend |
+| `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` (3) | no emcc (or `NULLDC_EMCC=OFF`) |
+| `debugger.sh4bp.b11` (1) | it counts host instructions with the performance counters of Linux (`perf_event_open`) and says `SKIPPED` elsewhere |
+| `debugger.sound.runner` (1) | its stand-ins for the emulator are scripts that the host runs by their first line (`#!`): a Linux host |
+
+The objdump oracles of `debugger/disasm` run where the binutils are: `arm-none-eabi-objdump` of Homebrew
+(`brew install arm-none-eabi-binutils`), and `sh-elf-objdump` where a KallistiOS toolchain is at
+`/opt/toolchains/dc` (Homebrew has none); `gen.sh --check` of the sounding guest likewise runs where `sh-elf-as`
+is. `macos.hashes.jit` holds the state hashes of the arm64 recompiler to the Mac's own references (a hash is good for
+one host: nothing compares the Mac's lines or hashes with Linux's).
+
+**The arm64 recompiler and the debugger** (A64, design 2.3.5). The arm64 recompiler has the debugger's native
+support, as the x86-64 one has it: its blocks make the debugger's checks and flow reports and it steps through
+RunBlock (`sh4-debug-native`; `Debugger:ForceFallback=yes` gives the interpreter fallback, `sh4-debug-fallback`), its
+context is complete wherever a running machine is read (no running tick says `registersStale`), and it keeps its
+slice counter when its loop is left, testing it in front of a block's charge as the x64 recompiler and the fallback
+do, so that a pause, a step or a stop of the host moves no slice end. The harnesses expect the native engine there
+(`NATIVE_RECOMPILER`), `debugger.selftest.emurun.pauses` runs on both engines and S04 of the contract gates is gated in
+full, as on every host. The sh4bp suite runs on the arm64 backend (`debugger/sh4bp/README.md`), with `abi`, the
+registers its main loop and RunBlock give a caller back; on the Mac its code region is MAP_JIT memory at the address
+of `SH4_TCB`, as the emulator's.
+
+## On Linux arm64
+
+The project builds natively on an arm64 Linux host (Ubuntu 24.04 on aarch64, GCC 13, CMake and Ninja of the
+distribution) with the configure line of Linux x86_64, and `tests/system` builds its emulators there as on Linux
+x86_64: the arm64 SH4 recompiler (`libswirl/jit/backend/arm64`, its debug engine `sh4-debug-native`), no ARM7
+recompiler (the ARM7 runs on its interpreter, as on every host), `-ffp-contract=off` (`nulldc3/cmake/config.cmake`).
+The emulator is built for 4 KiB pages: on a kernel with 16 or 64 KiB pages it refuses to start, with
+`nulldc3: this build needs 4 KiB pages; this kernel uses <n> KiB` on stderr and exit status 1
+(`libswirl/linux/common.cpp`; `linux_arm64.pages.refused` shows it through the test hook `NULLDC_TEST_PAGE_SIZE`).
+The tests of `linux_arm64/` run there and nowhere else: `linux_arm64.hashes.jit` holds the state hashes of the arm64
+recompiler on Linux to the references of `linux_arm64/linux_arm64.cmake` (the arm64 host's, which equal the Mac's of
+`macos.hashes.jit`; a hash is good for one host, and another host whose recompiler computes otherwise needs references
+of its own), and `linux_arm64.pages.refused` the refusal. Their runs are headless, without `DISPLAY` and
+`WAYLAND_DISPLAY`, with a core file size limit of 1 byte (as `common/emurun.py` starts an emulator on a POSIX host, so
+that a crash is not piped to the system's core handler, apport or systemd-coredump), and neither test starts an
+emulator before a shell run the same way has shown that envelope. The arm64 recompiler and the debugger are as on the
+Mac (above): the native engine, S04 gated in full, the sh4bp suite on the arm64 backend; there `b11` counts host
+instructions where the kernel lets a process count its own (`/proc/sys/kernel/perf_event_paranoid` of 2 or less) and
+says `SKIPPED` with the kernel's refusal otherwise.
+
+The objdump oracles of `debugger/disasm` need `sh-elf-objdump` and `arm-eabi-objdump` (`-DSH_OBJDUMP=`,
+`-DARM_OBJDUMP=`), and fail without them on Linux. An `sh-elf-objdump` for an arm64 host has to be built with
+`-fsigned-char`: binutils' SH disassembler takes the sign of an 8-bit branch displacement from a cast to `char`
+(`opcodes/sh-dis.c`), which is unsigned on arm64 Linux, and an objdump built as it is puts the target of every `bt`,
+`bf`, `bt/s` and `bf/s` with a negative displacement 512 bytes too far (`debugger.disasm.sh4_objdump`: 512
+unexplained encodings).
+
+What is skipped on Linux arm64, with its reason (16 of the 330 tests; every other one runs):
+
+| tests | reason |
+|---|---|
+| `sh4.singlestep.dynarec`, `sh4.directed.dynarec*`, `sh4.differential`, `sh4.directed.differential`, `sh4.fpu.*` (9) | they run the blocks of the x64 backend |
+| `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` (3) | no emcc |
+| `system.vmem.none`, `system.vmem.taken`, and the two of `system.hle.*` (4) | they say `SKIPPED` where the host gives no unprivileged user and mount namespace (`unshare -rm`), as Ubuntu 24.04's AppArmor restricts them by default |
 
 ## Layout
 
@@ -222,6 +425,22 @@ More about the suites:
     devtools/          devtools.commit: the UI checkout of the tests against the submodule devtools/, and
                        its script on scratch repositories (devtools.commit_check); lookup.cmake, where the
                        tests look for the UI, on scratch layouts (devtools.lookup)
+    rebrand/           rebrand.names: where the tree may say the name of the emulator it was forked from
+                       (allowed.txt, README.md)
+    icons/             icons.generated: the icon files made from the approved PNGs of nulldc3/icon/ are the
+                       committed ones; icons.x11: the values of the X11 window's icon
+    macos/             macOS only: macrun.py, the run envelope of the Mac, its sandbox profile and its canary;
+                       the emulator headless, its fatal ends, a refused command line, the bundle and its icon
+                       (README.md)
+    linux_arm64/       Linux arm64 only: the state hashes of the arm64 recompiler there, and the refusal of a
+                       kernel whose pages are not 4 KiB (CMakeLists.txt)
+    version/           version.derive: the rule of the emulator's version (nulldc3/cmake/version.cmake) on
+                       scratch repositories; version.build_time: the version is made at the build, not at the
+                       configure (a clone, a commit, no reconfigure); version.cl: --version of cfg/cl.cpp and
+                       cl_FinishText(); version.binary: the emulator's --version is the tree's version
+    ci/                ci.hygiene: no tracked file names a machine (nulldc3/ci/hygiene.py); ci.workflows: the
+                       rules of .github/workflows/ci.yml and release.sh against a stand-in for gh; ci.scripts:
+                       zipcheck.py and (Linux) smoke.py against a stand-in for the emulator (README.md)
     vendor/            the submodules
     files/             fixtures
     debugger/          the debugger's modules that link without the emulator, one CMake project per directory:
@@ -476,6 +695,7 @@ itself only.
 | `debugger.disasm.sh4_opcode_table` | every SH-4 opcode against `hw/sh4/sh4_opcode_list.cpp` | python3 |
 | `debugger.disasm.arm7_objdump` `debugger.disasm.arm7_objdump_selftest` | 249,364 ARM encodings against GNU objdump, and that comparison on dumps with a changed field | python3, an ARM objdump |
 | `debugger.disasm.dsp_playground` | 100,193 DSP steps against the disassembler and assembler of the devtools playground | a dreamcast-devtools checkout with `node_modules` |
+| `debugger.disasm.standalone.configure` `debugger.disasm.standalone` | Windows only: `debugger/disasm` built by itself, as its `CMakeLists.txt` says, without `NULLDC_WINRUN` (configured only, with the generator, compiler and Python of the tests project and its devtools checkout): its `dsp_playground` is the skip of the platform there, `SKIP: no nulldc3-winrun to run the script inside`, and runs no `tsx.cmd` or `node` outside an `nulldc3-winrun` | none |
 | `debugger.disasm.dsptest` | the DSP program of the sounding guest: the disassembler of the 128 steps as its ELF loads them gives the `MPRO` lines of its text, `dsptest_dsp.txt`, and `TRA:0` behind them; and the playground's assembler gives the ELF's words for those lines, and its `COEF`, `MADRS` and `MEMS_H` | python3; a dreamcast-devtools checkout with `node_modules` for the second half |
 | `debugger.regs.tables` `debugger.regs.sources` | `dbg_regs_tables.cpp`, the device tree behind `debugger.describe`: the tables by themselves (104 nodes; 2940 registers in milestone M2, 2949 from milestone M3 on, with the nine of the DSP's datapath, the fields of the AICA's register file bit for bit), and their on-chip, system bus and PVR rows against `hw/sh4/sh4_mmr.h`, `hw/holly/sb_regs.h` and `hw/pvr/pvr_regs.h` | nothing |
 | `debugger.regs.panels` | the panel ids of the tables against the list of the devtools UI | a dreamcast-devtools checkout |
@@ -500,7 +720,7 @@ without its data.
 * `debugger/disasm/README.md`: what is compared with objdump, the opcode table and the playground, and every
   difference that is accepted,
 * `debugger/regs/README.md`: what the table tests check, and the tests of `regs/aica`, the one directory of these
-  suites that takes the emulator's definitions and flags (`reicast/cmake/config.cmake`, for itself only),
+  suites that takes the emulator's definitions and flags (`nulldc3/cmake/config.cmake`, for itself only),
 * `debugger/symbols/README.md`: the fixture images of the symbol table's tests and what each test breaks in them,
 * the head of `debugger/net/CMakeLists.txt`: the sanitizer builds and the bundle of the net suite,
 * `debugger/sh4bp/README.md`: the suite of `tests/debugger` that compiles libswirl translation units as the

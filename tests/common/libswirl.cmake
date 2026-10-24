@@ -1,11 +1,11 @@
 ## libswirl for the tests ##
 #
 #	The suites link libraries made of hand-picked libswirl translation units. They are compiled with the
-#	definitions and flags of the emulator build (reicast/cmake/config.cmake), so a test runs the same code
+#	definitions and flags of the emulator build (nulldc3/cmake/config.cmake), so a test runs the same code
 #	the emulator runs.
 #
 
-list(APPEND CMAKE_MODULE_PATH "${nulldc_root_path}/reicast/cmake")
+list(APPEND CMAKE_MODULE_PATH "${nulldc_root_path}/nulldc3/cmake")
 include(config)
 
 # The recompiler selection belongs to each libswirl library (nulldc_add_libswirl_library), not to the project
@@ -50,6 +50,18 @@ function(nulldc_add_libswirl_library target)
   add_library(${target} OBJECT ${srcs})
   target_link_libraries(${target} PUBLIC nulldc_libswirl_headers)
   target_compile_definitions(${target} PUBLIC FEAT_SHREC=${shrec} FEAT_AREC=${arec})
+endfunction()
+
+# nulldc_add_version_sources(<target>)
+#
+# libswirl/version.cpp and version_title.cpp (nulldc_version(), nulldc_title(), ...) into <target>, which is built
+# after the version step of tests/CMakeLists.txt. version.cpp is the one translation unit that includes the generated
+# nulldc3_version.h, and has the generated directory on its include path alone. A source file's properties belong
+# to a directory: call it in the directory that makes <target>.
+function(nulldc_add_version_sources target)
+  target_sources(${target} PRIVATE "${nulldc_core_path}/version.cpp" "${nulldc_core_path}/version_title.cpp")
+  set_source_files_properties("${nulldc_core_path}/version.cpp" PROPERTIES INCLUDE_DIRECTORIES "${NULLDC_VERSION_INCLUDE_DIR}")
+  add_dependencies(${target} nulldc_tests_version)
 endfunction()
 
 # The SH4 interpreter: opcode handlers, opcode tables, register banks, exceptions and the memory map tables.

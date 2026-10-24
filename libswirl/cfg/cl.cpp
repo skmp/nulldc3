@@ -26,6 +26,7 @@
 #include <fcntl.h>
 
 #include "cfg/cfg.h"
+#include "nulldc_version.h"
 #include "stdclass.h"
 
 #if HOST_OS == OS_WINDOWS
@@ -72,6 +73,7 @@ namespace {
 
 HostDirs host_dirs;
 string error_text;
+string finish_text;	// what --help or --version printed on stdout
 
 // What the command line asks for, in its order: a later value of a key wins over an earlier one, and a game sets
 // keys too
@@ -85,6 +87,7 @@ struct Item
 struct CommandLine
 {
 	bool help = false;
+	bool version = false;
 	bool portable = false;
 	string portable_dir;		// as given
 	bool shared = false;
@@ -94,7 +97,7 @@ struct CommandLine
 
 // The switches of this build, without their dashes
 const char* const switches[] = {
-	"config", "portable", "shared", "help",
+	"config", "portable", "shared", "help", "version",
 #if HOST_OS == OS_WINDOWS
 	"console", "log",
 #endif
@@ -195,6 +198,12 @@ bool parse(int argc, wchar* argv[], CommandLine& cl)
 		{
 			// what follows is not looked at
 			cl.help = true;
+			return true;
+		}
+		else if (name == "version")
+		{
+			// what follows is not looked at either
+			cl.version = true;
 			return true;
 		}
 		else if (name == "config")
@@ -472,8 +481,20 @@ bool choose_dirs(const CommandLine& cl)
 					+ choose_another);
 			dir = host_dirs.exe_dir;
 			if (!writable(dir, why))
+			{
+#if HOST_OS == OS_DARWIN
+				// App Translocation (PL-D49): macOS runs an application that was downloaded and is opened where it
+				// was unpacked, with its quarantine, from a random read-only place, a path with /AppTranslocation/
+				if (dir.find("/AppTranslocation/") != string::npos)
+					return fail("the directory of the executable, " + dir + ", cannot be written (" + why + "): "
+						"macOS runs this copy of nulldc3.app from a read-only place (App Translocation, for an "
+						"application that was downloaded and has not been moved). Move the folder that holds "
+						"nulldc3.app to another place with the Finder, or clear its quarantine with "
+						"xattr -dr com.apple.quarantine <that folder>, and open it again; or " + choose_another);
+#endif
 				return fail("the directory of the executable, " + dir + ", cannot be written (" + why + "); "
 					+ choose_another);
+			}
 		}
 		clear_dirs();
 		set_user_config_dir(dir);
@@ -494,6 +515,14 @@ void cl_SetHostDirs(const HostDirs& dirs)
 const string& cl_ErrorText()
 {
 	return error_text;
+}
+
+// The text that --help or --version printed on stdout, when ParseCommandLine returned rv_cli_finish: the usage
+// text, or "nullDC <version>" and a line end. Where stdout cannot be read once the process has ended (Windows,
+// without a console of its own), the caller shows this text, the one that was asked for.
+const string& cl_FinishText()
+{
+	return finish_text;
 }
 
 const string& cl_HelpText()
@@ -526,8 +555,12 @@ const string& cl_HelpText()
 		"  --log                 write the output of the emulator to nulldc3-log.txt in that directory\n"
 #endif
 		"  --help                show this text\n"
+		"  --version             print the version of the emulator, nullDC <version>\n"
 		"  --                    every word after it is a game, also one that begins with a dash\n\n"
 		"Without --portable and --shared the emulator keeps its files in the directory of its executable.\n"
+#if HOST_OS == OS_LINUX
+		"Started from an AppImage, that is the directory that holds the AppImage.\n"
+#endif
 		"Every word that begins with a dash is a switch: an unknown one, or one written with one dash, is an\n"
 		"error.\n\n";
 	return text;
@@ -553,6 +586,7 @@ bool cl_LogToFile(const string& path)
 int ParseCommandLine(int argc,wchar* argv[])
 {
 	error_text.clear();
+	finish_text.clear();
 	cfgSetVirtual("config", "image", "");
 
 	CommandLine cl;
@@ -563,7 +597,16 @@ int ParseCommandLine(int argc,wchar* argv[])
 	}
 	if (cl.help)
 	{
-		fputs(cl_HelpText().c_str(), stdout);
+		finish_text = cl_HelpText();
+		fputs(finish_text.c_str(), stdout);
+		return rv_cli_finish;
+	}
+	if (cl.version)
+	{
+		// one line on stdout, before anything is set up: no directory, no config, no display
+		finish_text = string("nullDC ") + nulldc_version() + "\n";
+		fputs(finish_text.c_str(), stdout);
+		fflush(stdout);
 		return rv_cli_finish;
 	}
 	if (!choose_dirs(cl))

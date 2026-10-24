@@ -61,14 +61,23 @@ static const void* check_stub;
 	A check is DBG_CHECK_CALL_BYTES in the block: two arguments and the call of the block's own tail, which adds
 	the third and goes on to check_stub. The register allocator flushes for it: every host register that holds a
 	guest register is written to the context in front of the check and loaded again behind it, 13 bytes each
-	way for one of the 6 general registers and 15 for one of the 4 xmm registers.
+	way for one of the general registers and 15 for one of the xmm registers at most (x64_regalloc.h): 6 and 4 of
+	them with the System V calling convention, 8 and 10 with Windows'. The tail is 10 bytes, 11 on Windows, whose
+	third argument register is r8d. Measured by debugger.sh4bp.dense, a check in front of which every host register
+	was written and behind which every one is read again: it adds 301 bytes to its block on Linux (the call, a flush
+	of 276 bytes and the tail) and 522 on Windows (the call, 496 and the tail).
 
 	A block holds DBG_CHECK_BUDGET of them (ngen_features::DebugCheckBudget), which keeps their code within
-	DBG_CHECKS_BYTES_MAX whatever is armed.
+	DBG_CHECKS_BYTES_MAX whatever is armed: 56 on Linux, 31 on Windows.
 */
 #define DBG_CHECK_CALL_BYTES   15
+#ifdef _WIN32
+#define DBG_CHECK_FLUSH_BYTES  (2 * (8 * 13 + 10 * 15))
+#define DBG_CHECK_TAIL_BYTES   11		// the third argument is r8d there: mov r8d, imm32 has a REX prefix
+#else
 #define DBG_CHECK_FLUSH_BYTES  (2 * (6 * 13 + 4 * 15))
 #define DBG_CHECK_TAIL_BYTES   10
+#endif
 #define DBG_CHECKS_BYTES_MAX   (16 * 1024)
 #define DBG_CHECK_BUDGET       ((DBG_CHECKS_BYTES_MAX - DBG_CHECK_TAIL_BYTES) / (DBG_CHECK_CALL_BYTES + DBG_CHECK_FLUSH_BYTES))
 
@@ -93,6 +102,8 @@ static __attribute((used)) void end_slice()
 #ifdef _WIN32
 #define WIN32_ONLY(x) x
 #define STACK_ALIGN 40  		// 32-byte shadow space + 8 byte alignment
+#define CHECK_HOME_SPACE 32		// the callee's home space below the refund in the check stub
+static_assert(8 + CHECK_HOME_SPACE == STACK_ALIGN, "the check stub's frame at its call is the frame of a block");
 #else
 #define WIN32_ONLY(x)
 #define STACK_ALIGN  8
@@ -160,19 +171,59 @@ public:
 		emit_Skip((u32)getSize());
 	}
 
+	// The frame of the main loop and of RunBlock: the eight general registers a caller expects back, and on Windows
+	// xmm6-xmm15 as well, in which the blocks keep guest registers there (x64_regalloc.h). On Windows the xmm
+	// registers lie in the frame right above the 32 bytes of the callee's home space (as tests/sh4_dynarec's
+	// entry has them), and the unwind data of the code region describes the frame (libswirl/windows/win_jit_unwind.cpp:
+	// win_jit_unwind_frame, which reads the end of every instruction of the prologue from prolog).
+#ifdef _WIN32
+#define MAINLOOP_FRAME (STACK_ALIGN + 10 * 16)
+#else
+#define MAINLOOP_FRAME STACK_ALIGN
+#endif
+	void mainloop_prologue(u8* prolog) {
+		// Store callee saved registers (64 bytes) + align stack
+		push(rbx);   WIN32_ONLY(prolog[0] = (u8)getSize());
+		push(rbp);   WIN32_ONLY(prolog[1] = (u8)getSize());
+		push(rdi);   WIN32_ONLY(prolog[2] = (u8)getSize());
+		push(rsi);   WIN32_ONLY(prolog[3] = (u8)getSize());
+		push(r12);   WIN32_ONLY(prolog[4] = (u8)getSize());
+		push(r13);   WIN32_ONLY(prolog[5] = (u8)getSize());
+		push(r14);   WIN32_ONLY(prolog[6] = (u8)getSize());
+		push(r15);   WIN32_ONLY(prolog[7] = (u8)getSize());
+		sub(rsp, MAINLOOP_FRAME);   WIN32_ONLY(prolog[8] = (u8)getSize());
+#ifdef _WIN32
+		for (int i = 0; i < 10; i++)
+		{
+			movaps(xword[rsp + STACK_ALIGN - 8 + i * 16], Xbyak::Xmm(6 + i));
+			prolog[9 + i] = (u8)getSize();
+		}
+#endif
+	}
+
+	// The other end of mainloop_prologue: the frame dropped, the registers back, the return
+	void mainloop_epilogue() {
+#ifdef _WIN32
+		for (int i = 0; i < 10; i++)
+			movaps(Xbyak::Xmm(6 + i), xword[rsp + STACK_ALIGN - 8 + i * 16]);
+#endif
+		add(rsp, MAINLOOP_FRAME); // Restore to previous state
+		pop(r15);
+		pop(r14);
+		pop(r13);
+		pop(r12);
+		pop(rsi);
+		pop(rdi);
+		pop(rbp);
+		pop(rbx);
+		ret();
+	}
+
 	//TODO: FIXME THIS DOES NOT CONFORM TO NGEN SPEC AROUND INTERRUPT HANDLING
 	void build_mainloop() {
 		Xbyak::Label run_loop, slice_loop, slice_end, end_loop;
-		// Store callee saved registers (64 bytes) + align stack
-		push(rbx);
-		push(rbp);
-		push(rdi);
-		push(rsi);
-		push(r12);
-		push(r13);
-		push(r14);
-		push(r15);
-		sub(rsp, STACK_ALIGN);
+		u8 prolog[19];
+		mainloop_prologue(prolog);
 
 		// The loop can have been left behind the block that used the slice up, in front of the test of the
 		// counter (a flow report of the debugger stopped there): the end-of-slice work comes first then
@@ -214,20 +265,18 @@ public:
 
 		L(end_loop);  // -- end_loop
 		mainloop_exit = getCurr();
-		add(rsp, STACK_ALIGN); // Restore to previous state
-		pop(r15);
-		pop(r14);
-		pop(r13);
-		pop(r12);
-		pop(rsi);
-		pop(rdi);
-		pop(rbp);
-		pop(rbx);
-		ret();
+		mainloop_epilogue();
 
 		// Align end for perf
 		while (getSize() & 15)
 			nop();
+
+#ifdef _WIN32
+		{
+			extern void win_jit_unwind_frame(int which, const void* begin, size_t size, const u8* prolog, u32 frame);
+			win_jit_unwind_frame(0, CC_RW2RX(getCode()), getSize(), prolog, MAINLOOP_FRAME);
+		}
+#endif
 
 		ready();
 		emit_Skip((u32)getSize());
@@ -235,19 +284,16 @@ public:
 
 	// One pass of the main loop's slice_loop for a block that is not in the block cache: runs it, then does the
 	// end-of-slice work if the slice ran out. It has the frame of the main loop, so that the block can leave
-	// through mainloop_exit as any other.
+	// through mainloop_exit as any other. On Windows it ends in an epilogue of its own instead of the jump to
+	// mainloop_exit: the return address of its call of UpdateSystem_INTC is the instruction behind the call, and
+	// the system's unwinder takes a jump there to a place outside RunBlock's range of the unwind data for an
+	// epilogue that ends in a tail call, which it unwinds as a bare return (from the home space): a stack walk
+	// from UpdateSystem_INTC would leave the stack there (libswirl/windows/win_jit_unwind.cpp; the test
+	// windows.abi.xmm walks it).
 	void build_runblock() {
 		Xbyak::Label slice_left;
-
-		push(rbx);
-		push(rbp);
-		push(rdi);
-		push(rsi);
-		push(r12);
-		push(r13);
-		push(r14);
-		push(r15);
-		sub(rsp, STACK_ALIGN);
+		u8 prolog[19];
+		mainloop_prologue(prolog);
 
 		call(call_regs[0].cvt64());          // The block
 		mov(ecx, dword[rip + &cycle_counter]);
@@ -259,11 +305,22 @@ public:
 		call(UpdateSystem_INTC);
 
 		L(slice_left);
+#ifdef _WIN32
+		mainloop_epilogue();
+#else
 		jmp(mainloop_exit);
+#endif
 
 		// Align end for perf
 		while (getSize() & 15)
 			nop();
+
+#ifdef _WIN32
+		{
+			extern void win_jit_unwind_frame(int which, const void* begin, size_t size, const u8* prolog, u32 frame);
+			win_jit_unwind_frame(1, CC_RW2RX(getCode()), getSize(), prolog, MAINLOOP_FRAME);
+		}
+#endif
 
 		ready();
 		emit_Skip((u32)getSize());
@@ -273,12 +330,21 @@ public:
 	// The debugger check of a block, out of line and shared by every block: entered by a call from the block
 	// (through the block's tail) with the arguments of dbg_sh4_Check in place. No host register holds anything
 	// across it: the register allocator flushes for the check.
+	// On Windows the callee owns 32 bytes above its return address, the home space of its four register arguments,
+	// which an MSVC-compiled dbg_sh4_Check may write (its arguments, or registers it saves there): the stub gives it
+	// that space below the refund. Its frame at the call is then the refund and the home space, 40 bytes below the
+	// return address into the block, which is the frame of a block (STACK_ALIGN): the unwind data of the code region
+	// describes every pc that is not the main loop's or RunBlock's that way (libswirl/windows/win_jit_unwind.cpp),
+	// so a stack walk from dbg_sh4_Check comes through the stub, the block and the main loop to their C++ caller
+	// (debugger.sh4bp.unwind holds it on Windows).
 	void build_check_stub() {
 		Xbyak::Label stop;
 
 		// the refund, across the call; the stack is aligned again with it
 		push(call_regs[1].cvt64());
+		WIN32_ONLY(sub(rsp, CHECK_HOME_SPACE));
 		call(CC_RX2RW(dbg_sh4_Check));
+		WIN32_ONLY(add(rsp, CHECK_HOME_SPACE));
 		pop(call_regs[1].cvt64());
 
 		test(eax, eax);
@@ -1778,9 +1844,9 @@ struct X64NGenBackend : NGenBackend
 		dst->InterpreterFallback = false;
 		dst->OnlyDynamicEnds = false;
 
-		// The check, its stop path, RunBlock and the flow report are stated where they have been run: with the
-		// System V calling convention. Elsewhere the debugger uses the interpreter fallback (hw/sh4/sh4_dbg.h).
-#if defined(NULLDC_DEBUGGER) && !defined(_WIN32)
+		// The check, its stop path, RunBlock and the flow report, with the System V calling convention and with
+		// Windows' (the check stub's home space, the budget of the larger register set; the sh4bp gates hold both)
+#if defined(NULLDC_DEBUGGER)
 		dst->DebugChecks = true;
 		dst->DebugCheckBudget = DBG_CHECK_BUDGET;
 #else

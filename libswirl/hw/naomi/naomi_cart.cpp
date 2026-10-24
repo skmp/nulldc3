@@ -929,19 +929,19 @@ void NaomiCartridge::WriteMem(u32 address, u32 data, u32 size)
 
 void NaomiCartridge::Serialize(void** data, unsigned int* total_size)
 {
-	REICAST_S(RomPioOffset);
-	REICAST_S(RomPioAutoIncrement);
-	REICAST_S(DmaOffset);
-	REICAST_S(DmaCount);
+	NULLDC_S(RomPioOffset);
+	NULLDC_S(RomPioAutoIncrement);
+	NULLDC_S(DmaOffset);
+	NULLDC_S(DmaCount);
 	Cartridge::Serialize(data, total_size);
 }
 
 void NaomiCartridge::Unserialize(void** data, unsigned int* total_size)
 {
-	REICAST_US(RomPioOffset);
-	REICAST_US(RomPioAutoIncrement);
-	REICAST_US(DmaOffset);
-	REICAST_US(DmaCount);
+	NULLDC_US(RomPioOffset);
+	NULLDC_US(RomPioAutoIncrement);
+	NULLDC_US(DmaOffset);
+	NULLDC_US(DmaCount);
 	Cartridge::Unserialize(data, total_size);
 }
 
@@ -1033,11 +1033,11 @@ std::string M2Cartridge::GetGameId()
 }
 
 void M2Cartridge::Serialize(void** data, unsigned int* total_size) {
-	REICAST_S(naomi_cart_ram);
+	NULLDC_S(naomi_cart_ram);
 	NaomiCartridge::Serialize(data, total_size);
 }
 
 void M2Cartridge::Unserialize(void** data, unsigned int* total_size) {
-	REICAST_US(naomi_cart_ram);
+	NULLDC_US(naomi_cart_ram);
 	NaomiCartridge::Unserialize(data, total_size);
 }

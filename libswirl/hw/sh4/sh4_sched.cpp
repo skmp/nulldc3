@@ -184,25 +184,25 @@ void sh4_sched_cleanup() {
 }
 
 void sh4_sched_serialize(void** data, unsigned int* total_size) {
-	REICAST_S(sh4_sched_next_id);
-	REICAST_S(sh4_sched_ffb);
-	REICAST_S(sh4_sched_intr);
+	NULLDC_S(sh4_sched_next_id);
+	NULLDC_S(sh4_sched_ffb);
+	NULLDC_S(sh4_sched_intr);
 
 	for (auto& entry : sch_list) {
-		REICAST_S(entry.tag);
-		REICAST_S(entry.start);
-		REICAST_S(entry.end);
+		NULLDC_S(entry.tag);
+		NULLDC_S(entry.start);
+		NULLDC_S(entry.end);
 	}
 }
 
 void sh4_sched_unserialize(void** data, unsigned int* total_size) {
-	REICAST_US(sh4_sched_next_id);
-	REICAST_US(sh4_sched_ffb);
-	REICAST_US(sh4_sched_intr);
+	NULLDC_US(sh4_sched_next_id);
+	NULLDC_US(sh4_sched_ffb);
+	NULLDC_US(sh4_sched_intr);
 
 	for (auto& entry : sch_list) {
-		REICAST_US(entry.tag);
-		REICAST_US(entry.start);
-		REICAST_US(entry.end);
+		NULLDC_US(entry.tag);
+		NULLDC_US(entry.start);
+		NULLDC_US(entry.end);
 	}
 }

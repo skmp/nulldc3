@@ -3,7 +3,6 @@
 *.orig
 *build_obj
 Workdir/data
-Workdir/reicast*
 Workdir/vmu*
 Workdir/webui*
 Workdir/emu.cfg
@@ -29,26 +28,16 @@ profile
 DerivedData
 *.hmap
 emulator.xccheckout
-reicast.xccheckout
 build/*
 *.so
 *Karen_angelXwind*
 *build_obj
 *.d
 Workdir/data
-Workdir/reicast*
 Workdir/vmu*
 Workdir/webui*
 Workdir/emu.cfg
 Workdir/lib*ant.properties
-
-# Linux General
-reicast/linux/.map
-reicast/linux/nosym-reicast.elf
-reicast/linux/reicast.elf
-reicast/linux/reicast_naomi.elf
-reicast/linux/reicast_awave.elf
-reicast/linux/dispframe.elf
 
 # Visual Studio
 generated
@@ -59,3 +48,12 @@ obj/
 # JetBrains IDES
 .idea/
 cmake-build-*/
+
+# CI's scripts (nulldc3/ci) when their --work or --out is inside the tree: an AppDir, an extraction of an AppImage,
+# the release files and their configure lines
+AppDir/
+squashfs-root/
+nulldc3-*.AppImage
+nulldc3-*-windows-x86_64.zip
+nulldc3-*-macos-arm64.zip
+nulldc3-*.configure.txt

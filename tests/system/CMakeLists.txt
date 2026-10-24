@@ -49,6 +49,8 @@ set(nulldc_system_cases
   "dirs.portable:"
   "dirs.shared:"
   "dirs.errors:"
+  "dirs.appimage:"
+  "dirs.appimage.inherited:"
 )
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -56,6 +58,8 @@ find_package(Python3 COMPONENTS Interpreter)
 set(nulldc_system_skip "")
 if(NOT NULLDC_SYSTEM_TESTS)
   set(nulldc_system_skip "NULLDC_SYSTEM_TESTS is OFF")
+elseif(${HOST_OS} EQUAL ${OS_WINDOWS} OR ${HOST_OS} EQUAL ${OS_DARWIN})
+  set(nulldc_system_skip "the Linux-only system-test harness")
 elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX})
   set(nulldc_system_skip "headless mode is there on Linux hosts only")
 elseif(NOT Python3_Interpreter_FOUND)

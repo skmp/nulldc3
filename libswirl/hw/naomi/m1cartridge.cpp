@@ -136,31 +136,31 @@ u32 M1Cartridge::get_decrypted_32b()
 }
 
 void M1Cartridge::Serialize(void** data, unsigned int* total_size) {
-	REICAST_S(buffer);
-	REICAST_S(dict);
-	REICAST_S(hist);
-	REICAST_S(avail_val);
-	REICAST_S(rom_cur_address);
-	REICAST_S(buffer_actual_size);
-	REICAST_S(avail_bits);
-	REICAST_S(stream_ended);
-	REICAST_S(has_history);
-	REICAST_S(encryption);
+	NULLDC_S(buffer);
+	NULLDC_S(dict);
+	NULLDC_S(hist);
+	NULLDC_S(avail_val);
+	NULLDC_S(rom_cur_address);
+	NULLDC_S(buffer_actual_size);
+	NULLDC_S(avail_bits);
+	NULLDC_S(stream_ended);
+	NULLDC_S(has_history);
+	NULLDC_S(encryption);
 
 	NaomiCartridge::Serialize(data, total_size);
 }
 
 void M1Cartridge::Unserialize(void** data, unsigned int* total_size) {
-	REICAST_US(buffer);
-	REICAST_US(dict);
-	REICAST_US(hist);
-	REICAST_US(avail_val);
-	REICAST_US(rom_cur_address);
-	REICAST_US(buffer_actual_size);
-	REICAST_US(avail_bits);
-	REICAST_US(stream_ended);
-	REICAST_US(has_history);
-	REICAST_US(encryption);
+	NULLDC_US(buffer);
+	NULLDC_US(dict);
+	NULLDC_US(hist);
+	NULLDC_US(avail_val);
+	NULLDC_US(rom_cur_address);
+	NULLDC_US(buffer_actual_size);
+	NULLDC_US(avail_bits);
+	NULLDC_US(stream_ended);
+	NULLDC_US(has_history);
+	NULLDC_US(encryption);
 
 	NaomiCartridge::Unserialize(data, total_size);
 }

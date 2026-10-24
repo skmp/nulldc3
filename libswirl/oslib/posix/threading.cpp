@@ -11,7 +11,16 @@
 #if !defined(HOST_NO_THREADS)
 void cThread::Start() {
 	hThread = new pthread_t;
+#if HOST_OS == OS_DARWIN
+	// the stack of a thread on Linux, 8 MiB: a thread that macOS makes without one gets 512 KiB (PL-D48)
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
+	pthread_create( hThread, &attr, entry, param);
+	pthread_attr_destroy(&attr);
+#else
 	pthread_create( hThread, NULL, entry, param);
+#endif
 }
 void cThread::WaitToEnd() {
 	if (hThread) {

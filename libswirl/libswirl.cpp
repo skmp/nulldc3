@@ -586,7 +586,7 @@ void SaveSettings()
 
 }
 
-int reicast_init(int argc, char* argv[])
+int nulldc_init(int argc, char* argv[])
 {
 #ifdef _WIN32
     setbuf(stdout, 0);
@@ -629,11 +629,11 @@ int reicast_init(int argc, char* argv[])
     return 0;
 }
 
-void reicast_ui_loop() {
+void nulldc_ui_loop() {
     g_GUIRenderer->UILoop();
 }
 
-void reicast_term() {
+void nulldc_term() {
     // before the GUI, and with it the machine, goes away
     dbg::Term();
 

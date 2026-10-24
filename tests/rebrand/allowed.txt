@@ -1,0 +1,77 @@
+# Where the tree may say "reicast": the history the rebrand keeps (the test rebrand.names; tests/rebrand/README.md).
+#
+# Every line of a tracked text file that says "reicast", in any case, must be allowed by an entry here, and every
+# row must still find its line. One entry per line, four fields separated by " | ":
+#
+#   <path> | <pattern> | <class> | <reason>
+#
+#   <path>     a tracked file as git names it, from the top of the tree, with "/"; "<dir>/**" is every file below
+#              <dir> (only with the pattern "*")
+#   <pattern>  "*": the whole file (a whole path: no rows, and no check that it still says reicast); else a row:
+#              a piece of the one line it allows, copied from that line (case and spaces count), that says reicast.
+#              n rows with the same path and pattern allow n lines that have it, and need exactly n
+#   <class>    one word, what kind of history it is: licence, record, origin, credit, provenance, header, marker,
+#              legacy-dirs; and self for this test's own files
+#   <reason>   why the line keeps the name
+#
+# Rows are sorted by path and, within a file, by line. A package that adds, moves, rewraps or deletes a line of
+# history changes its row here in the same commit: find the row by the file's path and a piece of the line's text.
+# Lines starting with "#" and empty lines are comments.
+
+# Whole paths: the licences, the records of the rounds, and this test
+LICENSE | * | licence | the emulator's licence, reicast's BSD licence and copyright as they were
+LICENSE-GPL | * | licence | the GPL text the licence refers to
+LICENSE-LGPL | * | licence | the LGPL text the licence refers to
+docs/nulldc3/** | * | record | the design, the plan and the rounds' records: they record what was
+libswirl/license/** | * | licence | the licence blocks every libswirl file includes
+nulldc3/LICENSE | * | licence | the BSD licence of the platform shell, reicast's copyright
+tests/rebrand/** | * | self | this test: it names the word it looks for, and this file is its list
+
+# Rows
+README.md | This tree is a fork of reicast (it was named | origin | where the tree comes from
+README.md | The directories of reicast (`~/.reicast`, `~/.config/reicast`, ...) are not read. | legacy-dirs | names the old directories, which are not read
+libswirl/deps/vixl/aarch32/macro-assembler-aarch32.h | // ADDED for REICAST -- allows to bind external functions | marker | marks a local edit of the vendored library
+libswirl/deps/vixl/code-buffer-vixl.cc | // MODIFIED FOR REICAST // ANDROID armhf build | marker | marks a local edit of the vendored library
+libswirl/jit/backend/x64/x64_regalloc.h | This file is part of reicast. | licence | the file's GPL header
+libswirl/jit/backend/x64/x64_regalloc.h | reicast is free software: you can redistribute it and/or modify | licence | the file's GPL header
+libswirl/jit/backend/x64/x64_regalloc.h | reicast is distributed in the hope that it will be useful, | licence | the file's GPL header
+libswirl/jit/backend/x64/x64_regalloc.h | along with reicast.  If not, see <https://www.gnu.org/licenses/>. | licence | the file's GPL header
+libswirl/linux-dist/main.cpp | The reicast directories of before (~/.reicast, the XDG ones named reicast) | legacy-dirs | names the old directories, which are not read
+libswirl/oslib/audiobackend_coreaudio.cpp | This is part of the Reicast project, please consult the | licence | the file's licence header
+libswirl/reios/descrambl.cpp | Adapted by Stefanos Kornilios Mitsis Poiitidis (skmp) for reicast | credit | the author's credit
+nulldc3/apple/AppDelegate.h | This file is part of reicast-osx | header | the macOS source's provenance header
+nulldc3/apple/AppDelegate.mm | This file is part of reicast-osx | header | the macOS source's provenance header
+nulldc3/apple/ConsoleViewController.h | //  reicast-osx | header | the macOS source's Xcode header
+nulldc3/apple/ConsoleViewController.h | //  Copyright © 2020 reicast. All rights reserved. | header | the macOS source's copyright
+nulldc3/apple/ConsoleViewController.m | //  reicast-osx | header | the macOS source's Xcode header
+nulldc3/apple/ConsoleViewController.m | //  Copyright © 2020 reicast. All rights reserved. | header | the macOS source's copyright
+nulldc3/apple/EmuGLView.h | This file is part of reicast-osx | header | the macOS source's provenance header
+nulldc3/apple/EmuGLView.m | This file is part of reicast-osx | header | the macOS source's provenance header
+nulldc3/apple/MainMenu.h | //  reicast-osx | header | the macOS source's Xcode header
+nulldc3/apple/MainMenu.h | //  Copyright © 2020 reicast. All rights reserved. | header | the macOS source's copyright
+nulldc3/apple/MainMenu.m | //  reicast-osx | header | the macOS source's Xcode header
+nulldc3/apple/MainMenu.m | //  Copyright © 2020 reicast. All rights reserved. | header | the macOS source's copyright
+nulldc3/apple/OSXGamepadDevice.h | This file is part of reicast-osx | header | the macOS source's provenance header
+nulldc3/apple/OSXKeyboardDevice.h | This file is part of reicast-osx | header | the macOS source's provenance header
+nulldc3/apple/input.h | This file is part of reicast-osx | header | the macOS source's provenance header
+nulldc3/apple/input.mm | This file is part of reicast-osx | header | the macOS source's provenance header
+nulldc3/apple/main.m | This file is part of reicast-osx | header | the macOS source's provenance header
+nulldc3/linux/man/nulldc3-joyconfig.1 | \fBreicast\fR is developed by a number of people. | credit | AUTHOR: the tool's authors
+nulldc3/linux/man/nulldc3-joyconfig.1 | \fIhttps://github.com/reicast/reicast-emulator/graphs/contributors\fP | credit | AUTHOR: the tool's authors
+nulldc3/linux/man/nulldc3-joyconfig.1 | Head over to reicast's git repository if you want to contibute: | credit | AUTHOR: where the tool came from
+nulldc3/linux/man/nulldc3-joyconfig.1 | \fIhttps://github.com/reicast/reicast-emulator\fP | credit | AUTHOR: where the tool came from
+nulldc3/linux/man/nulldc3.1 | The directories of reicast (~/.reicast, ~/.config/reicast, ~/.local/share/reicast) are not read. | legacy-dirs | names the old directories, which are not read
+nulldc3/linux/tools/nulldc3-joyconfig.py | # https://github.com/reicast/reicast-emulator/issues/962 | provenance | the upstream bug that explains a workaround
+tests/README.md | The vectors come from an emulator (Reicast's interpreter on an ARM64 host) | provenance | where the single-step vectors come from
+tests/common/ss_policy.h | The vectors were generated by an emulator (Reicast's interpreter on an ARM64 host) | provenance | where the single-step vectors come from
+tests/system/README.md | in each place of reicast and of `--shared` | legacy-dirs | dirs.default seeds the old directories and proves they are not read
+tests/system/README.md | in each of the reicast directories (`~/.reicast`, `~/.config/reicast`, `~/.local/share/reicast`, `reicast` below | legacy-dirs | dirs.shared seeds the old directories and proves they are not read
+tests/system/system_test.py | # reicast builds read an emu.cfg from, and the places they read data/ from | legacy-dirs | the comment of the old directories the dirs.* cases seed
+tests/system/system_test.py | LEGACY_CONFIGS = ('home/.reicast', 'home/.config/reicast', 'xdg/config/reicast', 'sys/c/reicast') | legacy-dirs | the old config directories the dirs.* cases seed
+tests/system/system_test.py | LEGACY_DATAS = LEGACY_CONFIGS + ('home/.local/share/reicast', 'xdg/data/reicast', 'sys/d/reicast') | legacy-dirs | the old data directories the dirs.* cases seed
+tests/system/system_test.py | places (an emu.cfg and a flash in each place of reicast and of --shared). Started through | legacy-dirs | the docstring of dirs.default
+tests/system/system_test.py | places is read (an emu.cfg and a flash in each place of reicast and of --shared). "--" ends | legacy-dirs | the docstring of dirs.portable
+tests/system/system_test.py | The reicast directories of before are there and not read | legacy-dirs | the docstring of dirs.shared
+tests/system/system_test.py | # every place the reicast builds read a config or a flash from | legacy-dirs | the comment of what dirs.shared seeds
+tests/system/system_test.py | # config directory goes, so that a reicast emu.cfg would still show | legacy-dirs | the comment of what dirs.shared seeds
+tests/system/system_test.py | 'a reicast emu.cfg was read: the exit line has a state hash' | legacy-dirs | the check of dirs.shared that the old directories are not read

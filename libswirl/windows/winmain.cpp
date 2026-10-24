@@ -3,11 +3,20 @@
 */
 #include "license/bsd"
 
+// Without /EHsc nlohmann's JSON_THROW is std::abort() and unwinding skips destructors (nulldc3/cmake/config.cmake)
+#if defined(_MSC_VER) && !defined(_CPPUNWIND)
+#error "MSVC build without /EHsc: JSON_THROW would be std::abort"
+#endif
+
 #include "win_common.h"
+#include "win_fatal.h"
 
 #include <shlobj.h>		// SHGetKnownFolderPath
 #include <knownfolders.h>
-#include <io.h>			// _get_osfhandle
+#include <io.h>			// _get_osfhandle, _setmode
+#include <fcntl.h>		// _O_BINARY
+
+#include "utils/run_control.h"
 
 // Gamepads
 u16 kcode[4] = { 0xffff, 0xffff, 0xffff, 0xffff };
@@ -26,101 +35,6 @@ static Win32KeyboardDevice keyboard(0);
 
 extern int screen_width, screen_height;
 bool window_maximized = false;
-
-
-PCHAR*
-	CommandLineToArgvA(
-	PCHAR CmdLine,
-	int* _argc
-	)
-{
-	PCHAR* argv;
-	PCHAR  _argv;
-	ULONG   len;
-	ULONG   argc;
-	CHAR    a;
-	ULONG   i, j;
-
-	BOOLEAN  in_QM;
-	BOOLEAN  in_TEXT;
-	BOOLEAN  in_SPACE;
-
-	len = strlen(CmdLine);
-	i = ((len+2)/2)*sizeof(PVOID) + sizeof(PVOID);
-
-	argv = (PCHAR*)GlobalAlloc(GMEM_FIXED,
-		i + (len+2)*sizeof(CHAR));
-
-	_argv = (PCHAR)(((PUCHAR)argv)+i);
-
-	argc = 0;
-	argv[argc] = _argv;
-	in_QM = FALSE;
-	in_TEXT = FALSE;
-	in_SPACE = TRUE;
-	i = 0;
-	j = 0;
-
-	while( a = CmdLine[i] )
-	{
-		if(in_QM)
-		{
-			if(a == '\"')
-			{
-				in_QM = FALSE;
-			}
-			else
-			{
-				_argv[j] = a;
-				j++;
-			}
-		}
-		else
-		{
-			switch(a)
-			{
-			case '\"':
-				in_QM = TRUE;
-				in_TEXT = TRUE;
-				if(in_SPACE) {
-					argv[argc] = _argv+j;
-					argc++;
-				}
-				in_SPACE = FALSE;
-				break;
-			case ' ':
-			case '\t':
-			case '\n':
-			case '\r':
-				if(in_TEXT)
-				{
-					_argv[j] = '\0';
-					j++;
-				}
-				in_TEXT = FALSE;
-				in_SPACE = TRUE;
-				break;
-			default:
-				in_TEXT = TRUE;
-				if(in_SPACE)
-				{
-					argv[argc] = _argv+j;
-					argc++;
-				}
-				_argv[j] = a;
-				j++;
-				in_SPACE = FALSE;
-				break;
-			}
-		}
-		i++;
-	}
-	_argv[j] = '\0';
-	argv[argc] = NULL;
-
-	(*_argc) = argc;
-	return argv;
-}
 
 
 LONG ExeptionHandler(EXCEPTION_POINTERS *ExceptionInfo)
@@ -271,26 +185,6 @@ void ToggleFullscreen()
 }
 
 
-BOOL CtrlHandler( DWORD fdwCtrlType )
-{
-	switch( fdwCtrlType )
-	{
-		case CTRL_SHUTDOWN_EVENT:
-		case CTRL_LOGOFF_EVENT:
-		// Pass other signals to the next handler.
-		case CTRL_BREAK_EVENT:
-		// CTRL-CLOSE: confirm that the user wants to exit.
-		case CTRL_CLOSE_EVENT:
-		// Handle the CTRL-C signal.
-		case CTRL_C_EVENT:
-			SendMessageA((HWND)libPvr_GetRenderTarget(),WM_CLOSE,0,0); //FIXEM
-			return( TRUE );
-		default:
-			return FALSE;
-	}
-}
-
-
 // Whether what the emulator wrote to stream can still be read when the process has ended: in a file or a pipe, or
 // in the console of the cmd.exe or PowerShell it was started from. Not when there is no console, nor in a console
 // that has this process alone (the one Windows opens for a start from Explorer or a shortcut, or the one of
@@ -310,279 +204,89 @@ static bool output_is_kept(FILE* stream)
 	return GetConsoleProcessList(processes, 2) > 1;
 }
 
-void ReserveBottomMemory()
+// Whether a --config item of the command line sets config:Headless, read ahead of the parser (cfg/cl.cpp, whose
+// grammar this follows): the help and error box is for a person who started the emulator, never for a headless run,
+// also one whose command line is refused. The last item wins, as in the parser; a value is true as cfgLoadBool has it.
+static bool argv_headless(int argc, char** argv)
 {
-#ifdef _DEBUG
-    static bool s_initialized = false;
-    if ( s_initialized )
-        return;
-    s_initialized = true;
-
-    // Start by reserving large blocks of address space, and then
-    // gradually reduce the size in order to capture all of the
-    // fragments. Technically we should continue down to 64 KB but
-    // stopping at 1 MB is sufficient to keep most allocators out.
-
-    const size_t LOW_MEM_LINE = 0x100000000LL;
-    size_t totalReservation = 0;
-    size_t numVAllocs = 0;
-    size_t numHeapAllocs = 0;
-    size_t oneMB = 1024 * 1024;
-    for (size_t size = 256 * oneMB; size >= oneMB; size /= 2)
-    {
-        for (;;)
-        {
-            void* p = VirtualAlloc(0, size, MEM_RESERVE, PAGE_NOACCESS);
-            if (!p)
-                break;
-
-            if ((size_t)p >= LOW_MEM_LINE)
-            {
-                // We don't need this memory, so release it completely.
-                VirtualFree(p, 0, MEM_RELEASE);
-                break;
-            }
-
-            totalReservation += size;
-            ++numVAllocs;
-        }
-    }
-
-    // Now repeat the same process but making heap allocations, to use up
-    // the already reserved heap blocks that are below the 4 GB line.
-    HANDLE heap = GetProcessHeap();
-    for (size_t blockSize = 64 * 1024; blockSize >= 16; blockSize /= 2)
-    {
-        for (;;)
-        {
-            void* p = HeapAlloc(heap, 0, blockSize);
-            if (!p)
-                break;
-
-            if ((size_t)p >= LOW_MEM_LINE)
-            {
-                // We don't need this memory, so release it completely.
-                HeapFree(heap, 0, p);
-                break;
-            }
-
-            totalReservation += blockSize;
-            ++numHeapAllocs;
-        }
-    }
-
-    // Perversely enough the CRT doesn't use the process heap. Suck up
-    // the memory the CRT heap has already reserved.
-    for (size_t blockSize = 64 * 1024; blockSize >= 16; blockSize /= 2)
-    {
-        for (;;)
-        {
-            void* p = malloc(blockSize);
-            if (!p)
-                break;
-
-            if ((size_t)p >= LOW_MEM_LINE)
-            {
-                // We don't need this memory, so release it completely.
-                free(p);
-                break;
-            }
-
-            totalReservation += blockSize;
-            ++numHeapAllocs;
-        }
-    }
-
-    // Print diagnostics showing how many allocations we had to make in
-    // order to reserve all of low memory, typically less than 200.
-    char buffer[1000];
-    sprintf_s(buffer, "Reserved %1.3f MB (%d vallocs,"
-                      "%d heap allocs) of low-memory.\n",
-            totalReservation / (1024 * 1024.0),
-            (int)numVAllocs, (int)numHeapAllocs);
-    OutputDebugStringA(buffer);
-#endif
+	bool headless = false;
+	for (int i = 1; i < argc; i++)
+	{
+		string word = argv[i];
+		if (word == "--" || word == "--help" || word == "--version")
+			break;
+		if (word != "--config")
+			continue;
+		while (i + 1 < argc)
+		{
+			string item = argv[++i];
+			size_t colon = item.find(':');
+			size_t equals = colon == string::npos ? string::npos : item.find('=', colon + 1);
+			if (equals != string::npos)
+			{
+				auto trim = [](const string& t) {
+					size_t first = t.find_first_not_of(" \t\r\n\v\f"), last = t.find_last_not_of(" \t\r\n\v\f");
+					return first == string::npos ? string() : t.substr(first, last - first + 1);
+				};
+				string section = trim(item.substr(0, colon));
+				string key = trim(item.substr(colon + 1, equals - colon - 1));
+				string value = trim(item.substr(equals + 1));
+				if (section == "config" && key == "Headless")
+					headless = !stricmp(value.c_str(), "yes") || !stricmp(value.c_str(), "true") ||
+					           !stricmp(value.c_str(), "on") || !stricmp(value.c_str(), "1");
+			}
+			if (i + 1 < argc && !strcmp(argv[i + 1], ","))
+				i++;
+			else
+				break;
+		}
+	}
+	return headless;
 }
 
-#include "hw/sh4/dyna/ngen.h"
-
-typedef union _UNWIND_CODE {
-	struct {
-		u8 CodeOffset;
-		u8 UnwindOp : 4;
-		u8 OpInfo : 4;
-	};
-	USHORT FrameOffset;
-} UNWIND_CODE, *PUNWIND_CODE;
-
-typedef struct _UNWIND_INFO {
-	u8 Version : 3;
-	u8 Flags : 5;
-	u8 SizeOfProlog;
-	u8 CountOfCodes;
-	u8 FrameRegister : 4;
-	u8 FrameOffset : 4;
-	//ULONG ExceptionHandler;
-	UNWIND_CODE UnwindCode[1];
-	/*  UNWIND_CODE MoreUnwindCode[((CountOfCodes + 1) & ~1) - 1];
-	*   union {
-	*       OPTIONAL ULONG ExceptionHandler;
-	*       OPTIONAL ULONG FunctionEntry;
-	*   };
-	*   OPTIONAL ULONG ExceptionData[]; */
-} UNWIND_INFO, *PUNWIND_INFO;
-
-static RUNTIME_FUNCTION Table[1];
-static _UNWIND_INFO unwind_info[1];
-
-EXCEPTION_DISPOSITION
-__gnat_SEH_error_handler(struct _EXCEPTION_RECORD* ExceptionRecord,
-void *EstablisherFrame,
-struct _CONTEXT* ContextRecord,
-	void *DispatcherContext)
-{
-	EXCEPTION_POINTERS ep;
-	ep.ContextRecord = ContextRecord;
-	ep.ExceptionRecord = ExceptionRecord;
-
-	return (EXCEPTION_DISPOSITION)ExeptionHandler(&ep);
-}
-
-PRUNTIME_FUNCTION
-seh_callback(
-_In_ DWORD64 ControlPc,
-_In_opt_ PVOID Context
-) {
-	unwind_info[0].Version = 1;
-	unwind_info[0].Flags = UNW_FLAG_UHANDLER;
-	/* We don't use the unwinding info so fill the structure with 0 values.  */
-	unwind_info[0].SizeOfProlog = 0;
-	unwind_info[0].CountOfCodes = 0;
-	unwind_info[0].FrameOffset = 0;
-	unwind_info[0].FrameRegister = 0;
-	/* Add the exception handler.  */
-
-//		unwind_info[0].ExceptionHandler =
-	//	(DWORD)((u8 *)__gnat_SEH_error_handler - CodeCache);
-	/* Set its scope to the entire program.  */
-	Table[0].BeginAddress = 0;// (CodeCache - (u8*)__ImageBase);
-	Table[0].EndAddress = /*(CodeCache - (u8*)__ImageBase) +*/ CODE_SIZE;
-	Table[0].UnwindData = (DWORD)((u8 *)unwind_info - CodeCache);
-	printf("TABLE CALLBACK\n");
-	//for (;;);
-	return Table;
-}
-void setup_seh() {
-#if 1
-	/* Get the base of the module.  */
-	//u8* __ImageBase = (u8*)GetModuleHandle(NULL);
-	/* Current version is always 1 and we are registering an
-	exception handler.  */
-	unwind_info[0].Version = 1;
-	unwind_info[0].Flags = UNW_FLAG_NHANDLER;
-	/* We don't use the unwinding info so fill the structure with 0 values.  */
-	unwind_info[0].SizeOfProlog = 0;
-	unwind_info[0].CountOfCodes = 1;
-	unwind_info[0].FrameOffset = 0;
-	unwind_info[0].FrameRegister = 0;
-	/* Add the exception handler.  */
-
-	unwind_info[0].UnwindCode[0].CodeOffset = 0;
-	unwind_info[0].UnwindCode[0].UnwindOp = 2;// UWOP_ALLOC_SMALL;
-	unwind_info[0].UnwindCode[0].OpInfo = 0x20 / 8;
-
-	//unwind_info[0].ExceptionHandler =
-		//(DWORD)((u8 *)__gnat_SEH_error_handler - CodeCache);
-	/* Set its scope to the entire program.  */
-	Table[0].BeginAddress = 0;// (CodeCache - (u8*)__ImageBase);
-	Table[0].EndAddress = /*(CodeCache - (u8*)__ImageBase) +*/ CODE_SIZE;
-	Table[0].UnwindData = (DWORD)((u8 *)unwind_info - CodeCache);
-	/* Register the unwind information.  */
-	RtlAddFunctionTable(Table, 1, (DWORD64)CodeCache);
-#endif
-
-	//verify(RtlInstallFunctionTableCallback((unat)CodeCache | 0x3, (DWORD64)CodeCache, CODE_SIZE, seh_callback, 0, 0));
-}
-
-
-
-
-
-// DEF_CONSOLE allows you to override linker subsystem and therefore default console //
-//	: pragma isn't pretty but def's are configurable 
-#ifdef DEF_CONSOLE
+// nulldc3.exe is a console program (PL-D31): run from a terminal or by a harness it writes into the console or the
+// handles it was given and never opens one of its own; started from Explorer, Windows gives it a console beside its
+// window. --console and --log are accepted switches of the command line (cfg/cl.cpp).
 #pragma comment(linker, "/subsystem:console")
 
 int main(int argc, char **argv)
 {
-#else
-#pragma comment(linker, "/subsystem:windows")
+	// First of all: no dialog of any kind, and the fatal ends of the platform (win_fatal.cpp)
+	win_install_fatal_policy();
 
-int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine,int nCmdShowCmd)
+	// The bytes Linux writes: no \r in front of every \n (libswirl.cpp makes both streams unbuffered)
+	_setmode(_fileno(stdout), _O_BINARY);
+	_setmode(_fileno(stderr), _O_BINARY);
 
-{
-	int argc=0;
-	wchar* cmd_line=GetCommandLineA();
-	wchar** argv=CommandLineToArgvA(cmd_line,&argc);
-	// --console is looked for here, ahead of the command line (cfg/cl.cpp, which takes it and --log), so that the
-	// console shows what that says as well; a "--" ends the switches here too
-	for (int i = 1; i < argc; i++)
-	{
-		if (!strcmp(argv[i], "--"))
-			break;
-		if (!strcmp(argv[i], "--console"))
-		{
-			if (AllocConsole())
-			{
-				freopen("CON", "w", stdout);
-				freopen("CON", "w", stderr);
-				freopen("CON", "r", stdin);
-			}
-			SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE);
-			break;
-		}
-	}
-
-#endif
-
-	ReserveBottomMemory();
 	SetupPath();
 
+	// the guest memory faults first; the fatal handler of the policy comes behind it
 	AddVectoredExceptionHandler(1, ExeptionHandler);
-#ifndef __GNUC__
-	__try
-#endif
+
+	int init_rv = nulldc_init(argc, argv);
+	if (init_rv == rv_cli_finish || init_rv == rv_cli_error)
 	{
-		CoInitialize(nullptr);
-
-		int init_rv = reicast_init(argc, argv);
-		if (init_rv == rv_cli_finish || init_rv == rv_cli_error)
-		{
-			// --help (the usage text is on stdout, and is all that was asked for) or a command line that was refused
-			// (the reason is on stderr): where that cannot be read once the process has ended, without a console
-			// or in one that closes with the process, a message box shows it as well
-			bool help = init_rv == rv_cli_finish;
-			if (!output_is_kept(help ? stdout : stderr))
-				MessageBoxA(NULL, (help ? cl_HelpText() : cl_ErrorText()).c_str(), "nullDC",
-				            MB_OK | (help ? MB_ICONINFORMATION : MB_ICONERROR));
-			return help ? 0 : 2;
-		}
-		if (init_rv != 0)
-			die("nullDC initialization failed");
-
-		setup_seh();
-
-        reicast_ui_loop();
-
-        reicast_term();
+		// --help or --version (what was asked for is on stdout) or a command line that was refused (the reason is
+		// on stderr): where that cannot be read once the process has ended, without a console or in one that
+		// closes with the process, a message box shows it as well; never in a headless run
+		bool finish = init_rv == rv_cli_finish;
+		if (!output_is_kept(finish ? stdout : stderr) && !argv_headless(argc, argv))
+			MessageBoxA(NULL, (finish ? cl_FinishText() : cl_ErrorText()).c_str(), "nullDC",
+			            MB_OK | (finish ? MB_ICONINFORMATION : MB_ICONERROR));
+		return finish ? 0 : 2;
 	}
-#ifndef __GNUC__
-	__except( ExeptionHandler(GetExceptionInformation()) )
-	{
-		printf("Unhandled exception - Emulation thread halted...\n");
-	}
-#endif
-	SetUnhandledExceptionFilter(0);
+	if (init_rv != 0)
+		die("nullDC initialization failed");
+
+	win_test_fatal();
+
+	nulldc_ui_loop();
+
+	nulldc_term();
+
+	extern bool window_class_registered;
+	win_test_ui_report(window_class_registered, WINDOW_CLASS);
+
 	cfgSaveBool("windows", "maximized", window_maximized);
 	if (!window_maximized && screen_width != 0 && screen_height != 0)
 	{
@@ -590,7 +294,7 @@ int CALLBACK WinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPSTR lpCmdLine
 		cfgSaveInt("windows", "height", screen_height);
 	}
 
-	return 0;
+	return runctl_exit_code();
 }
 
 int get_mic_data(u8* buffer) { return 0; }

@@ -185,7 +185,7 @@ audiobackend_t* GetAudioBackend(int num)
 
 bool RegisterAudioBackend(audiobackend_t *backend)
 {
-	/* This function announces the availability of an audio backend to reicast. */
+	/* This function announces the availability of an audio backend to the emulator. */
 	// Check if backend is valid
 	if (backend == NULL)
 	{

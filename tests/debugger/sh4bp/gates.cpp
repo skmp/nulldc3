@@ -1,6 +1,7 @@
 /*
 	The gates. Each one names the gate of the design it stands for (B1 to B14) and runs for every engine it
-	applies to: the x64 backend, the interpreter, and the x64 backend with the interpreter fallback forced.
+	applies to: the recompiler of the host (the x64 backend on x86-64, the arm64 backend on arm64), the interpreter,
+	and the recompiler with the interpreter fallback forced.
 */
 #include "gates.h"
 #include "machine.h"
@@ -8,6 +9,7 @@
 
 #include "hw/sh4/sh4_if.h"
 #include "hw/sh4/sh4_interpreter.h"
+#include "hw/sh4/sh4_interrupts.h"
 #include "hw/sh4/sh4_opcode_list.h"
 #include "hw/sh4/dyna/blockmanager.h"
 #include "hw/sh4/dyna/ngen.h"
@@ -19,6 +21,14 @@
 
 #if defined(__GLIBC__)
 #include <malloc.h>
+#endif
+
+//<windows.h> (behind the headers of the tree on Windows) still defines far and near, empty, for 16-bit code
+#ifdef far
+#undef far
+#endif
+#ifdef near
+#undef near
 #endif
 
 using dbg::StopCause;
@@ -768,6 +778,22 @@ static void gate_b5()
 		s = machine_step();
 		check(is_step(s, G_irq) && Sh4cntx.spc == G_sleep_after && counters.slices == 7,
 			"%s: a step on SLEEP with an interrupt on the way ends at the handler after %llu slices", en, (unsigned long long)counters.slices);
+
+		//An instruction that unmasks an interrupt the device requests (ldc r0, sr): the interrupt is accepted
+		//behind it, in front of the next instruction, so the step that executes it ends at the handler. The block
+		//of the step ends with the instruction's interrupt check (an interrupt end), and is left behind it
+		machine_reset(e);
+		machine_write16(G_buffer, 0x400E);		//ldc r0, sr
+		machine_write16(G_buffer + 2, 0x7001);	//add #1, r0
+		machine_set_sr(SR_MD_MASK);
+		R(0) = SR_MD;
+		machine_set_pc(G_buffer);
+		SetInterruptPend(sh4_IRL_9);
+
+		s = machine_step();
+		check(is_step(s, G_irq) && Sh4cntx.spc == G_buffer + 2 && counters.slices == 0,
+			"%s: a step over an ldc that unmasks an interrupt the device requests ends at the handler, the interrupt accepted behind the ldc (stop at %08X, spc %08X)",
+			en, s.pc, Sh4cntx.spc);
 	}
 }
 
@@ -862,7 +888,7 @@ static void gate_b6()
 */
 static void gate_b7()
 {
-	u32 where[ENGINE_COUNT][12];
+	u32 where[ENGINE_COUNT][13];
 
 	for (Engine e : all_engines)
 	{
@@ -988,6 +1014,29 @@ static void gate_b7()
 		s = machine_step_out();
 		at[9] = s.pc;
 		check(is_step(s, back) && (Sh4cntx.sr.status & 0x10000000) == 0, "%s: step out of an interrupt handler stops where the interrupt was taken (%08X)", en, back);
+
+		//step out of an interrupt handler whose device asks again before its rte: the return from exception lets
+		//the new request in. The rte reports in front of its interrupt check, which is made all the same when the
+		//report stops: the stop latch holds the acceptance back and it is owed (hw/sh4/sh4_interrupts.cpp). The
+		//step-out stops where the interrupt was taken, and the next step takes the interrupt first: it ends at the
+		//handler's first instruction
+		machine_reset(e);
+		machine_set_sr(SR_MD);
+		machine_set_pc(G_waitmain);
+		knobs.irq_period = 3;
+		bps({ G_irq_rte });
+		MachineStop at_rte = machine_resume();
+		bps({ });
+		knobs.irq_period = 0;
+		back = Sh4cntx.spc;
+		const u32 handled = machine_read32(G_irqcnt);
+		SetInterruptPend(sh4_IRL_9);
+		s = machine_step_out();
+		at[12] = s.pc;
+		MachineStop next = machine_step();
+		check(is_bp(at_rte, 1, G_irq_rte) && is_step(s, back) && is_step(next, G_irq) && Sh4cntx.spc == back && machine_read32(G_irqcnt) == handled,
+			"%s: step out of an interrupt handler whose device asks again before its rte stops where the interrupt was taken (%08X), and the next step takes the interrupt the rte owes: it ends at the handler (%08X, spc %08X)",
+			en, s.pc, next.pc, Sh4cntx.spc);
 
 		//a stop for another reason ends a pending step-out
 		machine_reset(e);
@@ -1848,6 +1897,43 @@ static Dense dense_start(Engine e, u32 top, u32 n, bool fp, u32 passes)
 	return d;
 }
 
+//A line whose 36 instructions write r0 to r7 and fr0 to fr9, every one of them twice, 18 instructions apart, with
+//the tail of dense_write behind it: a check on the 19th instruction is a check in front of which every host register
+//holds a guest register it has written, and behind which every one is read again
+static Dense flush_line_write(u32 top)
+{
+	static const u16 group[18] = {
+		0x7001, 0x7101, 0x7201, 0x7301, 0x7401, 0x7501, 0x7601, 0x7701,	//add #1, r0 ... add #1, r7
+		0xF000, 0xF110, 0xF220, 0xF330, 0xF440, 0xF550, 0xF660, 0xF770,	//fadd fr0, fr0 ... fadd fr7, fr7
+		0xF880, 0xF990,													//fadd fr8, fr8, fadd fr9, fr9
+	};
+	static const u16 tail[] = {
+		0x4C0B,		//jsr @r12
+		0x0009,
+		0xE103,		//mov #3, r1
+		0x62D2,		//mov.l @r13, r2
+		0x4110,		//dt r1
+		0x8BFC,		//bf poll
+		0x4810,		//dt r8
+		0x8901,		//bt end
+		0x4E2B,		//jmp @r14
+		0x0009,
+		0xAFFE,		//end: bra end
+		0x0009,
+	};
+	const u32 n = 36;
+
+	for (u32 i = 0; i < n; i++)
+		machine_write16(top + i * 2, group[i % 18]);
+
+	for (u32 i = 0; i < 12; i++)
+		machine_write16(top + n * 2 + i * 2, tail[i]);
+
+	Dense d = { top, n, top + n * 2, top + n * 2 + 20 };
+
+	return d;
+}
+
 //The first armed instructions of the line, and the end
 static void dense_arm(const Dense& d, u32 armed)
 {
@@ -1918,23 +2004,26 @@ static MachineState dense_timed(Engine e, u32 top, u32 n, bool fp, u32 armed, bo
 	return s;
 }
 
-//The heap of the process: the bytes in use, and the bytes the C library holds for them
-struct HeapSize
+//The heap of the process: the bytes in use, and the bytes the C library holds for them (not HeapSize, a function
+//of Windows)
+struct HeapUse
 {
 	s64 in_use;
 	s64 held;
 };
 
 //false: this C library does not tell (nor does it under a sanitizer that has its own allocator)
-static bool heap_size(HeapSize* h)
+static bool heap_size(HeapUse* h)
 {
 	h->in_use = h->held = 0;
 
-#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
+#if defined(__GLIBC__)
+#if __GLIBC_PREREQ(2, 33)
 	struct mallinfo2 m = mallinfo2();
 
 	h->in_use = (s64)m.uordblks;
 	h->held = (s64)m.arena + (s64)m.hblkhd;
+#endif
 #endif
 
 	return h->held != 0;
@@ -1981,6 +2070,62 @@ static void gate_dense()
 			check(bytes[2] > bytes[0] && (bytes[2] - bytes[0]) <= 16 * 1024, "%s line: %u checks add %u bytes of host code to their block, within the 16 KiB that the backend states",
 				fp ? "fp" : "integer", budget, bytes[2] - bytes[0]);
 		}
+	}
+
+	//The flush of a check at its most: every host register written to the context in front of it and loaded again
+	//behind it (flush_line_write). One such check adds the call, both halves of the flush and the tail of the
+	//checks to its block; the budget's worth of them, with one tail, has to stay within the 16 KiB that the backend
+	//states. The register set is the calling convention's: 6 general and 4 xmm registers with System V, 8 and 10
+	//with Windows' (x64_regalloc.h), so the budget of one is no bound for the other; on arm64 8 general and 8 FP
+	//registers (arm64_regalloc.h)
+	{
+		u32 bytes[2];
+
+		for (u32 i = 0; i < 2; i++)
+		{
+			machine_reset(ENGINE_JIT);
+
+			Dense d = flush_line_write(0x8C020000);
+
+			R(8) = 1;
+			R(12) = G_leaf;
+			R(13) = G_data;
+			R(14) = d.top;
+			machine_set_pc(d.top);
+
+			std::vector<u32> ids, at;
+			if (i)
+				at.push_back(d.top + 18 * 2);
+			at.push_back(d.end);
+			for (u32 k = 0; k < at.size(); k++)
+				ids.push_back(k + 1);
+			machine_breakpoints(ids.data(), at.data(), (u32)at.size());
+
+			dbg::sh4::SetActiveMask(0);
+			knobs.host_stop_slice = 3;
+			machine_resume();
+
+			RuntimeBlockInfo* blk = bm_GetBlock(d.top);
+
+			bytes[i] = blk ? blk->host_code_size : 0;
+
+			check(blk != nullptr && blk->dbg_rest_pc == 0 && block_checks(d.top) == (int)i, "a line that writes every register twice: the block with %u armed instructions is whole and has %u checks",
+				i, i);
+		}
+
+		const u32 one = bytes[1] - bytes[0];
+#if defined(_WIN32)
+		const u32 tail = 11;	//the third argument is in r8d: its mov has a REX prefix
+#elif HOST_CPU == CPU_ARM64
+		const u32 tail = 12;	//the end of the block into w2 (movz, movk) and the branch to the check stub
+#else
+		const u32 tail = 10;
+#endif
+
+		note("a check between two writes of every register adds %u bytes to its block: the call, the flush both ways and the tail of %u bytes", one, tail);
+
+		check(one > tail && budget * (one - tail) + tail <= 16 * 1024, "%u such checks add %u bytes of host code to their block, within the 16 KiB that the backend states",
+			budget, budget * (one - tail) + tail);
 	}
 
 	struct Layout { const char* what; u32 top; bool fp; };
@@ -2082,7 +2227,7 @@ static void gate_dense()
 	{
 		const u64 slices = 45;
 		u64 stops;
-		HeapSize before, after;
+		HeapUse before, after;
 
 		settings.dynarec.idleskip = false;
 
@@ -2189,16 +2334,30 @@ static void gate_dense()
 	//The code cache. A block is compiled when 16 KiB of the cache are free, and its code can be more than
 	//that: the backend gives it up, the cache is emptied and the block compiled again
 	{
-		//a line of double precision arithmetic: every instruction is a call
+		//a line of double precision arithmetic: every instruction is a call, around which the System V backend
+		//saves xmm8-xmm11. On Windows the callee keeps xmm6-xmm15 and such a call is a few bytes: there the line is
+		//of ftrv, about a hundred bytes of code each. On arm64 the callee keeps the registers of the blocks too, and
+		//the most code an instruction that costs no cycles compiles to is ftrv's, 52 bytes: there the line is of ftrv
 		const u32 top = 0x8C020000;
 		const u32 n = 500;
 		const u64 slices = 12;
 
-		auto doubles = [&](u32 cache_left, u32 armed, u32* most_bytes)
+		//rest_block_bytes, clears (arm64): the host code of the block at the top that hands its rest over, 0 if there is
+		//none, and how often the driver emptied the code cache in the run (counters.cache_clears)
+		auto doubles = [&](u32 cache_left, u32 armed, u32* most_bytes, u32* rest_block_bytes = nullptr, u64* clears = nullptr)
 		{
 			machine_reset(ENGINE_JIT);
 
+#if defined(_WIN32)
+			static const u16 ops[] = { 0xF1FD /*ftrv xmtrx, fv0*/, 0xF5FD /*ftrv xmtrx, fv4*/, 0xF9FD /*ftrv xmtrx, fv8*/, 0xFDFD /*ftrv xmtrx, fv12*/ };
+			const u32 fpscr = 0x00040001;	//single precision
+#elif HOST_CPU == CPU_ARM64
+			static const u16 ops[] = { 0xF1FD /*ftrv xmtrx, fv0*/, 0xF5FD /*ftrv xmtrx, fv4*/, 0xF9FD /*ftrv xmtrx, fv8*/, 0xFDFD /*ftrv xmtrx, fv12*/ };
+			const u32 fpscr = 0x00040001;	//single precision
+#else
 			static const u16 ops[] = { 0xF200 /*fadd dr0, dr2*/, 0xF422 /*fmul dr2, dr4*/, 0xF601 /*fsub dr0, dr6*/, 0xF843 /*fdiv dr4, dr8*/ };
+			const u32 fpscr = 0x000C0001;	//double precision, pairs
+#endif
 
 			for (u32 i = 0; i < n; i++)
 				machine_write16(top + i * 2, ops[i % 4]);
@@ -2212,7 +2371,7 @@ static void gate_dense()
 			R(13) = G_data;
 			R(14) = top;
 
-			Sh4cntx.fpscr.full = 0x000C0001;
+			Sh4cntx.fpscr.full = fpscr;
 			Sh4cntx.old_fpscr = Sh4cntx.fpscr;
 			UpdateFPSCR();
 
@@ -2235,6 +2394,18 @@ static void gate_dense()
 
 			*most_bytes = dense_blocks().most_bytes;
 
+			if (rest_block_bytes)
+			{
+				*rest_block_bytes = 0;
+
+				for (RuntimeBlockInfo* blk : all_blocks)
+					if (blk->addr == top && blk->dbg_rest_pc != 0)
+						*rest_block_bytes = blk->host_code_size;
+			}
+
+			if (clears)
+				*clears = counters.cache_clears;
+
 			if (s.debugger)
 				st.pc = 0;
 
@@ -2245,7 +2416,13 @@ static void gate_dense()
 
 		MachineState base = doubles(0, 0, &bytes);
 
-		check(bytes > 16 * 1024 + 2048, "a block of %u double precision instructions has %u bytes of host code, more than the 16 KiB that a compile waits for", n, bytes);
+		check(bytes > 16 * 1024 + 2048, "a block of %u %s instructions has %u bytes of host code, more than the 16 KiB that a compile waits for", n,
+#if defined(_WIN32) || HOST_CPU == CPU_ARM64
+			"ftrv",
+#else
+			"double precision",
+#endif
+			bytes);
 
 		//room for the compile to begin, not for the code
 		MachineState s = doubles(16 * 1024 + 2048, 0, &bytes_left);
@@ -2261,25 +2438,62 @@ static void gate_dense()
 		//code of the rest, which is compiled outside the block cache
 		const u32 first_part = bytes / n * (budget + 8);
 
+#if HOST_CPU == CPU_ARM64
+		//arm64: the most code an instruction that costs no cycles compiles to is ftrv's, 52 bytes, and a block holds
+		//500 instructions: no such line has the code behind its first budget + 8 instructions that the bound of the
+		//other hosts asks for (more than 18 KiB + 2048 bytes: 54 bytes an instruction with a budget of 113). What the
+		//bound stands for is measured instead: the block of the first instructions, the one that hands its rest over,
+		//leaves room for a compile to begin behind it (16 KiB), and the rest's compile there is given up, so the code
+		//cache is emptied for it
+		u32 first_bytes = 0;
+		u64 clears = 0;
+
+		s = doubles(16 * 1024 + 2048 + first_part, budget + 40, &bytes_armed, &first_bytes, &clears);
+
+		const u32 left = 16 * 1024 + 2048 + first_part;
+		const u32 behind = first_bytes != 0 && first_bytes < left ? left - first_bytes : 0;
+
+		check(s == base && first_part < 14 * 1024 && behind >= 16 * 1024 && clears != 0,
+			"and with %u bytes left, which the rest of the block does not fit into when it is compiled: the block of its first %u instructions takes %u bytes, "
+			"%u are left behind it, room for a compile to begin, and the rest's compile there is given up, the code cache emptied %llu times (%s)",
+			left, budget, first_bytes, behind, (unsigned long long)clears, str(s));
+#else
 		s = doubles(16 * 1024 + 2048 + first_part, budget + 40, &bytes_armed);
 
 		check(s == base && first_part < 14 * 1024 && bytes - first_part > 18 * 1024 + 2048,
 			"and with %u bytes left, which the rest of the block does not fit into when it is compiled (%u bytes of the block's %u are behind its first %u instructions) (%s)",
 			16 * 1024 + 2048 + first_part, bytes - first_part, bytes, budget + 8, str(s));
+#endif
 	}
 
 	//A code cache that has no room for the code of a block when it is empty: the block is made of fewer
 	//instructions. That moves block ends, and time with them; what the guest computes stays.
+	//The line at 0x8C020000 is in a page without data: its blocks do not check their code when they are entered
+	//(DoCheck: NoCheck). The line at 0x8C004000 is in the first 64 KiB of RAM, whose pages hold data from the reset
+	//on (bm_Reset): each of its blocks checks its code when it is entered (Dynarec.SmcCheckLevel of this machine:
+	//FullCheck), with code of its own in front of the block's, about two bytes of host code and one of literal a byte
+	//of guest code on arm64. The cache of that line has less room than the check of a block of the whole fp line
+	//(fp instructions cost no cycles: up to 500 instructions a block). The room a compile keeps for the check is held
+	//there: a compile that kept too little would write the check past the end of the room
+	struct SmallCache { u32 top; bool data; u32 room; };
+	const SmallCache small_caches[] = {
+		{ 0x8C020000, false, 2600 },
+		{ 0x8C004000, true, 1600 },
+	};
+
+	for (const SmallCache& c : small_caches)
 	{
-		const u32 top = 0x8C020000;
+		const u32 top = c.top;
 		const u32 line = 600;
 		const u32 passes = 2;
-		const u32 room = 2600;
+		const u32 room = c.room;
+		const char* page = c.data ? "a page with data, every block checking its code" : "a page without data";
 
 		for (bool fp : { false, true })
 		{
 			std::vector<OwnHit> hits[2];
 			u32 most_bytes = 0;
+			bool page_data = !c.data;
 
 			for (int i = 0; i < 2; i++)
 			{
@@ -2288,7 +2502,10 @@ static void gate_dense()
 				const u32 cache_begin = LastAddr_min;
 
 				if (i == 1)
+				{
+					page_data = bm_RamPageHasData(top, d.end + 4 - top);
 					LastAddr_min = LastAddr = CODE_SIZE - room;
+				}
 
 				//every eighth instruction of the line, and the end
 				std::vector<u32> ids, at;
@@ -2329,9 +2546,12 @@ static void gate_dense()
 				&& hits[1][same].regs.same_all(hits[0][same].regs))
 				same++;
 
+			check(page_data == c.data, "%s line at %08X: the RAM of the line is %s", fp ? "fp" : "integer", top,
+				page_data ? "in a page with data" : "in a page without data");
+
 			check(hits[0].size() == passes * (line / 8) + 1 && hits[1].size() == hits[0].size() && same == hits[0].size() && most_bytes != 0 && most_bytes <= room,
-				"%s line of %u instructions in a code cache of %u bytes: the jit runs it in blocks of at most %u bytes of host code, its stops are the interpreter's with their registers (%zu stops, %zu agree)",
-				fp ? "fp" : "integer", line, room, most_bytes, hits[1].size(), same);
+				"%s line of %u instructions in %s, in a code cache of %u bytes: the jit runs it in blocks of at most %u bytes of host code, its stops are the interpreter's with their registers (%zu stops, %zu agree)",
+				fp ? "fp" : "integer", line, page, room, most_bytes, hits[1].size(), same);
 		}
 	}
 }
@@ -3460,6 +3680,380 @@ static void gate_threads()
 }
 
 
+#if defined(_WIN32)
+/*
+	unwind (Windows): a stop that a check of the recompiler made, walked by the system's unwinder from the debugger's
+	latch through dbg_sh4_Check, the check stub, the block and the main loop back to the machine (machine.cpp,
+	walk_from_stop). The stub calls dbg_sh4_Check with the callee's home space below the refund, so that its frame at
+	the call is 40 bytes below the return address into the block: the frame of a block, which is what the unwind
+	data of the code region describes for every pc that is not the main loop's or RunBlock's
+	(libswirl/windows/win_jit_unwind.cpp, jit/backend/x64/rec_x64.cpp). sh4bp_test holds the walks of every stop of
+	every gate as well; this gate makes sure that some of them came from checks
+*/
+static void gate_unwind()
+{
+	struct Case { const char* what; u32 bp; };
+	static const Case cases[] = {
+		{ "the first instruction of a block", G_line },
+		{ "the middle of a block", G_line_mid },
+		{ "the slot of a bra", G_line_slot },
+	};
+
+	for (const Case& c : cases)
+	{
+		machine_reset(ENGINE_JIT);
+		machine_set_pc(G_line);
+		bps({ c.bp });
+
+		const MachineWalks before = walks;
+		MachineStop s = machine_resume();
+
+		check(s.debugger && s.cause == StopCause::Breakpoint && s.id == 1, "jit: %s: the check stops there (at %08X)", c.what, s.pc);
+		check(walks.made > before.made && walks.through_region > before.through_region && walks.failed == before.failed,
+			"jit: %s: the system's unwinder walked the stop from the debugger's latch through the check stub, the block and the main "
+			"loop back to the machine (%u walks, %u of them through 3 frames of the code region or more, %u went wrong%s%s)",
+			c.what, walks.made - before.made, walks.through_region - before.through_region, walks.failed - before.failed,
+			walks.failed != before.failed ? ": " : "", walks.failed != before.failed ? walks.first_failure : "");
+	}
+
+	note("the most frames of the code region one walk came through: %d", walks.region_frames);
+}
+#endif
+
+
+#if HOST_CPU == CPU_ARM64
+/*
+	abi (arm64): the main loop and RunBlock of the arm64 recompiler give a caller back what the AAPCS64 makes a callee
+	keep: x19-x29, sp and the low 64 bits of v8-v15 (d8-d15), through every way they end (jit/backend/arm64/
+	rec_arm64.cpp: one frame and one exit for both). The blocks keep guest registers in w19-w26 and s8-s15 (a write of
+	sN clears the rest of v<N>), the slice counter in w27, the context in x28 and the pc in w29: a frame that saved
+	s8-s15 as 32-bit values, or an exit that missed one of them, gives the caller other values back. As windows.abi.xmm
+	for Windows' xmm6-xmm15: a thunk loads canaries into the nineteen registers, calls the code under test, and writes
+	what they hold when it returns, and sp. The gate puts a wrapper of the thunk in the place of Mainloop and of
+	RunBlock (rdv_ngen), so that the machine's runs and steps go through it, on a line whose instructions write r0 to
+	r7 and fr0 to fr9 (flush_line_write: every host register of the blocks holds a guest register), and checks every
+	call, case by case:
+	    the loop entered with the cpu stopped (the poll), a host stop at a slice end, a pause latched at a slice end,
+	    the loop entered with the slice used up (the end of the slice first);
+	    with native debugger checks also a check that stops in a block, a flow report that stops, the code of a block
+	    that hands its rest over, a step (RunBlock), a step that ends the slice (RunBlock's end of slice)
+*/
+extern "C" void sh4bp_abi_thunk(void (*fn)(void*), void* arg, const u64* in, u64* out);
+
+#define ABI_STR_(x) #x
+#define ABI_STR(x) ABI_STR_(x)
+#define ABI_SYM(name) ABI_STR(__USER_LABEL_PREFIX__) #name
+#if defined(__ELF__)
+#define ABI_TEXT ".pushsection .text\n\t"
+#define ABI_TEXT_END ".popsection\n"
+#else
+#define ABI_TEXT ".text\n\t"
+#define ABI_TEXT_END ""
+#endif
+
+//in: x19-x29 (11), d8-d15 (8); out: the same nineteen behind the call, and sp in front of it and behind it
+__asm__
+(
+	ABI_TEXT
+	".p2align 2\n\t"
+	".globl " ABI_SYM(sh4bp_abi_thunk) "\n"
+	ABI_SYM(sh4bp_abi_thunk) ":\n\t"
+	"hint #34\n\t"						// bti c
+	"stp x29, x30, [sp, #-176]!\n\t"
+	"stp x19, x20, [sp, #16]\n\t"
+	"stp x21, x22, [sp, #32]\n\t"
+	"stp x23, x24, [sp, #48]\n\t"
+	"stp x25, x26, [sp, #64]\n\t"
+	"stp x27, x28, [sp, #80]\n\t"
+	"stp d8, d9, [sp, #96]\n\t"
+	"stp d10, d11, [sp, #112]\n\t"
+	"stp d12, d13, [sp, #128]\n\t"
+	"stp d14, d15, [sp, #144]\n\t"
+	"str x3, [sp, #160]\n\t"
+	"mov x9, sp\n\t"
+	"str x9, [x3, #152]\n\t"
+	"mov x9, x0\n\t"
+	"mov x0, x1\n\t"
+	"ldp x19, x20, [x2, #0]\n\t"
+	"ldp x21, x22, [x2, #16]\n\t"
+	"ldp x23, x24, [x2, #32]\n\t"
+	"ldp x25, x26, [x2, #48]\n\t"
+	"ldp x27, x28, [x2, #64]\n\t"
+	"ldr x29, [x2, #80]\n\t"
+	"ldp d8, d9, [x2, #88]\n\t"
+	"ldp d10, d11, [x2, #104]\n\t"
+	"ldp d12, d13, [x2, #120]\n\t"
+	"ldp d14, d15, [x2, #136]\n\t"
+	"blr x9\n\t"
+	"ldr x9, [sp, #160]\n\t"
+	"stp x19, x20, [x9, #0]\n\t"
+	"stp x21, x22, [x9, #16]\n\t"
+	"stp x23, x24, [x9, #32]\n\t"
+	"stp x25, x26, [x9, #48]\n\t"
+	"stp x27, x28, [x9, #64]\n\t"
+	"str x29, [x9, #80]\n\t"
+	"stp d8, d9, [x9, #88]\n\t"
+	"stp d10, d11, [x9, #104]\n\t"
+	"stp d12, d13, [x9, #120]\n\t"
+	"stp d14, d15, [x9, #136]\n\t"
+	"mov x10, sp\n\t"
+	"str x10, [x9, #160]\n\t"
+	"ldp d14, d15, [sp, #144]\n\t"
+	"ldp d12, d13, [sp, #128]\n\t"
+	"ldp d10, d11, [sp, #112]\n\t"
+	"ldp d8, d9, [sp, #96]\n\t"
+	"ldp x27, x28, [sp, #80]\n\t"
+	"ldp x25, x26, [sp, #64]\n\t"
+	"ldp x23, x24, [sp, #48]\n\t"
+	"ldp x21, x22, [sp, #32]\n\t"
+	"ldp x19, x20, [sp, #16]\n\t"
+	"ldp x29, x30, [sp], #176\n\t"
+	"ret\n\t"
+	ABI_TEXT_END
+);
+
+static const char* const abi_names[19] = {
+	"x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29",
+	"d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15",
+};
+
+//What the wrappers found, for the case that runs
+static struct
+{
+	MainloopFnPtr_t mainloop;
+	RunBlockFnPtr_t runblock;
+	u64 seed;
+	u32 mainloop_calls, runblock_calls;
+	u32 bad_calls;
+	char first_bad[200];
+} abi;
+
+static void abi_call(void (*fn)(void*), void* arg, const char* what)
+{
+	u64 in[19];
+	u64 out[21];
+
+	//values a block does not make: every bit pattern of the canaries differs in both halves from call to call
+	for (u32 i = 0; i < 19; i++)
+		in[i] = (abi.seed += 0x9E3779B97F4A7C15ull) | 0x8000000100000001ull;
+
+	memset(out, 0, sizeof(out));
+	sh4bp_abi_thunk(fn, arg, in, out);
+
+	int wrong = -1;
+	for (u32 i = 0; i < 19 && wrong < 0; i++)
+		if (out[i] != in[i])
+			wrong = (int)i;
+
+	if (wrong >= 0 || out[20] != out[19])
+	{
+		if (abi.bad_calls++ == 0)
+		{
+			if (wrong >= 0)
+				snprintf(abi.first_bad, sizeof(abi.first_bad), "%s gave %s back as %016llX, not %016llX", what, abi_names[wrong],
+					(unsigned long long)out[wrong], (unsigned long long)in[wrong]);
+			else
+				snprintf(abi.first_bad, sizeof(abi.first_bad), "%s gave sp back as %016llX, not %016llX", what,
+					(unsigned long long)out[20], (unsigned long long)out[19]);
+		}
+	}
+}
+
+static void abi_mainloop(void* rcb)
+{
+	abi.mainloop_calls++;
+	abi_call(abi.mainloop, rcb, "Mainloop");
+}
+
+static void abi_runblock(void* code)
+{
+	abi.runblock_calls++;
+	abi_call((void (*)(void*))abi.runblock, code, "RunBlock");
+}
+
+//The wrappers in the place of the backend's two entries, from here until abi_off()
+static void abi_on()
+{
+	abi.mainloop = rdv_ngen->Mainloop;
+	abi.runblock = rdv_ngen->RunBlock;
+
+	rdv_ngen->Mainloop = abi_mainloop;
+	if (abi.runblock)
+		rdv_ngen->RunBlock = abi_runblock;
+
+	abi.mainloop_calls = abi.runblock_calls = abi.bad_calls = 0;
+	abi.first_bad[0] = 0;
+}
+
+static void abi_off()
+{
+	rdv_ngen->Mainloop = abi.mainloop;
+	rdv_ngen->RunBlock = abi.runblock;
+}
+
+//The line of flush_line_write at its top, run until the host stops it at the given slice
+static Dense abi_line(u32 host_stop_slice)
+{
+	machine_reset(ENGINE_JIT);
+
+	Dense d = flush_line_write(0x8C020000);
+
+	R(8) = 0;		//2^32 passes
+	R(12) = G_leaf;
+	R(13) = G_data;
+	R(14) = d.top;
+	machine_set_pc(d.top);
+	machine_set_sr(SR_MD);
+
+	knobs.host_stop_slice = host_stop_slice;
+
+	return d;
+}
+
+//One case: what the wrappers counted, and that every call gave the registers back
+static void abi_case(const char* what, bool ran, u32 mainloop_calls, u32 runblock_calls)
+{
+	check(ran && abi.mainloop_calls >= mainloop_calls && abi.runblock_calls >= runblock_calls && abi.bad_calls == 0,
+		"%s: x19-x29, d8-d15 and sp came back as they were from %u calls of Mainloop and %u of RunBlock (%u did not%s%s)",
+		what, abi.mainloop_calls, abi.runblock_calls, abi.bad_calls, abi.bad_calls ? ": " : "", abi.first_bad);
+}
+
+static void gate_abi()
+{
+	ngen_features features = { };
+	rdv_ngen->GetFeatures(&features);
+
+	//the loop entered with the cpu stopped: the poll leaves it at once
+	{
+		abi_line(0);
+		abi_on();
+		Sh4cntx.CpuRunning = 0;
+		rdv_ngen->Mainloop(sh4_dyna_rcb);
+		abi_off();
+
+		abi_case("Mainloop entered with the cpu stopped", true, 1, 0);
+	}
+
+	//a host stop at a slice end: the loop ends at its poll behind the slice end
+	{
+		abi_line(6);
+		abi_on();
+		MachineStop s = machine_resume();
+		abi_off();
+
+		abi_case("the blocks of a line that writes r0-r7 and fr0-fr9, to a host stop", !s.debugger && counters.slices >= 6 && R(0) != 0, 1, 0);
+	}
+
+	//a pause latched at a slice end, and the resumes behind it
+	{
+		abi_line(30);
+		knobs.pause_every = 4;
+		abi_on();
+
+		u32 pauses = 0;
+		for (;;)
+		{
+			MachineStop s = machine_resume();
+
+			if (!s.debugger)
+				break;
+			pauses += s.cause == StopCause::Pause;
+		}
+		abi_off();
+
+		abi_case("pauses latched at slice ends, each resumed, to a host stop", pauses >= 5, pauses + 1, 0);
+	}
+
+	//the loop entered with the slice used up: the end of the slice comes first
+	{
+		abi_line(5);
+		rdv_ngen->SetSliceCyclesLeft(-7);
+		abi_on();
+		MachineStop s = machine_resume();
+		abi_off();
+
+		abi_case("Mainloop entered with the slice used up (-7 cycles left), to a host stop", !s.debugger && counters.slices >= 5, 1, 0);
+	}
+
+	if (!features.DebugChecks)
+	{
+		note("the recompiler has no native debugger checks: no case of a check, a flow report, a block's rest or RunBlock");
+		return;
+	}
+
+	//a check that stops, in a block behind writes of every register: the check stub's exit
+	{
+		Dense d = abi_line(0);
+		bps({ d.top + 18 * 2 });
+		abi_on();
+		MachineStop s = machine_resume();
+		abi_off();
+
+		abi_case("a check that stops in a block (the check stub's exit)", is_bp(s, 1, d.top + 18 * 2), 1, 0);
+	}
+
+	//steps: RunBlock, its exit behind the block; and a step that uses the slice up, RunBlock's end of the slice
+	{
+		Dense d = abi_line(0);
+		abi_on();
+		MachineStop s1 = machine_step();
+		const u64 slices = counters.slices;
+		rdv_ngen->SetSliceCyclesLeft(1);
+		MachineStop s2 = machine_step();
+		abi_off();
+
+		abi_case("two steps, the second of which ends the slice (RunBlock, its exit and its end of the slice)",
+			is_step(s1, d.top + 2) && is_step(s2, d.top + 4) && counters.slices == slices + 1, 0, 2);
+	}
+
+	//A step-out from the leaf the line calls: the flow report of its return stops (that exit). From the stop at the
+	//leaf's entry the rest of its block is owed and runs outside the block cache, so the report is made in RunBlock;
+	//with the pc written in that stop nothing is owed (b10), and the report is made in a block of the main loop
+	for (bool written : { false, true })
+	{
+		Dense d = abi_line(0);
+		bps({ G_leaf });
+		abi_on();
+		MachineStop a = machine_resume();
+		bps({});
+		if (written)
+			machine_set_pc(G_leaf);
+		const u32 mainloop_calls = abi.mainloop_calls, runblock_calls = abi.runblock_calls;
+		MachineStop b = machine_step_out();
+		abi_off();
+
+		const bool ok = is_bp(a, 1, G_leaf) && b.debugger && b.cause == StopCause::Step && b.pc == d.call + 4
+			&& (written ? abi.mainloop_calls == mainloop_calls + 1 && abi.runblock_calls == runblock_calls
+			            : abi.runblock_calls == runblock_calls + 1);
+
+		abi_case(written ? "a step-out from the leaf the line calls, the pc written at the stop: the flow report of its return stops in "
+		                   "a block of the main loop (that exit)"
+		                 : "a step-out from the leaf the line calls: the flow report of its return stops in the rest of the leaf's block, "
+		                   "which RunBlock runs (that exit)",
+			ok, written ? 2 : 1, written ? 0 : 1);
+	}
+
+	//the code of a block that ends in front of its rest (more armed and muted instructions than the budget): that
+	//exit, and RunBlock for the rest
+	{
+		Dense d = dense_start(ENGINE_JIT, 0x8C020000, features.DebugCheckBudget + 40, true, 0);
+
+		machine_set_sr(SR_MD);
+		dense_arm(d, features.DebugCheckBudget + 40);
+		dbg::sh4::SetActiveMask(0);
+		knobs.host_stop_slice = 12;
+
+		abi_on();
+		MachineStop s = machine_resume();
+		abi_off();
+
+		abi_case("a block whose code hands its rest over, to a host stop (that exit, and RunBlock for the rest)",
+			!s.debugger && dense_blocks().with_rest != 0, 2, 1);
+	}
+}
+#endif
+
+
 const Gate gates[] = {
 	{ "b1", "B1 exact pc and registers at a hit: block start, mid-block, delay slot", gate_b1 },
 	{ "b2", "B2 resume exempts once; hit counts in a loop; time at the loop exit", gate_b2 },
@@ -3483,6 +4077,12 @@ const Gate gates[] = {
 	{ "arm", "page discards on arming, blocks over two pages, category mask, breakpoints added in a stop", gate_arm },
 	{ "event", "an event breakpoint on the vblank of the machine: at a slice end, in a SLEEP wait, with an interrupt request", gate_event },
 	{ "threads", "the recompiler of a new emulator thread: the code region of the process, prepared once, and an empty code cache in it", gate_threads },
+#if HOST_CPU == CPU_ARM64
+	{ "abi", "arm64: x19-x29, d8-d15 and sp given back by the main loop and RunBlock, through each of their exits", gate_abi },
+#endif
+#if defined(_WIN32)
+	{ "unwind", "Windows: a stop of a check walked by the system's unwinder through the check stub, the block and the main loop", gate_unwind },
+#endif
 };
 
 const u32 gate_count = sizeof(gates) / sizeof(gates[0]);

@@ -41,6 +41,7 @@
 #include "deps/nlohmann/json.hpp"
 
 #include "dbg_selftest.h"
+#include "dbg_selftest_nap.h"
 #include "dbg_arm7.h"
 #include "dbg_core_private.h"
 #include "dbg_dsp.h"
@@ -51,8 +52,10 @@
 #include "dbg_symbols.h"
 
 #include "libswirl.h"
+#include "nulldc_version.h"
 #include "cfg/cfg.h"
 #include "hw/sh4/sh4_if.h"
+#include "hw/sh4/sh4_interpreter.h"
 #include "hw/sh4/sh4_mem.h"
 #include "hw/sh4/sh4_opcode_list.h"
 #include "hw/sh4/sh4_sched.h"
@@ -102,7 +105,7 @@ double MsSince(Clock::time_point t0)
 
 void Nap(int ms)
 {
-	std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+	selftest::NapUs((s64)ms * 1000);
 }
 
 /*
@@ -159,7 +162,7 @@ bool WaitLifetime(Lifetime want, int timeout_ms = kBoundMs)
 		if (MsSince(t0) > timeout_ms)
 			return false;
 
-		std::this_thread::sleep_for(std::chrono::microseconds(100));
+		selftest::NapUs(100);
 	}
 
 	return true;
@@ -1440,7 +1443,7 @@ DBG_SELFTEST(core_tick, "core.tick")
 	if (shape.is_object() && shape.contains("deviceTree"))
 		CollectNodes(shape["deviceTree"], "", &nodes, &problems);
 
-	Check(shape.size() == 6 && shape["emulator"] == json({ { "name", "nullDC" }, { "version", "3.0.0" }, { "build", "native" } }) && shape["protocol"] == 3
+	Check(shape.size() == 6 && shape["emulator"] == json({ { "name", "nullDC" }, { "version", nulldc_version() }, { "build", "native" } }) && shape["protocol"] == 3
 		&& shape["ui"].is_string() && shape["capabilities"].is_array() && shape["targets"].is_array() && shape["deviceTree"].is_array(),
 		"it has emulator, protocol 3, ui, capabilities, targets and deviceTree, and nothing else");
 
@@ -2581,6 +2584,16 @@ BOUNDED_GUEST_TEST(core_reset, "core.reset")
 			"the tables are what they were: the breakpoint that had stopped, the disabled one, the watch and the muted category (%s)", tick["breakpoints"].dump().c_str());
 
 		CheckArm7(tick, false, "behind the reset");
+
+		// The slice in progress belongs to the machine before the reset: the reset leaves the SH4's slice counter
+		// full (SuperH4Backend::ResetSlice), so that the machine behind it begins at the start of a slice
+		{
+			emu::Sh4EngineInfo info = { };
+			const bool known = emu::GetSh4Engine(&info);
+
+			Check(known && info.sliceCyclesLeft == SH4_TIMESLICE, "and its slice counter is full: %d cycles of a slice of %d left (%s)", info.sliceCyclesLeft,
+				SH4_TIMESLICE, known ? info.backend : "no engine");
+		}
 
 		// the machine runs behind its reset: the boot stops at the entry again
 		rs.stop0 = stop.stopId;

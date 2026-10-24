@@ -133,6 +133,18 @@ static INLINE void RaiseFPUDisableException()
 #define SH4_QNAN32 0x7FBFFFFF
 #define SH4_QNAN64 0x7FF7FFFFFFFFFFFFull
 
+// What fixNaN writes. For the host both are signalling NaNs, and MSVC folds such bits, copied into a float,
+// into a float constant made quiet (0x7FFFFFFF, 0x7FFFFFFF FFFFFFFF): there the bits are read at run time
+#if BUILD_COMPILER == COMPILER_VC
+static const volatile u32 sh4_qnan32_bits = SH4_QNAN32;
+static const volatile u64 sh4_qnan64_bits = SH4_QNAN64;
+#define SH4_QNAN32_BITS sh4_qnan32_bits
+#define SH4_QNAN64_BITS sh4_qnan64_bits
+#else
+#define SH4_QNAN32_BITS SH4_QNAN32
+#define SH4_QNAN64_BITS SH4_QNAN64
+#endif
+
 static INLINE f32 fixNaN(f32 f)
 {
 	u32 hex;
@@ -140,7 +152,7 @@ static INLINE f32 fixNaN(f32 f)
 
 	if ((hex & 0x7FFFFFFF) > 0x7F800000)
 	{
-		hex = SH4_QNAN32;
+		hex = SH4_QNAN32_BITS;
 		memcpy(&f, &hex, sizeof(f));
 	}
 
@@ -154,7 +166,7 @@ static INLINE f64 fixNaN64(f64 f)
 
 	if ((hex & 0x7FFFFFFFFFFFFFFFull) > 0x7FF0000000000000ull)
 	{
-		hex = SH4_QNAN64;
+		hex = SH4_QNAN64_BITS;
 		memcpy(&f, &hex, sizeof(f));
 	}
 

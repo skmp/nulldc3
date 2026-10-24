@@ -15,7 +15,9 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmacro-redefined"
 #endif
-#if HOST_OS == OS_DARWIN
+// The page of the host: 16 KiB on Apple silicon (arm64 macOS), 4 KiB elsewhere, macOS on x86_64 among them
+// (common_linux_setup() of linux/common.cpp checks it against the system's at start)
+#if HOST_OS == OS_DARWIN && HOST_CPU == CPU_ARM64
 #define REI_PAGE_SIZE 16384
 #else
 #define REI_PAGE_SIZE 4096

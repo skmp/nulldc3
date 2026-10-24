@@ -4,6 +4,18 @@
 #	build, <build dir>/system/emulator, or NULLDC_EMULATOR). selftest.py runs a session and says what it has
 #	to end with; README.md has the tests.
 #
+#	On Windows tests/system builds no emulator: NULLDC_EMULATOR is nulldc3.exe of an emulator build, and without it
+#	the tests are skipped with that reason. There every program the scripts start runs inside nulldc3-winrun
+#	(tests/common/emurun.py), whose path the tests have in NULLDC_WINRUN: the one of NULLDC_WINRUN, or the one
+#	tests/windows builds.
+#
+#	On macOS tests/system builds no emulator either: NULLDC_EMULATOR is the executable of an emulator build's bundle,
+#	<build>/nulldc3.app/Contents/MacOS/nulldc3, and without it, or with one that names no file, the tests are tests
+#	whose data is missing (failures with NULLDC_TESTS_REQUIRE_DATA), and the configure says so. There the scripts
+#	start the emulator, and every other program, through tests/macos/macrun.py (tests/common/emurun.py): the sandbox
+#	profile that denies the window server, the Dock and LaunchServices, a session of its own, a timeout, TMPDIR in
+#	the run's directory.
+#
 #	A package registers the selftest of its file libswirl/debugger/dbg_selftest_<package>.cpp with one line:
 #
 #	    nulldc_debugger_selftest(<name>)
@@ -20,23 +32,58 @@
 #	    ARGS <argument>...          more arguments for selftest.py
 #	    TIMEOUT <seconds>           of ctest, default 600
 #
+#	The sessions nap for fractions of a millisecond, between pauses, while they wait for a state and for every
+#	slice inside a SLEEP wait. They nap with dbg::selftest::NapUs (libswirl/debugger/dbg_selftest_nap.h): on
+#	Windows std::this_thread::sleep_for lasts a tick of the system timer, 15.6 ms, whatever it is asked for, and
+#	emu outlasted its watchdog there and emurun.pauses its run; NapUs is sleep_for on a POSIX host and on Windows a
+#	high-resolution waitable timer and a short spin. debugger.selftest.nap holds it
+#
 
 find_package(Python3 COMPONENTS Interpreter)
 
 set(nulldc_selftest_skip "")
 if(NOT NULLDC_SYSTEM_TESTS AND NOT NULLDC_EMULATOR)
   set(nulldc_selftest_skip "NULLDC_SYSTEM_TESTS is OFF and no NULLDC_EMULATOR is given: there is no emulator to run")
-elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX})
-  set(nulldc_selftest_skip "headless mode is there on Linux hosts only")
+elseif(${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT NULLDC_EMULATOR)
+  set(nulldc_selftest_skip
+      "no NULLDC_EMULATOR is given, and on Windows tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<nulldc3.exe of an emulator build>")
+elseif(NOT ${HOST_OS} EQUAL ${OS_LINUX} AND NOT ${HOST_OS} EQUAL ${OS_WINDOWS} AND NOT ${HOST_OS} EQUAL ${OS_DARWIN})
+  set(nulldc_selftest_skip "headless mode is there on Linux, Windows and macOS hosts only")
 elseif(NOT Python3_Interpreter_FOUND)
   set(nulldc_selftest_skip "no python3 to run tests/debugger/selftest/selftest.py with")
+endif()
+
+# macOS: the emulator is the one of NULLDC_EMULATOR, which has to name a file (nulldc_selftest_missing: the reason)
+set(nulldc_selftest_missing "")
+if(NOT nulldc_selftest_skip AND ${HOST_OS} EQUAL ${OS_DARWIN})
+  if(NOT NULLDC_EMULATOR)
+    set(nulldc_selftest_missing
+        "no NULLDC_EMULATOR is given, and on macOS tests/system builds no emulator: configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  elseif(NOT EXISTS "${NULLDC_EMULATOR}" OR IS_DIRECTORY "${NULLDC_EMULATOR}")
+    set(nulldc_selftest_missing
+        "NULLDC_EMULATOR names no file (\"${NULLDC_EMULATOR}\"): configure with -DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3")
+  endif()
+  if(nulldc_selftest_missing)
+    message(WARNING "tests/debugger/selftest: ${nulldc_selftest_missing}")
+  endif()
 endif()
 
 if(NULLDC_EMULATOR)
   set(nulldc_selftest_emulator "${NULLDC_EMULATOR}")
 else()
   # what tests/system builds, every time the project is built
-  set(nulldc_selftest_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3")
+  set(nulldc_selftest_emulator "${CMAKE_BINARY_DIR}/system/emulator/nulldc3${CMAKE_EXECUTABLE_SUFFIX}")
+endif()
+
+# The environment of the tests: Python writes no bytecode into the source tree; on Windows the scripts start every
+# program inside nulldc3-winrun (tests/common/emurun.py)
+set(nulldc_selftest_env PYTHONDONTWRITEBYTECODE=1)
+if(${HOST_OS} EQUAL ${OS_WINDOWS})
+  if(NULLDC_WINRUN)
+    list(APPEND nulldc_selftest_env "NULLDC_WINRUN=${NULLDC_WINRUN}")
+  else()
+    list(APPEND nulldc_selftest_env "NULLDC_WINRUN=$<TARGET_FILE:nulldc3_winrun>")
+  endif()
 endif()
 
 function(nulldc_debugger_selftest name)
@@ -65,6 +112,9 @@ function(nulldc_debugger_selftest name)
     if(nulldc_selftest_skip)
       nulldc_add_skipped_test(${test} "${nulldc_selftest_skip}")
       continue()
+    elseif(nulldc_selftest_missing)
+      nulldc_add_missing_data_test(${test} "${nulldc_selftest_missing}")
+      continue()
     endif()
 
     set(command "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/selftest/selftest.py"
@@ -89,15 +139,20 @@ function(nulldc_debugger_selftest name)
     endforeach()
 
     add_test(NAME ${test} COMMAND ${command} ${ARG_ARGS})
-    # selftest.py has a watchdog per run of the emulator, this is the one behind it. Python writes no bytecode
-    # into the source tree
-    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+    # selftest.py has a watchdog per run of the emulator, this is the one behind it
+    set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT} ENVIRONMENT "${nulldc_selftest_env}")
   endforeach()
 endfunction()
 
 # One line for the selftest of each package of the debugger
 
 nulldc_debugger_selftest(emu)
+
+# The naps of the sessions (libswirl/debugger/dbg_selftest_nap.cpp): naps of 100 us to 50 ms last what they were
+# asked for, never less and at most a little more, and wait without a spin for the nap; on a POSIX host as long as
+# std::this_thread::sleep_for of the same request, to within 50 us; on Windows also without the high-resolution
+# timer. A machine test, on one engine
+nulldc_debugger_selftest(nap ENGINES jit)
 
 # The device tree's registers, guest memory and the device accessors against the live machine
 # (libswirl/debugger/dbg_selftest_regs.cpp): machine tests, on the machine of the booted program, and one
@@ -154,19 +209,44 @@ nulldc_debugger_selftest(writes.fallback SELFTEST writes ENGINES jit CONFIG Debu
 nulldc_debugger_selftest(writes.smc SELFTEST smcwrites ENGINES jit CONFIG config:Dynarec.SmcCheckLevel=-1
                          ARGS --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf")
 
-# What sessions of those have to agree on, and the forced fallback and idleskip off: the script of that
+# The store queues with the MMU off (libswirl/debugger/dbg_selftest_sqw.cpp): a program of the test sets QACR0 and
+# QACR1 to area 3 and sends 32 bytes through SQ0 and 32 through SQ1 with a pref each; the 64 bytes are in main memory
+# and nothing around them changed, compared with the values written. Then the store queue function of the context,
+# which the recompiler's blocks call for their pref, called by the test as they call it: the same. On the JIT and
+# on the interpreter
+nulldc_debugger_selftest(sqw)
+
+# What sessions of those have to agree on, and the forced fallback and idleskip off: sessions.py of that
 # directory, whose sessions are headless too
 set(test debugger.selftest.sh4bp.sessions)
 if(nulldc_selftest_skip)
   nulldc_add_skipped_test(${test} "${nulldc_selftest_skip}")
+elseif(nulldc_selftest_missing)
+  nulldc_add_missing_data_test(${test} "${nulldc_selftest_missing}")
 elseif(NOT NULLDC_ELF_DIR OR NOT EXISTS "${NULLDC_ELF_DIR}/2ndmix.elf")
   nulldc_add_missing_data_test(${test}
     "no 2ndmix.elf in NULLDC_ELF_DIR (\"${NULLDC_ELF_DIR}\"), configure with -DNULLDC_ELF_DIR=<directory with the KallistiOS examples>")
 else()
   add_test(NAME ${test}
-           COMMAND bash "${nulldc_tests_path}/debugger/sh4bp/selftest.sh" "${nulldc_selftest_emulator}" "${NULLDC_ELF_DIR}/2ndmix.elf"
-                   "${CMAKE_BINARY_DIR}/debugger/selftest/work/${test}")
-  set_tests_properties(${test} PROPERTIES TIMEOUT 1800)
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/sh4bp/sessions.py" "${nulldc_selftest_emulator}"
+                   "${NULLDC_ELF_DIR}/2ndmix.elf" "${CMAKE_BINARY_DIR}/debugger/selftest/work/${test}")
+  set_tests_properties(${test} PROPERTIES TIMEOUT 1800 ENVIRONMENT "${nulldc_selftest_env}")
+endif()
+
+# What the scripts make of what they read, on made-up input, no emulator is run: there wherever python3 is.
+# log.rule: selftest.py's checks on the output of a session whose lines end in \n and in \r\n. sessions.rule:
+# the comparisons of sessions.py on made-up sessions, every key it holds and the repeats of its rule
+if(Python3_Interpreter_FOUND)
+  add_test(NAME debugger.selftest.log.rule
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/selftest/selftest.py" --mode log-rule
+                   --work "${CMAKE_BINARY_DIR}/debugger/selftest/work/debugger.selftest.log.rule")
+  add_test(NAME debugger.selftest.sh4bp.sessions.rule
+           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/sh4bp/sessions.py" --rule)
+  set_tests_properties(debugger.selftest.log.rule debugger.selftest.sh4bp.sessions.rule PROPERTIES
+                       TIMEOUT 60 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+else()
+  nulldc_add_skipped_test(debugger.selftest.log.rule "no python3 to run tests/debugger/selftest/selftest.py with")
+  nulldc_add_skipped_test(debugger.selftest.sh4bp.sessions.rule "no python3 to run tests/debugger/sh4bp/sessions.py with")
 endif()
 
 
@@ -179,12 +259,10 @@ nulldc_debugger_selftest(emuexit.parked  MODE guest-exit)
 
 # The debugger at work in a run that an Exit.* key ends: the state hash of a run nobody touched.
 # A pause and its resume leave no trace on a backend whose slice counter is the same after Loop() was left and
-# entered again (SH4DBG_NATIVE, hw/sh4/sh4_if.h): emurun.pauses runs on those, the interpreter and the x64
-# recompiler. A backend that starts its counter anew at every entry loses what its last block ran over the slice
-set(nulldc_selftest_exact_engines interp)
-if(${HOST_CPU} EQUAL ${CPU_X64})
-  set(nulldc_selftest_exact_engines jit interp)
-endif()
+# entered again, and whose loop is left with nothing owed (hw/sh4/sh4_if.h): the interpreter, and the recompilers
+# of x86-64 and arm64 hosts, which keep their counters and test them in front of a block's charge. emurun.pauses runs
+# on both engines of every host
+set(nulldc_selftest_exact_engines jit interp)
 
 nulldc_debugger_selftest(emurun.reads   MODE same-hash ELF 2ndmix.elf)
 nulldc_debugger_selftest(emurun.pending MODE same-hash ELF 2ndmix.elf)

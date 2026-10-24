@@ -29,6 +29,7 @@
 #include "hw/sh4/sh4_interpreter.h"
 #include "hw/sh4/sh4_mmr.h"
 #include "hw/sh4/sh4_sched.h"
+#include "nulldc_version.h"
 #include "serialize.h"
 
 #include <algorithm>
@@ -998,7 +999,7 @@ DBG_SELFTEST(regs_values, "regs.values")
 	Check(ok && strcmp(text, "200MHz") == 0, "dc.SYSCLK is \"%s\"", text);
 
 	ok = root && regs::Read(*root, (u32)regs::FindRegister(*root, "BUILD"), nullptr, text, sizeof(text));
-	Check(ok && strncmp(text, "nullDC 3.0.0", 12) == 0, "dc.BUILD is \"%s\"", text);
+	Check(ok && std::string(text) == std::string("nullDC ") + nulldc_version(), "dc.BUILD is \"%s\"", text);
 
 	ok = timing && regs::Read(*timing, (u32)regs::FindRegister(*timing, "MODE"), nullptr, text, sizeof(text));
 	Check(ok && strcmp(text, "fast") == 0, "dc.timing.MODE is \"%s\"", text);
@@ -2672,8 +2673,8 @@ std::vector<u8> MakeGdromState(const std::vector<u8>& real, u32 seed)
 	std::vector<u8> made(real.size());
 	u32 state = seed * 0x9E3779B1u + 0x1234567u;
 
-	for (u8& byte : made)
-		byte = (NextRandom(&state) >> 16) & 1;
+	for (u8& b : made)
+		b = (NextRandom(&state) >> 16) & 1;
 
 	size_t state_at, disc_at;
 	gd_states gd_state;

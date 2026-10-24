@@ -916,7 +916,7 @@ struct SuperH4Mmr_impl final : SuperH4Mmr
 	}
 
 	virtual void serialize(void** data, unsigned int* total_size) {
-		REICAST_SA(OnChipRAM.data, OnChipRAM_SIZE);
+		NULLDC_SA(OnChipRAM.data, OnChipRAM_SIZE);
 
 #define register_serialize(mod1, mod2, data, total_size) register_serialize(mod1.data(), mod1.size(), data, total_size); mod##mod2->serialize(data, total_size)
 
@@ -933,7 +933,7 @@ struct SuperH4Mmr_impl final : SuperH4Mmr
 	}
 
 	virtual void unserialize(void** data, unsigned int* total_size) {
-		REICAST_USA(OnChipRAM.data, OnChipRAM_SIZE);
+		NULLDC_USA(OnChipRAM.data, OnChipRAM_SIZE);
 
 #define register_unserialize(mod1, mod2, data, total_size) register_unserialize(mod1.data(), mod1.size(), data, total_size); mod##mod2->unserialize(data, total_size)
 

@@ -170,10 +170,10 @@ void LoadGuest()
 	emu::SetSh4Breakpoints(nullptr, nullptr, 0);
 	emu::SetActiveMask(~0u);
 
-	// compiled code of what was there
+	// compiled code of what was there (DebugDiscardPage discards one 4 KiB page, design R4)
 	if (backend)
 	{
-		for (u32 addr = G_BASE; addr < G_BASE + sizeof(guest_image) + REI_PAGE_SIZE; addr += REI_PAGE_SIZE)
+		for (u32 addr = G_BASE; addr < G_BASE + sizeof(guest_image) + 4096; addr += 4096)
 			backend->DebugDiscardPage(addr);
 	}
 

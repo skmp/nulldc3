@@ -52,6 +52,12 @@ extern "C" {
 #include <stdio.h>
 #include <time.h>
 
+#ifdef _MSC_VER
+/* MSVC has no ssize_t: the signed size of POSIX */
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#endif
+
 /* flags for zip_open */
 
 #define ZIP_CREATE           1

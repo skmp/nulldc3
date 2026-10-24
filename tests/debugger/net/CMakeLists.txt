@@ -52,16 +52,34 @@ add_library(dbg_net STATIC "${d_debugger}/dbg_net.cpp" "${d_core}/deps/crypto/sh
 target_compile_options(dbg_net PRIVATE ${warnings})
 target_link_libraries(dbg_net PUBLIC ${platform_libs})
 
+# The version, which the page dbg_webui.cpp serves without a bundle names: nulldc3/cmake/version.cmake runs at every
+# build into this project's build directory, as it does for the emulator (nulldc3/README.md). The step has a target
+# name of its own: the tests project, which adds this directory, has a step of its own as well. libswirl/version.cpp
+# alone is compiled here, with the generated directory on its include path alone; it includes nothing of the
+# emulator (version_title.cpp would need types.h and the emulator's TARGET_* definitions, which this project has
+# not).
+add_custom_target(dbg_net_version
+  COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${tree}" "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+          -P "${tree}/nulldc3/cmake/version.cmake"
+  BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/generated/nulldc3_version.h" "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.txt"
+             "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.cmake"
+  COMMENT "The version of nullDC (tests/debugger/net)"
+  VERBATIM)
+
 # The UI: dbg_webui.cpp registers itself with dbg_net from a static initialiser, so its object has to be
-# linked as such; out of a static library the linker would drop it.
+# linked as such; out of a static library the linker would drop it. version.cpp is linked with it by every
+# executable that takes its objects.
 set(NULLDC_DEVTOOLS_DIST "${CMAKE_CURRENT_SOURCE_DIR}/bundle" CACHE STRING "Devtools UI bundle to embed, or OFF")
 include("${d_debugger}/cmake/dbg_webui.cmake")
 dbg_webui_data("${tree}" webui_data)
 set(zlib "${d_core}/deps/zlib")
 add_library(dbg_webui OBJECT
-  "${d_debugger}/dbg_webui.cpp" "${webui_data}"
+  "${d_debugger}/dbg_webui.cpp" "${d_core}/version.cpp" "${webui_data}"
   "${zlib}/inflate.c" "${zlib}/inftrees.c" "${zlib}/inffast.c" "${zlib}/zutil.c" "${zlib}/adler32.c" "${zlib}/crc32.c")
+add_dependencies(dbg_webui dbg_net_version)
 set_source_files_properties("${d_debugger}/dbg_webui.cpp" PROPERTIES COMPILE_OPTIONS "${warnings}")
+set_source_files_properties("${d_core}/version.cpp" PROPERTIES COMPILE_OPTIONS "${warnings}"
+                            INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 enable_testing()
 
@@ -101,6 +119,13 @@ target_link_libraries(dbg_net_demo dbg_net)
 foreach(name test_ws test_http test_fuzz test_e2e test_bounds test_webui)
   set_tests_properties(${NULLDC_TEST_PREFIX}${name} PROPERTIES TIMEOUT 300)
 endforeach()
+
+# On Windows every program of this directory has the policy of the tests project for a program that dies (tests/common/win_policy.cpp: no box, no crash report, one line and 128 + the signal's number)
+if(WIN32)
+  foreach(name test_ws test_http test_fuzz test_e2e test_bounds test_webui dbg_net_demo)
+    target_sources(${name} PRIVATE "${tree}/tests/common/win_policy.cpp")
+  endforeach()
+endif()
 
 # Interoperability with the "ws" package of the devtools tree. Skipped without node or without the package:
 # the script prints "SKIP: <reason>" and returns 77 for the latter. With NULLDC_TESTS_REQUIRE_DATA either one

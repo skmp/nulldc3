@@ -70,10 +70,10 @@ static int allocate_shared_filemem(unsigned size) {
 		fd = memfd_create("dcnzorz_mem", MFD_CLOEXEC);
 		#endif
 
-		#if HOST_OS != OS_DARWIN
 		// a name of this process: its pid, and a counter for a name that is there all the same (a process
 		// of another pid namespace that shares /dev/shm). A name that is there is someone else's: it is
-		// left alone. The name is removed as soon as it is open.
+		// left alone. The name is removed as soon as it is open. macOS too (PL-D48): the name is in its
+		// limit of 31 characters, and the one ftruncate below is what it allows of an object of shm_open.
 		for (unsigned attempt = 0; fd < 0 && attempt < 64; attempt++) {
 			char name[64];
 			snprintf(name, sizeof(name), "/dcnzorz_mem.%ld.%u", (long)getpid(), attempt);
@@ -83,9 +83,8 @@ static int allocate_shared_filemem(unsigned size) {
 			else if (errno != EEXIST)
 				break;
 		}
-		#endif
 
-		// if shmem does not work (or using OSX) fallback to a regular file on disk, of a name of its own
+		// if shmem does not work fallback to a regular file on disk, of a name of its own
 		if (fd < 0) {
 			string path = get_writable_data_path("/dcnzorz_mem.XXXXXX");
 			vector<char> name(path.begin(), path.end());
@@ -195,7 +194,7 @@ bool vmem_platform_prepare_jit_block(void *code_area, unsigned size, void **code
 	// Try to map is as RWX, this fails apparently on OSX (and perhaps other systems?)
 	if (mprotect(code_area, size, PROT_READ | PROT_WRITE | PROT_EXEC)) {
 		// Well it failed, use another approach, unmap the memory area and remap it back.
-		// Seems it works well on Darwin according to reicast code :P
+		// Seems it works well on Darwin according to the emulator's earlier code :P
 		munmap(code_area, size);
 		void *ret_ptr = mmap(code_area, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_JIT | MAP_PRIVATE | MAP_ANON, 0, 0);
 		// Ensure it's the area we requested

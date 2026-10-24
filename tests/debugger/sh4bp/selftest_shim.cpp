@@ -123,7 +123,11 @@ int Call(CallClass cls, std::function<void()> fn)
 
 bool GetSh4Engine(Sh4EngineInfo* out)
 {
+#if HOST_CPU == CPU_ARM64
+	out->backend = engine == ENGINE_INTERP ? "interpreter" : "arm64";
+#else
 	out->backend = engine == ENGINE_INTERP ? "interpreter" : "x64";
+#endif
 	out->caps = machine_backend()->DebugCaps();
 	out->fallback = engine == ENGINE_FALLBACK;
 	out->fallbackLoop = machine_used_fallback();

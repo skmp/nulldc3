@@ -100,3 +100,20 @@
 #define VERSION "0.9.3"
 
 #endif
+
+#ifdef _MSC_VER
+/* Config header for MSVC (the Windows build of nullDC; zip.h has ssize_t, zip_close.c and mkstemp.c take <io.h>
+   for <unistd.h>) */
+#include <io.h>
+#include <process.h>
+#include <string.h>
+
+/* Define to 1 if you have the `MoveFileExA' function. */
+#define HAVE_MOVEFILEEXA 1
+
+typedef int mode_t;
+typedef int pid_t;
+
+#define strcasecmp _stricmp
+#define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
+#endif

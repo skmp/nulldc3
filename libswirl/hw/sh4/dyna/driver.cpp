@@ -216,6 +216,7 @@ void RuntimeBlockInfo::Setup(u32 rpc,fpscr_t rfpu_cfg,const DecodeLimits* limits
 	pBranchBlock=pNextBlock=0;
 	code=0;
 	has_jcond=false;
+	temporary=false;
 	BranchBlock=NextBlock=csc_RetCache=0xFFFFFFFF;
 	BlockType=BET_SCL_Intr;
 	
@@ -335,6 +336,9 @@ void rdv_RunTempBlock(const DecodeLimits* limits)
 		rbi = rdv_ngen->AllocateBlock();
 
 		rbi->Setup(pc,fpscr,&fewer);
+
+		//not a block of the cache: its code ends without a link (blockmanager.h)
+		rbi->temporary=true;
 
 		bool do_opts=((rbi->addr&0x3FFFFFFF)>0x0C010100);
 		rbi->staging_runs=do_opts?100:-100;
@@ -503,6 +507,9 @@ void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc)
 	}
 	
 	verify(rbi != NULL);
+
+	//a block outside the block cache is never linked (blockmanager.h): RunBlock deletes it behind its run
+	verify(!rbi->temporary);
 
 	u32 bcls=BET_GET_CLS(rbi->BlockType);
 

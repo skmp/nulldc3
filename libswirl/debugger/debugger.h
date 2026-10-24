@@ -89,7 +89,7 @@ namespace dbg {
 	  read by dbg::selftest   SelfTest (empty)
 */
 
-// (U), once, at the end of reicast_init(); lifetime NoMachine. With Debugger:Enabled (in an automated run and
+// (U), once, at the end of nulldc_init(); lifetime NoMachine. With Debugger:Enabled (in an automated run and
 // in a selftest session: only when the key is set explicitly, on the command line or in emu.cfg) it starts
 // the server and the core thread and prints exactly "Debugger: http://<bind>:<port>/" with the bound port, as
 // one line on stdout, flushed (a Bind that contains a colon is printed in brackets: http://[::1]:<port>/); it
@@ -109,12 +109,12 @@ namespace dbg {
 // not change signal dispositions.
 void Init();
 
-// (U), once, at the start of reicast_term(), before the GUI and with it the machine are destroyed; any
+// (U), once, at the start of nulldc_term(), before the GUI and with it the machine are destroyed; any
 // lifetime state: an emulator thread may be running or parked. The caller must not hold L. Stops the server
 // (every client is closed), ends the core thread and joins both; a call the core thread is waiting for is
 // given up. Afterwards no listener is installed and no debugger thread exists; the hooks and helpers below
 // stay callable until the process ends, and a parked emulator thread is released by the stop request that
-// the emulator's shutdown makes right behind this call (reicast_term).
+// the emulator's shutdown makes right behind this call (nulldc_term).
 void Term();
 
 /*
@@ -332,11 +332,12 @@ enum : u32 {
 //   the threads that the selftest of dbg::emu starts itself.
 //   Entering a stop: g_parked is set, CpuRunning cleared, the breakpoint state of the SH4, of the ARM7 and of
 //   the DSP drop their temporary breakpoints, a pending step-out and a step that is armed, the listener is
-//   invoked, the window title becomes "nullDC 3.0.0 [paused by debugger]" (it is put where it is not on the
-//   window already and stays until the running machine writes its frame rate; the emulator thread makes no
-//   window call behind its stop callback). The park loop then waits, without limit, for a call, for a
-//   run-control action that a call armed, or for Kick(). Armed steps are executed by the loop itself, with
-//   one exception: a step of the ARM7 or of the DSP asked for while no sound burst is suspended (below).
+//   invoked, the window title becomes "nullDC <version> [paused by debugger]", <version> being the build's
+//   version string (NULLDC_VERSION) (it is put where it is not on the window already and stays until the
+//   running machine writes its frame rate; the emulator thread makes no window call behind its stop
+//   callback). The park loop then waits, without limit, for a call, for a run-control action that a call
+//   armed, or for Kick(). Armed steps are executed by the loop itself, with one exception: a step of the ARM7
+//   or of the DSP asked for while no sound burst is suspended (below).
 // - Leaves the park context for a resume and at the end of a service excursion, in this order: for a
 //   resume decides the resume exemptions of the ARM7 and of the DSP (dbg::arm7::PrepareResume,
 //   dbg::dsp::PrepareResume); runs a suspended sound burst on, with the checks of the ARM7 and of the DSP

@@ -40,15 +40,15 @@ struct SystemBus_impl final : SystemBus {
 	virtual void serialize(void** data, unsigned int* total_size)
 	{
 		register_serialize(sb_regs.data(), sb_regs.size(), data, total_size);
-		REICAST_S(SB_FFST_rc);
-		REICAST_S(SB_FFST);
+		NULLDC_S(SB_FFST_rc);
+		NULLDC_S(SB_FFST);
 	}
 
 	virtual void unserialize(void** data, unsigned int* total_size)
 	{
 		register_unserialize(sb_regs.data(), sb_regs.size(), data, total_size);
-		REICAST_US(SB_FFST_rc);
-		REICAST_US(SB_FFST);
+		NULLDC_US(SB_FFST_rc);
+		NULLDC_US(SB_FFST);
 	}
 
 	u32 sbio_read_noacc(u32 addr) {

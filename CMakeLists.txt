@@ -1,35 +1,66 @@
 cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
 
 find_program(CCACHE_FOUND ccache)
-if (CCACHE_FOUND AND NOT CMAKE_HOST_WIN32)
+# macOS: through ccache only when asked, -DNULLDC_CCACHE=ON. A ccache that cannot start there (Homebrew's, after an
+# upgrade took a library it links) ends every compile in dyld's abort, and every abort leaves a crash report in
+# ~/Library/Logs/DiagnosticReports; CCACHE_DISABLE=1 cannot help, ccache reads it once it has started
+if(CMAKE_HOST_APPLE)
+  option(NULLDC_CCACHE "macOS: compile and link through the ccache on the PATH" OFF)
+endif()
+if (CCACHE_FOUND AND NOT CMAKE_HOST_WIN32 AND (NOT CMAKE_HOST_APPLE OR NULLDC_CCACHE))
   set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
   set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ccache)
 endif()
 
-# The executable: nulldc3 on every system (macOS: nulldc3.app, reicast/apple/emulator-osx/emulator-osx/build_app_bundle.sh)
+# The executable: nulldc3 on every system (macOS: inside the bundle nulldc3.app, below)
 set(TNAME nulldc3)
 
-project(${TNAME})
+# macOS: the oldest system the build runs on, 11.0 unless the configure line gives another (arm64 needs 11.0; the
+# tree needs 10.15 for std::filesystem). A cache variable, read when project() enables the languages.
+if(CMAKE_HOST_APPLE)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "The oldest macOS the build runs on")
+endif()
+
+# Windows (MSVC): the static runtime, so that nulldc3.exe needs no redistributable beside it, and the debug
+# information in the objects (/Z7), so that no mspdbsrv.exe outlives a build (PL-D32). Both are read when
+# project() enables the languages.
+if(CMAKE_HOST_WIN32)
+  cmake_policy(SET CMP0091 NEW)
+  if(POLICY CMP0141)	# CMake 3.25
+    cmake_policy(SET CMP0141 NEW)
+  endif()
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+endif()
+
+# Every command of the build is printed unless the configure line says -DCMAKE_VERBOSE_MAKEFILE=OFF (CI's release
+# builds, for a log of a reasonable size). A cache entry made here, in front of project(), which would cache CMake's
+# own default (off) otherwise; a value of the configure line, or of an earlier configure, is kept
+if(NOT DEFINED CMAKE_VERBOSE_MAKEFILE)
+  set(CMAKE_VERBOSE_MAKEFILE ON CACHE BOOL "Print every command of the build (-DCMAKE_VERBOSE_MAKEFILE=OFF: not)")
+endif()
+
+# the macOS shell is Objective-C and Objective-C++ (nulldc3/apple)
+if(CMAKE_HOST_APPLE)
+  project(${TNAME} LANGUAGES C CXX OBJC OBJCXX)
+else()
+  project(${TNAME})
+endif()
 
 set(DEBUG_CMAKE ON)
 
-set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-set(reicast_root_path  "${CMAKE_CURRENT_SOURCE_DIR}")
-set(reicast_core_path  "${reicast_root_path}/libswirl")
-set(reicast_shell_path "${reicast_root_path}/reicast")
+set(nulldc_root_path  "${CMAKE_CURRENT_SOURCE_DIR}")
+set(nulldc_core_path  "${nulldc_root_path}/libswirl")
+set(nulldc_shell_path "${nulldc_root_path}/nulldc3")
 
-list(APPEND CMAKE_MODULE_PATH "${reicast_shell_path}/cmake")
+list(APPEND CMAKE_MODULE_PATH "${nulldc_shell_path}/cmake")
 
-include(GetGitRevisionDescription)
-git_describe(GIT_VERSION --tags)
-configure_file(${reicast_core_path}/version.h.in ${reicast_core_path}/version.h @ONLY)
-
-## reicast build modules #
+## nulldc3 build modules #
 #
 
-set(reicast_SRCS "")
+set(nulldc_SRCS "")
 
 include(config)			# configure build settings, must be first
 
@@ -38,7 +69,7 @@ add_definitions(/DSCRIPTING)
 
 ### libdreamcast.cmake #########################################################################
 
-set(d_core ${reicast_core_path})
+set(d_core ${nulldc_core_path})
 
 file(GLOB_RECURSE hw_SRCS	${d_core}/hw/*.cpp			${d_core}/hw/*.h)
 # the C interface of the DSP core is the playground's (its wasm build), not the emulator's
@@ -98,12 +129,17 @@ set(core_SRCS
   ${wgl_SRCS}
   ${d_core}/archive/archive.cpp ${d_core}/archive/archive.h
   ${d_core}/libswirl.cpp
+  ${d_core}/version.cpp
+  ${d_core}/version_title.cpp
   ${d_core}/stdclass.cpp
   ${d_core}/dispframe.cpp
   ${d_core}/serialize.cpp
 )
 
 if(${BUILD_COMPILER} EQUAL ${COMPILER_GCC} OR (${BUILD_COMPILER} EQUAL ${COMPILER_CLANG} AND ${HOST_OS} EQUAL ${OS_DARWIN})) # TODO: Test with Clang on other platforms
+  list(APPEND core_SRCS ${archive_SRCS})
+elseif(${BUILD_COMPILER} EQUAL ${COMPILER_VC})
+  # the 7z and zip archives with MSVC as well (PL-D33)
   list(APPEND core_SRCS ${archive_SRCS})
 endif()
 
@@ -131,8 +167,8 @@ include(${d_core}/debugger/debugger.cmake)
 
 ### deps.cmake #################################################################################
 
-set(d_deps ${reicast_core_path}/deps)
-set(gpl_deps ${reicast_core_path}/gpl/deps)
+set(d_deps ${nulldc_core_path}/deps)
+set(gpl_deps ${nulldc_core_path}/gpl/deps)
 
 include_directories ("${d_deps}")
 include_directories ("${gpl_deps}/picotcp/include")
@@ -200,11 +236,27 @@ if(${BUILD_COMPILER} EQUAL ${COMPILER_GCC} OR (${BUILD_COMPILER} EQUAL ${COMPILE
 
 	add_definitions(-DPACKAGE_VERSION=\"1.3.2\" -DFLAC__HAS_OGG=0 -DFLAC__NO_DLL -DHAVE_LROUND -DHAVE_STDINT_H -DHAVE_STDLIB_H -DHAVE_SYS_PARAM_H)
   add_definitions(-D_7ZIP_ST -DCHD5_LZMA -DCHD5_FLAC)
+elseif(${BUILD_COMPILER} EQUAL ${COMPILER_VC})
+  # MSVC: CHD's LZMA and FLAC codecs and the 7z / zip archives (PL-D33). picoTCP stays GCC/Clang-only: the modem is
+  # a stub with MSVC (hw/modem/picoppp.cpp). No <sys/param.h> here.
+  list(APPEND deps_SRCS
+    ${lzip_SRCS}
+    ${lzma_SRCS}
+    ${flac_SRCS}
+  )
+
+  include_directories ("${d_deps}/flac/src/libFLAC/include")
+  include_directories ("${d_deps}/flac/include")
+
+  add_definitions(-DPACKAGE_VERSION=\"1.3.2\" -DFLAC__HAS_OGG=0 -DFLAC__NO_DLL -DHAVE_LROUND -DHAVE_STDINT_H -DHAVE_STDLIB_H)
+  add_definitions(-D_7ZIP_ST -DCHD5_LZMA -DCHD5_FLAC)
+  # libzip is compiled into the executable: its functions are neither exported nor imported
+  add_definitions(-DZIP_EXTERN=)
 endif()
 
 ### libosd.cmake ################################################################################
 
-set(d_aout ${reicast_core_path}/oslib)
+set(d_aout ${nulldc_core_path}/oslib)
 
 include_directories ("${d_core}/khronos")
 
@@ -217,14 +269,19 @@ list(APPEND osd_SRCS ${d_aout}/audiostream.cpp)
 if (${HOST_OS} EQUAL ${OS_WINDOWS})
   list(APPEND osd_SRCS ${d_core}/windows/win_common.cpp)
   list(APPEND osd_SRCS ${d_core}/windows/winmain.cpp)
+  list(APPEND osd_SRCS ${d_core}/windows/win_fatal.cpp)
   list(APPEND osd_SRCS ${d_core}/windows/win_vmem.cpp)
+  list(APPEND osd_SRCS ${d_core}/windows/win_jit_unwind.cpp)
   list(APPEND osd_SRCS ${d_core}/oslib/windows/threading.cpp)
   list(APPEND osd_SRCS ${d_aout}/audiobackend_directsound.cpp)
+  # the icon and the version resource (nulldc3/windows/nulldc3.rc; its include path below)
+  list(APPEND osd_SRCS ${nulldc_shell_path}/windows/nulldc3.rc)
   link_libraries(dsound.lib winmm.lib xinput.lib wsock32.lib opengl32.lib)
 elseif (${HOST_OS} EQUAL ${OS_LINUX})
 
     list(APPEND osd_SRCS
       ${d_core}/linux-dist/main.cpp
+      ${d_core}/linux-dist/x11_icon.cpp
       ${d_core}/linux/common.cpp
       ${d_core}/linux/context.cpp
       ${d_core}/linux/posix_vmem.cpp
@@ -236,7 +293,7 @@ elseif (${HOST_OS} EQUAL ${OS_LINUX})
 
 elseif(${HOST_OS} EQUAL ${OS_DARWIN})
 
-  set(d_osx ${reicast_shell_path}/apple/emulator-osx/emulator-osx)
+  set(d_osx ${nulldc_shell_path}/apple)
 
   list(APPEND objc_SRCS
     ${d_osx}/main.m
@@ -263,16 +320,82 @@ else()
 
 endif()
 
-include_directories ("${reicast_core_path}")
+include_directories ("${nulldc_core_path}")
 
-set(reicast_SRCS ${core_SRCS} ${deps_SRCS} ${osd_SRCS})
+set(nulldc_SRCS ${core_SRCS} ${deps_SRCS} ${osd_SRCS})
 
-  add_executable(${TNAME}${binSuffix} ${reicast_SRCS}) 
-set_target_properties(${TNAME}${binSuffix} PROPERTIES
-    XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS
-    "${CMAKE_CURRENT_LIST_DIR}/reicast.entitlements")
+if(${HOST_OS} EQUAL ${OS_DARWIN})
+  # The bundle nulldc3.app (nulldc3/README.md): Contents/MacOS/nulldc3, Contents/Info.plist from the template
+  # nulldc3/apple/Info.plist.in, and in Contents/Resources the icon and the licences a release carries (PL-D80):
+  # LICENSE, LICENSE-GPL, LICENSE-LGPL, nulldc3/LICENSE as LICENSE-shell, and the UI's devtools/LICENSE as
+  # LICENSE-devtools only when the build embeds the UI (DBG_WEBUI_BUNDLE_DIR, libswirl/debugger/cmake/dbg_webui.cmake);
+  # without it the submodule is never read. Three of them are named LICENSE: they are copied into the build
+  # directory under their names first.
+  set(nulldc_bundle_licences "${CMAKE_CURRENT_BINARY_DIR}/bundle-licences")
+  set(nulldc_bundle_resources "${nulldc_shell_path}/apple/nulldc3.icns")
+  set(nulldc_licence_sources
+    "LICENSE=${nulldc_root_path}/LICENSE"
+    "LICENSE-GPL=${nulldc_root_path}/LICENSE-GPL"
+    "LICENSE-LGPL=${nulldc_root_path}/LICENSE-LGPL"
+    "LICENSE-shell=${nulldc_shell_path}/LICENSE")
+  if(DBG_WEBUI_BUNDLE_DIR)
+    if(NOT EXISTS "${nulldc_root_path}/devtools/LICENSE")
+      message(FATAL_ERROR "The build embeds the UI (${DBG_WEBUI_BUNDLE_DIR}), and its licence goes into the bundle as LICENSE-devtools: there is no devtools/LICENSE (${nulldc_root_path}/devtools/LICENSE). Initialise the submodule devtools, or configure with -DNULLDC_DEVTOOLS_DIST=OFF to build without the UI.")
+    endif()
+    list(APPEND nulldc_licence_sources "LICENSE-devtools=${nulldc_root_path}/devtools/LICENSE")
+  else()
+    # a configure of this build directory that embedded the UI left its licence: it goes, from the bundle too
+    file(REMOVE "${nulldc_bundle_licences}/LICENSE-devtools"
+                "${CMAKE_CURRENT_BINARY_DIR}/${TNAME}${binSuffix}.app/Contents/Resources/LICENSE-devtools")
+  endif()
+  foreach(entry ${nulldc_licence_sources})
+    string(REGEX MATCH "^([^=]+)=(.*)$" _ "${entry}")
+    configure_file("${CMAKE_MATCH_2}" "${nulldc_bundle_licences}/${CMAKE_MATCH_1}" COPYONLY)
+    list(APPEND nulldc_bundle_resources "${nulldc_bundle_licences}/${CMAKE_MATCH_1}")
+  endforeach()
+  set_source_files_properties(${nulldc_bundle_resources} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  # the set of the resources, written when it changes: another set signs the bundle again (the stamp below)
+  string(REPLACE ";" "\n" nulldc_bundle_set "${nulldc_bundle_resources}\n")
+  set(nulldc_bundle_set_file "${nulldc_bundle_licences}/resources.txt")
+  set(nulldc_bundle_set_old "")
+  if(EXISTS "${nulldc_bundle_set_file}")
+    file(READ "${nulldc_bundle_set_file}" nulldc_bundle_set_old)
+  endif()
+  if(NOT nulldc_bundle_set_old STREQUAL nulldc_bundle_set)
+    file(WRITE "${nulldc_bundle_set_file}" "${nulldc_bundle_set}")
+  endif()
+
+  add_executable(${TNAME}${binSuffix} MACOSX_BUNDLE ${nulldc_SRCS} ${nulldc_bundle_resources})
+
+  # the version keys stay placeholders in the template: the build writes them (below)
+  set(NULLDC_BUNDLE_VERSION_AT_BUILD "written-at-build-time")
+  set_target_properties(${TNAME}${binSuffix} PROPERTIES
+    MACOSX_BUNDLE_INFO_PLIST "${nulldc_shell_path}/apple/Info.plist.in"
+    XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-")
+else()
+  add_executable(${TNAME}${binSuffix} ${nulldc_SRCS})
+endif()
 
 target_compile_features(${TNAME}${binSuffix} PRIVATE cxx_std_20)
+
+# The version (nulldc3/README.md): nulldc3/cmake/version.cmake runs at every build and writes, when their text
+# changes, generated/nulldc3_version.h, nulldc3-version.txt and nulldc3-version.cmake into this build directory.
+# libswirl/version.cpp is the one translation unit that includes the header, and the only one with the directory
+# on its include path: a new commit compiles it again, and nothing else.
+add_custom_target(nulldc3_version
+  COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${nulldc_root_path}" "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+          -P "${nulldc_shell_path}/cmake/version.cmake"
+  BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/generated/nulldc3_version.h" "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.txt"
+             "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.cmake"
+  COMMENT "The version of nullDC"
+  VERBATIM)
+add_dependencies(${TNAME}${binSuffix} nulldc3_version)
+set_source_files_properties("${d_core}/version.cpp" PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/generated")
+if(${HOST_OS} EQUAL ${OS_WINDOWS})
+  # the VERSIONINFO of nulldc3.rc reads the same header: the generated directory is on its include path too, and on
+  # no other but version.cpp's
+  set_source_files_properties("${nulldc_shell_path}/windows/nulldc3.rc" PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/generated")
+endif()
 
 if(${HOST_OS} EQUAL ${OS_LINUX})
   # needed for opentty
@@ -375,9 +498,6 @@ if(${HOST_OS} EQUAL ${OS_LINUX})
 endif()
 
 if(${HOST_OS} EQUAL ${OS_DARWIN})
-  enable_language(OBJC)
-  enable_language(OBJCXX)
-
   # Silence warnings about OpenGL deprecation on Mojave and greater (10.14+)
   target_compile_options(${TNAME} PRIVATE -DGL_SILENCE_DEPRECATION)
 
@@ -405,12 +525,41 @@ if(${HOST_OS} EQUAL ${OS_DARWIN})
     "-framework GameController"
   )
 
-  # Create the macOS app bundle
-  add_custom_command(TARGET ${TNAME} POST_BUILD
-    COMMAND bash "-c" "APP_NAME=\"${TNAME}\" D_OSX=\"${d_osx}\" CMAKE_CURRENT_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\" CMAKE_CURRENT_BINARY_DIR=\"${CMAKE_CURRENT_BINARY_DIR}\" \"${d_osx}/build_app_bundle.sh\""
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Creating macOS app bundle..."
-  )
+  # The version keys of the bundle's Info.plist and the ad-hoc signature (nulldc3/apple/bundle_stamp.cmake;
+  # PL-D42): a command with a stamp file, the last step of every build that changes the bundle. Not a POST_BUILD
+  # step: that runs only when the executable is linked again, while CMake writes Contents/Info.plist from the
+  # template whenever it generates the build, and after a configure without a link the keys would be gone and the
+  # seal broken. It depends on the executable, the version file, the template, the plist CMake writes and every
+  # resource in the bundle. The Xcode generator signs the bundle itself (XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY above),
+  # after its own steps: there the keys are written after the link, and nothing is signed here.
+  set(nulldc_bundle_contents "$<TARGET_BUNDLE_CONTENT_DIR:${TNAME}>")
+  if(CMAKE_GENERATOR STREQUAL "Xcode")
+    add_custom_command(TARGET ${TNAME} POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" "-DBUNDLE=$<TARGET_BUNDLE_DIR:${TNAME}>"
+              "-DVERSION_FILE=${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.cmake" -DSIGN=OFF
+              -P "${d_osx}/bundle_stamp.cmake"
+      COMMENT "The version of nulldc3.app"
+      VERBATIM)
+  else()
+    set(nulldc_bundle_depends
+      "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.cmake"
+      "${d_osx}/Info.plist.in"
+      "${d_osx}/bundle_stamp.cmake"
+      "${nulldc_bundle_contents}/Info.plist"
+      "${nulldc_bundle_set_file}")
+    foreach(resource ${nulldc_bundle_resources})
+      get_filename_component(resource_name "${resource}" NAME)
+      list(APPEND nulldc_bundle_depends "${nulldc_bundle_contents}/Resources/${resource_name}")
+    endforeach()
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-bundle.stamp"
+      COMMAND "${CMAKE_COMMAND}" "-DBUNDLE=$<TARGET_BUNDLE_DIR:${TNAME}>"
+              "-DVERSION_FILE=${CMAKE_CURRENT_BINARY_DIR}/nulldc3-version.cmake"
+              "-DSTAMP=${CMAKE_CURRENT_BINARY_DIR}/nulldc3-bundle.stamp" -P "${d_osx}/bundle_stamp.cmake"
+      DEPENDS ${TNAME} ${nulldc_bundle_depends}
+      COMMENT "The version and the signature of nulldc3.app"
+      VERBATIM)
+    add_custom_target(nulldc3_bundle ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/nulldc3-bundle.stamp")
+  endif()
 
 endif()
 

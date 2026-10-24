@@ -90,7 +90,20 @@ int main(int argc, char** argv)
 		u32 failures_before = failures;
 
 		gate_name = gates[g].name;
+#if defined(_WIN32)
+		const MachineWalks walks_before = walks;
+#endif
 		gates[g].run();
+
+#if defined(_WIN32)
+		//Windows: every stop of the gate was walked by the system's unwinder back to the machine (machine.cpp)
+		if (walks.made != walks_before.made)
+			check(walks.failed == walks_before.failed,
+				"the system's unwinder walked the stack from every one of the %u stops of the gate back to the machine, %u of them through "
+				"a check of the recompiler (%u went wrong%s%s)", walks.made - walks_before.made, walks.through_region - walks_before.through_region,
+				walks.failed - walks_before.failed, walks.failed != walks_before.failed ? ": " : "",
+				walks.failed != walks_before.failed ? walks.first_failure : "");
+#endif
 
 		//a gate without a check did not test anything
 		bool pass = failures == failures_before && checks != checks_before;

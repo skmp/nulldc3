@@ -31,7 +31,6 @@
 #include "linux-dist/main.h"	// FIXME for kcode[]
 #include "gui_util.h"
 
-#include "version.h"
 #include "oslib/audiostream.h"
 #include "hw/pvr/Renderer_if.h"
 #include "libswirl.h"
@@ -201,7 +200,7 @@ void ImGui_Impl_NewFrame()
 
 std::unique_ptr<GUI> g_GUI;
 
-struct ReicastUI_impl : GUI {
+struct ImguiGUI : GUI {
     
     ImFont* font17;
     ImFont* font64;
@@ -406,7 +405,7 @@ struct ReicastUI_impl : GUI {
         gui_state = Onboarding;
     }
 
-    ~ReicastUI_impl()
+    ~ImguiGUI()
     {
         virtualDreamcast.reset();
 
@@ -583,12 +582,6 @@ struct ReicastUI_impl : GUI {
 
             cfgSetVirtual("config", "image", "");
         }
-        ImGui::NextColumn();
-        if (ImGui::Button("Report a game bug", ImVec2(150 * scaling, 50 * scaling)))
-        {
-            os_LaunchFromURL("http://report-games.reicast.com");
-        }
-
         ImGui::NextColumn();
         if (ImGui::Button("Swap Disc", ImVec2(150 * scaling, 50 * scaling)))
         {
@@ -1052,7 +1045,7 @@ GUI* GUI::Create() {
     if (runctl_headless())
         return CreateHeadlessGUI();
 
-    return new ReicastUI_impl();
+    return new ImguiGUI();
 }
 
 int msgboxf(const wchar* text, unsigned int type, ...) {

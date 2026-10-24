@@ -7,6 +7,8 @@
 
 #include "dbg_net.h"
 
+#include "nulldc_version.h"
+
 #include "deps/zlib/zlib.h"
 
 #include <cstring>
@@ -63,9 +65,9 @@ const std::string& BuiltinPage() {
 	static const std::string page =
 		"<!doctype html>\n"
 		"<html lang=\"en\">\n"
-		"<head><meta charset=\"utf-8\"><title>nullDC 3.0.0 debugger</title></head>\n"
+		"<head><meta charset=\"utf-8\"><title>nullDC " + std::string(nulldc_version()) + " debugger</title></head>\n"
 		"<body>\n"
-		"<h1>nullDC 3.0.0 debugger</h1>\n"
+		"<h1>nullDC " + std::string(nulldc_version()) + " debugger</h1>\n"
 		"<p>The debugger server is running, but this build of the emulator has no Dreamcast DevTools embedded.</p>\n"
 		"<p>To get Dreamcast DevTools, build it in <code>devtools/</code> of the emulator tree (the submodule\n"
 		"dreamcast-devtools: <code>git submodule update --init devtools</code>) with\n"

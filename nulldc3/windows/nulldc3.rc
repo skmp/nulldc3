@@ -1,0 +1,42 @@
+// The resources of nulldc3.exe: its icon and its version (compiled by CMakeLists.txt on Windows).
+//
+// nulldc3_version.h is made at every build into <build>/generated (nulldc3/cmake/version.cmake), which is on the
+// include path of this file alone (and of libswirl/version.cpp): NULLDC_VERSION, the version string, and
+// NULLDC_VERSION_NUMBERS, its four numbers X,Y,Z,N (nulldc3/README.md).
+#include "resource.h"
+#include "nulldc3_version.h"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_ICON1               ICON                    "nulldc3.ico"
+
+/////////////////////////////////////////////////////////////////////////////
+
+1 VERSIONINFO
+FILEVERSION     NULLDC_VERSION_NUMBERS
+PRODUCTVERSION  NULLDC_VERSION_NUMBERS
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904E4"
+    BEGIN
+      VALUE "CompanyName", "nullDC Team"
+      VALUE "FileDescription", "nullDC"
+      VALUE "FileVersion", NULLDC_VERSION
+      VALUE "InternalName", "nulldc3"
+      VALUE "LegalCopyright", "Copyright (c) 2026 nullDC Team"
+      VALUE "OriginalFilename", "nulldc3.exe"
+      VALUE "ProductName", "nullDC"
+      VALUE "ProductVersion", NULLDC_VERSION
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1252
+  END
+END

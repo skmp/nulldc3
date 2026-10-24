@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	The template of nulldc3.app/Contents/Info.plist (CMakeLists.txt: MACOSX_BUNDLE_INFO_PLIST; nulldc3/README.md).
+	CMake writes the bundle's plist from it when it generates the build. The three version keys are written at
+	every build that changes the bundle, from <build>/nulldc3-version.cmake (bundle_stamp.cmake), before the bundle
+	is signed: CFBundleShortVersionString X.Y.Z, CFBundleVersion X.Y.Z.N, NullDCVersion the version.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>nullDC</string>
+	<key>CFBundleExecutable</key>
+	<string>nulldc3</string>
+	<key>CFBundleIconFile</key>
+	<string>nulldc3</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.emudev.nulldc3</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>nulldc3</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@NULLDC_BUNDLE_VERSION_AT_BUILD@</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>@NULLDC_BUNDLE_VERSION_AT_BUILD@</string>
+	<key>NullDCVersion</key>
+	<string>@NULLDC_BUNDLE_VERSION_AT_BUILD@</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>@CMAKE_OSX_DEPLOYMENT_TARGET@</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 nullDC Team</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+</dict>
+</plist>
