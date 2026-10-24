@@ -33,3 +33,8 @@ reprof/3rdParty/** | * | reprof's third-party .NET libraries as their authors bu
 # tests whose inputs are made-up paths
 tests/common/emurun_test.py | * | made-up environments of a caller (/home/u, /Users/u, C:\Users\u) that the test's environment rules must drop
 tests/debugger/net/test_http.cpp | file:///home/user/page.html | a made-up Origin the server must refuse
+
+# the round's record (PLG, PL-D79): the copy of the platform round's cut quotes the patterns of its host-detail rule
+docs/nulldc3/platform-round.md | (`/Users/<u>/`, `C:\Users\<u>\`, `C:/Users/<u>/`) | generic tool paths in the round's record: the forms of a remote user name that the scrubber and the remote patterns look for, with the placeholder <u>, no machine of the project
+docs/nulldc3/platform-round.md | `/home/<u>/` | generic tool paths in the round's record: the form of this machine's home that the full patterns look for, with the placeholder <u>, no machine of the project
+docs/nulldc3/platform-round.md | `/home/` and `/Users/` | generic tool paths in the round's record: the generic patterns that the UI's own hygiene tests name, quoted in a review finding
