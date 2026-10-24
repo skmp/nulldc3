@@ -277,12 +277,12 @@ are not the emulator (the contract runner, the tools) `TEMP`, `TMP` and npm's ca
   programs of `build/hw`) and 12 of shrike4-rtl (the three headers of `sh4_fpu`, `tools/hw/fpdn/*.bin` and the console
   records the vector suite reads), about 12 MB; and `2ndmix.elf` and `hello.elf` in `NULLDC_ELF_DIR`.
 
-What is skipped on Windows, with its reason (73 of the 340 tests; every other one runs, and the gate has no open
+What is skipped on Windows, with its reason (77 of the 349 tests; every other one runs, and the gate has no open
 defect):
 
 | tests | reason |
 |---|---|
-| `system.*`, `system.hle.*` (63) | the Linux-only system-test harness |
+| `system.*`, `system.hle.*` (67) | the Linux-only system-test harness |
 | `aica.dsp.wasm` `.wasm.emsdk` `.wasm.noemcc` (3) | no emcc |
 | `debugger.disasm.sh4_objdump` `.sh4_objdump_selftest`, `.arm7_objdump` `.arm7_objdump_selftest` (4) | no sh-elf-objdump / arm-eabi-objdump on this host (a skip of the platform also with `NULLDC_TESTS_REQUIRE_DATA`; on Linux a missing tool fails) |
 | `debugger.sh4bp.b11` (1) | it counts host instructions with the performance counters of Linux (`perf_event_open`) and says `SKIPPED` elsewhere |
