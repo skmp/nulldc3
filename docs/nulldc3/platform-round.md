@@ -2515,19 +2515,21 @@ departures accepted, the known limits. A later brief is read with these.
   passed, 77 skipped (the Linux-only harness 67, the four objdump oracles, the three emcc tests, `cfg.log_file`,
   `debugger.sound.runner`, `debugger.sh4bp.b11`), the same set both times; in run 2
   `debugger.selftest.emurun.pauses.interp` failed once (its `SelfTest:` line spliced into a guest console line,
-  `DMSelfTest: emurun.pauses: note: ...`: the flake A64 saw) and passed when run again alone, so every target ran green
-  twice; the contract gates with Linux's numbers on the JIT (`sh4-debug-native`), the interpreter and the forced
-  fallback (M1 18, M2 19, M2's guest run 2, M3 20, M3's DSP runs 3 and 2; 0 partial, 0 not applicable, 0 invariant
-  violations; the results of the two runs equal); `hostcycles` with its files kept, 2 of 2; `windows.ps1 -Mode ci` as
-  the workflow runs it (`-Jobs 8`): 349 tests, 190 passed, 159 skipped, 0 failed, the zip's entries from its central
-  directory (the folder `nulldc3-3.0.0-pre+g1206916377-windows-x86_64/` with `nulldc3.exe`, the five licences and
-  `README.txt`, every name with `/`), its smoke run through `winrun` (5 PASS: the zip, `--version`, the guest at 90
-  vblanks `6a1e1008459e6ab3`, its files in its `--portable` directory, `debugger.describe`'s `ui`
-  `3.0.0-pre+g7b88410915`); the version resource of the unzipped `nulldc3.exe` read back (not run): numeric file and
-  product version `3.0.0.0`, `FileVersion` and `ProductVersion` `3.0.0-pre+g1206916377`, `CompanyName` "nullDC Team",
-  `LegalCopyright` "Copyright (c) 2026 nullDC Team"; the crash-report places 543 entries before and after, none new (the
-  one line `places_diff.py` called new is an entry of the first listing with the next directory's "File Not Found" run
-  onto it); no process of the work folder left.
+  `DMSelfTest: emurun.pauses: note: ...`: the flake A64 saw) and passed when run again alone, so every other target ran
+  green twice and this one green in one full run and once alone (in PLG's verification it failed in run 1 of 3 there,
+  and runs 2 and 3 were both green; on the Mac in 1 of 3: the design's 2.3.7 item 32); the contract gates with Linux's
+  numbers on the JIT (`sh4-debug-native`), the interpreter and the forced fallback (M1 18, M2 19, M2's guest run 2, M3
+  20, M3's DSP runs 3 and 2; 0 partial, 0 not applicable, 0 invariant violations; the results of the two runs equal);
+  `hostcycles` with its files kept, 2 of 2; `windows.ps1 -Mode ci` as the workflow runs it (`-Jobs 8`): 349 tests, 190
+  passed, 159 skipped, 0 failed, the zip's entries from its central directory (the folder
+  `nulldc3-3.0.0-pre+g1206916377-windows-x86_64/` with `nulldc3.exe`, the five licences and `README.txt`, every name
+  with `/`), its smoke run through `winrun` (5 PASS: the zip, `--version`, the guest at 90 vblanks `6a1e1008459e6ab3`,
+  its files in its `--portable` directory, `debugger.describe`'s `ui` `3.0.0-pre+g7b88410915`); the version resource of
+  the unzipped `nulldc3.exe` read back (not run): numeric file and product version `3.0.0.0`, `FileVersion` and
+  `ProductVersion` `3.0.0-pre+g1206916377`, `CompanyName` "nullDC Team", `LegalCopyright` "Copyright (c) 2026 nullDC
+  Team"; the crash-report places 543 entries before and after, none new (the one line `places_diff.py` called new is an
+  entry of the first listing with the next directory's "File Not Found" run onto it); no process of the work folder
+  left.
 - **The Mac** (at `12069163`, on AC power with `caffeinate -i` around every long step): the DiagnosticReports listed
   first (2 entries, the owner's; names only); the three bundles (Release, 30, 23 and 30 s; each `3.0.0-pre+g1206916377`,
   `3.0.0` / `3.0.0.0` in its plist, codesign valid, the four licences of a bundle without a UI); the tests project (340

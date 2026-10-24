@@ -241,7 +241,8 @@ targets green twice, none skipped, P0's 38 rows and 12 sound lines identical, Th
 runs without a report, `npm run check` (793 unit tests passed, 1 skipped; the four contract runs on the mock OK) and the
 e2e suite (401 passed, 1 skipped: the smoke spec, run on its own against the emulator) in a fresh clone of the UI, the
 smoke spec, the x86_64 AppImage with its five licences and its binary equal to P0 on P0's default rows; on the merged
-tree, the Windows host 349 targets twice (77 skipped with their reasons), the same contract gates on every engine, the
+tree, the Windows host 349 targets twice (77 skipped with their reasons; `debugger.selftest.emurun.pauses.interp` failed
+in one of the two runs and passed alone, design 2.3.7 item 32), the same contract gates on every engine, the
 zip with its version resource ("nullDC Team", `3.0.0.0`); the Mac 340 targets twice (81 skipped), the same contract
 gates, `macos.hashes.jit` on A64's references, the zip of `macos.sh` with its signature checked and its smoke run; the
 arm64 host 330 targets twice (16 skipped), the same contract gates in full on every engine, the arm64 AppImage; no crash
@@ -282,11 +283,13 @@ the integrator's notes of its Appendix I and PLG; none of them blocks M4):
   icon, About, a game, pause with the debugger and close the window (parked, and with a pause pending), the window
   sessions of design 6.1.2, Explorer's Properties on Windows, the Finder's start of the unzipped app on macOS, and on
   the Mac a breakpoint, a step, a step-out and a pause from the UI on the arm64 recompiler (A64).
-- *Flakes seen once and passed when run again* (design 2.3.7 item 32): on the Mac's loopback `debugger.net.test_e2e`
+- *Flakes that passed when run again* (design 2.3.7 item 32): on the Mac's loopback `debugger.net.test_e2e`
   (`test_e2e.cpp` line 306 assumes the kernel cannot hold 16 MiB for a peer that does not read) and
   `debugger.contract.m2.guest.interp` (S16's reset not seen within 5000 ms, once in three full runs), which `macos.sh`
   runs once more when they are a run's only failures; the arm64 host's `debugger.selftest.hostcycles` (its rate window);
-  the Windows host's `debugger.selftest.emurun.pauses.interp` (its `SelfTest:` line spliced into a guest console line).
+  `debugger.selftest.emurun.pauses.interp` on the Windows host and on the Mac under `ctest -j4` (in about one full run
+  in two or three; never alone): the emulator's `SelfTest:` note is spliced into a guest console line, and `selftest.py`
+  reads only the lines that start with `SelfTest: `.
 - *Left by VCu* (the UI): `gitFacts` is not held to `gitEnvironment`'s filter by a test (a build run from a git hook
   would take the hook repository's version); `publish`'s size check takes a longer asset with no digest; no unit case
   pins the zip entries' 1980-01-01 time or that `v3.0.0-pre-2` is no tag; `e2e/support/globalSetup.ts` `BUILD_INPUTS`
@@ -318,7 +321,11 @@ the integrator's notes of its Appendix I and PLG; none of them blocks M4):
   decision whose parenthesis A64 has since met) and `docs/nulldc3/sh4-breakpoints-spec.md` 3.j (the arm64 backend as
   requirements); for a later change of those documents. The release notes' known issues are drafted for CIe's template
   (`nulldc3/ci/release-notes.md` has no section for them), not committed:
-  `agents/nulldc3/plg/release-notes-known-issues.md`, the integrator's to take.
+  `agents/nulldc3/plg/release-notes-known-issues.md`, the integrator's to take. And the harness fix for
+  `debugger.selftest.emurun.pauses.interp` (design 2.3.7 item 32; a test file, not PLG's): the selftests' harness
+  (`tests/debugger/selftest/selftest.py`, `selftest_lines()`) takes a `SelfTest:` line only where it starts a line, and
+  the emulator's note can land in the middle of a guest console line under load; either the harness finds the line's
+  `SelfTest: ` wherever it stands, or the emulator starts its note on a line of its own, with a case that splices it.
 **Backlog left by the M3 round** (from the cut's 1.2, the owner's answers to M3-Q1 to M3-Q4, the integrator's notes of its
 Appendix I and M3G; none of them blocks M4):
 - *The SGC's sends and fetches in time* (M3-D10): `ChannelFetch`, `BusRead` and `MixsSendLate` are not called in the

@@ -1731,13 +1731,19 @@ what the first runs on Windows, the Mac and Linux arm64 showed, and what A64's v
     reading reios boots `0xAC008300` from RAM filled with `0xFF`, and the opcode `0xFFFF` reaches the `die` of
     `cpu_iNimp`, on every engine. The owner decided to fix it after the round (PLAN's backlog). An automated run ends a
     fatal signal with Linux's line and `_exit(128+N)` instead (D10).
-32. **Targets that flaked once in the platform round** and passed when run again; none concerns the emulator a user
-    runs: on the Mac's loopback `debugger.net.test_e2e` (all 16 MiB reached a peer that does not read, `test_e2e.cpp`
-    line 306: now and then in MACa's and MACb's runs) and `debugger.contract.m2.guest.interp` (S16's reset not seen
-    within 5000 ms, once in three full runs under `ctest -j4`; LA64), which `nulldc3/ci/macos.sh` runs once more when
-    they are the only failures of a run, and says so; on the arm64 host `debugger.selftest.hostcycles` (its rate window
-    on a busy host; A64); on the Windows host `debugger.selftest.emurun.pauses.interp` (its `SelfTest:` line spliced
-    into a guest console line; A64).
+32. **Targets that flaked in the platform round** and passed when run again; none concerns the emulator a user runs:
+    on the Mac's loopback `debugger.net.test_e2e` (all 16 MiB reached a peer that does not read, `test_e2e.cpp` line
+    306: now and then in MACa's and MACb's runs) and `debugger.contract.m2.guest.interp` (S16's reset not seen within
+    5000 ms, once in three full runs under `ctest -j4`; LA64), which `nulldc3/ci/macos.sh` runs once more when they are
+    the only failures of a run, and says so; on the arm64 host `debugger.selftest.hostcycles` (its rate window on a
+    busy host; A64); and on the Windows host and on the Mac `debugger.selftest.emurun.pauses.interp`, under `ctest -j4`
+    only, in about one full run in two or three (A64 once on the Windows host; at PLG's gate in one of its two full
+    runs there; in PLG's verification in one of three full runs on the Windows host and one of three on the Mac) and
+    never alone (15 of 15 runs alone on each of the two, and its JIT twin `emurun.pauses` 15 of 15): the emulator's
+    note `SelfTest: emurun.pauses: note: all 150 pauses were taken and resumed` is spliced into a guest console line
+    (`A0: Dreamcast Controller        SelfTest: emurun.pauses: note: ...`), and `selftest.py` reads only the lines that
+    start with `SelfTest: ` (`selftest_lines()`), so the run's `--expect` does not find it. The fix is the harness's
+    (PLAN's backlog, "Left by PLG"); CI's `ci` mode does not run the target (it needs 2ndmix).
 33. **What A64's verifiers left** (`PLATFORM-ROUND.md` I.12): mutants of the arm64 recompiler that stayed green and were
     judged by reading (the room a compile keeps for `CheckBlock` and for a pending literal pool; five equivalents); the
     `-DNULLDC_DEBUGGER=OFF` build measured about 1.3 % slower on the arm64 host after A64 (`speed_pct` medians 663 to
@@ -4335,7 +4341,9 @@ fatal line: D10 and `docs/nulldc3/automated-runs.md`, "Windows".
 **The gates passed on the Windows host** (W64b, W64c; again at the platform round's gate, PLG, on its merged tree): the
 three builds (default, `-DNULLDC_DEBUGGER=OFF`, `-DTARGET_NO_REC=ON`); the tests project inside an outer
 `nulldc3-winrun` (every program it starts runs inside one too), every target that runs green twice and the skipped
-listed with their reasons (PL-D5; `tests/README.md`, "On Windows": 349 targets, 272 passed and 77 skipped, twice); the
+listed with their reasons (PL-D5; `tests/README.md`, "On Windows": 349 targets, 272 passed and 77 skipped; at PLG's gate
+every target green in both full runs but `debugger.selftest.emurun.pauses.interp`, which failed in run 2 and passed when
+run again alone, and in PLG's verification it failed in run 1 of 3 and runs 2 and 3 were both green: 2.3.7 item 32); the
 contract gates M1 to M3 on the JIT, the interpreter and the forced fallback with Linux's numbers, the selftests
 (`debugger.selftest.hostcycles` among them: J1's bound of thread starts is gone on Windows too), the sh4bp gates B1 to
 B14 but B11 (its counters are Linux's `perf_event_open`), the sound tests. The x64 JIT sets `DebugChecks` in Windows
@@ -4405,16 +4413,18 @@ Rules:
   four contract runs on the mock OK) and the e2e suite (401 passed, 1 skipped: the smoke spec, run on its own against
   the emulator) in a fresh clone of the UI; the smoke spec against a headless emulator with the bundle; the x86_64
   AppImage made by `appimage.sh` (its five licences, its smoke run) and its binary on P0's default rows, equal. On the
-  merged tree `12069163`: the Windows host 349 targets green twice (272 passed, 77 skipped with their reasons), the
+  merged tree `12069163`: the Windows host 349 targets (272 passed, 77 skipped with their reasons), each green in both
+  full runs but `debugger.selftest.emurun.pauses.interp`, which failed in one and passed alone (2.3.7 item 32), the
   contract gates with Linux's numbers on every engine, the zip of `windows.ps1` (its entries, its smoke run through
   `nulldc3-winrun`, its version resource: `3.0.0.0`, the version strings, "nullDC Team"); the Mac 340 targets green
-  twice (259 passed, 81 skipped), the canary in both shapes, the contract gates with Linux's numbers on every engine,
-  the sh4bp suite (29 of its 30 targets; `b11` skips there), `macos.hashes.jit` on A64's references, the zip of
-  `macos.sh` (unpacked with `ditto`, `codesign --verify`, its smoke run through `macrun.py`); the arm64 Linux host 330
-  targets green twice (314 passed, 16 skipped), the contract gates in full on every engine, `linux_arm64.hashes.jit` and
-  `.pages.refused`, the arm64 AppImage and its smoke run. No crash report on any system. Both workflows pass
-  `actionlint`, and neither repository's tracked files name a machine of the project. **Next:** the cut of M4 (E9, F5).
-  What is left for the next emulator package is 6.1.2 and PLAN's backlog of the M3 round and of the platform round.
+  twice (259 passed, 81 skipped; in PLG's verification `emurun.pauses.interp` failed in one of three full runs there,
+  item 32), the canary in both shapes, the contract gates with Linux's numbers on every engine, the sh4bp suite (29 of
+  its 30 targets; `b11` skips there), `macos.hashes.jit` on A64's references, the zip of `macos.sh` (unpacked with
+  `ditto`, `codesign --verify`, its smoke run through `macrun.py`); the arm64 Linux host 330 targets green twice (314
+  passed, 16 skipped), the contract gates in full on every engine, `linux_arm64.hashes.jit` and `.pages.refused`, the
+  arm64 AppImage and its smoke run. No crash report on any system. Both workflows pass `actionlint`, and neither
+  repository's tracked files name a machine of the project. **Next:** the cut of M4 (E9, F5). What is left for the next
+  emulator package is 6.1.2 and PLAN's backlog of the M3 round and of the platform round.
 
 ### 6.1 Emulator, round 1 (M1)
 
