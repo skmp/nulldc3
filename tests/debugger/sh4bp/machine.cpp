@@ -127,7 +127,7 @@ struct MachineSh4 : SuperH4
 
 	bool IsRunning() { return sh4_int_bCpuRun; }
 
-	void ResetCache() { backends[0]->ClearCache(); }
+	void ResetCache() { counters.cache_clears++; backends[0]->ClearCache(); }
 };
 
 

@@ -20,10 +20,6 @@
 #	takes its one stop some 900 bursts in); the line is taken at 2000 and the hash some 2070 bursts in. A test
 #	that is added here keeps its stops as far from the end of the run.
 #
-#	On an arm64 host the .jit tests that nulldc_a64_known_limits() of ../../selftest/CMakeLists.txt lists are known
-#	limits of the arm64 recompiler (KNOWN LIMIT (A64), NOT RUN), counted as skipped; their .interp twins run.
-#	debugger.a64.knownlimits, at the end of this file, checks that registration on every host.
-#
 #	A test that armed nothing would pass both, so each says what it did in lines that its target requires
 #	(EXPECT), and fails a check of its own when it did less:
 #
@@ -111,95 +107,3 @@ nulldc_sound_neutral(sgc.running   SELFTEST sgcn.running
 nulldc_sound_neutral(sgc.paused    SELFTEST sgcn.paused
                      EXPECT "captures armed at stops, each resumed"
                             "each stopped behind its last frame with its frames and its time steps")
-
-
-## debugger.a64.knownlimits: the registration of the arm64 recompiler's known limits ##
-#
-#	Here, behind the last of the targets nulldc_a64_known_limits() lists (../../selftest/CMakeLists.txt), the
-#	configure checks what nulldc_debugger_selftest and nulldc_sound_neutral registered, and the test says what it
-#	found: "PASS: ..." or "FAIL: ..." (a failure). It decides by itself whether this is an arm64 host, from
-#	CMAKE_SYSTEM_PROCESSOR (aarch64 or arm64), and holds for every entry of the list:
-#	  - it is <target>=stale or <target>=slice, and the target is one of the recompiler with a twin on the
-#	    interpreter: debugger.selftest.<name> (no .interp, no .fallback) and .<name>.interp,
-#	    debugger.sound.neutral.<name>.jit and .<name>.interp;
-#	  - the twin was registered to run (on every host, an arm64 host too), or both were skipped (no emulator, no data);
-#	  - with its twin registered to run, the target is a known limit on an arm64 host and registered to run on any
-#	    other;
-#	and that nothing else was registered as a known limit. So a list or a registration that also took an interpreter
-#	target, or that took effect on a host that is not arm64, is a failure here.
-
-nulldc_a64_known_limits(nulldc_a64_list)
-get_property(nulldc_a64_registered GLOBAL PROPERTY NULLDC_A64_REGISTERED)
-set(nulldc_a64_arm64_host OFF)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
-  set(nulldc_a64_arm64_host ON)
-endif()
-
-# what each target was registered as
-set(nulldc_a64_problems "")
-set(nulldc_a64_names "")
-foreach(entry ${nulldc_a64_list})
-  if(NOT entry MATCHES "^([a-z0-9.]+)=(stale|slice)$")
-    list(APPEND nulldc_a64_problems "the entry \"${entry}\" is not <target>=stale|slice")
-    continue()
-  endif()
-  set(name "${CMAKE_MATCH_1}")
-  list(APPEND nulldc_a64_names "${name}")
-  set(twin "")
-  if(name MATCHES "^debugger\\.selftest\\.[a-z0-9.]+$" AND NOT name MATCHES "\\.(interp|fallback)$")
-    set(twin "${name}.interp")
-  elseif(name MATCHES "^debugger\\.sound\\.neutral\\.[a-z0-9.]+\\.jit$")
-    string(REGEX REPLACE "\\.jit$" ".interp" twin "${name}")
-  else()
-    list(APPEND nulldc_a64_problems "${name} is not a target of the recompiler with a twin on the interpreter")
-    continue()
-  endif()
-  set(kind "")
-  set(twin_kind "")
-  foreach(r ${nulldc_a64_registered})
-    if(r MATCHES "^(.+)=(run|limit|skip)$")
-      if(CMAKE_MATCH_1 STREQUAL name)
-        set(kind "${CMAKE_MATCH_2}")
-      elseif(CMAKE_MATCH_1 STREQUAL twin)
-        set(twin_kind "${CMAKE_MATCH_2}")
-      endif()
-    endif()
-  endforeach()
-  if(NOT kind)
-    list(APPEND nulldc_a64_problems "${name} was not registered")
-  elseif(twin_kind STREQUAL "skip")
-    if(NOT kind STREQUAL "skip")
-      list(APPEND nulldc_a64_problems "${name} was registered as ${kind}, and its twin ${twin} was skipped")
-    endif()
-  elseif(NOT twin_kind STREQUAL "run")
-    list(APPEND nulldc_a64_problems "the twin ${twin} of ${name} was registered as \"${twin_kind}\", not to run")
-  elseif(nulldc_a64_arm64_host AND NOT kind STREQUAL "limit")
-    list(APPEND nulldc_a64_problems "${name} was registered as ${kind} on an arm64 host, not as a known limit")
-  elseif(NOT nulldc_a64_arm64_host AND NOT kind STREQUAL "run")
-    list(APPEND nulldc_a64_problems "${name} was registered as ${kind} on a host that is not arm64 (${CMAKE_SYSTEM_PROCESSOR}), not to run")
-  endif()
-endforeach()
-
-# nothing else is a known limit
-set(nulldc_a64_limits 0)
-foreach(r ${nulldc_a64_registered})
-  if(r MATCHES "^(.+)=limit$")
-    math(EXPR nulldc_a64_limits "${nulldc_a64_limits} + 1")
-    if(NOT CMAKE_MATCH_1 IN_LIST nulldc_a64_names)
-      list(APPEND nulldc_a64_problems "${CMAKE_MATCH_1} was registered as a known limit and is not in the list")
-    endif()
-  endif()
-endforeach()
-
-list(LENGTH nulldc_a64_names nulldc_a64_count)
-if(nulldc_a64_problems)
-  string(REPLACE ";" "; " nulldc_a64_problems "${nulldc_a64_problems}")
-  add_test(NAME debugger.a64.knownlimits COMMAND "${CMAKE_COMMAND}" -E echo "FAIL: ${nulldc_a64_problems}")
-elseif(nulldc_a64_arm64_host)
-  add_test(NAME debugger.a64.knownlimits COMMAND "${CMAKE_COMMAND}" -E echo
-           "PASS: ${nulldc_a64_count} targets in the list, ${nulldc_a64_limits} registered as known limits on this arm64 host (${CMAKE_SYSTEM_PROCESSOR}), their twins on the interpreter to run")
-else()
-  add_test(NAME debugger.a64.knownlimits COMMAND "${CMAKE_COMMAND}" -E echo
-           "PASS: ${nulldc_a64_count} targets in the list, ${nulldc_a64_limits} known limits on this host (${CMAKE_SYSTEM_PROCESSOR}), which is not arm64: each target and its twin registered to run")
-endif()
-set_tests_properties(debugger.a64.knownlimits PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL: " PASS_REGULAR_EXPRESSION "PASS: ")

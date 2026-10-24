@@ -62,25 +62,15 @@
 #	                                                    2ndmix, and on the sounding guest of the tree
 #	    debugger.contract.hash.listening.rule           what these four take for a full running tick, on ticks
 #	                                                    that are made up: no emulator is run
-#	    debugger.contract.s04.rule                      the rule of the modes that run the contract runner for S04
-#	                                                    on the recompiler of an arm64 host (PL-D78: recorded, not
-#	                                                    gated, when S04 alone failed and on its SH4_CYCLES checks
-#	                                                    only), on summaries of the runner that are made up, and
-#	                                                    run_runner on a runner that is made up: no emulator is run
 #
-#	Every test but hash.listening.rule and s04.rule fails a run that was not made on the engine it asks for: the SH4 on the
+#	Every test but hash.listening.rule fails a run that was not made on the engine it asks for: the SH4 on the
 #	recompiler or the interpreter, and, where a client describes the server, sh4-debug-fallback for a FALLBACK
 #	test and sh4-debug-native for every other (README.md, "The engine of a run").
 #
 #	The runner needs the dreamcast-devtools checkout with its node_modules (NULLDC_DEVTOOLS_DIR) and npm:
 #	without them m1*, m2*, m2arm7*, m2writes*, m3*, m3dsp*, m3dsp21* and hash.idlebp* are tests whose data is missing. Everything
-#	needs 2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree and hash.listening.rule and
-#	s04.rule, which need python3 and nothing else.
-#
-#	On an arm64 host the recompiler's breakpoints and steps run on the interpreter fallback with or without
-#	FALLBACK, behind a loop that restarts its slice counter at every entry: there m1, m2 and m3 on the JIT, and
-#	their .fallback, pass a runner whose S04 alone failed, on its SH4_CYCLES checks only, and say "S04: recorded
-#	(PL-D78)" (contract.py, s04.rule); the interpreter's are gated in full, as every run of an x86-64 host.
+#	needs 2ndmix.elf of NULLDC_ELF_DIR, but the tests on the guest of the tree and hash.listening.rule, which needs
+#	python3 and nothing else.
 #
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -326,24 +316,13 @@ nulldc_debugger_contract(hash.listening.guest MODE hash-listening ENGINES jit in
 # What the four tests above take for a full running tick, on ticks that are made up. The context of the SH4 is not
 # complete where a running machine is read on a recompiler that does not say it is (hw/sh4/sh4_if.h,
 # SH4DBG_CTX_AT_SLICE): every running tick of such a server says registersStale and is without dc.sh4.cpu, and is
-# a full one with every other path. The interpreter and the x64 recompiler send no such tick, so on an x64 host
-# no run of the four shows what they make of one. No emulator is run: the test is there wherever python3 is
+# a full one with every other path. The interpreter and the recompilers of x86-64 and arm64 hosts send no such tick,
+# and the four refuse one, so no run of the four shows what they make of one. No emulator is run: the test is there
+# wherever python3 is
 if(Python3_Interpreter_FOUND)
   add_test(NAME debugger.contract.hash.listening.rule
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/contract/contract.py" --mode hash-listening-rule)
   set_tests_properties(debugger.contract.hash.listening.rule PROPERTIES TIMEOUT 60 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 else()
   nulldc_add_skipped_test(debugger.contract.hash.listening.rule "no python3 to run tests/debugger/contract/contract.py with")
-endif()
-
-# S04 on the recompiler of an arm64 host is recorded, not gated (PL-D78): the rule of contract.py's run_runner on
-# summaries of the runner that are made up, each accepted or refused, and run_runner on a runner that is made up, with
-# the host it asks platform.machine() for answered by the test. No emulator or runner is run: on every host
-if(Python3_Interpreter_FOUND)
-  add_test(NAME debugger.contract.s04.rule
-           COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/contract/s04_rule_test.py"
-                   --work "${CMAKE_BINARY_DIR}/debugger/contract/work/debugger.contract.s04.rule")
-  set_tests_properties(debugger.contract.s04.rule PROPERTIES TIMEOUT 120 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
-else()
-  nulldc_add_skipped_test(debugger.contract.s04.rule "no python3 to run tests/debugger/contract/s04_rule_test.py with")
 endif()

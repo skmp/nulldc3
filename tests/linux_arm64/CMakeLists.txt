@@ -12,9 +12,10 @@
 #	linux_arm64.hashes.jit     the state hashes of the SH4 on the recompiler of a Linux arm64 host: the guest of the
 #	                           tree (tests/debugger/guest/dsptest/dsptest.elf) at 90 vblanks and 2ndmix.elf
 #	                           (NULLDC_ELF_DIR) at 600, each the reference linux_arm64.cmake has, which the arm64
-#	                           host's runs gave (and which equal the Mac's of macos.hashes.jit): a change of what
-#	                           the arm64 recompiler computes, or of the Linux fault context it runs on
-#	                           (libswirl/linux/context.cpp), is red. A hash is good for one host (design 5.6)
+#	                           host's runs gave (and which equal the Mac's of macos.hashes.jit; A64 took them anew,
+#	                           PL-D86): a change of what the arm64 recompiler computes, or of the Linux fault
+#	                           context it runs on (libswirl/linux/context.cpp), is red. A hash is good for one host
+#	                           (design 5.6)
 #	linux_arm64.pages.refused  the refusal of a kernel whose pages are not 4 KiB (libswirl/linux/common.cpp,
 #	                           PL-D52), through its test hook NULLDC_TEST_PAGE_SIZE: 16384 and 65536 end --version
 #	                           with exit status 1, the line "nulldc3: this build needs 4 KiB pages; this kernel uses

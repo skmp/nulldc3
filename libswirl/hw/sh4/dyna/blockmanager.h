@@ -64,6 +64,11 @@ struct RuntimeBlockInfo: RuntimeBlockInfo_Core
 	u32 dbg_rest_pc;
 	u32 dbg_rest_cycles;
 
+	//A block that runs outside the block cache (rdv_RunTempBlock: a single step, the rest of a block), set between
+	//Setup and Compile. Nothing links it or links to it, and its backend makes it end without a link: a linking
+	//backend (arm64) stores its next pc and returns to RunBlock. Setup clears it
+	bool temporary;
+
 	vector<shil_opcode> oplist;
 
 	bool contains_code(u8* ptr)

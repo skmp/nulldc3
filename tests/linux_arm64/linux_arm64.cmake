@@ -98,11 +98,14 @@ message("envelope: core file size limit 1 byte, no DISPLAY and no WAYLAND_DISPLA
 if(CASE STREQUAL "hashes")
   # The state hashes of the SH4 on the recompiler of a Linux arm64 host (config:Dynarec.Enabled=yes; the ARM7 on
   # the interpreter, PL-D46): the arm64 host's own references, as P0's are Linux x86_64's and macos.hashes.jit's
-  # the Mac's. LA64's gate read them twice equal on the default and the -DNULLDC_DEBUGGER=OFF builds (the
-  # interpreter's there are P0's); they are the Mac's as well. A hash is good for one host (design 5.6): these are
-  # no comparison with another host's, and a host whose recompiler computes otherwise gets references of its own
-  set(ref_guest c9bb6e60601ab606)
-  set(ref_2ndmix 6ab1933550d37163)
+  # the Mac's. A64 took them (PL-D86): the arm64 recompiler tests its slice counter in front of a block's charge, as
+  # the x64 recompiler and the interpreter fallback do, which moved every slice end of its runs (LA64's were
+  # c9bb6e60601ab606 and 6ab1933550d37163). A64's runs read them twice equal on the default and the
+  # -DNULLDC_DEBUGGER=OFF builds (the interpreter's there are P0's); they are the Mac's as well. A hash is good for
+  # one host (design 5.6): these are no comparison with another host's, and a host whose recompiler computes
+  # otherwise gets references of its own
+  set(ref_guest 6a1e1008459e6ab3)
+  set(ref_2ndmix 56bd7274490f91aa)
   set(file_guest "${GUEST}")
   set(file_2ndmix "${ELF_DIR}/2ndmix.elf")
   set(vblanks_guest 90)

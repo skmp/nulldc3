@@ -88,6 +88,7 @@ struct MachineCounters
 	u64 excursions;
 	u64 irqs;			//interrupt requests made
 	u64 stray;			//guest accesses outside of RAM and the device
+	u64 cache_clears;	//code cache emptied by the dynarec's driver (sh4_cpu->ResetCache: no room for a compile)
 };
 
 extern MachineCounters counters;

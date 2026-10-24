@@ -64,29 +64,17 @@ interpreter with --engine interp: the emulator takes config:Dynarec.Enabled=yes 
 Recompiler" or "Using MCPU Interpreter", and a run that says the other, or neither, fails. A mode that talks to the
 server also requires the SH4 debug engine, by the name debugger.describe gives it among its capabilities:
 sh4-debug-fallback with --fallback (Debugger:ForceFallback=yes), sh4-debug-native on the recompiler without it (on
-an x86-64 host, whose recompiler has native breakpoints and steps; on another the recompiler has none and the
-fallback is what it reports), and sh4-debug-native on the interpreter, which executes its breakpoints and steps
+an x86-64 or an arm64 host, whose recompilers have native breakpoints and steps; on a host of another kind a
+recompiler would have none and the fallback is what it would report), and sh4-debug-native on the interpreter, which executes its breakpoints and steps
 itself and which the key does not change (--fallback is refused with --engine interp). The modes m1, m2, m3, m3dsp,
 parts and dsp ask for describe on a connection of their own behind the runner, grace and hash-listening on their clients at the
 StartPaused stop, slow on its client once the machine runs, hash-idlebp takes the runner's describe from its last
 "server:" line; hash-off, hash-noclient and config have no client
 and check the SH4's engine alone (config not even that: its runs end before there is a machine). A failure says the
 engine found and the one asked for.
-
-S04 on the recompiler of an arm64 host is recorded, not gated (PL-D78 of the platform round; the design's contract
-notes): the arm64 recompiler restarts its slice counter at every entry of its loop, and its breakpoints and steps run
-on the interpreter fallback with or without --fallback, so a step there can move dc.timing.SH4_CYCLES by less than a
-slice. In the modes that run the contract runner (run_runner), on an arm64 or aarch64 host with --engine jit, a run
-whose runner fails S04 alone, and S04 on one of its two SH4_CYCLES checks only - the counter went back by less than
-SH4_TIMESLICE (448) in a step, or did not move in a step that did not end at an exception vector - passes, by the
-runner's summary (--json-file): one scenario failed, S04, and no partial, no scenario not applicable, no invariant
-violated, no clean-up problem and no required note missing. The test prints "S04: recorded (PL-D78): <the runner's
-detail>". Every other result is as before, on every host; s04_rule_test.py (debugger.contract.s04.rule) holds the
-rule on made-up summaries.
 """
 
 import argparse
-import json
 import os
 import platform
 import re
@@ -121,9 +109,9 @@ ENGINE_NAMES = {'jit': 'the recompiler', 'interp': 'the interpreter'}
 # 2.3.5): the active backend itself, or the interpreter fallback
 DEBUG_ENGINES = ('sh4-debug-native', 'sh4-debug-fallback')
 
-# The recompiler of an x86-64 host executes breakpoints and steps itself (SH4DBG_NATIVE, hw/sh4/sh4_if.h); the one
-# of an arm64 host does not, and runs them on the interpreter fallback with or without Debugger:ForceFallback
-NATIVE_RECOMPILER = platform.machine().lower() in ('x86_64', 'amd64')
+# The recompilers of x86-64 and arm64 hosts execute breakpoints and steps themselves (SH4DBG_NATIVE, hw/sh4/sh4_if.h);
+# on a host of another kind the expectation is the interpreter fallback, with or without Debugger:ForceFallback
+NATIVE_RECOMPILER = platform.machine().lower() in ('x86_64', 'amd64', 'arm64', 'aarch64')
 
 
 class Failed(Exception):
@@ -272,7 +260,7 @@ def debug_engine_asked(args):
     if args.fallback:
         return 'sh4-debug-fallback', 'the recompiler (config:Dynarec.Enabled=yes) with Debugger:ForceFallback=yes (--fallback)'
     if NATIVE_RECOMPILER:
-        return 'sh4-debug-native', 'the recompiler (config:Dynarec.Enabled=yes) of an x86-64 host, without Debugger:ForceFallback'
+        return 'sh4-debug-native', 'the recompiler (config:Dynarec.Enabled=yes) of an %s host, without Debugger:ForceFallback' % platform.machine()
     return 'sh4-debug-fallback', 'the recompiler (config:Dynarec.Enabled=yes) of a %s host, which has no native breakpoints' % platform.machine()
 
 
@@ -376,68 +364,16 @@ def runner_env(args):
 
 STARTPAUSED = ['Debugger:Enabled=yes', 'Debugger:Port=0', 'Debugger:Required=yes', 'Debugger:StartPaused=yes']
 
-# PL-D78: S04 on the recompiler of an arm64 host is recorded, not gated (the top of the file). The hosts, by
-# platform.machine(); the slice (SH4_TIMESLICE, libswirl/hw/sh4/sh4_interpreter.h); and the two checks of S04's
-# step on dc.timing.SH4_CYCLES (scripts/contract/scenarios.ts of the UI), as the runner words their failures
-S04_RECORDED_HOSTS = ('arm64', 'aarch64')
-SH4_TIMESLICE = 448
-S04_WENT_BACK = re.compile(r'^dc\.timing\.SH4_CYCLES went back from (\d+) to (\d+) in a step$')
-S04_DID_NOT_MOVE = 'dc.timing.SH4_CYCLES did not increase in a step that did not end at an exception vector'
-
-
-def read_summary(path):
-    """The runner's summary (--json-file, ContractSummary of the UI's scripts/contract/run.ts), or None."""
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            summary = json.load(f)
-    except (OSError, ValueError):
-        return None
-    return summary if isinstance(summary, dict) else None
-
-
-def s04_recorded(machine, engine, code, summary):
-    """PL-D78: the runner's detail of S04 when a run of the runner with the exit code code and that summary passes by
-    the rule, else None. machine: platform.machine() of the host; engine: --engine."""
-    if str(machine).lower() not in S04_RECORDED_HOSTS or engine != 'jit' or code != 1 or not isinstance(summary, dict):
-        return None
-    try:
-        others = [scenario for scenario in summary['scenarios'] if scenario['status'] != 'passed']
-        if not (summary['failed'] == 1 and summary['partial'] == 0 and summary['notApplicable'] == 0
-                and summary['passed'] >= 1 and summary['nothingVerified'] is False
-                and summary['invariantViolations'] == [] and summary['cleanUpProblems'] == []
-                and summary['requiredNotesMissing'] == []
-                and summary['requiredNotPassed'] == [{'id': 'S04', 'status': 'failed'}]
-                and len(others) == 1 and others[0]['id'] == 'S04' and others[0]['status'] == 'failed'):
-            return None
-        details = others[0]['details']
-    except (KeyError, TypeError):
-        return None
-    if not isinstance(details, list) or len(details) != 1 or not isinstance(details[0], str):
-        return None
-    detail = details[0]
-    back = S04_WENT_BACK.match(detail)
-    if back:
-        moved = int(back.group(1)) - int(back.group(2))
-        return detail if 0 < moved < SH4_TIMESLICE else None
-    return detail if detail == S04_DID_NOT_MOVE else None
-
 
 def run_runner(args, selection, what):
     """The emulator at its StartPaused stop and the contract runner against it, with the selection of the mode.
     The runner decides: its exit code, "contract: OK" and a summary in which every selected scenario passed and
-    no invariant was violated. Nothing else of its report is read here; but on the recompiler of an arm64 host a
-    run whose S04 alone failed, on one of its SH4_CYCLES checks, passes with that recorded (PL-D78, s04_recorded,
-    by the runner's summary of --json-file)."""
+    no invariant was violated. Nothing else of its report is read here."""
     run = Run(args, 'emulator').start(STARTPAUSED)
-    recorded = None
     try:
         port = run.port()
         log_path = os.path.join(args.work, 'runner.txt')
-        summary_path = os.path.join(args.work, 'summary.json')
-        # the rule of PL-D78 reads the summary of this run of the runner, never one that was there before it
-        if os.path.exists(summary_path):
-            os.remove(summary_path)
-        command = runner_command(args, port, selection + ['--json-file', summary_path])
+        command = runner_command(args, port, selection + ['--json-file', os.path.join(args.work, 'summary.json')])
         with open(log_path, 'wb') as log:
             runner = emurun.start(command, args.watchdog, cwd=args.devtools, env=runner_env(args), stdout=log,
                                   stderr=subprocess.STDOUT, emulator=False)
@@ -455,20 +391,13 @@ def run_runner(args, selection, what):
         # what the runner checked was made on the engine the test asked for: a describe of its own, behind the
         # runner, which it does not see
         engine = described_engine(args, port, run)
-        if code != 0:
-            recorded = s04_recorded(platform.machine(), args.engine, code, read_summary(summary_path))
-        check(code == 0 or recorded is not None, 'the contract runner ended with exit code %d: %s did not pass' % (code, what), run)
+        check(code == 0, 'the contract runner ended with exit code %d: %s did not pass' % (code, what), run)
         summary = [line for line in text.splitlines() if ' passed, ' in line and ' failed, ' in line]
-        said = 'contract: OK' if recorded is None else 'contract: FAILED'
-        check(summary and said in text, 'the runner did not say "%s"' % said, run)
+        check(summary and 'contract: OK' in text, 'the runner did not say "contract: OK"', run)
         counts = re.match(r'(\d+) passed, (\d+) failed, (\d+) partial, (\d+) not applicable; (\d+) ticks checked, (\d+) invariant violation', summary[-1])
         check(counts is not None, 'the summary of the runner is not understood: ' + summary[-1], run)
-        if recorded is None:
-            check(int(counts.group(1)) > 0 and all(int(counts.group(i)) == 0 for i in (2, 3, 4, 6)),
-                  'every selected scenario has to pass, with no invariant violated: ' + summary[-1], run)
-        else:
-            check(int(counts.group(1)) > 0 and int(counts.group(2)) == 1 and all(int(counts.group(i)) == 0 for i in (3, 4, 6)),
-                  'S04 is recorded (PL-D78) only where it is the one scenario that failed, with no invariant violated: ' + summary[-1], run)
+        check(int(counts.group(1)) > 0 and all(int(counts.group(i)) == 0 for i in (2, 3, 4, 6)),
+              'every selected scenario has to pass, with no invariant violated: ' + summary[-1], run)
     finally:
         # emulated time stands still at a stop, so no exit key ends this process: the harness does
         ended = run.terminate()
@@ -476,8 +405,6 @@ def run_runner(args, selection, what):
     check(ended, 'the emulator did not end within 20 s of SIGTERM', run)
     print('engine: ' + engine)
     print('%s: %s' % (what, summary[-1]))
-    if recorded is not None:
-        print('S04: recorded (PL-D78): ' + recorded)
 
 
 def mode_m1(args):
@@ -941,9 +868,10 @@ def mode_hash_idlebp(args):
 LISTENING_KEYS = ['Debugger:TickMs=20', 'Debugger:FullTickEvery=1']
 
 # The node whose registers are the context of the SH4. A running machine is read where the SH4 gives up its
-# slice, and the context is complete there on the interpreter and on a recompiler that says so, which the one for
-# x64 does. On any other recompiler every running tick says registersStale and leaves this node out (design 2.8;
-# the runner has the same rule in its invariant I5)
+# slice, and the context is complete there on the interpreter and on a recompiler that says so, which the ones for
+# x64 and arm64 do. On any other recompiler every running tick says registersStale and leaves this node out (design
+# 2.8; the runner has the same rule in its invariant I5). No engine the tests run sends such a tick: the mode
+# hash-listening refuses one, and full_running_tick keeps the design's shape of it for hash-listening-rule
 SH4_CONTEXT_PATH = 'dc.sh4.cpu'
 
 
@@ -1019,22 +947,24 @@ def mode_hash_listening(args):
     registers = full_running_tick(full[-1], counts)[1]
     check(values == registers, 'a full running tick has %d register values, the device tree %d registers on its %d paths'
           % (values, registers, len(full[-1]['registers'])), run)
-    stale = sum(1 for tick in full if tick['executionState'].get('registersStale'))
+    # every engine of the tests has the SH4's context complete where a running machine is read (SH4DBG_CTX_AT_SLICE)
+    stale = sum(1 for tick in running if tick['executionState'].get('registersStale'))
+    check(stale == 0, '%d of the %d running ticks say registersStale: the SH4\'s context of a running tick is complete on '
+          'the interpreter and on the recompilers of x86-64 and arm64 hosts' % (stale, len(running)), run)
 
     line = exit_line(run.out)
     check(line is not None and 'hash' in line, 'the run with the listening client printed no state hash', run)
     check(run.code == 0, 'exit code %s' % run.code, run)
     same_hash(base, line, 'the run with a client that only listens and the run with the server off', run)
-    print('a client that only listens, sent %d full ticks of %d registers on %d paths while the target ran%s, and server off: both runs end in '
-          'hash=%s after %s vblanks' % (len(full), registers, len(full[-1]['registers']),
-                                        ' (%d of them say registersStale and are without %s)' % (stale, SH4_CONTEXT_PATH) if stale else '',
-                                        line['hash'], line['vblanks']))
+    print('a client that only listens, sent %d full ticks of %d registers on %d paths while the target ran, and server off: both runs end in '
+          'hash=%s after %s vblanks' % (len(full), registers, len(full[-1]['registers']), line['hash'], line['vblanks']))
 
 
 def mode_hash_listening_rule():
     """What full_running_tick() makes of ticks that are made up. The tick without dc.sh4.cpu is what a recompiler
-    sends whose SH4 context is not complete at the end of a slice. The one for x64 is not of that kind and the
-    interpreter is not either, so no run on an x64 host has such a tick: the rule for it is held here."""
+    sends whose SH4 context is not complete at the end of a slice. The ones for x64 and arm64 are not of that kind
+    and the interpreter is not either, so no run of the tests has such a tick (the mode hash-listening refuses one):
+    the design's rule for it is held here."""
     counts = {'dc.sh4.cpu': 69, 'dc.aica.arm7': 41, 'dc.aica.dsp': 9, 'dc.timing': 5, 'dc.holly.spg': 9, 'dc.aica.sgc.0': 38}
     every = sorted(counts)
     base = ['dc.aica.arm7', 'dc.aica.dsp', 'dc.sh4.cpu', 'dc.timing']

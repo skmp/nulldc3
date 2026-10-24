@@ -41,22 +41,44 @@ endif()
 # the configurations that the gates on the booted guest are made in: engine, and "off" for idleskip off
 set(sh4bp_boots jit interpreter fallback jit-idleskip-off fallback-idleskip-off)
 
-# The tests run the blocks of the x64 backend through its main loop, with its native debugger checks (DebugChecks,
-# jit/backend/x64/rec_x64.cpp), on Linux and on Windows (its check stub with the home space of the Windows calling
-# convention, and its own budget of checks). b11 counts host instructions with the performance counters of Linux and
-# says SKIPPED on another host
-if(NOT ((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT})))
-  set(sh4bp_skip "the sh4bp gates need an x86-64 build with the SH4 recompiler")
-  set(sh4bp_boot_tests "")
-  foreach(boot ${sh4bp_boots})
-    list(APPEND sh4bp_boot_tests boot.${boot})
-  endforeach()
+set(sh4bp_boot_tests "")
+foreach(boot ${sh4bp_boots})
+  list(APPEND sh4bp_boot_tests boot.${boot})
+endforeach()
+
+# The tests run the blocks of the SH4 recompiler of the host through its main loop and RunBlock, with its native
+# debugger checks (DebugChecks): the x64 backend (jit/backend/x64/rec_x64.cpp) on Linux and on Windows (its check stub
+# with the home space of the Windows calling convention, and its own budget of checks), the arm64 backend
+# (jit/backend/arm64/rec_arm64.cpp, with vixl) on Linux and on macOS. On arm64 also abi: the registers a caller keeps,
+# around the main loop and RunBlock, through each of their exits (as unwind is Windows-only). b11 counts host
+# instructions with the performance counters of Linux and says SKIPPED on another host, and where the kernel refuses
+# them.
+# On macOS the code region is MAP_JIT memory at the address of SH4_TCB, as the emulator maps it (stubs.cpp): a host
+# that refuses it makes every program of this directory say "SKIPPED: the code region: ..." at its start, with the
+# request, the error and the distance to SH4_TCB, which ctest counts as skipped
+if((${HOST_CPU} EQUAL ${CPU_X64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT}))
+  set(sh4bp_backend_sources jit/backend/x64/rec_x64.cpp)
+elseif((${HOST_CPU} EQUAL ${CPU_A64}) AND (${FEAT_SHREC} EQUAL ${DYNAREC_JIT}))
+  file(GLOB sh4bp_vixl_sources RELATIVE "${nulldc_core_path}" "${nulldc_core_path}/deps/vixl/aarch64/*.cc")
+  set(sh4bp_backend_sources jit/backend/arm64/rec_arm64.cpp
+    deps/vixl/code-buffer-vixl.cc deps/vixl/cpu-features.cc deps/vixl/utils-vixl.cc deps/vixl/compiler-intrinsics-vixl.cc
+    ${sh4bp_vixl_sources})
+  list(APPEND sh4bp_gates abi)
+else()
+  set(sh4bp_skip "the sh4bp gates need a build with the SH4 recompiler of an x86-64 or an arm64 host")
   foreach(gate ${sh4bp_gates} selftest ${sh4bp_boot_tests} b11)
     add_test(NAME debugger.sh4bp.${gate}
       COMMAND ${CMAKE_COMMAND} -E echo "SKIPPED: ${sh4bp_skip}")
     set_tests_properties(debugger.sh4bp.${gate} PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
   endforeach()
   return()
+endif()
+
+# On arm64 a program that the host refuses its code region says so (stubs.cpp): sh4bp_refusal gives the tests that
+# start one the regular expression of that line
+set(sh4bp_refused "")
+if(${HOST_CPU} EQUAL ${CPU_A64})
+  set(sh4bp_refused "SKIPPED: the code region")
 endif()
 
 
@@ -233,13 +255,17 @@ nulldc_add_libswirl_library(nulldc_sh4bp
     hw/sh4/dyna/shil.cpp
     hw/sh4/dyna/driver.cpp
     hw/sh4/dyna/blockmanager.cpp
-    jit/backend/x64/rec_x64.cpp
+    ${sh4bp_backend_sources}
     deps/crypto/sha1.cpp
     debugger/dbg_sh4.cpp
     ${sh4bp_host_sources}
 )
 target_sources(nulldc_sh4bp PRIVATE "${sh4bp_interrupts_src}" "${sh4bp_opcodes_src}")
 target_compile_definitions(nulldc_sh4bp PUBLIC NULLDC_DEBUGGER=1)
+# vixl's headers include each other by the names under deps/vixl (the emulator's include path has it as well)
+if(${HOST_CPU} EQUAL ${CPU_A64})
+  target_include_directories(nulldc_sh4bp PRIVATE "${nulldc_core_path}/deps/vixl")
+endif()
 
 add_executable(sh4bp_test
   sh4bp_test.cpp
@@ -250,9 +276,17 @@ add_executable(sh4bp_test
 )
 target_link_libraries(sh4bp_test PRIVATE nulldc_sh4bp)
 
+# sh4bp_refusal(<test>): a test whose program the host can refuse its code region (arm64) counts that as a skip
+function(sh4bp_refusal test)
+  if(sh4bp_refused)
+    set_tests_properties(${test} PROPERTIES SKIP_REGULAR_EXPRESSION "${sh4bp_refused}")
+  endif()
+endfunction()
+
 foreach(gate ${sh4bp_gates})
   add_test(NAME debugger.sh4bp.${gate} COMMAND sh4bp_test ${gate})
   set_tests_properties(debugger.sh4bp.${gate} PROPERTIES TIMEOUT 300)
+  sh4bp_refusal(debugger.sh4bp.${gate})
 endforeach()
 
 
@@ -275,6 +309,7 @@ target_link_libraries(sh4bp_selftest PRIVATE nulldc_sh4bp)
 add_test(NAME debugger.sh4bp.selftest
   COMMAND ${CMAKE_COMMAND} -DSELFTEST=$<TARGET_FILE:sh4bp_selftest> -P "${CMAKE_CURRENT_SOURCE_DIR}/selftest_compare.cmake")
 set_tests_properties(debugger.sh4bp.selftest PROPERTIES TIMEOUT 600)
+sh4bp_refusal(debugger.sh4bp.selftest)
 
 # The gates on the booted guest: sessions of the tests sh4bpboot against sessions of their twins sh4bpbase
 foreach(boot ${sh4bp_boots})
@@ -288,6 +323,7 @@ foreach(boot ${sh4bp_boots})
     COMMAND ${CMAKE_COMMAND} -DSELFTEST=$<TARGET_FILE:sh4bp_selftest> -DENGINE=${engine} -DIDLESKIP=${idleskip}
       -P "${CMAKE_CURRENT_SOURCE_DIR}/selftest_boot.cmake")
   set_tests_properties(debugger.sh4bp.boot.${boot} PROPERTIES TIMEOUT 900)
+  sh4bp_refusal(debugger.sh4bp.boot.${boot})
 endforeach()
 
 
@@ -304,10 +340,13 @@ nulldc_add_libswirl_library(nulldc_sh4bp_off
     hw/sh4/dyna/shil.cpp
     hw/sh4/dyna/driver.cpp
     hw/sh4/dyna/blockmanager.cpp
-    jit/backend/x64/rec_x64.cpp
+    ${sh4bp_backend_sources}
     deps/crypto/sha1.cpp
     ${sh4bp_host_sources}
 )
+if(${HOST_CPU} EQUAL ${CPU_A64})
+  target_include_directories(nulldc_sh4bp_off PRIVATE "${nulldc_core_path}/deps/vixl")
+endif()
 
 add_executable(sh4bp_cost_on cost.cpp stubs.cpp "${nulldc_core_path}/debugger/dbg_selftest_sh4bp_guest.inc")
 target_link_libraries(sh4bp_cost_on PRIVATE nulldc_sh4bp)

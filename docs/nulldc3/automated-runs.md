@@ -335,12 +335,9 @@ not the emulator (the contract runner, the tools of the tests) gets the caller's
 cache in its run's directory, so that `node`, `tsx` and npm write nothing outside the work folder. A harness ends a
 run with a `SIGTERM` to `macrun.py`, which kills the program and everything below it (a `SIGKILL` to `macrun.py` would
 leave them running in the session it gave them). The harnesses are Python 3.9 with the standard library, the Python of
-Xcode. They expect what the debugger's arm64 rules say of the arm64 recompiler: its breakpoints and steps on the
-interpreter fallback (`sh4-debug-fallback`, with or without `Debugger:ForceFallback`), and S04 of the contract gates
-recorded, not gated, where it fails on its `SH4_CYCLES` checks alone (PL-D78, `tests/debugger/contract/README.md`).
-Thirteen targets of those tests are known limits of the arm64 recompiler's debugger on every arm64 host, macOS and
-Linux: they say `KNOWN LIMIT (A64), NOT RUN: <cause>` and are counted as skipped (`tests/README.md`, "Known limits of
-the arm64 recompiler's debugger (A64)"). `tests/system` builds no emulator on macOS: the tests project takes
+Xcode. They expect of the arm64 recompiler what they expect of the x86-64 one: its breakpoints and steps native to it
+(`sh4-debug-native`; `sh4-debug-fallback` with `Debugger:ForceFallback=yes`), and S04 of the contract gates gated in
+full; no test is registered as a known limit. `tests/system` builds no emulator on macOS: the tests project takes
 `-DNULLDC_EMULATOR=<build>/nulldc3.app/Contents/MacOS/nulldc3` (`tests/README.md`, "On macOS", with the skip list).
 The selftest sessions nap with a kqueue timer that the kernel does not coalesce on macOS
 (`libswirl/debugger/dbg_selftest_nap.h`): its timers with the default leeway, `std::this_thread::sleep_for` among
@@ -355,9 +352,9 @@ exit status 1, whatever the command line (`--version` too):
 
     nulldc3: this build needs 4 KiB pages; this kernel uses 16 KiB
 
-The fault handler reads and writes the pc of a fault in Linux's `mcontext` (`libswirl/linux/context.cpp`). The
-debugger's arm64 rules, and the thirteen known limits of the arm64 recompiler's debugger, are those of the Mac
-(`tests/README.md`, "On Linux arm64" and "Known limits of the arm64 recompiler's debugger (A64)").
+The fault handler reads and writes the pc of a fault in Linux's `mcontext` (`libswirl/linux/context.cpp`). The arm64
+recompiler and the debugger are as on the Mac: the native engine, S04 gated in full, no known limits
+(`tests/README.md`, "On Linux arm64").
 
 Ubuntu on arm64 (and on x86_64) pipes a crash to apport, which writes under `/var` (its log, and a report for a
 program of a package), as WSL2 pipes it to its handler: an automated run there gets the core file size limit of

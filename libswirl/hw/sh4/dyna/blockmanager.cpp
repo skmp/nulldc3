@@ -192,13 +192,18 @@ void bm_DiscardAddress(u32 codeaddr)
 void bm_DiscardAddrPage(u32 addr)
 {
 	u32 ram_page = (addr & RAM_MASK) / REI_PAGE_SIZE;
+	// the 4 KiB page of the address (design R4), inside the block manager's page (16 KiB on Apple silicon)
+	const u32 first = (addr & RAM_MASK) & ~0xFFFu;
+	const u32 end = first + 0x1000;
 
 	// Make a local copy so we can remove from the page_blocks list while iterating
 	auto list = page_blocks[ram_page];
 
 	for (auto it = list.begin(); it != list.end(); it++)
 	{
-		bm_DiscardBlock(*it);
+		const u32 b = (*it)->addr & RAM_MASK;
+		if (b < end && b + (*it)->sh4_code_size > first)
+			bm_DiscardBlock(*it);
 	}
 }
 

@@ -28,17 +28,15 @@ using namespace vixl::aarch64;
 #include "hw/sh4/sh4_core.h"
 #include "hw/sh4/dyna/ngen.h"
 #include "hw/sh4/sh4_rom.h"
+#include "debugger/debugger.h"
 #include "arm64_regalloc.h"
 
 #undef do_sqw_nommu
 
-extern "C" void no_update();
-extern "C" void intc_sched();
 extern "C" void ngen_blockcheckfail(u32 pc);
 extern "C" void ngen_LinkBlock_Generic_stub();
 extern "C" void ngen_LinkBlock_cond_Branch_stub();
 extern "C" void ngen_LinkBlock_cond_Next_stub();
-extern "C" void ngen_FailedToFindBlock_();
 extern void vmem_platform_flush_cache(void *icache_start, void *icache_end, void *dcache_start, void *dcache_end);
 
 // The names the assembly below gives C symbols, and the visibility of the stubs it defines. A C name is the symbol of
@@ -92,6 +90,67 @@ static __attribute((used)) void end_slice()
 }
 #endif
 
+/*
+	The slice counter: the cycles left until the next UpdateSystem. Inside a run of the generated code it is in w27;
+	here it is kept when the main loop is left and entered again, so that leaving and entering it is not visible to
+	the guest, and a machine reset sets it (ResetSlice). The generated code stores w27 here whenever code other than
+	itself may read it: in front of the UpdateSystem_INTC of a slice end, in front of the handler of SLEEP (which calls
+	UpdateSystem from inside its block), at the debugger's calls and at every exit of the main loop and of RunBlock;
+	it loads it at every entry, and again behind the UpdateSystem_INTC of a slice end. No C code writes it while
+	generated code runs: SetSliceCyclesLeft is called by the interpreter fallback at the entry of its loop or of a
+	step only (hw/sh4/dyna/driver.cpp, fallback_Enter / fallback_Leave), ResetSlice with the cpu stopped.
+*/
+static int a64_slice = SH4_TIMESLICE;
+
+// The stubs of the code generator (Arm64NGenBackend::Init), the first thing in the code cache: the main loop's poll and
+// dispatch, its end of slice (entered by a branch from the prologue of a block whose test found the slice used up), the
+// exit of the main loop and of RunBlock, RunBlock's test behind its block, the debugger's check stub and the
+// dispatcher's entry for a pc that has no block. Their addresses, in the executable view of the cache
+static void* a64_poll;
+static void* a64_slice_end;
+static void* a64_exit;
+static void* a64_runblock_tail;
+static void* a64_check_stub;
+static void* a64_failed_to_find;
+
+/*
+	What debugger checks add to a block, at most.
+
+	A check is A64_CHECK_CALL_BYTES in the block: the pc and the refund in w0 and w1 and the call of the block's own
+	tail, four instructions whatever their values (an ExactAssemblyScope). The tail adds the third argument, the end of
+	the block, and goes on to the check stub: two instructions and a branch, A64_CHECK_TAIL_BYTES, once per block. The
+	register allocator flushes for a check: every host register that holds a guest register is written to the
+	context in front of it and loaded again behind it, one str or ldr of [x28, #offset] each (arm64_regalloc.h), and the
+	blocks keep guest registers in 8 general and 8 FP registers. Measured by debugger.sh4bp.dense, a check in front of
+	which every host register was written and behind which every one is read again: it adds 156 bytes to its block (the
+	call, a flush of 128 and the tail).
+
+	A block holds A64_CHECK_BUDGET of them (ngen_features::DebugCheckBudget), which keeps their code within
+	A64_CHECKS_BYTES_MAX whatever is armed: 113.
+*/
+#define A64_CHECK_CALL_BYTES   16
+#define A64_CHECK_FLUSH_BYTES  (2 * (8 + 8) * 4)
+#define A64_CHECK_TAIL_BYTES   12
+#define A64_CHECKS_BYTES_MAX   (16 * 1024)
+#define A64_CHECK_BUDGET       ((A64_CHECKS_BYTES_MAX - A64_CHECK_TAIL_BYTES) / (A64_CHECK_CALL_BYTES + A64_CHECK_FLUSH_BYTES))
+
+/*
+	The room a compile keeps (Arm64Assembler::Room). vixl writes into the buffer it is given and, when an instruction
+	does not fit, grows it with realloc: the buffer is a part of the code cache, so that would be a crash, not an
+	overrun that could be caught. The compile tests in front of the check of the block's code and in front of every
+	op that what it writes next fits with room to spare, and gives the block up otherwise (Compile: block->code 0).
+	  A64_OP_MAX_BYTES      what one op writes at most, with the loads and stores of the register allocator around
+	                        it and the literals it adds (a canonical call of eight arguments, its largest, is some
+	                        150 bytes; a flush of every register 64); each op is held to it (a verify)
+	  A64_END_MAX_BYTES     what the block writes behind its last op, at most: the flow report, the end of the block
+	                        (RelinkBlock: the rest of a block, a temporary block's end, a conditional end), the tail
+	                        of the checks
+	  A64_SCOPE_BYTES       the room a macro instruction of vixl asks the buffer for, whatever it writes
+*/
+#define A64_OP_MAX_BYTES       512
+#define A64_END_MAX_BYTES      256
+#define A64_SCOPE_BYTES        32
+
 __asm__
 (
 		A64_HIDDEN(ngen_LinkBlock_cond_Branch_stub)
@@ -120,13 +179,6 @@ __asm__
 		"bl " A64_SYM(rdv_LinkBlock) "					\n\t"   // returns an RX addr
 		"br x0								\n"
 
-		A64_HIDDEN(ngen_FailedToFindBlock_)
-		".globl " A64_SYM(ngen_FailedToFindBlock_) "		\n\t"
-	A64_SYM(ngen_FailedToFindBlock_) ":				\n\t"
-		"mov w0, w29						\n\t"
-		"bl " A64_SYM(rdv_FailedToFindBlock) "			\n\t"
-		"br x0								\n"
-
 		A64_HIDDEN(ngen_blockcheckfail)
 		".globl " A64_SYM(ngen_blockcheckfail) "			\n\t"
 	A64_SYM(ngen_blockcheckfail) ":					\n\t"
@@ -134,91 +186,14 @@ __asm__
 		"br x0								\n"
 );
 
-// The run flag is an atomic of 32 bits (sh4_if.h): the ldr of no_update below is a relaxed load of it, the
+// The run flag is an atomic of 32 bits (sh4_if.h): the ldr of the poll in the main loop is a relaxed load of it, the
 // poll of the emulator thread
 static_assert(sizeof(Sh4cntx.CpuRunning) == 4, "the main loop loads the run flag as 32 bits");
 
-void rec_mainloop(void* v_cntx)
-{
-	Sh4RCB* ctx = (Sh4RCB*)((u8*)v_cntx - sizeof(Sh4RCB));
-
-	__asm__
-	(
-		"stp x19, x20, [sp, #-160]!	\n\t"
-		"stp x21, x22, [sp, #16]	\n\t"
-		"stp x23, x24, [sp, #32]	\n\t"
-		"stp x25, x26, [sp, #48]	\n\t"
-		"stp x27, x28, [sp, #64]	\n\t"
-		"stp s14, s15, [sp, #80]	\n\t"
-		"stp s8, s9, [sp, #96]		\n\t"
-		"stp s10, s11, [sp, #112]	\n\t"
-		"stp s12, s13, [sp, #128]	\n\t"
-		"stp x29, x30, [sp, #144]	\n\t"
-		// Use x28 as sh4 context pointer
-		"mov x28, %[cntx]			\n\t"
-		// Use x27 as cycle_counter
-		"mov w27, %[_SH4_TIMESLICE]	\n\t"
-		// w29 is next_pc
-		"ldr w29, [x28, %[pc]]		\n\t"
-		"b " A64_SYM(no_update) "				\n"
-
-		A64_HIDDEN(intc_sched)
-		".globl " A64_SYM(intc_sched) "			\n\t"
-	A64_SYM(intc_sched) ":					\n\t"
-		"add w27, w27, %[_SH4_TIMESLICE]	\n\t"
-		"mov x29, lr				\n\r"	// Trashing pc here but it will be reset at the end of the block or in DoInterrupts
-		"bl " A64_SYM(UpdateSystem) "			\n\t"
-		"mov lr, x29				\n\t"
-		"cbnz w0, 1f 	\n\t"
-		"ret						\n"
-
-	".do_interrupts:				\n\t"
-		"1: \n\t"
-		"mov x0, x29				\n\t"
-		"bl " A64_SYM(rdv_DoInterrupts) "		\n\t"	// Updates next_pc based on host pc
-		"mov w29, w0				\n"
-
-		A64_HIDDEN(no_update)
-		".globl " A64_SYM(no_update) "			\n\t"
-	A64_SYM(no_update) ":						\n\t"	// next_pc _MUST_ be on w29
-		"ldr w0, [x28, %[CpuRunning]] \n\t"
-		"cbz w0, 1f		\n\t"
-
-		"movz x2, %[RCB_SIZE], lsl #16	\n\t"
-		"sub x2, x28, x2			\n\t"
-		"add x2, x2, %[SH4CTX_SIZE]	\n\t"
-#if RAM_SIZE_MAX == 33554432
-		"ubfx w1, w29, #1, #24		\n\t"	// 24+1 bits: 32 MB
-#elif RAM_SIZE_MAX == 16777216
-		"ubfx w1, w29, #1, #23		\n\t"	// 23+1 bits: 16 MB
-#else
-#error "Define RAM_SIZE_MAX"
-#endif
-		"ldr x0, [x2, x1, lsl #3]	\n\t"
-		"br x0						\n"
-
-	".end_mainloop:					\n\t"
-	"1:					\n\t"
-		"ldp x29, x30, [sp, #144]	\n\t"
-		"ldp s12, s13, [sp, #128]	\n\t"
-		"ldp s10, s11, [sp, #112]	\n\t"
-		"ldp s8, s9, [sp, #96]		\n\t"
-		"ldp s14, s15, [sp, #80]	\n\t"
-		"ldp x27, x28, [sp, #64]	\n\t"
-		"ldp x25, x26, [sp, #48]	\n\t"
-		"ldp x23, x24, [sp, #32]	\n\t"
-		"ldp x21, x22, [sp, #16]	\n\t"
-		"ldp x19, x20, [sp], #160	\n\t"
-	:
-	: [cntx] "r"(reinterpret_cast<uintptr_t>(&ctx->cntx)),
-	  [pc] "i"(offsetof(Sh4Context, pc)),
-	  [_SH4_TIMESLICE] "i"(SH4_TIMESLICE),
-	  [CpuRunning] "i"(offsetof(Sh4Context, CpuRunning)),
-	  [RCB_SIZE] "i" (sizeof(Sh4RCB) >> 16),
-	  [SH4CTX_SIZE] "i" (sizeof(Sh4Context))
-	: "memory"
-	);
-}
+// The context is the last member of Sh4RCB, and the table of the dispatcher (fpcb) its first: the main loop gets the
+// address behind the context (sh4_dyna_rcb) and reaches both from x28
+static_assert(offsetof(Sh4RCB, cntx) + sizeof(Sh4Context) == sizeof(Sh4RCB), "the context ends Sh4RCB");
+static_assert(offsetof(Sh4RCB, fpcb) == 0, "the dispatcher's table starts Sh4RCB");
 
 class Arm64Assembler : public MacroAssembler
 {
@@ -226,7 +201,8 @@ class Arm64Assembler : public MacroAssembler
 	typedef void (MacroAssembler::*Arm64Op_RROF)(const Register&, const Register&, const Operand&, enum FlagsUpdate);
 
 public:
-	Arm64Assembler(void *buffer) : MacroAssembler((u8 *)buffer, 64 * 1024), regalloc(this)
+	// The code is written where it will run: capacity is what the place has room for
+	Arm64Assembler(void *buffer, size_t capacity = 64 * 1024) : MacroAssembler((u8 *)buffer, capacity), regalloc(this)
 	{
 		call_regs.push_back(&w0);
 		call_regs.push_back(&w1);
@@ -300,26 +276,259 @@ public:
 		return *ret_reg;
 	}
 
-	void ngen_Compile(RuntimeBlockInfo* block, SmcCheckEnum smc_checks, bool reset, bool staging, bool optimise)
+	// w27 to the slice counter in memory (a64_slice), and back
+	void GenStoreSlice()
 	{
-		A64_JIT_WRITE_PROTECT(false);
+		Mov(x9, reinterpret_cast<uintptr_t>(&a64_slice));
+		Str(w27, MemOperand(x9));
+	}
+
+	void GenLoadSlice()
+	{
+		Mov(x9, reinterpret_cast<uintptr_t>(&a64_slice));
+		Ldr(w27, MemOperand(x9));
+	}
+
+	// w29 = pc in two instructions whatever its value: block ends behind relink_offset have one size, whatever
+	// DynaRBI::Relink() writes there later
+	void GenSetNextPc(u32 pc)
+	{
+		vixl::ExactAssemblyScope scope(this, 2 * kInstructionSize);
+		movz(w29, pc & 0xFFFF, 0);
+		movk(w29, pc >> 16, 16);
+	}
+
+	/*
+		The stubs of the code generator, written at the start of the code cache by Init: the main loop (Mainloop),
+		its poll and dispatch, its end of slice and its exit, RunBlock and its tail, the debugger's check stub, and the
+		dispatcher's entry for a pc that has no block.
+
+		Mainloop and RunBlock share one frame and one exit: the registers a caller expects back (x19-x30 and d8-d15,
+		the low 64 bits of v8-v15 of the AAPCS64; the blocks keep guest registers in w19-w26 and s8-s15, and a write
+		of sN clears the rest of the register). Between two blocks x27 is the slice counter, x28 the context and w29
+		the pc the guest arrives at; the blocks run on the frame's sp, without a frame of their own, and reach the
+		stubs by branches, the check stub by a call.
+
+		  Mainloop   the frame; x28, w27 from a64_slice, w29 from the context; entered with a counter that is not
+		             positive, the end of the slice first (a flow report of the debugger stopped behind the block
+		             that used the slice up); then the poll
+		  poll       CpuRunning clear: the exit. Otherwise the dispatch of w29: its entry in fpcb
+		  slice end  entered from the prologue of a block whose test found the slice used up, before the block's
+		             charge: w29 into the context, the counter refilled and stored, UpdateSystem_INTC, which can
+		             accept an interrupt (the pc in the context) or latch a stop (CpuRunning); w29 and the counter
+		             loaded again, the poll. Nothing is owed when the loop is left there
+		  exit       the counter stored, the frame back, the return. It never writes the pc: Sh4cntx.pc is complete
+		             wherever the loop is left (the poll's w29 came from the context; a temporary block, a check, a
+		             flow report and the rest of a block write it themselves)
+		  RunBlock   (x0 = a block that is not in the block cache, rdv_RunTempBlock) the frame; x28 from p_sh4rcb at
+		             run time, w27 from a64_slice; the block. A temporary block charges its cost without a test, stores
+		             its next pc at every end and branches to the tail (rec_arm64's RelinkBlock)
+		  tail       what the main loop does behind a block: the counter is tested, and the end of the slice made if
+		             it ran out (the counter refilled and stored, UpdateSystem_INTC, the counter loaded again); the
+		             exit
+		  check      (NULLDC_DEBUGGER) called from a block through the block's tail, with the arguments of
+		             dbg_sh4_Check in w0-w2 and the return address into the block in x30, which it keeps with the
+		             refund across the call (one pair: sp stays aligned). The counter is stored for the debugger.
+		             0: back into the block, which loads its registers again. A stop: the refund back on the counter,
+		             and the exit, without the end-of-slice work and without a store of w29 over the pc the debugger
+		             wrote
+		  failed     the pc has no block: rdv_FailedToFindBlock(w29) compiles it, and the code is entered
+	*/
+	void GenLoopCode(MainloopFnPtr_t* mainloop, RunBlockFnPtr_t* runblock)
+	{
+		const ptrdiff_t pc_offset = offsetof(Sh4Context, pc);
+		Label poll, slice_end, exit, tail;
+
+		// Mainloop(x0 = the address behind the context, sh4_dyna_rcb)
+		*mainloop = (MainloopFnPtr_t)CC_RW2RX(GetCursorAddress<void*>());
+
+		GenFrame();
+		Sub(x28, x0, sizeof(Sh4Context));
+		GenLoadSlice();
+		Ldr(w29, MemOperand(x28, pc_offset));
+		Cmp(w27, 0);
+		B(&slice_end, le);
+
+		// the poll and the dispatch: next_pc _MUST_ be on w29
+		Bind(&poll);
+		a64_poll = CC_RW2RX(GetLabelAddress<void*>(&poll));
+		Ldr(w0, MemOperand(x28, offsetof(Sh4Context, CpuRunning)));
+		Cbz(w0, &exit);
+		Sub(x2, x28, offsetof(Sh4RCB, cntx));
+#if RAM_SIZE_MAX == 33554432
+		Ubfx(w1, w29, 1, 24);	// 24+1 bits: 32 MB
+#elif RAM_SIZE_MAX == 16777216
+		Ubfx(w1, w29, 1, 23);	// 23+1 bits: 16 MB
+#else
+#error "Define RAM_SIZE_MAX"
+#endif
+		Ldr(x0, MemOperand(x2, x1, LSL, 3));
+		Br(x0);
+
+		// the end of the slice
+		Bind(&slice_end);
+		a64_slice_end = CC_RW2RX(GetLabelAddress<void*>(&slice_end));
+		Add(w27, w27, SH4_TIMESLICE);
+		Str(w29, MemOperand(x28, pc_offset));
+		GenStoreSlice();
+		GenCallRuntime(UpdateSystem_INTC);
+		Ldr(w29, MemOperand(x28, pc_offset));
+		GenLoadSlice();
+		B(&poll);
+
+		// the exit of Mainloop and of RunBlock
+		Bind(&exit);
+		a64_exit = CC_RW2RX(GetLabelAddress<void*>(&exit));
+		GenStoreSlice();
+		GenFrameEnd();
+
+		// RunBlock(x0 = the block's code)
+		*runblock = (RunBlockFnPtr_t)CC_RW2RX(GetCursorAddress<void*>());
+
+		GenFrame();
+		Mov(x9, reinterpret_cast<uintptr_t>(&p_sh4rcb));
+		Ldr(x9, MemOperand(x9));
+		Add(x28, x9, offsetof(Sh4RCB, cntx));
+		GenLoadSlice();
+		Br(x0);
+
+		// RunBlock's tail: the test behind the block, the end of the slice if it ran out, the exit
+		Bind(&tail);
+		a64_runblock_tail = CC_RW2RX(GetLabelAddress<void*>(&tail));
+		Cmp(w27, 0);
+		B(&exit, gt);
+		Add(w27, w27, SH4_TIMESLICE);
+		GenStoreSlice();
+		GenCallRuntime(UpdateSystem_INTC);
+		GenLoadSlice();
+		B(&exit);
+
+#if defined(NULLDC_DEBUGGER)
+		// the check stub
+		a64_check_stub = CC_RW2RX(GetCursorAddress<void*>());
+		Label stop;
+		Stp(x1, x30, MemOperand(sp, -16, PreIndex));
+		GenStoreSlice();
+		GenCallRuntime(dbg_sh4_Check);
+		Ldp(x1, x30, MemOperand(sp, 16, PostIndex));
+		Cbnz(w0, &stop);
+		Ret();
+
+		// A stop in front of the instruction: the cycles of the instructions that did not run go back to the slice
+		// counter, and the block and the loop are left without the end-of-slice work
+		Bind(&stop);
+		Add(w27, w27, w1);
+		B(&exit);
+#else
+		a64_check_stub = nullptr;
+#endif
+
+		// the dispatcher's entry of a pc without a block (fpcb, bm_GetCode): reached by the dispatch, by the
+		// dynamic ends of the blocks and by rdv_LinkBlock's stubs, with the pc in w29. In the cache, so that no
+		// indirect branch of the generated code has its target in .text (BTI)
+		a64_failed_to_find = CC_RW2RX(GetCursorAddress<void*>());
+		Mov(w0, w29);
+		GenCallRuntime(rdv_FailedToFindBlock);
+		Br(x0);
+	}
+
+	// The frame of Mainloop and RunBlock, and its end: the registers back, the return
+	static const int kFrame = 160;
+
+	void GenFrame()
+	{
+		Stp(x29, x30, MemOperand(sp, -kFrame, PreIndex));
+		Stp(x19, x20, MemOperand(sp, 16));
+		Stp(x21, x22, MemOperand(sp, 32));
+		Stp(x23, x24, MemOperand(sp, 48));
+		Stp(x25, x26, MemOperand(sp, 64));
+		Stp(x27, x28, MemOperand(sp, 80));
+		Stp(d8, d9, MemOperand(sp, 96));
+		Stp(d10, d11, MemOperand(sp, 112));
+		Stp(d12, d13, MemOperand(sp, 128));
+		Stp(d14, d15, MemOperand(sp, 144));
+	}
+
+	void GenFrameEnd()
+	{
+		Ldp(d14, d15, MemOperand(sp, 144));
+		Ldp(d12, d13, MemOperand(sp, 128));
+		Ldp(d10, d11, MemOperand(sp, 112));
+		Ldp(d8, d9, MemOperand(sp, 96));
+		Ldp(x27, x28, MemOperand(sp, 80));
+		Ldp(x25, x26, MemOperand(sp, 64));
+		Ldp(x23, x24, MemOperand(sp, 48));
+		Ldp(x21, x22, MemOperand(sp, 32));
+		Ldp(x19, x20, MemOperand(sp, 16));
+		Ldp(x29, x30, MemOperand(sp, kFrame, PostIndex));
+		Ret();
+	}
+
+	// Is there room for what comes next (bytes, at most) and for everything behind it, with what vixl keeps
+	// pending (the literal pool and the veneers), strictly inside the buffer? The capacity is that of the place
+	// in the code cache (Compile)
+	bool Room(size_t bytes)
+	{
+		const size_t need = (size_t)GetCursorOffset() + A64_SCOPE_BYTES + bytes + GetLiteralPoolMaxSize() + GetVeneerPoolMaxSize()
+			+ A64_END_MAX_BYTES;
+
+		return need < GetBuffer()->GetCapacity();
+	}
+
+	// What CheckBlock writes at most: per 8 bytes of guest code a load, a literal load of 8 bytes, a compare and a
+	// branch (24 bytes, and 8 of literal), and around them the pointer and the failure path
+	static size_t CheckBlockBytes(SmcCheckEnum smc_checks, RuntimeBlockInfo* block)
+	{
+		return 64 + ((size_t)block->sh4_code_size / 8 + 2) * 32;
+	}
+
+	// Compiles the block into the buffer. false: its code does not fit into the buffer's room (Room), and the block
+	// is given up; nothing of what was written counts (Compile)
+	bool ngen_Compile(RuntimeBlockInfo* block, SmcCheckEnum smc_checks, bool reset, bool staging, bool optimise)
+	{
 		//printf("REC-ARM64 compiling %08x\n", block->addr);
 #ifdef PROFILING
 		SaveFramePointer();
 #endif
 		this->block = block;
-		
+
+		if (!Room(CheckBlockBytes(smc_checks, block)))
+			return false;
+
 		CheckBlock(smc_checks, block);
 
 		// run register allocator
 		regalloc.DoAlloc(block);
 
-		// scheduler
-		Subs(w27, w27, block->guest_cycles);
-		Label cycles_remaining;
-		B(&cycles_remaining, pl);
-		GenCallRuntime(intc_sched);
-		Bind(&cycles_remaining);
+		verify(block->guest_cycles <= SH4_TIMESLICE / 2);
+
+		if (block->temporary)
+		{
+			// A block outside the block cache (rdv_RunTempBlock: a step, the rest of a block): it is run by
+			// RunBlock, which tests the counter behind it, and its instruction runs whatever the counter is
+			// (SuperH4Backend::Step)
+			Sub(w27, w27, block->guest_cycles);
+		}
+		else
+		{
+			// The slice is tested in front of the charge, as the main loop of the x64 backend and the interpreter
+			// fallback test it behind the block before (hw/sh4/sh4_dbg.h): a block is entered with a positive
+			// counter, or the slice ends here, in front of it, and the block is dispatched again behind the
+			// end-of-slice work. w29 is the pc the guest arrived at, which the end of the slice stores. A block costs
+			// at most SH4_TIMESLICE / 2, so the counter is positive again behind it
+			Cmp(w27, 0);
+			Label slice_left;
+			B(&slice_left, gt);
+			GenBranchRuntime((void (*)())a64_slice_end);
+			Bind(&slice_left);
+			Sub(w27, w27, block->guest_cycles);
+		}
+
+#if defined(NULLDC_DEBUGGER)
+		// the tail of the debugger checks of the block, and whether there is one
+		Label check_tail;
+		bool has_checks = false;
+#endif
 
 #ifdef PROFILING
 		Ldr(x11, (uintptr_t)&guest_cpu_cycles);
@@ -330,16 +539,44 @@ public:
 		for (size_t i = 0; i < block->oplist.size(); i++)
 		{
 			shil_opcode& op  = block->oplist[i];
+
+			if (!Room(A64_OP_MAX_BYTES))
+				return false;
+
+			const ptrdiff_t op_start = GetCursorOffset();
+
 			regalloc.OpBegin(&op, i);
 
 			switch (op.op)
 			{
+#if defined(NULLDC_DEBUGGER)
+			case shop_dbg_check:
+				{
+					// The register allocator flushes for this op: every register is in the context, and none is
+					// cached across the call. The pc and the refund are arguments, the debugger writes the pc when
+					// it stops; the tail of the block adds the block's end. Four instructions whatever the values:
+					// the pc in two, the refund (at most SH4_TIMESLICE / 2) in one
+					verify(op.rs2._imm <= 0xFFFF);
+					vixl::ExactAssemblyScope scope(this, A64_CHECK_CALL_BYTES);
+					movz(w0, op.rs1._imm & 0xFFFF, 0);
+					movk(w0, op.rs1._imm >> 16, 16);
+					movz(w1, op.rs2._imm, 0);
+					bl(&check_tail);
+					has_checks = true;
+				}
+				break;
+#endif
+
 			case shop_ifb:	// Interpreter fallback
 				if (op.rs1._imm)	// if NeedPC()
 				{
 					Mov(w10, op.rs2._imm);
 					Str(w10, sh4_context_mem_operand(&next_pc));
 				}
+				// SLEEP calls UpdateSystem from inside the block, where the slice counter is read (SH4 time): it is
+				// stored for it
+				if (op.rs3._imm == 0x001B)
+					GenStoreSlice();
 				Mov(*call_regs[0], op.rs3._imm);
 
 				GenCallRuntime(OpDesc[op.rs3._imm]->oph);
@@ -711,15 +948,65 @@ public:
 				break;
 			}
 			regalloc.OpEnd(&op);
+
+			// what Room() took for an op at most
+			verify(GetCursorOffset() - op_start <= A64_OP_MAX_BYTES);
 		}
+
+		const ptrdiff_t end_start = GetCursorOffset();
+
+#if defined(NULLDC_DEBUGGER)
+		// A step-out is pending: the call or return and its slot have run, the pc is where it goes. A return from
+		// exception reports in front of its interrupt check, which is still made when the report stops: if it lets an
+		// interrupt in, the stop is at the handler. In front of relink_offset: Relink() leaves it
+		if (block->dbg_flow)
+		{
+			const bool update_intc = block->BlockType == BET_DynamicIntr || block->BlockType == BET_StaticIntr;
+
+			if (block->BlockType == BET_StaticCall)
+				GenSetNextPc(block->BranchBlock);
+			Str(w29, sh4_context_mem_operand(&next_pc));
+			GenStoreSlice();
+			Mov(w0, block->dbg_flow);
+			GenCallRuntime(dbg_sh4_CheckFlow);
+
+			Label no_stop;
+			Cbz(w0, &no_stop);
+			if (update_intc)
+				GenCallRuntime(UpdateINTC);
+			GenBranchRuntime((void (*)())a64_exit);
+			Bind(&no_stop);
+		}
+#endif
 
 		block->relink_offset = (u32)GetBuffer()->GetCursorOffset();
 		block->relink_data = 0;
 
 		RelinkBlock(block);
 
+#if defined(NULLDC_DEBUGGER)
+		if (has_checks)
+		{
+			// The tail of the checks: the third argument, the same for all of them, and on to the check stub. Behind
+			// the block's end, which Relink() rewrites at the same size
+			const u32 end = block->addr + block->sh4_code_size;
+
+			Bind(&check_tail);
+			{
+				vixl::ExactAssemblyScope scope(this, 2 * kInstructionSize);
+				movz(w2, end & 0xFFFF, 0);
+				movk(w2, end >> 16, 16);
+			}
+			GenBranchRuntime((void (*)())a64_check_stub);
+		}
+#endif
+
+		// what Room() took for the end at most
+		verify(GetCursorOffset() - end_start <= A64_END_MAX_BYTES);
+
 		Finalize();
-		A64_JIT_WRITE_PROTECT(true);
+
+		return true;
 	}
 
 	void ngen_CC_Start(shil_opcode* op)
@@ -891,16 +1178,110 @@ public:
 		regalloc.current_opid = opid;
 	}
 
+	/*
+		The end of the block, at relink_offset: what DynaRBI::Relink() writes again, in place, whenever a successor is
+		linked or discarded. Literal-free (a literal pool would land behind it) and of one size whatever is linked.
+		The end of a block whose code ends in front of its rest, and the end of a temporary block, are never linked:
+		they are written the same way every time, and rdv_LinkBlock never sees them (no link stub is called).
+	*/
 	u32 RelinkBlock(RuntimeBlockInfo *block)
 	{
 		ptrdiff_t start_offset = GetBuffer()->GetCursorOffset();
+
+#if defined(NULLDC_DEBUGGER)
+		if (block->dbg_rest_pc)
+		{
+			// The code of the block ends here and its rest runs outside the block cache (rdv_BlockRest). Every
+			// register is in the context. The rest gets the cycles of its instructions back, and the loop, the main
+			// loop or RunBlock, is left without its test of the slice counter: that comes behind the last
+			// instruction of the block
+			const u32 end = block->addr + block->sh4_code_size;
+
+			{
+				vixl::ExactAssemblyScope scope(this, 5 * kInstructionSize);
+				movz(w0, block->dbg_rest_pc & 0xFFFF, 0);
+				movk(w0, block->dbg_rest_pc >> 16, 16);
+				movz(w1, block->dbg_rest_cycles, 0);
+				movz(w2, end & 0xFFFF, 0);
+				movk(w2, end >> 16, 16);
+			}
+			GenCallRuntime(rdv_BlockRest);
+			{
+				vixl::ExactAssemblyScope scope(this, kInstructionSize);
+				add(w27, w27, Operand(block->dbg_rest_cycles));
+			}
+			GenBranchRuntime((void (*)())a64_exit);
+
+			return GetBuffer()->GetCursorOffset() - start_offset;
+		}
+#endif
+
+		if (block->temporary)
+		{
+			// A block outside the block cache: the next pc into the context, the interrupt check of an interrupt
+			// end, and RunBlock's tail, which tests the slice counter behind the block. It links nothing and
+			// dispatches nothing
+			switch (block->BlockType)
+			{
+			case BET_StaticJump:
+			case BET_StaticCall:
+				GenSetNextPc(block->BranchBlock);
+				break;
+
+			case BET_Cond_0:
+			case BET_Cond_1:
+				{
+					if (block->has_jcond)
+						Ldr(w11, sh4_context_mem_operand(&Sh4cntx.jdyn));
+					else
+						Ldr(w11, sh4_context_mem_operand(&sr.T));
+
+					Cmp(w11, block->BlockType & 1);
+
+					Label branch_not_taken, set;
+
+					B(ne, &branch_not_taken);
+					GenSetNextPc(block->BranchBlock);
+					B(&set);
+					Bind(&branch_not_taken);
+					GenSetNextPc(block->NextBlock);
+					Bind(&set);
+				}
+				break;
+
+			case BET_DynamicJump:
+			case BET_DynamicCall:
+			case BET_DynamicRet:
+			case BET_DynamicIntr:
+				// w29 is *jdyn
+				break;
+
+			case BET_StaticIntr:
+				GenSetNextPc(block->NextBlock);
+				break;
+
+			default:
+				die("Invalid block end type");
+			}
+
+			Str(w29, sh4_context_mem_operand(&next_pc));
+
+			if (block->BlockType == BET_DynamicIntr || block->BlockType == BET_StaticIntr)
+				GenCallRuntime(UpdateINTC);
+
+			GenBranchRuntime((void (*)())a64_runblock_tail);
+
+			return GetBuffer()->GetCursorOffset() - start_offset;
+		}
 
 		switch (block->BlockType)
 		{
 
 		case BET_StaticJump:
 		case BET_StaticCall:
-			// next_pc = block->BranchBlock;
+			// next_pc = block->BranchBlock, in w29: the pc the guest arrives at, which a slice end in the prologue of
+			// the next block stores
+			GenSetNextPc(block->BranchBlock);
 			if (block->pBranchBlock == NULL)
 				GenCallRuntime(ngen_LinkBlock_Generic_stub);
 			else
@@ -924,6 +1305,7 @@ public:
 				Label branch_not_taken;
 
 				B(ne, &branch_not_taken);
+				GenSetNextPc(block->BranchBlock);
 				if (block->pBranchBlock != NULL)
 					GenBranch(block->pBranchBlock->code);
 				else
@@ -931,6 +1313,7 @@ public:
 
 				Bind(&branch_not_taken);
 
+				GenSetNextPc(block->NextBlock);
 				if (block->pNextBlock != NULL)
 					GenBranch(block->pNextBlock->code);
 				else
@@ -944,7 +1327,7 @@ public:
 			// next_pc = *jdyn;
 
 			Str(w29, sh4_context_mem_operand(&next_pc));
-			// TODO Call no_update instead (and check CpuRunning less frequently?)
+			// TODO Branch to the poll of the main loop instead (and check CpuRunning less frequently?)
 			Mov(x2, sizeof(Sh4RCB));
 			Sub(x2, x28, x2);
 			Add(x2, x2, sizeof(Sh4Context));		// x2 now points to FPCB
@@ -971,7 +1354,7 @@ public:
 
 			Ldr(w29, sh4_context_mem_operand(&next_pc));
 
-			GenBranchRuntime(no_update);
+			GenBranchRuntime((void (*)())a64_poll);
 			break;
 
 		default:
@@ -1343,7 +1726,8 @@ private:
 
 		Bind(&blockcheck_fail);
 		Ldr(w0, block->addr);
-		TailCallRuntime(ngen_blockcheckfail);
+		// a direct branch: the stub is in .text, where an indirect one would need a landing pad (BTI)
+		GenBranchRuntime(ngen_blockcheckfail);
 
 		Bind(&blockcheck_success);
 	}
@@ -1414,6 +1798,11 @@ u32 DynaRBI::Relink()
 {
 	//printf("DynaRBI::Relink %08x\n", this->addr);
 
+	// A temporary block is never linked from or to (driver.cpp, rdv_RunTempBlock), and the end of a block whose code
+	// ends in front of its rest links nothing: written again, it is what it was
+	verify(!this->temporary);
+	verify(this->dbg_rest_pc == 0 || (this->pBranchBlock == NULL && this->pNextBlock == NULL));
+
 	A64_JIT_WRITE_PROTECT(false);
 	Arm64Assembler *compiler = new Arm64Assembler((u8 *)this->code + this->relink_offset);
 
@@ -1445,7 +1834,10 @@ void Arm64RegAlloc::Writeback_FPU(u32 reg, eFReg nreg)
 
 // The store queue's write to main memory with the MMU off (the do_sqw_nommu of the context, called by the blocks and
 // by the interpreter): x0 the address, x1 the store queues
+// It is reached by indirect calls (blr from the blocks, a function pointer of C++): its first instruction is the landing
+// pad of such a call (bti c, a hint: no operation on a core without BTI)
 #define A64_SQW_NOMMU_AREA_3 \
+		"hint #34					\n\t"	/* bti c */ \
 		"and x12, x0, #0x20			\n\t"	/* SQ# selection, isolate */ \
 		"add x12, x12, x1			\n\t"	/* SQ# selection, add to SQ ptr */ \
 		"ld2 { v0.2D, v1.2D }, [x12]\n\t" \
@@ -1492,9 +1884,31 @@ struct Arm64NGenBackend: NGenBackend
 	bool Init()
 	{
 		printf("Initializing the ARM64 dynarec\n");
-		
-		this->FailedToFindBlock = &ngen_FailedToFindBlock_;
-		this->Mainloop = &rec_mainloop;
+
+		// What is written here is the first thing in the code cache, with the base of what a cache clear
+		// recycles behind it: Init() is entered with an empty cache every time (recSH4::Init), also by the
+		// backend object of a later emulator thread, which writes the same stubs to the same place
+		verify(emit_FreeSpace() == CODE_SIZE);
+
+		A64_JIT_WRITE_PROTECT(false);
+		{
+			Arm64Assembler stubs(emit_GetCCPtr(), 4096);
+
+			stubs.GenLoopCode(&this->Mainloop, &this->RunBlock);
+			stubs.FinalizeCode();
+
+			u8* begin = stubs.GetBuffer()->GetStartAddress<u8*>();
+			u8* end = stubs.GetBuffer()->GetEndAddress<u8*>();
+
+			vmem_platform_flush_cache(CC_RW2RX(begin), CC_RW2RX(end), begin, end);
+			emit_Skip((u32)(end - begin));
+		}
+		A64_JIT_WRITE_PROTECT(true);
+
+		// To prevent code cache reset from wiping these out
+		emit_SetBaseAddr();
+
+		this->FailedToFindBlock = (void (*)())a64_failed_to_find;
 
 		return true;
 	}
@@ -1507,6 +1921,40 @@ struct Arm64NGenBackend: NGenBackend
 	{
 		dst->InterpreterFallback = false;
 		dst->OnlyDynamicEnds = false;
+
+		// The check, its stop path, RunBlock with its temporary blocks, the rest of a block and the flow report
+#if defined(NULLDC_DEBUGGER)
+		dst->DebugChecks = true;
+		dst->DebugCheckBudget = A64_CHECK_BUDGET;
+#else
+		dst->DebugChecks = false;
+		dst->DebugCheckBudget = 0;
+#endif
+
+		// Between two blocks every register is in the context, and an end of slice stores the pc (w29) in front
+		// of UpdateSystem_INTC. Inside a block UpdateSystem is only called by SLEEP, in front of which the register
+		// allocator flushes and the block stores the pc
+		dst->CtxAtSlice = true;
+	}
+
+	int SliceCyclesLeft()
+	{
+		return a64_slice;
+	}
+
+	void ResetSlice()
+	{
+		a64_slice = SH4_TIMESLICE;
+	}
+
+	bool KeepsSlice()
+	{
+		return true;
+	}
+
+	void SetSliceCyclesLeft(int cycles)
+	{
+		a64_slice = cycles;
 	}
 
 	RuntimeBlockInfo* AllocateBlock()
@@ -1515,16 +1963,29 @@ struct Arm64NGenBackend: NGenBackend
 	}
 
 
+	// The code goes to the end of the code cache, into a buffer of what is left of the cache, 64 KiB at most. Code
+	// that does not fit is given up (Arm64Assembler::Room): block->code stays 0 and the cache is as it was, for the
+	// caller to make room or to ask for less (ngen.h)
 	void Compile(RuntimeBlockInfo* block, SmcCheckEnum smc_checks, bool reset, bool staging, bool optimise)
 	{
-		verify(emit_FreeSpace() >= 16 * 1024);
+		block->code = 0;
+		block->host_code_size = 0;
 
-		compiler = new Arm64Assembler(emit_GetCCPtr());
+		A64_JIT_WRITE_PROTECT(false);
 
-		compiler->ngen_Compile(block, smc_checks, reset, staging, optimise);
+		compiler = new Arm64Assembler(emit_GetCCPtr(), std::min<u32>(64 * 1024, emit_FreeSpace()));
+
+		if (!compiler->ngen_Compile(block, smc_checks, reset, staging, optimise))
+		{
+			block->code = 0;
+			block->host_code_size = 0;
+			block->memory_accesses.clear();
+		}
 
 		delete compiler;
 		compiler = NULL;
+
+		A64_JIT_WRITE_PROTECT(true);
 	}
 
 	void CC_Start(shil_opcode* op)
@@ -1563,6 +2024,7 @@ struct Arm64NGenBackend: NGenBackend
 		if (block == NULL)
 		{
 			printf("ngen_Rewrite: Block at %p not found\n", (void *)ctx->pc);
+			A64_JIT_WRITE_PROTECT(true);
 			return false;
 		}
 		u32 *code_ptr = (u32*)host_pc_rw;
@@ -1570,6 +2032,7 @@ struct Arm64NGenBackend: NGenBackend
 		if (it == block->memory_accesses.end())
 		{
 			printf("ngen_Rewrite: memory access at %p not found (%lu entries)\n", code_ptr, block->memory_accesses.size());
+			A64_JIT_WRITE_PROTECT(true);
 			return false;
 		}
 		u32 opid = it->second.opid;

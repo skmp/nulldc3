@@ -652,12 +652,14 @@ elseif(CASE STREQUAL "icns")
 
 elseif(CASE STREQUAL "hashes")
   # The state hashes of the SH4 on the recompiler of an arm64 Mac (config:Dynarec.Enabled=yes; the ARM7 on the
-  # interpreter, PL-D46): the Mac's own references, as P0's are Linux's. MACa's gate read them twice equal on the
-  # default and the -DNULLDC_DEBUGGER=OFF bundles, MACb's on its head. They are what the arm64 JIT computes, on the
-  # Darwin fault context it runs on: a mutation of that context (linux/context.cpp) changed these alone, and passed
-  # every other target. A hash is good for one host (design 5.6): nothing compares these with another host's
-  set(ref_guest c9bb6e60601ab606)
-  set(ref_2ndmix 6ab1933550d37163)
+  # interpreter, PL-D46): the Mac's own references, as P0's are Linux's. A64 took them (PL-D86): the arm64 recompiler
+  # tests its slice counter in front of a block's charge, as the x64 recompiler and the interpreter fallback do,
+  # which moved every slice end of its runs (MACa's and MACb's were c9bb6e60601ab606 and 6ab1933550d37163). A64's runs
+  # read them twice equal on the default and the -DNULLDC_DEBUGGER=OFF bundles. They are what the arm64 JIT computes,
+  # on the Darwin fault context it runs on: a mutation of that context (linux/context.cpp) changed these alone, and
+  # passed every other target. A hash is good for one host (design 5.6): nothing compares these with another host's
+  set(ref_guest 6a1e1008459e6ab3)
+  set(ref_2ndmix 56bd7274490f91aa)
   set(file_guest "${GUEST}")
   set(file_2ndmix "${ELF_DIR}/2ndmix.elf")
   set(vblanks_guest 90)
