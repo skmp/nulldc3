@@ -4180,15 +4180,16 @@ Built in round 1 (E3, `hw/aica/aica_hash.h/.cpp`), before the sound burst is tou
   for one build on one host (5.6), so the platform round held one baseline, P0 (RB's, equal to M3's B4: 38 rows of state
   hashes, 12 sound lines), taken again on its commit by every package and compared on Linux x86_64 only, where every
   package's gate kept it identical. On other hosts the hashes are reported, not compared with P0: on the Windows host
-  both engines end in Linux's hashes in every field (W64a, 16 runs; again at PLG); on the Mac and on Linux arm64 the
-  interpreter's equal Linux's, and the arm64 recompiler's are its own, the same on both, which `macos.hashes.jit` and
-  `linux_arm64.hashes.jit` hold as the one pair of references in the tree (a host whose recompiler computes otherwise
-  needs references of its own): since A64 (`PLATFORM-ROUND.md` PL-D86, the owner's acceptance of 2026-10-23) the guest
-  at 90 vblanks `6a1e1008459e6ab3`, equal to the x64 recompiler's, and 2ndmix at 600 `56bd7274490f91aa`; until A64,
-  whose slice model moved every arm64 slice end, they were `c9bb6e60601ab606` and `6ab1933550d37163`. The shipped
-  binaries meet P0 too (PL-D83): the release AppImage's binary (Release, the prefix map, the embedded UI) runs P0's
-  default rows (2ndmix 600 and 4000, hello 300, the guest 90, both engines) equal to P0, in CIe's gate and in PLG's (at
-  PLG: the 10 rows of P0's default build equal and its 6 sound lines identical).
+  both engines end in Linux's hashes in every field (W64a, 16 runs; at PLG the guest of the zip's smoke run, the JIT at
+  90 vblanks, `6a1e1008459e6ab3`); on the Mac and on Linux arm64 the interpreter's equal Linux's, and the arm64
+  recompiler's are its own, the same on both, which `macos.hashes.jit` and `linux_arm64.hashes.jit` hold as the one pair
+  of references in the tree (a host whose recompiler computes otherwise needs references of its own): since A64
+  (`PLATFORM-ROUND.md` PL-D86, the owner's acceptance of 2026-10-23) the guest at 90 vblanks `6a1e1008459e6ab3`, equal
+  to the x64 recompiler's, and 2ndmix at 600 `56bd7274490f91aa`; until A64, whose slice model moved every arm64 slice
+  end, they were `c9bb6e60601ab606` and `6ab1933550d37163`. The shipped binaries meet P0 too (PL-D83): the release
+  AppImage's binary (Release, the prefix map, the embedded UI) runs P0's default rows (2ndmix 600 and 4000, hello 300,
+  the guest 90, both engines) equal to P0, in CIe's gate and in PLG's (at PLG: the 10 rows of P0's default build equal
+  and its 6 sound lines identical).
 - With an SH4 breakpoint listed but never hit, the state is identical too (R5 and R13 on a real workload): the runner
   mode `--idle-breakpoint <address|symbol>` (4.2) connects at the `StartPaused` stop, mutes the `sh4` category, adds a
   breakpoint on a hot address — one the program reaches in every frame (below) —, resumes and stays connected until
@@ -4407,12 +4408,12 @@ Rules:
   contract gates with Linux's numbers on every engine, the zip of `windows.ps1` (its entries, its smoke run through
   `nulldc3-winrun`, its version resource: `3.0.0.0`, the version strings, "nullDC Team"); the Mac 340 targets green
   twice (259 passed, 81 skipped), the canary in both shapes, the contract gates with Linux's numbers on every engine,
-  the 30 sh4bp targets, `macos.hashes.jit` on A64's references, the zip of `macos.sh` (unpacked with `ditto`, `codesign
-  --verify`, its smoke run through `macrun.py`); the arm64 Linux host 330 targets green twice (314 passed, 16 skipped),
-  the contract gates in full on every engine, `linux_arm64.hashes.jit` and `.pages.refused`, the arm64 AppImage and its
-  smoke run. No crash report on any system. Both workflows pass `actionlint`, and neither repository's tracked files
-  name a machine of the project. **Next:** the cut of M4 (E9, F5). What is left for the next emulator package is 6.1.2
-  and PLAN's backlog of the M3 round and of the platform round.
+  the sh4bp suite (29 of its 30 targets; `b11` skips there), `macos.hashes.jit` on A64's references, the zip of
+  `macos.sh` (unpacked with `ditto`, `codesign --verify`, its smoke run through `macrun.py`); the arm64 Linux host 330
+  targets green twice (314 passed, 16 skipped), the contract gates in full on every engine, `linux_arm64.hashes.jit` and
+  `.pages.refused`, the arm64 AppImage and its smoke run. No crash report on any system. Both workflows pass
+  `actionlint`, and neither repository's tracked files name a machine of the project. **Next:** the cut of M4 (E9, F5).
+  What is left for the next emulator package is 6.1.2 and PLAN's backlog of the M3 round and of the platform round.
 
 ### 6.1 Emulator, round 1 (M1)
 
