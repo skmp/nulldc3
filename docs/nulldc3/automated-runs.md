@@ -103,7 +103,7 @@ in front of `AicaHash:`.
 | `samples` | 64-bit FNV-1a of every pair handed to the audio stream: right then left, two bytes each, low byte first |
 | `regs` | the same hash over the `0x8000` bytes of the register file of the AICA, at every tick |
 | `arm7` | over what the sound CPU writes into a save state (its registers of every mode, the interrupt latches, the reset state), at every tick |
-| `sh4` | over PC, R0-R15, PR, SR and FPSCR of the SH4, at every tick, on a backend whose context is complete inside a scheduler callback (the interpreter and the x64 recompiler); on any other it stays the offset basis `cbf29ce484222325` |
+| `sh4` | over PC, R0-R15, PR, SR and FPSCR of the SH4, at every tick, on a backend whose context is complete inside a scheduler callback (`SH4DBG_CTX_AT_SLICE`: the interpreter and the x64 and arm64 recompilers, the arm64 one since the platform round's package A64); on any other it stays the offset basis `cbf29ce484222325` |
 | `dsp` | over the state blob of the DSP core (`AicaDsp::SaveState`, `AicaDsp::StateSize()` bytes, `libswirl/hw/aica/dsp_core/aica_dsp_core.h`), at every tick: its registers, its datapath, MDEC_CT, both MIXS banks. The same on every host |
 | `ticks` | N |
 | `cycles` | scheduler time behind the N-th tick, in SH4 cycles |
@@ -401,8 +401,8 @@ making or choosing a directory (the Linux build prints three lines of its own se
 and the page size). `--version` does the same with the line `nullDC <version>`, its whole stdout on every system (the
 Linux build answers it before its setup, the macOS build prints its line of the page size on stderr):
 the version the build made from git, `3.0.0-pre+g<h>` (the first 10 characters of the commit) until a tag `v<T>` is
-reachable, `<T>` on the tag, `.dirty` or `+dirty` behind it when a tracked file had changed
-(`nulldc3/README.md` has the rule). A script that has a build directory and not the binary reads the same string
+reachable, `<T>` on the tag, `<T>+<N>.g<h>` N commits after it, `.dirty` or `+dirty` behind it when a tracked file
+had changed, and `3.0.0-pre+nogit` where the source is no git checkout (`nulldc3/README.md` has the rule). A script that has a build directory and not the binary reads the same string
 from `nulldc3-version.txt` there. A command line that is refused (a one-dash switch, an unknown one, `--portable`
 without a directory, a directory that cannot be written, ...) prints one line `nulldc3: <why>` on stderr and exits
 with code 2 before a machine is made.

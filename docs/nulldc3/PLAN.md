@@ -12,11 +12,33 @@ track.
 - Repos: emulator `dreamster/devcast`, UI `dreamster/dreamcast-devtools`; work on local branch `skmp/nulldc3` in each;
   packages commit on local branches and push nothing; after every milestone the integrator pushes `skmp/nulldc3` of both
   repositories and opens review PRs into `main`, the UI's first (the owner, 2026-10-16); nothing is merged by the
-  integrator. A second, older checkout of `devcast` outside `dreamster` is stale — do not
-  use it.
-- New surfaces say "nullDC" / "3.0.0". The tree is not mass-renamed. **The executable becomes `nulldc3` and is portable by
-  default** (user, 2026-10-12; package `N1` below, behind M2G): until it lands the binary is `devcast` and the Linux
-  directories are `reicast` ones.
+  integrator. The platform round ends the same way (`PLATFORM-ROUND.md` section 7): the UI's PR first, the emulator's
+  only after the owner has merged the UI's, with the emulator's submodule `devtools/` moved to the UI's `main` commit.
+  A second, older checkout of `devcast` outside `dreamster` is stale — do not use it.
+- New surfaces say "nullDC" and the build's version. **The executable is `nulldc3` and portable by default** (user,
+  2026-10-12; package `N1` below, done). **The tree was renamed by the platform round** (the owner, 2026-10-19;
+  `PLATFORM-ROUND.md` 1.3 item 1, package RB): the platform shell `reicast/` is `nulldc3/`, every live name that said
+  reicast has a nulldc3 name, and "reicast" stays only as history (licences, credits, the documents that record
+  history, git history), held by the test `rebrand.names`. Company and copyright holder: "nullDC Team"; macOS bundle
+  identifier `org.emudev.nulldc3` (1.3 item 2).
+- **Versions** (`PLATFORM-ROUND.md` section 5, packages VCu and VTe): both repositories take their version from the tag
+  `v3.0.0-pre` by one rule (`git describe --tags --long --match v[0-9]*`, the base `3.0.0-pre` in
+  `nulldc3/version-base.txt` and the UI's `package.json`): `3.0.0-pre+g<h>` (`<h>` 10 characters of the commit) until
+  the tag exists, `3.0.0-pre` on it, `3.0.0-pre+<N>.g<h>` after it, `.dirty` behind a tracked change. The emulator makes
+  it at build time; `nulldc3 --version` prints `nullDC <version>`.
+- **CI** (the owner, 2026-10-19; `PLATFORM-ROUND.md` section 6, packages VCu and CIe): GitHub Actions on pull requests
+  and
+  on tags `v*` in both repositories, GitHub-hosted runners only; a PR builds, tests and makes the release files as
+  artifacts (kept 7 days); a tag push also attaches them to a GitHub Release, a pre-release for a tag with `-pre`; a
+  dispatch checks the would-be Release of a tag and creates nothing. Actions pinned by full commit SHA; `contents:
+  write` only on the job `release`. The jobs are thin over committed scripts (`nulldc3/ci/`, the UI's
+  `scripts/release-files.ts`) that run on the three systems as they run on a runner. Nothing in CI files or CI logs may
+  name a host, a user, a home path or a LAN address (the owner's words); the runner's own paths, user and machine name
+  in GitHub's logs are PL-Q3, worked on as PL-D61 recommends until the owner answers (below, "Needs the user").
+- **Tags**: `v3.0.0-pre` on both repositories, annotated, made and pushed by the integrator after both PRs of the
+  platform round are merged and only with the owner's go; the UI's first, at the commit the emulator's gitlink names;
+  each repository's dispatch check before its tag, and a second emulator check with `require_ui_tag` between the two
+  tags (`PLATFORM-ROUND.md` section 7, PL-D66, PL-D67).
 - Scratch, build dirs, reports: `dreamster/agents/nulldc3/` only; agents delete their clones and build trees before returning.
 - **Machine**: 15 GB RAM. One workflow at a time; `ninja -j8`, `ctest -j4`, at most 4 emulator processes; every emulator run
   headless. Three parallel build-and-stress workflows were OOM-killed on 2026-10-06.
@@ -37,8 +59,16 @@ track.
   (`jit/emitter/arm32`, `jit/emitter/x86`), the ARM7 JIT variants `arm7_jit_virt_arm32.cpp` / `arm7_jit_virt_x86.cpp`, the
   32-bit DSP JIT `dsp_x86.cpp`, the `CPU_X86` / `CPU_ARM` branches of CMake, `config.cmake` and `build.h`, and code that
   exists only for 32-bit hosts; and the cached-SHIL `cpp` backend (`jit/backend/cpp`, `DYNAREC_CPP`, the `TARGET_NO_JIT`
-  option). What remains: the x64 and arm64 JITs and the interpreter (a future riscv64 build starts from the interpreter). New work targets x86_64 (built and tested here) and arm64 (kept source-consistent; it cannot be
-  built on this machine).
+  option). What remains: the x64 and arm64 JITs and the interpreter (a future riscv64 build starts from the
+  interpreter).
+  New work targets x86_64 and arm64; since the platform round both are built and tested: x86_64 on Linux (here) and on
+  Windows (MSVC, the Windows host), arm64 on macOS (the owner's Mac) and on Linux (an arm64 host); CI's
+  `ubuntu-24.04-arm` and `macos-26` jobs (CIe) are to build and test them from the round's two PRs on, whose runs are
+  the first (none was read when the round's gate ended). **Release targets** (the owner, 2026-10-19; `PLATFORM-ROUND.md`
+  1.3 item 3): Linux an AppImage only, x86_64 and arm64, portable (the folder that holds the AppImage; no `.deb`, no
+  per-user default); Windows a zip with `nulldc3.exe` (x86_64, the static CRT, a console program); macOS an ad-hoc
+  signed `nulldc3.app` in a zip (arm64 only; no Developer ID, no notarization). Not released: Windows on arm64, macOS
+  x86_64 (kept source-consistent and unbuilt).
   **B64 is done (merged 2026-10-08).** Its findings for the later ports: the interpreter-only build (`-DTARGET_NO_REC=ON`) and
   the generic host path (any 64-bit processor name CMake does not know as x86_64 / arm64) now build and boot; the generic path
   does not apply FPSCR.RM/DN to the host yet (`SetFloatStatusReg`: a BIOS boot ends in a different hash there), nothing in
@@ -54,7 +84,8 @@ track.
   Windows, macOS on x86_64 and arm64, the generic host path, the emscripten scaffolding. What a kept target compiles is
   unchanged text (checked mechanically); state hashes unchanged; five build configurations and 187 ctest targets green. Left
   for later packages, listed in `resume/p-desktop.final-result.json`: the three CI recipes of kept targets are stale (Azure
-  macOS image, AppVeyor `reicast.sln`, Wercker's old box) — one CI package settles them; unconditional code only Android used
+  macOS image, AppVeyor `reicast.sln`, Wercker's old box) — one CI package settles them (done: RB deleted them, CIe made
+  the emulator's CI, both in the platform round); unconditional code only Android used
   (virtual gamepad, microphone, screen orientation) goes with the imgui GUI (track 10); SDL / joystick / XAudio backends that
   no CMake target lists; GLES paths and `gl.rpi4_workaround` go with the renderers (track 9).
 - Timing tiers are **run-time** settings, one per processor, in a new settings group:
@@ -95,7 +126,8 @@ headless emulator on the JIT, the interpreter and the forced fallback (18 scenar
 server off / on without a client / with an idle breakpoint / compiled out. Also merged with it: the register `ENABLED` of
 `dc.aica.arm7` and the runner follow-up (design 4.2.2). Known and recorded: after a machine reset ARMRST reads "released" while
 the ARM7 is not clocked until the guest first writes it (AICA / ARM7 tier work, needs a console measurement); the grace test
-does not pin that a connect ends the expired grace state; no real MSVC build yet (package W64).
+does not pin that a connect ends the expired grace state; no real MSVC build yet (package W64; made in the platform
+round by W64a and W64b).
 P-desktop (desktop-only cleanup, libretro out) is done and merged the same day (`skmp/nulldc3` = 5ac00392).
 J1 is done and merged too (`skmp/nulldc3` = c0c81436, 190 ctest targets; two verification rounds and three read-only
 reviewers): the run flag is an atomic word with the layout it had (header revision 5; emitted x64 code unchanged, no
@@ -187,6 +219,37 @@ capture, memory binary, the binary path) on devcast `skmp/nulldc3` = 9fbc988a (3
 passed (2026-10-19; branch `skmp/nulldc3-m3g` on 9fbc988a, documents only), with emulators that carry the UI's bundle (`ui` of `debugger.describe` is `3.0.0-pre+066fcbc`): the M3 gate's run 1 on the JIT, the interpreter and the forced fallback (20 scenarios passed, 0 partial, 0 not applicable each), its run 2 on the guest (S00, S17, S21: 3 passed with the note `sgc: captured with the arm7 held`; `--only S00,S21`: 2 passed with the note `dsp: stepped with the arm7 held`) and the M2 gate's second run on the changed guest (2 passed, both notes); 307 ctest targets green twice, none skipped; the sound lines and the state hashes equal B4's (12 of 12 entries, 38 of 38 rows); `npm run check` (735 unit tests) and the e2e suite (401 passed, 1 skipped: the smoke spec, run on its own against the emulator) in a fresh clone; the smoke spec against the emulator; ThreadSanitizer of the sessions `dsp` and `sgc` and of the guest's contract runs: no report. Speed (tests/perf, none renderer, by CPU time, ten rounds, measured and reported, gating nothing): the end of the round 0.798 (JIT) and 0.919 (interpreter) of the round's start in its default setting (the batch render without a DSP), 0.902 and 0.960 of its per-sample path; host instructions about +3060 a sample for W1 to W3 together (G's merge against the round's start), +940 for E8a and E8b, about +4000 for the round's total (the end of the round against its start). The design is brought to the cut (its section 8), with the known limits of the round in its 2.3.7
 (items 25 to 30) and what each package left in its Appendix A.3, "M3 as built". What the round leaves to later work is
 listed below ("Backlog left by the M3 round").
+**THE PLATFORM ROUND IS COMPLETE (PLG, 2026-10-24); its PRs and tags are the integrator's, with the owner** (section 7
+of the cut). The round was cut in `PLATFORM-ROUND.md` (2026-10-19, three review rounds; the owner's decisions of 1.3:
+`reicast/` becomes `nulldc3/`, "nullDC Team" and `org.emudev.nulldc3`, AppImage-only Linux releases for x86_64 and
+arm64, a Windows zip, an ad-hoc signed macOS zip, CMake only on macOS, the tag `v3.0.0-pre` on both repositories, CI on
+pull requests and tags, headless on Windows and macOS, the portable part of the tests there, the approved icon
+everywhere, the UI's PR first) and built as thirteen packages, each verified by verifiers who did not write it, with
+mutations: the UI's VCu (its version from the tag, `.gitattributes`, its CI and Release) on devtools `skmp/nulldc3` =
+7b88410; the emulator's RB (the rebrand), IC (the icons), VTe (the version at build time, `--version`), W64a (the MSVC
+build, Windows headless, the no-dialog policy, the ABI fixes), W64b (the gates on the Windows host, the x64 JIT's native
+checks there), W64c (the selftests on Windows), MACa (the CMake bundle, macOS headless, `macrun.py`), MACb (the gates on
+the Mac), LA64 (Linux arm64, natively on an arm64 host the owner made available on 2026-10-22), CIe (the emulator's CI,
+the release files, the AppImage's portable directory) and A64 (the arm64 recompiler's native debugger, added at the
+owner's word of 2026-10-23 before the gate: its slice counter kept, its context at the slice end, the native checks; the
+thirteen known limits of the arm64 recompiler's debugger and S04's arm64 rule went with it, and its state-hash
+references were taken anew, PL-D86) on devcast `skmp/nulldc3` = 12069163 (327 ctest targets on Linux x86_64), and the
+gate PLG (branch `skmp/nulldc3-plg` on 12069163, documents only): on Linux, at the documents' head, with emulators that
+carry the UI's bundle (`ui` of `debugger.describe` is `3.0.0-pre+g7b88410915`), the contract gates M1 (18 passed), M2
+(19) and M3 (20) on the JIT, the interpreter and the forced fallback and the guest's runs with their notes, 327 ctest
+targets green twice, none skipped, P0's 38 rows and 12 sound lines identical, ThreadSanitizer of the guest's contract
+runs without a report, `npm run check` (793 unit tests passed, 1 skipped; the four contract runs on the mock OK) and the
+e2e suite (401 passed, 1 skipped: the smoke spec, run on its own against the emulator) in a fresh clone of the UI, the
+smoke spec, the x86_64 AppImage with its five licences and its binary equal to P0 on P0's default rows; on the merged
+tree, the Windows host 349 targets twice (77 skipped with their reasons; `debugger.selftest.emurun.pauses.interp` failed
+in one of the two runs and passed alone, design 2.3.7 item 32), the same contract gates on every engine, the
+zip with its version resource ("nullDC Team", `3.0.0.0`); the Mac 340 targets twice (81 skipped), the same contract
+gates, `macos.hashes.jit` on A64's references, the zip of `macos.sh` with its signature checked and its smoke run; the
+arm64 host 330 targets twice (16 skipped), the same contract gates in full on every engine, the arm64 AppImage; no crash
+report on any system; `actionlint` and the hygiene of both repositories clean. The design is brought to the round (the
+16 rows of the cut's Appendix D, as A64 left the tree), with the known limits of the round in its 2.3.7 (items 31 to
+33). What the round leaves to later work is listed below ("Backlog left by the platform round"). The owner's by-hand
+list (PL-D40) is in the emulator PR's text.
 After that, one workflow at a time, in this order unless the user reorders: M4 (E9, F5), track 10 (one web UI), track 3
 (cycle-similar). Devtools: F0, F1, F2 and the round after design revision 3 are done and verified.
 Known defects recorded by E4a's verifier, not caused by it (package J1): the x64 JIT keeps the code of earlier emulator threads, so after a
@@ -194,6 +257,75 @@ few hundred host stop/start cycles in one process the 10 MB code cache is full a
 is a plain volatile written across threads (every ThreadSanitizer report); event breakpoints latched inside SLEEP waits and
 single steps on the JIT shift guest time (the documented skew class).
 
+**Backlog left by the platform round** (from the cut's 1.2, its open questions, the owner's decisions of 2026-10-22,
+the integrator's notes of its Appendix I and PLG; none of them blocks M4):
+- *The arm64 ARM7 recompiler* (`hw/arm7/arm7_jit_virt_arm64.cpp`, not built in the round, PL-D46: on Apple silicon it
+  writes its MAP_JIT cache without lifting the write protection, unmaps a pointer it never set, maps a region per
+  emulator thread that it never frees and branches to C++ without a range check); with it the ARM7's fallback and its
+  notice (design 2.5.3) would run for the first time. And *the SH4 FPU fast-tier fixes of the arm64 JIT* (design 2.3.5:
+  its results are held to its own references, not compared with the interpreter's). Both were named with A64 before
+  the round; A64 delivered the native SH4 checks only.
+- *"Boot BIOS" with no BIOS copied in ends `nulldc3.app` on macOS* (`EXC_BREAKPOINT` in `os_DebugBreak()`; the owner's
+  run, 2026-10-22; by A64's reading reios boots `0xAC008300` from RAM filled with `0xFF` and the opcode `0xFFFF`
+  reaches `cpu_iNimp`'s `die`, on every engine): to be fixed after the round, which the round's PRs call M3b (the
+  owner's decision).
+- *macOS x86_64*: kept source-consistent and unbuilt (PL-D47); no release.
+- *CI's test data* (PL-Q1, open): 2ndmix, hello and the RTL checkouts in CI once their licences are settled ("Needs the
+  user"); the two ELFs as they are print a KallistiOS build banner that names the Windows host and its user, so CI needs
+  copies built without the owner's details.
+- *The macOS icon with Apple's margin* (PL-Q2, open): the approved art ships on every system (PL-D23); a padded variant
+  for the `.icns` alone if the owner approves one (IC's generator then takes a second PNG set).
+- *The runner's own paths, user and machine name in CI logs* (PL-Q3, open): work proceeded on PL-D61's reading (they
+  are GitHub's, not the owner's); the integrator scans the first runs' logs for the owner's own details.
+- *The Darwin sent-signal rule* (`si_code`, PL-D50): a `kill -SEGV` of a harness is not a path any test takes.
+- *`reidbg/` and the `refsw-dbg` server* (PL-D14): the client and the built server are kept or removed together.
+- *The owner's by-hand list* (PL-D40; it gates nothing): per system in the emulator PR's text — the windowed start, the
+  icon, About, a game, pause with the debugger and close the window (parked, and with a pause pending), the window
+  sessions of design 6.1.2, Explorer's Properties on Windows, the Finder's start of the unzipped app on macOS, and on
+  the Mac a breakpoint, a step, a step-out and a pause from the UI on the arm64 recompiler (A64).
+- *Flakes that passed when run again* (design 2.3.7 item 32): on the Mac's loopback `debugger.net.test_e2e`
+  (`test_e2e.cpp` line 306 assumes the kernel cannot hold 16 MiB for a peer that does not read) and
+  `debugger.contract.m2.guest.interp` (S16's reset not seen within 5000 ms, once in three full runs), which `macos.sh`
+  runs once more when they are a run's only failures; the arm64 host's `debugger.selftest.hostcycles` (its rate window);
+  `debugger.selftest.emurun.pauses.interp` on the Windows host and on the Mac under `ctest -j4` (in about one full run
+  in two or three; never alone): the emulator's `SelfTest:` note is spliced into a guest console line, and `selftest.py`
+  reads only the lines that start with `SelfTest: `.
+- *Left by VCu* (the UI): `gitFacts` is not held to `gitEnvironment`'s filter by a test (a build run from a git hook
+  would take the hook repository's version); `publish`'s size check takes a longer asset with no digest; no unit case
+  pins the zip entries' 1980-01-01 time or that `v3.0.0-pre-2` is no tag; `e2e/support/globalSetup.ts` `BUILD_INPUTS`
+  does not list `scripts/version.ts`; the `BundleInfo.version` comment of `scripts/bundle-info.ts` still says
+  `+<git describe>`.
+- *Left by IC*: `icons.x11` checks the header against the generator and its own hash only (a generator change made
+  together with new outputs passes both; a few exact values would pin the pixel format), and `parse_ico` /
+  `parse_icns` have no literal tables; `x11.cpp` includes the 300 KB data header for a declaration only (an `-O0`
+  build carries the array twice).
+- *Left by W64c*: `AsSleepFor` compares the POSIX nap with `sleep_for` at five requests only; the `dsp_playground` skip
+  is registered whenever `disasm_winrun` is empty (a lost winrun line would turn into a skip, not a failure); a build
+  of `tests/debugger/disasm` by itself on Windows without `NULLDC_WINRUN` runs `dsptest`'s tsx outside a winrun;
+  `debugger.disasm.standalone.configure` needs the VS developer environment.
+- *Left by MACa and MACb*: `macrun.py`'s signal path (the detach worker's SIGTERM) and its `--detach` rc file when a
+  signal ends it are held by no test; `macos.build.ccache`'s coverage.
+- *Left by LA64 and CIe*: what only the `ubuntu-24.04-arm` runner shows (BTI and PAC on Neoverse N2, Ubuntu's arm64 SH
+  objdump with its char signedness: `linux.sh` passes no SH objdump there, so the two `debugger.disasm.sh4_objdump`
+  targets skip in the `linux-arm64` job, unprivileged user namespaces); `smoke.py`'s outer `finally` is covered by no
+  case; the pinned v4 actions run on Node 20.
+- *Left by A64* (design 2.3.7 item 33): mutants of the arm64 recompiler that stayed green and were judged by reading
+  (the room a compile keeps for `CheckBlock` and for a pending literal pool; five equivalents); the
+  `-DNULLDC_DEBUGGER=OFF` build about 1.3 % slower on the arm64 host after A64 (the owner's "don't mind perf for now"
+  of M3); `emu.fp` of `debugger.selftest.emu` is x86-64 only, so on arm64 nothing holds the host FP mode across the
+  park while `dbg_sh4_Check` runs C++ with the guest's FPCR (`sh4_host_fp_resync`); no target reloads the sh4bp
+  suite's guest after a block in the second to fourth 4 KiB page of a 16 KiB page was compiled and patched (A64's
+  `LoadGuest` step of 4 KiB, accepted by reading).
+- *Left by PLG*: two documents outside Appendix D that read as before A64: the decisions' item 25
+  (`DESIGN-V3-DECISIONS.md`, "The breakpoint fallback concerns arm64 only (until it implements the check)", a dated
+  decision whose parenthesis A64 has since met) and `docs/nulldc3/sh4-breakpoints-spec.md` 3.j (the arm64 backend as
+  requirements); for a later change of those documents. The release notes' known issues are drafted for CIe's template
+  (`nulldc3/ci/release-notes.md` has no section for them), not committed:
+  `agents/nulldc3/plg/release-notes-known-issues.md`, the integrator's to take. And the harness fix for
+  `debugger.selftest.emurun.pauses.interp` (design 2.3.7 item 32; a test file, not PLG's): the selftests' harness
+  (`tests/debugger/selftest/selftest.py`, `selftest_lines()`) takes a `SelfTest:` line only where it starts a line, and
+  the emulator's note can land in the middle of a guest console line under load; either the harness finds the line's
+  `SelfTest: ` wherever it stands, or the emulator starts its note on a line of its own, with a case that splices it.
 **Backlog left by the M3 round** (from the cut's 1.2, the owner's answers to M3-Q1 to M3-Q4, the integrator's notes of its
 Appendix I and M3G; none of them blocks M4):
 - *The SGC's sends and fetches in time* (M3-D10): `ChannelFetch`, `BusRead` and `MixsSendLate` are not called in the
@@ -627,11 +759,29 @@ cut like the others (readers, a cut with its decisions, implementation in a work
   devcast `skmp/nulldc3` = f986304c, **278 ctest targets** (+ `cfg.log_file`, `devtools.lookup`, `devtools.commit_check`;
   the tests project has to be configured again: `system/work.link` is made at configure time). **N1 IS COMPLETE.**
   Not built here (no MSVC, no Xcode): the Windows help/error message box (`output_is_kept`), `cl_LogToFile` under UCRT,
-  `narrow_path` with a UTF-8 code page, the macOS `AppDelegate` filter and scheme. `submodule.devtools.url` is set in the
+  `narrow_path` with a UTF-8 code page, the macOS `AppDelegate` filter and scheme (all built and run on their systems in
+  the platform round: W64a, MACa). `submodule.devtools.url` is set in the
   local config of the devcast repository to the UI checkout (not committed); a local `git submodule update` needs
   `-c protocol.file.allow=always`. What still says devcast: the README's history sentence, the `docs/nulldc3/` records,
   the internal `DEVCAST_DIR` CMake variables; reicast: the tool `reicast-joyconfig`, the Lua module, the tree's
   directory names.
+  **The rest of the rebrand is the platform round's, done** (the owner's decision of 2026-10-19, `PLATFORM-ROUND.md`
+  1.3 item 1; package RB, merged 2026-10-20 as `60bce5b7`, `PLATFORM-ROUND.md` I.2): the platform shell `reicast/` is
+  `nulldc3/` (`nulldc3/linux`, `nulldc3/windows`, `nulldc3/apple`, `nulldc3/cmake`; a commit of pure moves, every
+  file at R100, so that `git log --follow` reads through it), and what still said reicast at N1 is renamed:
+  `reicast-joyconfig` is `nulldc3-joyconfig`, the Lua module is `nulldc3` (no `reicast` alias), the HTTP User-Agent
+  `nulldc3`, `DEVCAST_DIR` is `nulldc_root_path` in the four test projects, `reicast_init` / `reicast_term` are
+  `nulldc_init` / `nulldc_term` (header revision 8), `ReicastUI_impl` is `ImguiGUI`, `REICAST_VERSION` is
+  `NULLDC_VERSION`, the save-state macros `NULLDC_S` / `NULLDC_US`; the imgui button "Report a game bug" (a dead
+  reicast site) is gone. Reicast's dead files went (the Xcode project, `appveyor.yml` with reicast's old AWS access
+  key id, which stays in the public history, `azure-pipelines.yml`, `wercker.yml`, `versioning/`, reicast's
+  CONTRIBUTING and release policy, `gdtool/`, the reicast icons). "reicast" stays only as history: `LICENSE`,
+  `nulldc3/LICENSE` (reicast's BSD shell licence), the licence blocks, credits, provenance notes, the macOS file
+  headers, `docs/nulldc3/**`; the test `rebrand.names` (`git grep -i reicast` minus `tests/rebrand/allowed.txt`) holds
+  it, and every package that moves or rewraps a piece of that history edits its row (PL-D79). `reidbg/` stays (the
+  client of the built `refsw-dbg` server; relabelled "nullDC host"). The icons came with it (package IC: the approved
+  snail in the Windows `.ico`, the macOS `.icns` and the X11 window's own icon, generated from the committed PNGs by
+  `nulldc3/icon/make_icons.py`, held by `icons.generated`).
   **Pushed 2026-10-16** at the owner's word (devtools ed4da47 to skmp/dreamcast-devtools, devcast 54f21352 to
   skmp/nulldc3; history as it was). Since 54f21352 the submodule's URL is relative (`../dreamcast-devtools.git`, the
   owner's wish) and pins ed4da47 (the DSP wasm without the builder's cargo path).
@@ -658,6 +808,12 @@ cut like the others (readers, a cut with its decisions, implementation in a work
 
 - A licence line for the shrike4 FPU headers, wren7 and the console dumps before they are copied into devcast (caique is MIT).
 - ~~Whether `dreamcast-devtools` becomes a submodule of devcast~~ answered 2026-10-15: yes, at `devtools/`, in package N1 (section "Rebrand").
+- The platform round's questions (`PLATFORM-ROUND.md` 8.2; work proceeds on each recommendation until the owner
+  answers): **PL-Q1**, test data in CI (the KallistiOS ELFs and the RTL checkouts; recommended: not in this round);
+  **PL-Q2**, a macOS icon with Apple's margin (recommended: ship the approved art for 3.0.0-pre); **PL-Q3**, the
+  runner's own paths in CI logs (recommended: accept them as GitHub's, not the owner's; both PR texts say so).
+- The platform round's end (section 7 of the cut): the owner merges the UI's PR, then the emulator's, and gives one go
+  for the dispatch checks and the tags `v3.0.0-pre`.
 - Needs the console (unmeasured, behaviour chosen and marked in the code until then): FLOAT; scalar ops with DN=1 + RZ (the
   reset mode); FTRC boundaries; reserved RM values; FDIV/FSQRT rounding sweeps; ARM7 STR-of-R15 / base-in-list / TEQP probes
   (already written in the runner's format).

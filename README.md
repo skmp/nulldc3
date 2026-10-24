@@ -217,5 +217,7 @@ names a machine (`ci.hygiene`) and the tests of the Windows zip's entry check an
   what each test needs and how to give it; `tests/system/README.md` for the tests that run the emulator itself.
   Every run of the emulator there has a directory of its own (`--portable`): a test run writes nothing beside the
   binary under test.
-- `docs/nulldc3/README.md`: the plan and the design of nullDC 3.0.0 and of its debugger.
+- `docs/nulldc3/README.md`: the plan and the design of nullDC 3.0.0 and of its debugger, and the record of its rounds;
+  `docs/nulldc3/platform-round.md` for the rebrand, the versions, the Windows, macOS and Linux arm64 builds, CI and the
+  releases; `docs/nulldc3/automated-runs.md` for headless runs on every system.
 - `devtools/README.md`: Dreamcast DevTools, its build, its tests and its mock emulator.

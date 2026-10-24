@@ -6,7 +6,10 @@ package (E5), which is done: milestone M1 is complete. Part 2: "header revision 
 brought the frozen headers to what the document says: it is applied, and its list is kept as the record. Part 3:
 header revision 5, applied with package J1: one declaration (the run flag as an `AtomicU32`) and one comment.
 Revision 6 is applied (package R6 of the M2 round); its list is section 2 of `M2-ROUND.md`. Revision 7 is applied
-(package R7 of the M3 round); its list is section 2 of `M3-ROUND.md`.
+(package R7 of the M3 round); its list is section 2 of `M3-ROUND.md`. Revision 8, comment-only, is applied (packages
+RB, VTe and A64 of the platform round); its list is 2.3 of `PLATFORM-ROUND.md` (H8-1 to H8-4) and A64's brief (H8-5,
+the one line of H15 below that it changes). Q10, the host for the arm64 backend, was answered by the platform round
+(1.1).
 
 History. The independent check of revision 3 added Q15 and Q16, widened Q4, added H17 to H19 and extended H8, H9 and
 one row of H10. Its second pass added H20 and H21 and rewrote H8; it added no question. On 2026-10-09 thirteen of the
@@ -31,6 +34,16 @@ A.3 "J1 as built"). No question was opened.
 **Q10. A host for the arm64 backend** (project owner). The arm64 JIT uses the interpreter fallback for breakpoints and
 has not received the SH4 FPU fast-tier fixes; it is kept source-consistent only. Package A64 (design 6.3) needs a
 machine that builds and runs it. No recommendation beyond: not before M1. Open because there is no such host yet.
+
+**Answered by the platform round (2026-10-19 to 2026-10-24):** the owner's Mac (an Apple M2, macOS), an arm64 Linux host
+the owner made available on 2026-10-22, and CI. The platform round (`PLATFORM-ROUND.md`) builds and runs the arm64 JIT
+on the Mac (packages MACa and MACb) and on the arm64 host (LA64, natively: Ubuntu 24.04, GCC 13); CI's jobs on GitHub's
+`ubuntu-24.04-arm` and `macos-26` runners (CIe) are to build and test it from the round's two PRs on, whose runs are the
+first (none was read when the round's gate ended). Its package A64, added at the owner's word before the round's gate,
+gave the arm64 JIT the debugger's native checks, its kept slice counter and its context at the slice end (design 2.3.5;
+`PLATFORM-ROUND.md` 2.15, PL-D86) on those hosts: the engine there is `sh4-debug-native`, and the contract gates M1 to
+M3 pass in full on every engine of both arm64 systems. The SH4 FPU fast-tier fixes of the arm64 JIT and the arm64 ARM7
+recompiler stay in PLAN's backlog (PL-D46). The question is closed.
 
 **Q13. The config section** (project owner). The keys stay under `Debugger:` for now (decision 27). When PLAN track 10
 defines the settings model the section can be renamed with an alias for the old keys, or kept. It is decided with the
@@ -415,6 +428,9 @@ New:
 	// A backend states the bit itself when it meets all of this; none does by default. The interpreter and the
 	// x64 JIT do; the arm64 JIT does not. Whatever reads SH4 state inside
 ```
+
+(Since header revision 8 the second line says `x64 and arm64 JITs do. Whatever reads SH4 state inside`: H8-5 of the
+platform round's package A64, which made the arm64 JIT state the bit, design 2.2.8.)
 
 ### H16. `libswirl/debugger/dbg_core.h`, the header comment: the order of what a client receives
 
