@@ -65,10 +65,12 @@ default_work() {
 
 cmd_deps() {
   # (the runner's image has the compiler, CMake, git and curl)
+  # libopengl-dev: GLVND's libOpenGL.so. Without it FindOpenGL takes the legacy libGL.so and defines no OpenGL::EGL
+  # target (it makes one only on top of OpenGL::OpenGL or GLES), and the configure fails at the EGL link
   local packages=(
     ninja-build ccache python3 pkg-config file
-    libx11-dev libgl-dev libegl-dev libasound2-dev libpulse-dev libudev-dev libevdev-dev libcurl4-openssl-dev
-    binutils-arm-none-eabi
+    libx11-dev libgl-dev libopengl-dev libegl-dev libasound2-dev libpulse-dev libudev-dev libevdev-dev
+    libcurl4-openssl-dev binutils-arm-none-eabi
   )
   # The SH objdump of Ubuntu's binutils-sh4-linux-gnu is an oracle of debugger.disasm.sh4_objdump on x86_64 only:
   # its arm64 build reads the 8-bit displacements of bt/bf with an unsigned char and names 512 wrong targets (the
