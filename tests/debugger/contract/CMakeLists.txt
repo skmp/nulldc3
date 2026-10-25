@@ -142,6 +142,12 @@ elseif(NOT NULLDC_NPM)
   set(nulldc_contract_no_runner "no npm to run the contract runner with (npm run contract)")
 endif()
 
+# NULLDC_CONTRACT_SKIP_GUEST_INTERP (macos.sh ci sets it on GitHub's runner): the targets of the tree's sounding guest
+# on the interpreter (debugger.contract.<name>.guest.interp) are skipped. On the hosted macOS runner S16's reset
+# outlasted the contract runner's 25 s there (the factor 5 of its emulator profile is the UI's); on a Mac of one's own
+# they pass, and the JIT and fallback targets of the same guest still run in CI
+option(NULLDC_CONTRACT_SKIP_GUEST_INTERP "skip debugger.contract.*.guest.interp (GitHub's hosted macOS runner)" OFF)
+
 # nulldc_debugger_contract(<name> MODE <mode of contract.py> [ENGINES <jit|interp>...] [RUNNER] [FALLBACK]
 #                          [IDLE_SYMBOL <symbol>] [TIMEOUT <seconds>] [GUEST <program>]
 #                          [PARTS <scenario>:<part>[+<part>...]] [ONLY <scenario>[,<scenario>...]]
@@ -171,6 +177,9 @@ function(nulldc_debugger_contract name)
     if(nulldc_contract_skip)
       nulldc_add_skipped_test(${test} "${nulldc_contract_skip}")
       continue()
+    elseif(NULLDC_CONTRACT_SKIP_GUEST_INTERP AND engine STREQUAL "interp" AND name MATCHES "\\.guest$")
+      nulldc_add_skipped_test(${test} "the sounding guest on the interpreter is not run on GitHub's hosted macOS runner, where S16's reset outlasted the contract runner's 25 s (NULLDC_CONTRACT_SKIP_GUEST_INTERP)")
+      continue()
     elseif(nulldc_contract_missing)
       nulldc_add_missing_data_test(${test} "${nulldc_contract_missing}")
       continue()
@@ -190,8 +199,9 @@ function(nulldc_debugger_contract name)
       continue()
     endif()
 
+    nulldc_work_dir(work_dir ${test})
     set(command "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/contract/contract.py"
-                --emulator "${nulldc_contract_emulator}" --work "${CMAKE_BINARY_DIR}/debugger/contract/work/${test}"
+                --emulator "${nulldc_contract_emulator}" --work "${work_dir}"
                 --guest "${guest}" --mode ${ARG_MODE} --engine ${engine})
 
     if(ARG_RUNNER)

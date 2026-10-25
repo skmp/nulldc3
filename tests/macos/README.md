@@ -56,7 +56,7 @@ Each case is in `macos.cmake`; every emulator run carries the keys of an automat
 the test's work directory and `--config config:Headless=yes , audio:backend=none , config:Dreamcast.RTC=946684800`
 (the refused command lines leave `config:Headless` out on purpose: the other conditions of the alert rule are what
 they check, on a command line that is refused before anything runs). The output of each run is in
-`<build>/macos/work/<test>/*.log`.
+`<build>/w/<hash>/*.log` (`<build>/w/index.txt` names the test of each).
 
 | test | what it checks |
 |---|---|

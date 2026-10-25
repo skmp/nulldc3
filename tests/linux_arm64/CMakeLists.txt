@@ -7,7 +7,7 @@
 #	WAYLAND_DISPLAY taken out of its environment, with a core file size limit of 1 byte (as common/emurun.py starts
 #	an emulator on a POSIX host: a crash is not piped to the system's core handler), under a timeout; each case
 #	checks that envelope on a shell before it starts an emulator. The cases are in linux_arm64.cmake; the output of
-#	each run is in <build dir>/linux_arm64/work/<test>/*.log.
+#	each run is in <build dir>/w/<hash>/*.log (w/index.txt names the test of each).
 #
 #	linux_arm64.hashes.jit     the state hashes of the SH4 on the recompiler of a Linux arm64 host: the guest of the
 #	                           tree (tests/debugger/guest/dsptest/dsptest.elf) at 90 vblanks and 2ndmix.elf
@@ -50,9 +50,10 @@ function(nulldc_la64_case test case)
     nulldc_add_skipped_test(${test} "${nulldc_la64_skip}")
     return()
   endif()
+  nulldc_work_dir(work_dir ${test})
   add_test(NAME ${test}
            COMMAND "${CMAKE_COMMAND}" "-DCASE=${case}" "-DEMULATOR=${nulldc_la64_emulator}" "-DGUEST=${nulldc_la64_guest}"
-                   "-DELF_DIR=${NULLDC_ELF_DIR}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/work/${test}"
+                   "-DELF_DIR=${NULLDC_ELF_DIR}" "-DWORK=${work_dir}"
                    "-DTEST_TIMEOUT=${ARG_TIMEOUT}" -P "${nulldc_la64_script}")
   set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
 endfunction()

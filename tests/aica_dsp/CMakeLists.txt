@@ -280,9 +280,10 @@ foreach(engine jit interp)
   elseif(NOT NULLDC_HAVE_CAIQUE)
     nulldc_add_missing_data_test(${test} "${NULLDC_CAIQUE_MISSING}")
   else()
+    nulldc_work_dir(work_dir ${test})
     add_test(NAME ${test}
              COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/guest/dsptest/soundlines.py"
-                     --emulator "${nulldc_oracle_emulator}" --work "${CMAKE_BINARY_DIR}/debugger/guest/work/${test}"
+                     --emulator "${nulldc_oracle_emulator}" --work "${work_dir}"
                      --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf" --ticks 2000
                      --mode oracle --engine ${engine} --oracle $<TARGET_FILE:aica_dsp_guest_oracle>)
     # soundlines.py has a watchdog per run of the emulator and of the tool, this is the one behind it

@@ -96,8 +96,9 @@ function(nulldc_sound_neutral name)
       continue()
     endif()
 
+    nulldc_work_dir(work_dir ${test})
     set(command "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/guest/dsptest/soundlines.py"
-                --emulator "${nulldc_guest_emulator}" --work "${CMAKE_BINARY_DIR}/debugger/guest/work/${test}"
+                --emulator "${nulldc_guest_emulator}" --work "${work_dir}"
                 --guest "${nulldc_tests_path}/debugger/guest/dsptest/dsptest.elf"
                 --mode neutral --ticks 2000 --vblanks 90 --engine ${engine}
                 --selftest ${ARG_SELFTEST})
@@ -141,9 +142,10 @@ endif()
 
 # The runner against stand-ins for the emulator: python, and a host that runs a script by its first line
 if(Python3_Interpreter_FOUND AND ${HOST_OS} EQUAL ${OS_LINUX})
+  nulldc_work_dir(work_dir debugger.sound.runner)
   add_test(NAME debugger.sound.runner
            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/soundlines_test.py"
-                   --work "${CMAKE_BINARY_DIR}/debugger/guest/work/debugger.sound.runner")
+                   --work "${work_dir}")
   set_tests_properties(debugger.sound.runner PROPERTIES TIMEOUT 300 ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
 elseif(NOT Python3_Interpreter_FOUND)
   nulldc_add_skipped_test(debugger.sound.runner "no python3 to run tests/debugger/guest/dsptest/soundlines_test.py with")
@@ -162,9 +164,10 @@ function(nulldc_sound_test test program ticks)
     return()
   endif()
 
+  nulldc_work_dir(work_dir ${test})
   add_test(NAME ${test}
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_sound_runner}" --emulator "${nulldc_guest_emulator}"
-                   --work "${CMAKE_BINARY_DIR}/debugger/guest/work/${test}" --guest "${program}" --ticks ${ticks} ${ARGN})
+                   --work "${work_dir}" --guest "${program}" --ticks ${ticks} ${ARGN})
   set_tests_properties(${test} PROPERTIES TIMEOUT 900 ENVIRONMENT "${nulldc_guest_env}")
 endfunction()
 

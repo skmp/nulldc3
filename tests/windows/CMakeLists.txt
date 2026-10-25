@@ -60,9 +60,10 @@ function(windows_case test case)
     nulldc_add_missing_data_test(${test} "no emulator to run: configure with -DNULLDC_EMULATOR=<nulldc3.exe>")
     return()
   endif()
+  nulldc_work_dir(work_dir ${test})
   add_test(NAME ${test}
            COMMAND "${CMAKE_COMMAND}" "-DCASE=${case}" "-DWINRUN=${nulldc_winrun}" "-DEMULATOR=${NULLDC_EMULATOR}"
-                   "-DGUEST=${nulldc_windows_guest}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/work/${test}"
+                   "-DGUEST=${nulldc_windows_guest}" "-DWORK=${work_dir}"
                    -P "${nulldc_windows_script}")
   set_tests_properties(${test} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
 endfunction()

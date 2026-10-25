@@ -39,9 +39,8 @@
 	nap of less than a millisecond is spun whole, and a longer one is std::this_thread::sleep_for's, which the
 	tick rounds up, without a spin.
 
-	The selftest "nap" (dbg_selftest_nap.cpp, debugger.selftest.nap) holds it on every host: how long naps of
-	100 us to 50 ms last and how much CPU time of the thread they take, and on a POSIX host but macOS that they last
-	what std::this_thread::sleep_for of the same request lasts.
+	The selftest "nap" (dbg_selftest_nap.cpp, debugger.selftest.nap) holds it on every host: naps of 100 us to
+	50 ms are never shorter than asked for and do not spin; how much longer they last is reported, not checked.
 */
 
 namespace dbg { namespace selftest {

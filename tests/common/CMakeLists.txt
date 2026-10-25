@@ -56,8 +56,9 @@ if(Python3_Interpreter_FOUND)
       list(APPEND nulldc_emurun_env "NULLDC_WINRUN=$<TARGET_FILE:nulldc3_winrun>")
     endif()
   endif()
+  nulldc_work_dir(work_dir harness.emurun)
   add_test(NAME harness.emurun
-           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/emurun_test.py" --work "${CMAKE_BINARY_DIR}/common/work/harness.emurun")
+           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/emurun_test.py" --work "${work_dir}")
   set_tests_properties(harness.emurun PROPERTIES TIMEOUT 300 ENVIRONMENT "${nulldc_emurun_env}")
 else()
   nulldc_add_skipped_test(harness.emurun "no python3 to run tests/common/emurun_test.py with")
@@ -80,10 +81,11 @@ if(${HOST_OS} EQUAL ${OS_WINDOWS})
   foreach(tool disasm_test sh4bp_test aica_dsp_guest_oracle)
     string(APPEND nulldc_guard_tools "$<$<TARGET_EXISTS:${tool}>:|$<TARGET_FILE:${tool}>>")
   endforeach()
+  nulldc_work_dir(work_dir common.guard.windows)
   add_test(NAME common.guard.windows
            COMMAND "${CMAKE_COMMAND}" "-DWINRUN=${nulldc_guard_winrun}" "-DPROGRAM=$<TARGET_FILE:common_selftest>"
                    "-DTOOLS=${nulldc_guard_tools}"
-                   "-DWORK=${CMAKE_BINARY_DIR}/common/work/common.guard.windows" -P "${CMAKE_CURRENT_SOURCE_DIR}/guard_windows.cmake")
+                   "-DWORK=${work_dir}" -P "${CMAKE_CURRENT_SOURCE_DIR}/guard_windows.cmake")
   set_tests_properties(common.guard.windows PROPERTIES TIMEOUT 600)
 endif()
 

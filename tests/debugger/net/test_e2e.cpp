@@ -294,7 +294,9 @@ static std::chrono::steady_clock::time_point ParkHalfClosed(TestClient& parked, 
 }
 
 // Called when the peer of ParkHalfClosed has not read for longer than the 10 s a closing connection has to
-// make progress in: the server has given it up. What the sockets held still arrives, then the stream ends.
+// make progress in: the server has given it up. What the sockets held still arrives, then the stream ends. How
+// much that is depends on the host's socket buffers (on GitHub's macOS runner they took the whole file), so it is
+// printed, not checked.
 static void CheckGivenUp(TestClient& parked) {
 	bool timedOut = false;
 	std::string all = parked.ReadToEnd(10000, &timedOut);
@@ -303,7 +305,6 @@ static void CheckGivenUp(TestClient& parked) {
 	REQUIRE(body != std::string::npos);
 	size_t got = all.size() - body - 4;
 	printf("half-closed peer that does not read: given up with %zu of %zu bytes delivered\n", got, kHugeFile);
-	CHECK(got < kHugeFile);
 	CHECK(all.compare(body + 4, got, Huge(), 0, got) == 0);
 }
 

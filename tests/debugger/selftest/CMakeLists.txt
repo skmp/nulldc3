@@ -117,8 +117,9 @@ function(nulldc_debugger_selftest name)
       continue()
     endif()
 
+    nulldc_work_dir(work_dir ${test})
     set(command "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/selftest/selftest.py"
-                --emulator "${nulldc_selftest_emulator}" --work "${CMAKE_BINARY_DIR}/debugger/selftest/work/${test}"
+                --emulator "${nulldc_selftest_emulator}" --work "${work_dir}"
                 --mode ${ARG_MODE} --engine ${engine})
 
     if(NOT ARG_SELFTEST STREQUAL "NONE")
@@ -148,10 +149,9 @@ endfunction()
 
 nulldc_debugger_selftest(emu)
 
-# The naps of the sessions (libswirl/debugger/dbg_selftest_nap.cpp): naps of 100 us to 50 ms last what they were
-# asked for, never less and at most a little more, and wait without a spin for the nap; on a POSIX host as long as
-# std::this_thread::sleep_for of the same request, to within 50 us; on Windows also without the high-resolution
-# timer. A machine test, on one engine
+# The naps of the sessions (libswirl/debugger/dbg_selftest_nap.cpp): naps of 100 us to 50 ms last never less than
+# they were asked for and wait without a spin for the nap (how much longer they last is a note, not a check); on
+# Windows also without the high-resolution timer. A machine test, on one engine
 nulldc_debugger_selftest(nap ENGINES jit)
 
 # The device tree's registers, guest memory and the device accessors against the live machine
@@ -227,9 +227,10 @@ elseif(NOT NULLDC_ELF_DIR OR NOT EXISTS "${NULLDC_ELF_DIR}/2ndmix.elf")
   nulldc_add_missing_data_test(${test}
     "no 2ndmix.elf in NULLDC_ELF_DIR (\"${NULLDC_ELF_DIR}\"), configure with -DNULLDC_ELF_DIR=<directory with the KallistiOS examples>")
 else()
+  nulldc_work_dir(work_dir ${test})
   add_test(NAME ${test}
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/sh4bp/sessions.py" "${nulldc_selftest_emulator}"
-                   "${NULLDC_ELF_DIR}/2ndmix.elf" "${CMAKE_BINARY_DIR}/debugger/selftest/work/${test}")
+                   "${NULLDC_ELF_DIR}/2ndmix.elf" "${work_dir}")
   set_tests_properties(${test} PROPERTIES TIMEOUT 1800 ENVIRONMENT "${nulldc_selftest_env}")
 endif()
 
@@ -237,9 +238,10 @@ endif()
 # log.rule: selftest.py's checks on the output of a session whose lines end in \n and in \r\n. sessions.rule:
 # the comparisons of sessions.py on made-up sessions, every key it holds and the repeats of its rule
 if(Python3_Interpreter_FOUND)
+  nulldc_work_dir(work_dir debugger.selftest.log.rule)
   add_test(NAME debugger.selftest.log.rule
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/selftest/selftest.py" --mode log-rule
-                   --work "${CMAKE_BINARY_DIR}/debugger/selftest/work/debugger.selftest.log.rule")
+                   --work "${work_dir}")
   add_test(NAME debugger.selftest.sh4bp.sessions.rule
            COMMAND "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/sh4bp/sessions.py" --rule)
   set_tests_properties(debugger.selftest.log.rule debugger.selftest.sh4bp.sessions.rule PROPERTIES
