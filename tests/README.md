@@ -349,6 +349,10 @@ What is skipped on macOS (arm64), with its reason (81 of the 340 tests; every ot
 | `debugger.sh4bp.b11` (1) | it counts host instructions with the performance counters of Linux (`perf_event_open`) and says `SKIPPED` elsewhere |
 | `debugger.sound.runner` (1) | its stand-ins for the emulator are scripts that the host runs by their first line (`#!`): a Linux host |
 
+On GitHub's hosted macOS runner, `macos.sh ci` also skips the six `debugger.contract.*.guest.interp` targets
+(`-DNULLDC_CONTRACT_SKIP_GUEST_INTERP=ON`): there S16's reset outlasted the contract runner's 25 s on the
+interpreter. They run on a Mac of one's own, and the JIT targets of the same guest run in CI.
+
 The objdump oracles of `debugger/disasm` run where the binutils are: `arm-none-eabi-objdump` of Homebrew
 (`brew install arm-none-eabi-binutils`), and `sh-elf-objdump` where a KallistiOS toolchain is at
 `/opt/toolchains/dc` (Homebrew has none); `gen.sh --check` of the sounding guest likewise runs where `sh-elf-as`
