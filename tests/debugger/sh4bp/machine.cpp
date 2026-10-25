@@ -613,6 +613,13 @@ void machine_call(std::function<void()> fn)
 	ext_done.wait(lock, [] { return !ext_call_pending.load(); });
 }
 
+int machine_queued_calls()
+{
+	std::lock_guard<std::mutex> lock(ext_mutex);
+
+	return ext_call ? 1 : 0;
+}
+
 SuperH4Backend* machine_backend()
 {
 	return backend;
