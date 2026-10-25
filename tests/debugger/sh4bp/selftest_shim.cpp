@@ -121,6 +121,16 @@ int Call(CallClass cls, std::function<void()> fn)
 	return 0;
 }
 
+namespace test {
+
+// dbg_emu.cpp's, for the selftest: the calls that wait to be taken
+size_t QueuedCalls()
+{
+	return (size_t)machine_queued_calls();
+}
+
+}
+
 bool GetSh4Engine(Sh4EngineInfo* out)
 {
 #if HOST_CPU == CPU_ARM64

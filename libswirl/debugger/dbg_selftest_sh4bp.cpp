@@ -47,10 +47,18 @@
 #include "dbg_selftest_sh4bp_guest.inc"
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <thread>
+
+namespace dbg { namespace emu { namespace test {
+
+// dbg_emu.cpp: how many calls wait in the queue
+size_t QueuedCalls();
+
+} } }
 
 namespace {
 
@@ -476,6 +484,7 @@ BootState boot_state;
 // the case of a run, and what it counts
 const BootCase* boot_case;
 u32 boot_stops, boot_pauses, boot_calls, boot_outs, boot_ended, boot_chain;
+std::atomic<bool> boot_arm_now;	// B6: the helper makes its call now, whatever the lifetime
 
 // the path
 u32 prof_pc[kBootSteps];
@@ -1162,13 +1171,19 @@ void BootCallFn(BootAt at, const emu::RunState& stop)
 	}
 }
 
-// B6: an address of a hot block, armed by a call of another thread while the guest runs, disarmed in its tenth stop
+// B6: an address of a hot block, armed by a call of another thread while the guest runs, disarmed in its tenth stop.
+// The call is made as soon as the guest runs, and is taken there, in an excursion of the running thread. Where the
+// helper has not made it by the first vblank behind the window (a host that gave it no processor in time: a
+// hosted runner under a load), that stop has it made at once and waits until it is in the queue, so that the
+// park loop, or the thread as it resumes, takes it there: the case has its ten stops in every run, and no run of
+// it is void for want of time
 void ArmHelper(u32 gen)
 {
 	const u32 hot = boot_hot;
 
-	// the call is made as soon as the guest runs: this loop does not give the processor away
-	while (HelperLive(gen) && emu::GetRunState().lifetime != Lifetime::Running)
+	// this loop does not give the processor away
+	helper_ready = true;
+	while (HelperLive(gen) && emu::GetRunState().lifetime != Lifetime::Running && !boot_arm_now)
 		helper_ready = true;
 
 	while (HelperLive(gen))
@@ -1192,12 +1207,22 @@ void BootHotFn(BootAt at, const emu::RunState& stop)
 	{
 	case BOOT_WINDOW:
 		boot_calls = boot_stops = 0;
+		boot_arm_now = false;
 		HelperStart(ArmHelper);
 		break;
 
 	case BOOT_STOP:
 		if (stop.cause == StopCause::Breakpoint && ++boot_stops == 10)
 			BootArm(nullptr, 0);
+		else if (boot_calls == 0 && !boot_arm_now)
+		{
+			// a vblank behind the window, and the helper's call has not been taken: it makes it now, and this
+			// stop goes on once the call waits in the queue (10 s at most; a run without it is void, as before)
+			boot_arm_now = true;
+			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+			while (emu::test::QueuedCalls() == 0 && std::chrono::steady_clock::now() < until)
+				std::this_thread::yield();
+		}
 		break;
 
 	case BOOT_END:

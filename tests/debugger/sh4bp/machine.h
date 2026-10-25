@@ -169,6 +169,8 @@ bool machine_used_fallback();
 //at once, on the calling thread's behalf, when the machine is parked) and the function returns behind it.
 void machine_request_pause();
 void machine_call(std::function<void()> fn);
+//machine_queued_calls: dbg::emu::test::QueuedCalls, the calls of other threads that wait to be taken (0 or 1)
+int machine_queued_calls();
 
 //The SH4 backend that runs the guest
 SuperH4Backend* machine_backend();
