@@ -106,6 +106,7 @@ const size_t kMaxStaticFile = 64u << 20;	// files from Options::webRoot are read
 const size_t kMaxHttpConnections = 32;		// connections that are not WebSocket clients
 const int kStallMs = 10000;					// an HTTP connection that makes no progress is closed
 const int kLingerMs = 2000;					// wait for the peer's FIN after sending ours
+const size_t kStopDrainBytes = 1u << 20;	// most that Stop reads away from one connection, see DrainInput
 const int kHangUpRetryMs = 15;				// see Conn::pollAfter
 const int kAcceptRetryMs = 100;				// after accept failed for lack of descriptors
 const int kIdlePollMs = 250;				// what a lost wake-up may cost, see Server::Impl::Wake
@@ -734,6 +735,19 @@ std::string FrameHeader(int opcode, size_t length) {
 			h += (char)((uint64_t)length >> shift);
 	}
 	return h;
+}
+
+// Reads away, without waiting, what a socket holds that was not read yet (kStopDrainBytes at most). A socket that is
+// closed with unread input ends its connection with a reset instead of a FIN, and a peer whose stack drops what it
+// had received when a reset comes (Windows) loses the frames that were sent last: the close frame of Stop
+static void DrainInput(sock_t fd) {
+	char buffer[4096];
+	for (size_t total = 0; total < kStopDrainBytes;) {
+		int n = (int)recv(fd, buffer, (int)sizeof(buffer), 0);
+		if (n <= 0)
+			return;
+		total += (size_t)n;
+	}
 }
 
 std::string CloseFrame(int code) {
@@ -1393,6 +1407,9 @@ struct Server::Impl {
 		}
 
 		for (const auto& c : conns) {
+			// what the peer sent and the loop did not read (a frame it sent just before the stop) would make the
+			// close below a reset, which can take the close frame with it: read away first, and end with a FIN
+			DrainInput(c->fd);
 			if (c->state == Conn::kWs) {
 				// Best effort, and only on a frame boundary: a close frame in the middle of another frame
 				// would corrupt the stream.
@@ -1402,6 +1419,7 @@ struct Server::Impl {
 				}
 				Unregister(*c);
 			}
+			shutdown(c->fd, kShutdownSend);
 			SockClose(c->fd);
 		}
 		conns.clear();
