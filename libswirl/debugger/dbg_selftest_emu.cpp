@@ -79,6 +79,9 @@ extern bool plainStart;
 // dbg_emu.cpp: called by OnThreadStarting() as its first statement
 extern void (*threadStarting)();
 
+// dbg_emu.cpp: how many calls wait in the queue
+size_t QueuedCalls();
+
 } } }
 
 // reios/reios.cpp: the hook a guest program returns to
@@ -1689,7 +1692,7 @@ struct {
 	u32 parkedFirst, starts;
 
 	// a stop during a call
-	std::atomic<bool> inCall { false }, inCallback { false };
+	std::atomic<bool> inCall { false }, inCallback { false }, exAnswered { false }, queuedInTime { false };
 	Where held, drd, dtb, dwr, dex;
 	HostStop during;
 } hs;
@@ -1880,6 +1883,8 @@ DBG_SELFTEST_GUEST(emu_hoststop, "emu.hoststop")
 		// A stop while a call runs, and calls that are queued while the stop callback runs
 		hs.inCall = false;
 		hs.inCallback = false;
+		hs.exAnswered = false;
+		hs.queuedInTime = false;
 		hs.phase = 3;
 		hs.stop0 = stop.stopId;
 
@@ -1907,7 +1912,13 @@ DBG_SELFTEST_GUEST(emu_hoststop, "emu.hoststop")
 				hs.during.callbacks++;
 				hs.during.onEmu = emu::OnEmuThread();
 				hs.inCallback = true;
-				Nap(40);
+				// the thread stays on its way out until the three calls below wait in its queue and CC_EXEC has
+				// its answer: no window of time for them to come in (a nap of 40 ms was one, too short on a
+				// hosted virtual machine); 10 s at most, should one never come
+				const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+				while (!(emu::test::QueuedCalls() >= 3 && hs.exAnswered) && std::chrono::steady_clock::now() < until)
+					Nap(1);
+				hs.queuedInTime = emu::test::QueuedCalls() >= 3 && hs.exAnswered;
 			});
 
 			while (!hs.inCallback)
@@ -1917,7 +1928,7 @@ DBG_SELFTEST_GUEST(emu_hoststop, "emu.hoststop")
 			std::thread t1([] { CallHere(&hs.drd, emu::CC_READ); });
 			std::thread t2([] { CallHere(&hs.dtb, emu::CC_TABLE); });
 			std::thread t3([] { CallHere(&hs.dwr, emu::CC_WRITE); });
-			std::thread t4([] { CallHere(&hs.dex, emu::CC_EXEC); });
+			std::thread t4([] { CallHere(&hs.dex, emu::CC_EXEC); hs.exAnswered = true; });
 
 			holder.join();
 			t1.join();
@@ -1941,6 +1952,7 @@ DBG_SELFTEST_GUEST(emu_hoststop, "emu.hoststop")
 		Check(!hs.otherFailed && stop.cause == StopCause::Start, "a host stop during a call ends the thread, and the host starts the next");
 		Check(hs.held.Ran(true, Lifetime::Running), "the call that was running when the stop came ran to its end (rv %d)", hs.held.rv.load());
 		Check(hs.during.callbacks == 1 && hs.during.onEmu, "the stop callback ran once, on the emulator thread");
+		Check(hs.queuedInTime, "the three calls waited in the queue of the thread that leaves, and CC_EXEC had its answer, while the stop callback ran");
 		Check(hs.drd.rv == 0 && hs.drd.runs == 1 && hs.drd.onEmu, "queued while the thread leaves, CC_READ: that thread runs it before it is gone (rv %d)", hs.drd.rv.load());
 		Check(hs.dtb.rv == 0 && hs.dtb.runs == 1 && hs.dtb.onEmu, "queued while the thread leaves, CC_TABLE: the same (rv %d)", hs.dtb.rv.load());
 		Check(hs.dwr.rv == kErrHostStopped && hs.dwr.runs == 0, "queued while the thread leaves, CC_WRITE: -32001, not run (rv %d)", hs.dwr.rv.load());

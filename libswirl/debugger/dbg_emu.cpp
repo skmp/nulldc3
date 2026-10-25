@@ -925,6 +925,22 @@ Taken RunOneCall()
 
 }
 
+namespace test {
+
+// For the selftest (dbg_selftest_emu.cpp, emu.hoststop, which declares it as well): how many calls wait in the
+// queue, not yet taken out of it. Takes Q
+size_t QueuedCalls()
+{
+	std::lock_guard<std::mutex> q(queue_lock);
+	size_t n = 0;
+	for (const auto& call : shared.calls)
+		if (call->state == CallObj::Queued)
+			n++;
+	return n;
+}
+
+}
+
 /*
 	Calls
 */
