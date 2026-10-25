@@ -150,6 +150,25 @@ function(nulldc_add_missing_data_test name reason)
   endif()
 endfunction()
 
+# The work directory of the test <name> in <var>: <build dir>/w/<the first 8 hex digits of the SHA-1 of the name>.
+# Short on purpose: on macOS the harnesses give a run TMPDIR=<work>/tmp, where node and tsx make Unix sockets
+# (<TMPDIR>/tsx-<uid>/<pid>.pipe), and macOS cuts a socket's path at 103 bytes without an error; a work directory
+# named after its test (<build dir>/debugger/contract/work/<test>) made those paths 110 to 130 bytes on GitHub's
+# runners, and the cut path named a directory that existed (EADDRINUSE). w/index.txt names the test of each one.
+file(WRITE "${CMAKE_BINARY_DIR}/w/index.txt" "# <work directory> <test>: the work directories of the tests (nulldc_work_dir)\n")
+set_property(GLOBAL PROPERTY nulldc_work_dirs "")
+function(nulldc_work_dir var name)
+  string(SHA1 hash "${name}")
+  string(SUBSTRING "${hash}" 0 8 hash)
+  get_property(taken GLOBAL PROPERTY nulldc_work_dirs)
+  if("${hash}" IN_LIST taken)
+    message(FATAL_ERROR "nulldc_work_dir: the work directory w/${hash} of ${name} is another test's (index.txt)")
+  endif()
+  set_property(GLOBAL APPEND PROPERTY nulldc_work_dirs "${hash}")
+  file(APPEND "${CMAKE_BINARY_DIR}/w/index.txt" "w/${hash} ${name}\n")
+  set(${var} "${CMAKE_BINARY_DIR}/w/${hash}" PARENT_SCOPE)
+endfunction()
+
 
 ## The version ##
 #

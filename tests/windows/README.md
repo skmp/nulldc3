@@ -9,7 +9,7 @@ Every program is started through `nulldc3-winrun` (the one this project builds, 
 of the emulator carries the keys of an automated run: a portable directory under the test's work directory and
 `--config config:Headless=yes , audio:backend=none , config:Dreamcast.RTC=946684800` (the help box cases leave
 `config:Headless` out, with a command line that is refused before anything runs). The cases are in `windows.cmake`;
-each keeps the output of its runs in `<build>/windows/work/<test>/*.log`.
+each keeps the output of its runs in `<build>/w/<hash>/*.log` (`<build>/w/index.txt` names the test of each).
 
 | test | what it checks |
 |---|---|

@@ -190,8 +190,9 @@ function(nulldc_debugger_contract name)
       continue()
     endif()
 
+    nulldc_work_dir(work_dir ${test})
     set(command "${Python3_EXECUTABLE}" "${nulldc_tests_path}/debugger/contract/contract.py"
-                --emulator "${nulldc_contract_emulator}" --work "${CMAKE_BINARY_DIR}/debugger/contract/work/${test}"
+                --emulator "${nulldc_contract_emulator}" --work "${work_dir}"
                 --guest "${guest}" --mode ${ARG_MODE} --engine ${engine})
 
     if(ARG_RUNNER)
