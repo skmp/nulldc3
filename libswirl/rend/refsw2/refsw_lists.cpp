@@ -391,8 +391,13 @@ void RenderCORE() {
     //   pos = j * factor (+ 1024 in a stream that a tile with y = 0 started, when the picture shrinks and both
     //   the interlace and the field bit are set), in units of 1/1024 line: line k = pos >> 10 and the next one,
     //   weighted with the top 4 bits of the fraction, (a * (16 - f) + b * f) >> 4. When the picture shrinks
-    //   (factor above 0x400) the lines are filtered first, (above + 2 * line + below) >> 2 with the stream's
-    //   first line repeated above it.
+    //   (factor above 0x400) the lines are filtered first with Y_COEFF, c1 = bits 15..8 for the line and
+    //   c0 = bits 7..0 for the lines above and below: ((c0 * above) >> 4) + ((c1 * line) >> 4) + ((c0 * below)
+    //   >> 4), all >> 4, kept to 8 bits (weights summing above 256 wrap, each channel on its own; 0x8040 is
+    //   (above + 2 * line + below) >> 2), with the stream's first line repeated above it. Bits 31..16 do
+    //   nothing. Pinned by Under Defeat's 0x6532 (polly2-data underdefeat_*: 5 frames = the console's; whole
+    //   products >> 8, or the products cut by 3 or 5 bits, miss 2,000-5,000 pixels a frame) and by
+    //   dreamcast-tests pvr-tests/ycoeff (18 pages, 14 values, factors 0x401 / 0x400 / 0x800 = the console's).
     //   A row is written when the stream has reached line k + 1 (k + 2 with the filter), at the x of the tile
     //   being worked on then and at row j & 1023 -- the row counter has 10 bits and belongs to the stream,
     //   not to the tile. In the order KallistiOS uses (column by column, top to bottom) that is the picture
@@ -423,11 +428,13 @@ void RenderCORE() {
                 put(X + x, Y, row[x][0], row[x][1], row[x][2], row[x][3]);
         }
     };
+    const int yc0 = Y_COEFF & 0xff, yc1 = (Y_COEFF >> 8) & 0xff;
     auto filtered = [&](s64 i, int x, int c) -> int {
         const int v = ring[i & 7].p[x][c];
         if (!vfilter)
             return v;
-        return (ring[(i > 0 ? i - 1 : 0) & 7].p[x][c] + 2 * v + ring[(i + 1) & 7].p[x][c]) >> 2;
+        const int a = ring[(i > 0 ? i - 1 : 0) & 7].p[x][c], b = ring[(i + 1) & 7].p[x][c];
+        return ((((yc0 * a) >> 4) + ((yc1 * v) >> 4) + ((yc0 * b) >> 4)) >> 4) & 0xff;
     };
     // write the rows that can be written. end: the stream is over (with the filter the last line has been
     // taken in once more); stuck: the end of the frame
