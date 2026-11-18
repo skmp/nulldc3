@@ -392,9 +392,9 @@ inline Fp Divide(const Fp& num, const Fp& den0)
     int64_t r = tab.Mantissa(md);
     // floor(mn * r * 131072) with mn = mant / 2^bn and r / 65536: mant * r * 2 / 2^bn, toward minus infinity
     (void)mn;
-    unsigned __int128 p = (unsigned __int128)num.mant * (uint64_t)r * 2;
+    pvrfp::u128 p = (pvrfp::u128)num.mant * (uint64_t)r * 2;
     uint64_t q = (uint64_t)(p >> bn);
-    bool lost = (p & (((unsigned __int128)1 << bn) - 1)) != 0;
+    bool lost = (p & (((pvrfp::u128)1 << bn) - 1)) != 0;
     if (num.neg && lost)
         q += 1;
     Fp out;

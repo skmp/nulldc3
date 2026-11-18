@@ -51,7 +51,7 @@ struct DepthTile {
     float first_z = 0;                                  // not valid: the depth every pixel gets
     // block form: twice the depth in units of 2^unit is d0 + sx2 * dx + sy2 * dy, with sx2, sy2 the steps from
     // the tile's first pixel center in half pixels
-    __int128 d0 = 0, dx = 0, dy = 0;
+    pvrfp::i128 d0 = 0, dx = 0, dy = 0;
     int unit = 0;
     // float form (a plane of zero)
     Fp A, B, C;
@@ -161,18 +161,18 @@ struct DepthTile {
         int e = first.zero() ? pair + (cfg.tileBits - cfg.pairBits) : first.top();
         Fp start = first.cut(cfg.startBits);
         unit = e - cfg.tileBits;
-        auto step = [&](const Fp& v) -> __int128 {
+        auto step = [&](const Fp& v) -> pvrfp::i128 {
             if (v.zero())
                 return 0;
             Fp s = v.cut(cfg.slopeBits).cutBelow(pair - cfg.pairBits).cutBelow(unit);
             if (s.zero())
                 return 0;
-            __int128 m = (__int128)s.mant << (s.exp - unit);
+            pvrfp::i128 m = (pvrfp::i128)s.mant << (s.exp - unit);
             return s.neg ? -m : m;
         };
         if (pair != pvrfp::NoExp && pair - cfg.pairBits + 24 - unit > 100)
             return;                                     // a slope 2^50 times the start: leave it to the float form
-        __int128 s0 = start.zero() ? 0 : (__int128)start.mant << (start.exp - unit);
+        pvrfp::i128 s0 = start.zero() ? 0 : (pvrfp::i128)start.mant << (start.exp - unit);
         d0 = 2 * (start.neg ? -s0 : s0);
         dx = step(A);
         dy = step(B);
@@ -189,9 +189,9 @@ struct DepthTile {
         const int h = centers ? 0 : -1;
         Fp v;
         if (block) {
-            __int128 t = d0 + (2 * i + h) * dx + (2 * j + h) * dy;
+            pvrfp::i128 t = d0 + (2 * i + h) * dx + (2 * j + h) * dy;
             v.neg = t < 0;
-            unsigned __int128 m = v.neg ? (unsigned __int128)(-t) : (unsigned __int128)t;
+            pvrfp::u128 m = v.neg ? (pvrfp::u128)(-t) : (pvrfp::u128)t;
             int n = (uint64_t)(m >> 64) ? 64 + Fp::Bits((uint64_t)(m >> 64)) : Fp::Bits((uint64_t)m);
             int drop = n > 64 ? n - 64 : 0;
             v.mant = (uint64_t)(m >> drop);

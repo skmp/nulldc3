@@ -1301,9 +1301,10 @@ static Color TextureFilter(TSP tsp, TCW tcw, float u, float v, u32 MipLevel, f32
             // when it is the first: never 32. Halfway from 210 to 0 is 233; from 64 to 0 the 32 pixels read
             // 62, 60 .. 0, from 0 to 64 they read 0, 2 .. 62. S, the high byte, is filtered as a colour is.
             auto circular = [](u32 first, u32 second, int weight) -> u32 {
-                const u32 big = first > second ? first : second, small = first > second ? second : first;
-                const u32 apart = big - small;
-                const u32 start = apart < 128 ? small : big;
+                // (not "small": the Windows headers define it as a type)
+                const u32 high = first > second ? first : second, low = first > second ? second : first;
+                const u32 apart = high - low;
+                const u32 start = apart < 128 ? low : high;
                 const u32 distance = apart < 128 ? apart : 256 - apart;
                 const int w = start == first ? weight : 31 - weight;
                 return (start + ((distance * w) >> 5)) & 255;

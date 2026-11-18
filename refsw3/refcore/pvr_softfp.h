@@ -24,6 +24,78 @@
 
 namespace pvrfp {
 
+// 128 bit integers for the exact sums and the fixed-point stepping. GCC and Clang have them (__int128); MSVC does
+// not, and gets two structs that do, in two's complement, the few things this code asks of them: shifts, sums,
+// negation, products (the low 128 bits), masks, comparisons, and the low 64 bits.
+#if defined(__SIZEOF_INT128__) && !defined(PVRFP_NO_INT128)     // PVRFP_NO_INT128: the structs, to test them
+typedef __int128 i128;
+typedef unsigned __int128 u128;
+#else
+struct i128;
+struct u128 {
+    uint64_t lo = 0, hi = 0;
+    constexpr u128() {}
+    constexpr u128(uint64_t v) : lo(v), hi(0) {}
+    constexpr u128(uint64_t h, uint64_t l) : lo(l), hi(h) {}
+    explicit u128(const i128& v);
+    explicit operator uint64_t() const { return lo; }
+    static u128 Mul64(uint64_t a, uint64_t b)
+    {
+        const uint64_t a0 = (uint32_t)a, a1 = a >> 32, b0 = (uint32_t)b, b1 = b >> 32;
+        const uint64_t p00 = a0 * b0, p01 = a0 * b1, p10 = a1 * b0, p11 = a1 * b1;
+        const uint64_t mid = (p00 >> 32) + (uint32_t)p01 + (uint32_t)p10;
+        return u128(p11 + (p01 >> 32) + (p10 >> 32) + (mid >> 32), (mid << 32) | (uint32_t)p00);
+    }
+    friend u128 operator+(u128 a, u128 b) { u128 r; r.lo = a.lo + b.lo; r.hi = a.hi + b.hi + (r.lo < a.lo ? 1 : 0); return r; }
+    friend u128 operator-(u128 a, u128 b) { u128 r; r.lo = a.lo - b.lo; r.hi = a.hi - b.hi - (a.lo < b.lo ? 1 : 0); return r; }
+    friend u128 operator*(u128 a, u128 b) { u128 r = Mul64(a.lo, b.lo); r.hi += a.lo * b.hi + a.hi * b.lo; return r; }
+    friend u128 operator&(u128 a, u128 b) { return u128(a.hi & b.hi, a.lo & b.lo); }
+    friend u128 operator<<(u128 a, int n)
+    {
+        if (n <= 0) return a;
+        if (n >= 128) return u128();
+        if (n >= 64) return u128(a.lo << (n - 64), 0);
+        return u128((a.hi << n) | (a.lo >> (64 - n)), a.lo << n);
+    }
+    friend u128 operator>>(u128 a, int n)
+    {
+        if (n <= 0) return a;
+        if (n >= 128) return u128();
+        if (n >= 64) return u128(0, a.hi >> (n - 64));
+        return u128(a.hi >> n, (a.lo >> n) | (a.hi << (64 - n)));
+    }
+    u128& operator>>=(int n) { return *this = *this >> n; }
+    friend bool operator==(u128 a, u128 b) { return a.lo == b.lo && a.hi == b.hi; }
+    friend bool operator!=(u128 a, u128 b) { return !(a == b); }
+};
+struct i128 {
+    u128 v;
+    constexpr i128() {}
+    constexpr i128(int x) : v((uint64_t)(x < 0 ? ~0ull : 0ull), (uint64_t)(int64_t)x) {}
+    constexpr i128(long x) : v((uint64_t)(x < 0 ? ~0ull : 0ull), (uint64_t)(int64_t)x) {}
+    constexpr i128(long long x) : v((uint64_t)(x < 0 ? ~0ull : 0ull), (uint64_t)x) {}
+    constexpr i128(unsigned x) : v((uint64_t)x) {}
+    constexpr i128(unsigned long x) : v((uint64_t)x) {}
+    constexpr i128(unsigned long long x) : v((uint64_t)x) {}
+    explicit i128(u128 x) : v(x) {}
+    friend i128 operator-(i128 a) { return i128(u128() - a.v); }
+    friend i128 operator+(i128 a, i128 b) { return i128(a.v + b.v); }
+    friend i128 operator-(i128 a, i128 b) { return i128(a.v - b.v); }
+    friend i128 operator*(i128 a, i128 b) { return i128(a.v * b.v); }
+    friend i128 operator<<(i128 a, int n) { return i128(a.v << n); }
+    friend bool operator<(i128 a, i128 b)
+    {
+        return a.v.hi != b.v.hi ? (int64_t)a.v.hi < (int64_t)b.v.hi : a.v.lo < b.v.lo;
+    }
+    friend bool operator>(i128 a, i128 b) { return b < a; }
+    friend bool operator<=(i128 a, i128 b) { return !(b < a); }
+    friend bool operator>=(i128 a, i128 b) { return !(a < b); }
+    friend bool operator==(i128 a, i128 b) { return a.v == b.v; }
+    friend bool operator!=(i128 a, i128 b) { return a.v != b.v; }
+};
+inline u128::u128(const i128& x) : lo(x.v.lo), hi(x.v.hi) {}
+#endif
+
 static const int NoExp = -1000000;      // top() of a zero
 
 struct Fp {
@@ -188,24 +260,18 @@ inline Fp Add(const Fp& a, const Fp& b, int bits, int reach, int guard = -1)
     if (sx > 90 || sy > 90) {       // cannot happen with reach <= 58; be safe
         return ta > tb ? a.cut(bits) : b.cut(bits);
     }
-#if defined(__SIZEOF_INT128__)
-    __int128 vx = (__int128)x.mant << sx, vy = (__int128)y.mant << sy;
+    i128 vx = (i128)x.mant << sx, vy = (i128)y.mant << sy;
     if (x.neg) vx = -vx;
     if (y.neg) vy = -vy;
-    __int128 s = vx + vy;
+    i128 s = vx + vy;
     r.neg = s < 0;
-    unsigned __int128 m = r.neg ? (unsigned __int128)(-s) : (unsigned __int128)s;
+    u128 m = r.neg ? (u128)(-s) : (u128)s;
     int n = (uint64_t)(m >> 64) ? 64 + Fp::Bits((uint64_t)(m >> 64)) : Fp::Bits((uint64_t)m);
     if (n > 64) {
         m >>= (n - 64);
         e += (n - 64);
     }
     r.mant = (uint64_t)m;
-#else
-    // without a 128 bit integer: drop the bits of the smaller operand that cannot reach the result's `bits`
-    // bits... not exact for subtraction; refsw2 is built with compilers that have __int128
-#error "pvr_softfp.h needs a 128 bit integer type"
-#endif
     r.exp = e;
     if (r.mant == 0)
         r.neg = false;
