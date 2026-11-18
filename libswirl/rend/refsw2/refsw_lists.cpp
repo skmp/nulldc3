@@ -295,19 +295,174 @@ void RenderObjectList(RenderMode render_mode, pvr32addr_t base, taRECT* rect)
 // Render a frame
 // Called on START_RENDER write
 void RenderCORE() {
-    {
-        auto field = SCALER_CTL.fieldselect;
-        auto interlace = SCALER_CTL.interlace;
-
-        auto base = (interlace && field) ? FB_W_SOF2 : FB_W_SOF1;
-        // printf("Rendering to %x\n", (interlace && field) ? FB_W_SOF2 : FB_W_SOF1);
-    }
     u32 base = REGION_BASE;
 
     RegionArrayEntry entry;
     
     RENDLOG("REFSW2LOG: 0");
     RENDLOG("BGTAG: %08X", ISP_BACKGND_T.full);
+
+    // The write-out is refsw3-core's (refsw3/refcore/refsw_lists.cpp), measured on a console: every pack mode
+    // (16 bit, 888 packed, 0888, 8888) with the hardware's dither, FB_X_CLIP / FB_Y_CLIP, and the scaler
+    // (SCALER_CTL: vertical factor and filter, horizontal halving).
+    // ---- writing the picture to the framebuffer ----
+    // What the hardware adds to a channel before cutting it to 4 bits, by pixel position; half of it for 5
+    // bits and a quarter for 6. Measured on a console, every entry exactly (dreamcast-tests/pvr-tests/fbpack; fb555,
+    // fb565).
+    static const int ditherAdd[4][4] = {
+        {  5, 13,  7, 15 },
+        {  9,  1, 11,  3 },
+        {  6, 14,  4, 12 },
+        { 10,  2,  8,  0 }
+    };
+    // Always FB_W_SOF1: on a console nothing reaches FB_W_SOF2, whatever the interlace and field bits of
+    // SCALER_CTL and the display's mode and field are (dreamcast-tests/pvr-tests/sof2probe, sof2field, scalermeas);
+    // those bits only choose which lines the scaler takes. FB_W_SOF2 is the second strip buffer: with FB_R_CTRL
+    // bit 22 the strips of 16 * size lines go to FB_W_SOF1 and FB_W_SOF2 in turn, each from the buffer's
+    // first line (dreamcast-tests/pvr-tests/sof2sweep). That mode is not implemented here.
+    const u32 fbBase = FB_W_SOF1;
+    const bool rtt = fbBase & 0x1000000;
+    const auto fb_packmode = FB_W_CTRL.fb_packmode;
+    if (fb_packmode == 0x7) {           // reserved: not measured; nothing is written (refsw3-core stops here)
+        static bool warned;
+        if (!warned) { printf("refsw2: FB_W_CTRL pack mode 7 (reserved): the tiles are not written out\n"); warned = true; }
+    }
+    const bool dither = FB_W_CTRL.fb_dither;
+    const int bpp = fb_packmode <= 0x3 ? 2 : fb_packmode == 0x4 ? 3 : 4;   // 16 bit formats: 2, 888 packed: 3, 0888 and 8888: 4
+    // One pixel of the framebuffer, if the pixel clip (FB_X_CLIP, FB_Y_CLIP: framebuffer coordinates, both ends
+    // included) lets it through.
+    auto put = [&](int X, int Y, int b8, int g8, int r8, int a8) {
+        if (fb_packmode == 0x7 || X < (int)FB_X_CLIP.min || X > (int)FB_X_CLIP.max || Y < (int)FB_Y_CLIP.min || Y > (int)FB_Y_CLIP.max)
+            return;
+        const u32 dst = fbBase + (u32)Y * FB_W_LINESTRIDE.stride * 8 + (u32)X * bpp;
+        const int add = dither ? ditherAdd[Y & 3][X & 3] : 0;
+        // a channel cut to `bits` bits: add the dither value, drop the low bits, saturate
+        auto cut = [add](int v, int bits) {
+            int q = (v + (add >> (bits - 4))) >> (8 - bits);
+            int top = (1 << bits) - 1;
+            return q > top ? top : q;
+        };
+        if (bpp == 2) {
+            u32 pixel;
+            if (fb_packmode == 0x0)         // 0555 KRGB: the top bit is the top bit of fb_kval
+                pixel = cut(b8, 5) | (cut(g8, 5) << 5) | (cut(r8, 5) << 10) | ((FB_W_CTRL.fb_kval & 0x80) << 8);
+            else if (fb_packmode == 0x1)    // 565 RGB
+                pixel = cut(b8, 5) | (cut(g8, 6) << 5) | (cut(r8, 5) << 11);
+            else if (fb_packmode == 0x2)    // 4444 ARGB: alpha is dithered like the colours
+                pixel = cut(b8, 4) | (cut(g8, 4) << 4) | (cut(r8, 4) << 8) | (cut(a8, 4) << 12);
+            else                            // 1555 ARGB: the top bit is "alpha is at least the threshold"
+                pixel = cut(b8, 5) | (cut(g8, 5) << 5) | (cut(r8, 5) << 10) | ((a8 >= (int)FB_W_CTRL.fb_alpha_threshold) << 15);
+            if (rtt)
+                (u16&)emu_vram[dst & VRAM_MASK] = pixel;
+            else
+                pvr_write_area1_16(emu_vram, dst, pixel);
+        }
+        else if (bpp == 3) {                // 888 RGB, packed
+            if (rtt) {
+                emu_vram[(dst + 0) & VRAM_MASK] = b8;
+                emu_vram[(dst + 1) & VRAM_MASK] = g8;
+                emu_vram[(dst + 2) & VRAM_MASK] = r8;
+            }
+            else {
+                emu_vram[pvr_map32(dst + 0)] = b8;
+                emu_vram[pvr_map32(dst + 1)] = g8;
+                emu_vram[pvr_map32(dst + 2)] = r8;
+            }
+        }
+        else {                              // 0888 KRGB: the top byte is fb_kval; 8888 ARGB: alpha
+            u32 top = fb_packmode == 0x5 ? (u32)FB_W_CTRL.fb_kval : (u32)a8;
+            u32 pixel = b8 + g8 * 256U + r8 * 256U * 256U + top * 256U * 256U * 256U;
+            if (rtt)
+                (u32&)emu_vram[dst & VRAM_MASK] = pixel;
+            else
+                pvr_write_area1_32(emu_vram, dst, pixel);
+        }
+    };
+    // ---- the scaler (SCALER_CTL) ----
+    // Measured on a console, every pixel of 77 pictures (dreamcast-tests/pvr-tests/scalermeas: 43 settings; scalertile:
+    // the tiles of the region array in six orders, two frames in a row, 1024 lines). The scaler is not a pass
+    // over the finished picture: the tiles go through it one after the other, in the order of the region
+    // array, and what it keeps between them does not know where a tile is.
+    //
+    //   factor 0x400 (the low 16 bits): no vertical scaling; a tile's lines go to the tile's own place.
+    //
+    //   Any other factor: the lines of the tiles are one stream. A tile with y = 0 starts a new stream (the
+    //   stream before it is ended first), and so does a frame. Output row j of a stream is taken at
+    //   pos = j * factor (+ 1024 in a stream that a tile with y = 0 started, when the picture shrinks and both
+    //   the interlace and the field bit are set), in units of 1/1024 line: line k = pos >> 10 and the next one,
+    //   weighted with the top 4 bits of the fraction, (a * (16 - f) + b * f) >> 4. When the picture shrinks
+    //   (factor above 0x400) the lines are filtered first, (above + 2 * line + below) >> 2 with the stream's
+    //   first line repeated above it.
+    //   A row is written when the stream has reached line k + 1 (k + 2 with the filter), at the x of the tile
+    //   being worked on then and at row j & 1023 -- the row counter has 10 bits and belongs to the stream,
+    //   not to the tile. In the order KallistiOS uses (column by column, top to bottom) that is the picture
+    //   one expects; row by row, every tile lands somewhere else.
+    //   When a stream ends, at the x of its last tile: with the filter, the last line counts once more as the
+    //   line below it; then the rows that need nothing after the last line are written (a row at the last
+    //   line itself only when the fraction of pos is 0, all 10 bits).
+    //   At the end of the frame the filtered last line is stuck at the value of the tile's first pixel for
+    //   the whole width of the tile (a row that uses it shows that pixel 31 times over).
+    //
+    //   Bit 16: pairs of pixels are averaged, (a + b) >> 1, after the above, and x is halved.
+    //   FB_X_CLIP and FB_Y_CLIP are applied to what comes out, in framebuffer coordinates.
+    //   Not measured: factor 0 (nothing is written here).
+    const int vfactor = SCALER_CTL.vscalefactor;
+    const bool vfilter = vfactor > 0x400, halve = SCALER_CTL.hscale;
+    const int fieldStart = (vfilter && SCALER_CTL.interlace && SCALER_CTL.fieldselect) ? 1024 : 0;
+    struct ScalerLine { u8 p[32][4]; };          // blue, green, red, alpha
+    ScalerLine ring[8];                          // the stream's last lines; line i is ring[i & 7]
+    s64 streamLines = 0, streamRow = 0;          // lines taken in, rows written
+    int streamStart = 0, streamX = -1;           // pos of row 0; x of the last tile (-1: no tile yet)
+    auto putRow = [&](int X, int Y, const int row[32][4]) {
+        if (halve) {
+            for (int x = 0; x < 16; x++)
+                put(X / 2 + x, Y, (row[2 * x][0] + row[2 * x + 1][0]) >> 1, (row[2 * x][1] + row[2 * x + 1][1]) >> 1,
+                    (row[2 * x][2] + row[2 * x + 1][2]) >> 1, (row[2 * x][3] + row[2 * x + 1][3]) >> 1);
+        } else {
+            for (int x = 0; x < 32; x++)
+                put(X + x, Y, row[x][0], row[x][1], row[x][2], row[x][3]);
+        }
+    };
+    auto filtered = [&](s64 i, int x, int c) -> int {
+        const int v = ring[i & 7].p[x][c];
+        if (!vfilter)
+            return v;
+        return (ring[(i > 0 ? i - 1 : 0) & 7].p[x][c] + 2 * v + ring[(i + 1) & 7].p[x][c]) >> 2;
+    };
+    // write the rows that can be written. end: the stream is over (with the filter the last line has been
+    // taken in once more); stuck: the end of the frame
+    auto emitRows = [&](int X, bool end, bool stuck) {
+        const s64 last = (end && vfilter ? streamLines - 1 : streamLines) - 1;      // the last line of the tiles
+        for (;;) {
+            const s64 pos = streamRow * vfactor + streamStart, k = pos >> 10;
+            const int f = (int)(pos >> 6) & 15;
+            if (end) {
+                if (!(k + 1 <= last || (k == last && (pos & 1023) == 0)))
+                    return;
+            } else if (k + (vfilter ? 2 : 1) > streamLines - 1)
+                return;
+            int row[32][4];
+            for (int x = 0; x < 32; x++)
+                for (int c = 0; c < 4; c++) {
+                    int a = filtered(k, stuck && vfilter && k == last ? 0 : x, c);
+                    if (f)
+                        a = (a * (16 - f) + filtered(k + 1, stuck && vfilter && k + 1 == last ? 0 : x, c) * f) >> 4;
+                    row[x][c] = a;
+                }
+            putRow(X, (int)(streamRow & 1023), row);
+            streamRow++;
+        }
+    };
+    auto endStream = [&](bool stuck) {
+        if (streamX < 0 || streamLines == 0)
+            return;
+        if (vfilter) {
+            ring[streamLines & 7] = ring[(streamLines - 1) & 7];
+            streamLines++;
+        }
+        emitRows(streamX, true, stuck);
+    };
+
 
     // Parse region array
     do {
@@ -462,131 +617,37 @@ void RenderCORE() {
             }
         }
         
-        // Copy to vram
+        // Copy to vram (refsw3-core's write-out, with the scaler's stream)
         if (!entry.control.no_writeout)
         {
-            // Precomputed “threshold biases” = bias4[bayer4[i][j]]
-            static constexpr uint8_t bayerBias[4][4] = {
-                {   8, 136,  40, 168 },  // 0→8, 8→136, 2→40, 10→168
-                { 200,  72, 232, 104 },  //12→200,4→72, 14→232,6→104
-                {  56, 184,  24, 152 },  // 3→56,11→184,1→24, 9→152
-                { 248, 120, 216,  88 }   //15→248,7→120,13→216,5→88
-            };
-
-            auto copy = GetColorOutputBuffer();
-
-            auto field = SCALER_CTL.fieldselect;
-            auto interlace = SCALER_CTL.interlace;
-
-            auto base = (interlace && field) ? FB_W_SOF2 : FB_W_SOF1;
-            bool rtt = base & 0x1000000;
-
-            // very few configurations supported here
-            //verify(SCALER_CTL.hscale == 0);
-            verify(SCALER_CTL.interlace == 0); // write both SOFs
-            auto vscale = SCALER_CTL.vscalefactor;
-            verify(vscale == 0x401 || vscale == 0x400 || vscale == 0x800);
-
-            auto fb_packmode = FB_W_CTRL.fb_packmode;
-            verify(fb_packmode == 0x0 || fb_packmode == 0x1 || fb_packmode == 0x4 || fb_packmode == 0x6); // 565 RGB16
-
-            bool dither = FB_W_CTRL.fb_dither;
-
-            auto src = copy;
-            auto bpp = fb_packmode == 0x1 ? 2 : 4;
-            auto offset_bytes = entry.control.tilex * 32 * bpp + entry.control.tiley * 32 * FB_W_LINESTRIDE.stride * 8;
-
-            for (int y = 0; y < 32; y++)
-            {
-                //auto base = (y&1) ? FB_W_SOF2 : FB_W_SOF1;
-                auto dst = base + offset_bytes + (y)*FB_W_LINESTRIDE.stride * 8;
-
-                for (int x = 0; x < 32; x++)
-                {
-                    if (fb_packmode == 0x0) {
-                        int r8 = src[0];
-                        int g8 = src[1];
-                        int b8 = src[2];
-
-                        int T = bayerBias[y & 3][x & 3];
-                        if (!dither) {
-                            T = 0;
-                        }
-
-                        // integer quantize exactly as before
-                        int r5 = (r8 * 31 + T) / 255;
-                        int g5 = (g8 * 31 + T) / 255;
-                        int b5 = (b8 * 31 + T) / 255;
-
-                        // clamp (just in case)
-                        if(r5<0) r5=0; else if(r5>31) r5=31;
-                        if(g5<0) g5=0; else if(g5>31) g5=31;
-                        if(b5<0) b5=0; else if(b5>31) b5=31;
-
-                        auto pixel = (r5 << 0) | (g5 << 5) | (b5 << 10);
-
-                        if (rtt) 
-                            (u16&)emu_vram[dst & VRAM_MASK] = pixel;
-                        else
-                            pvr_write_area1_16(emu_vram, dst, pixel);
-                    } else if (fb_packmode == 0x1) {
-                        int r8 = src[0];
-                        int g8 = src[1];
-                        int b8 = src[2];
-
-                        int T = bayerBias[y & 3][x & 3];
-                        if (!dither) {
-                            T = 0;
-                        }
-
-                        // integer quantize exactly as before
-                        int r5 = (r8 * 31 + T) / 255;
-                        int g6 = (g8 * 63 + T) / 255;
-                        int b5 = (b8 * 31 + T) / 255;
-
-                        // clamp (just in case)
-                        if(r5<0) r5=0; else if(r5>31) r5=31;
-                        if(g6<0) g6=0; else if(g6>63) g6=63;
-                        if(b5<0) b5=0; else if(b5>31) b5=31;
-                        
-                        auto pixel = (r5 << 0) | (g6 << 5) | (b5 << 11);
-
-                        if (rtt) 
-                            (u16&)emu_vram[dst & VRAM_MASK] = pixel;
-                        else
-                            pvr_write_area1_16(emu_vram, dst, pixel);
-                    }
-                    else if (fb_packmode == 4) {
-                        int r8 = src[0];
-                        int g8 = src[1];
-                        int b8 = src[2];
-
-                         if (rtt) {
-                            emu_vram[dst & VRAM_MASK + 0] = r8;
-                            emu_vram[dst & VRAM_MASK + 1] = g8;
-                            emu_vram[dst & VRAM_MASK + 2] = b8;
-                        }
-                        else {
-                            emu_vram[pvr_map32(dst + 0)] = r8;
-                            emu_vram[pvr_map32(dst + 1)] = g8;
-                            emu_vram[pvr_map32(dst + 2)] = b8;
-                        }
-                    }
-                    else {
-                        auto pixel = src[0] + src[1] * 256U + src[2] * 256U * 256U + src[3]  * 256U * 256U * 256U;
-                        if (rtt) 
-                            (u32&)emu_vram[dst & VRAM_MASK] = pixel;
-                        else
-                            pvr_write_area1_32(emu_vram, dst, pixel);
-                    }
-                    
-
-                    dst += bpp;
-                    src += 4; // skip alpha
+            auto src = GetColorOutputBuffer();      // blue, green, red, alpha
+            const int X0 = entry.control.tilex * 32, Y0 = entry.control.tiley * 32;
+            if (vfactor == 0x400) {
+                for (int y = 0; y < 32; y++) {
+                    int row[32][4];
+                    for (int x = 0; x < 32; x++, src += 4)
+                        for (int c = 0; c < 4; c++)
+                            row[x][c] = src[c];
+                    putRow(X0, Y0 + y, row);
                 }
+            } else if (vfactor != 0) {
+                if (entry.control.tiley == 0) {
+                    endStream(false);
+                    streamLines = streamRow = 0;
+                    streamStart = fieldStart;
+                }
+                for (int y = 0; y < 32; y++, src += 32 * 4) {
+                    memcpy(ring[streamLines & 7].p, src, 32 * 4);
+                    streamLines++;
+                    emitRows(X0, false, false);
+                }
+                streamX = X0;
             }
         }
     } while (!entry.control.last_region);
+
+    if (vfactor != 0x400 && vfactor != 0)
+        endStream(true);
 }
 
 

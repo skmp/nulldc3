@@ -858,7 +858,7 @@ ALWAYS_INLINE u32 TexStride(u32 TexU, u32 MipLevel) {
 }
 
 template<u32 PixelFmt>
-ALWAYS_INLINE u32 DecodeTextel(u32 PalSelect, u64 memtel, u32 offset) {
+ALWAYS_INLINE u32 DecodeTextel(u32 PalSelect, u64 memtel, u32 offset, bool twiddled) {
     auto memtel_32 = (u32*)&memtel;
     auto memtel_16 = (u16*)&memtel;
     auto memtel_8 = (u8*)&memtel;
@@ -873,9 +873,15 @@ ALWAYS_INLINE u32 DecodeTextel(u32 PalSelect, u64 memtel, u32 offset) {
             return memtel_16[offset & 3]; break;
 
         case PixelYUV: {
-            auto memtel_yuv = memtel_32[offset & 1];
-            auto memtel_yuv8 = (u8*)&memtel_yuv;
-            return YUV422(memtel_yuv8[1 + (offset & 2)], memtel_yuv8[0], memtel_yuv8[2]);
+            // A texel is Y and one chroma byte: the texel at an even x has U, its neighbour at x + 1 in the
+            // same row has V, and the two share both. In a texture that is not twiddled they are next to each
+            // other in memory; in a twiddled one bit 1 of the index is x's lowest bit, so they are two apart
+            // (hardware pairs by x there too, not by memory order: dreamcast-tests/pvr-tests/yuvbil; refsw3-core).
+            u32 self = offset & 3;
+            u32 tu = twiddled ? (self & 1) : (self & 2);
+            u32 tv = twiddled ? (self | 2) : (self | 1);
+            (void)memtel_32;
+            return YUV422(memtel_8[self * 2 + 1], memtel_8[tu * 2], memtel_8[tv * 2]);
             }
 
         case PixelPal4: {
@@ -950,7 +956,7 @@ static Color TextureFetch(TSP tsp, TCW tcw, int u, int v, u32 MipLevel) {
         memtel = VQLookup(start_address, memtel, offset * fbpp / 16);
     }
 
-    u32 textel = DecodeTextel<PixelFmt>(tcw.PalSelect, memtel, offset);
+    u32 textel = DecodeTextel<PixelFmt>(tcw.PalSelect, memtel, offset, VQ_Comp || MipMapped || !ScanOrder);
 
     u32 expand_format = GetExpandFormat<PixelFmt>();
 

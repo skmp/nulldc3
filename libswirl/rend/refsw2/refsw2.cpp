@@ -250,20 +250,11 @@ struct refsw2rend : Renderer
             {
                 for (int i = 0; i < width; i++)
                 {
-                    if (addr & 1)
-                    {
-                        u32 src = pvr_read_area1_32(vram, addr - 1);
-                        *dst++ = src >> RED_8;
-                        *dst++ = src >> 8;
-                        *dst++ = src >> BLUE_8;
-                    }
-                    else
-                    {
-                        u32 src = pvr_read_area1_32(vram, addr);
-                        *dst++ = src >> (RED_8 + 8);
-                        *dst++ = src >> 16;
-                        *dst++ = src >> (BLUE_8 + 8);
-                    }
+                    // three bytes a pixel at any byte address, blue first (as the write-out packs them)
+                    const u32 src = vram[pvr_map32(addr)] | vram[pvr_map32(addr + 1)] << 8 | (u32)vram[pvr_map32(addr + 2)] << 16;
+                    *dst++ = src >> RED_8;
+                    *dst++ = src >> 8;
+                    *dst++ = src >> BLUE_8;
                     *dst++ = 0xFF;
                     addr += bpp;
                 }
