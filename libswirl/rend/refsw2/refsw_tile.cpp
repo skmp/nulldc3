@@ -1411,7 +1411,9 @@ static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, boo
             float ddx = (entry->ips.U[two_voume_index].ddx + entry->ips.V[two_voume_index].ddx);
             float ddy = (entry->ips.U[two_voume_index].ddy + entry->ips.V[two_voume_index].ddy);
 
-            float dMip = fminf(fabsf(ddx), fabsf(ddy)) * W * sizeU * entry->params.tsp[two_voume_index].MipMapD / 4.0f;
+            // D adjust 0 (the manual: "illegal") is 4/4 on a console (Berserk; dreamcast-tests mipmeas --bias0)
+            const u32 mipD = entry->params.tsp[two_voume_index].MipMapD ? entry->params.tsp[two_voume_index].MipMapD : 4;
+            float dMip = fminf(fabsf(ddx), fabsf(ddy)) * W * sizeU * mipD / 4.0f;
 
             MipLevel = 0; // biggest
             while(dMip > 1.5 && MipLevel < 11) {

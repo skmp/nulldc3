@@ -1770,7 +1770,9 @@ static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, boo
             const auto& ips = entry->ips;
             auto choice = pvrtsp::MipSelect(ips.U[two_voume_index].soft, ips.V[two_voume_index].soft, ips.invW.soft,
                                             pvrfp::Fp::FromFloat(W), 3 + entry->params.tsp[two_voume_index].TexU,
-                                            entry->params.tsp[two_voume_index].MipMapD,
+                                            // D adjust 0 (the manual: "illegal") is 4/4 on a console: Berserk's
+                                            // ground (polly2-data berserk_*), dreamcast-tests mipmeas --bias0
+                                            entry->params.tsp[two_voume_index].MipMapD ? (int)entry->params.tsp[two_voume_index].MipMapD : 4,
                                             entry->params.isp.DCalcCtrl ? ips.first[two_voume_index] : nullptr);
             MipLevel = choice.level > 11 ? 11 : choice.level;
             dTrilinear = choice.k / 256.0f;
