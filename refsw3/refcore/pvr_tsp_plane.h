@@ -428,14 +428,29 @@ inline Fp Divide(const Fp& num, const Fp& den0)
 struct MipChoice {
     int level;      // 0: the largest
     int k;          // of 256: the share of level + 1 (trilinear pass B); pass A has 256 - k of this level
+    double kFull;   // K before its cut to 8 bits (0: none); for the generators (pvr-tests/mipk)
 };
+
+// MIP_K (0: the model): 1 K as it was before (numerators of the divided coefficients, exactly, and the longer plus
+// 27146 / 65536 of the shorter); 98, 99:
+// K one step of 8 bits more, less (pvr-tests/mipk places its cases with them). A generator sets mipKVariant,
+// refsw3-offline takes the environment's MIP_K
+inline int mipKVariant = -1;
+inline int MipK()
+{
+    if (mipKVariant < 0) {
+        const char* e = getenv("MIP_K");
+        mipKVariant = e ? atoi(e) : 0;
+    }
+    return mipKVariant;
+}
 
 // first: null (DCalcCtrl 0: the numerators are taken at the screen's origin), or the first vertex's u, v, 1/w, x
 // and y (DCalcCtrl 1: they are taken at that vertex).
 inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const Fp& q, int sizeLog2, int biasQuarters, const float* first = nullptr)
 {
     using namespace pvrfp;
-    MipChoice r = { 0, 0 };
+    MipChoice r = { 0, 0, 0 };
     const bool ranged = w.cfg.range != 0;
     if (biasQuarters <= 0 || u.bad || v.bad || w.bad)
         return r;
@@ -453,8 +468,7 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
     auto above = [](const Fp& x) { return !x.zero() && x.top() - 1 > 127; };
     auto below = [](const Fp& x) { return !x.zero() && x.top() - 1 < -126; };
     auto inf = []() { Fp x; x.bad = true; return x; };
-    // one product of two sums: 0 a number, 1 an infinity, -1 a zero (the value itself is taken from the divided
-    // coefficients below, as before)
+    // one product of two sums: 0 a number, 1 an infinity, -1 a zero (the value itself: minor, below)
     auto kind = [&](const Fp& x, const Fp& y) {
         if (!ranged) return 0;
         if (x.bad || y.bad) return ((!x.bad && x.zero()) || (!y.bad && y.zero())) ? -1 : 1;
@@ -462,7 +476,18 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
         Fp m = Mul(x, y, 24);
         return above(m) ? 1 : below(m) ? -1 : 0;
     };
-    // |a1 b2 - b1 a2| of the divided coefficients; s..: the same four as undivided sums, for the limits
+    // The console's numerators (dreamcast-tests/pvr-tests/mipk5: 1991 of 1991 cells; mipk): of the UNDIVIDED sums,
+    // each product cut to 24 bits and their difference cut to 24 bits, all toward zero; the two lengths are made of
+    // those, and the longer is then multiplied once by 1/det^2, the determinant's 24 bit reciprocal squared and cut to
+    // 24 bits (where every coefficient divided first loses its own cut; the 1/w plane's C of a flat triangle whose
+    // determinant is not a power of two is just under 1, and the console's numerators are as if it were 1)
+    const Fp& det = w.Sdet;
+    Fp inv = det.bad ? Fp() : Recip(det, 24);
+    if (ranged && below(inv))
+        inv = Fp();
+    const bool undivided = MipK() != 1 && !det.zero() && !inv.zero();
+    const Fp inv2 = Mul(inv, inv, 24);
+    // |a1 b2 - b1 a2|: of the undivided sums sa1 .. sb2 (MIP_K 1: of the divided coefficients a1 .. b2)
     auto minor = [&](const Fp& a1, const Fp& b1, const Fp& a2, const Fp& b2, const Fp& sa1, const Fp& sb1, const Fp& sa2, const Fp& sb2, bool neg1, bool neg2) {
         const int k1 = kind(sa1, sb2), k2 = kind(sb1, sa2);
         if (k1 == 1 || k2 == 1) {
@@ -471,6 +496,18 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
             return inf();
         }
         // a product that is a zero by the sums (zero times anything, also times an infinity) is one here too
+        if (undivided) {
+            const Fp q1 = (k1 < 0 || sa1.bad || sb2.bad) ? Fp() : Mul(sa1, sb2, 24), q2 = (k2 < 0 || sb1.bad || sa2.bad) ? Fp() : Mul(sb1, sa2, 24);
+            Fp n = Sub(q1, q2, 62, 200).cut(24);
+            n.neg = false;
+            n.bad = false;
+            if (ranged) {                               // the limits as before: by the quotient
+                const Fp nq = Mul(n, inv2, 62);
+                if (below(nq)) return Fp();
+                if (above(nq)) return inf();
+            }
+            return n;
+        }
         const Fp p1 = (k1 < 0 || a1.bad || b2.bad) ? Fp() : Mul(a1, b2, 62), p2 = (k2 < 0 || b1.bad || a2.bad) ? Fp() : Mul(b1, a2, 62);
         Fp n = Sub(p1, p2, 62, 200);
         n.neg = false;
@@ -481,9 +518,8 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
             return inf();
         return n;
     };
-    // along x: |C_a A_w - A_a C_w| for U and for V; along y: |B_a C_w - C_a B_w|. Each pair is one length,
-    // the larger plus a part of the smaller; K is the longer of the two.
-    // the two numerators of a direction as one length: the larger plus (sqrt(2) - 1) of the smaller
+    // along x: |C_a A_w - A_a C_w| for U and for V; along y: |B_a C_w - C_a B_w|. Each pair is one length (about
+    // the larger plus (sqrt(2) - 1) of the smaller); K is the longer of the two.
     auto length = [](const Fp& p, const Fp& q) {
         if (p.bad || q.bad) {
             Fp x; x.bad = true; return x;
@@ -492,9 +528,21 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
         const Fp& lo = p.toDouble() >= q.toDouble() ? q : p;
         if (lo.zero())
             return hi;
-        Fp part = Mul(lo, Fp::FromHalves(2 * 27146), 62);       // 27146 / 65536
-        part.exp -= 16;
-        return Add(hi, part, 62, 200);
+        if (MipK() == 1) {                              // as it was: the longer plus 27146 / 65536 of the shorter
+            Fp part = Mul(lo, Fp::FromHalves(2 * 27146), 62);
+            part.exp -= 16;
+            return Add(hi, part, 62, 200);
+        }
+        // the console's (dreamcast-tests/pvr-tests/mipk4, mipk3, mipk2: every cell): the two added, less 0x3F15F612
+        // (0.585785985, a little under 2 - sqrt(2)) times the shorter, each of the three cut to 24 bits toward zero,
+        // in the setup's adder (an operand 25 exponents below the other is dropped: a shorter that is a rounding's
+        // residue leaves the longer as it is). (longer + shorter) - (2 - sqrt(2)) shorter is longer + (sqrt(2) - 1)
+        // shorter, but with the sum's own cut: the part of the shorter falls as the shorter rises, until the sum steps up
+        Fp k2;
+        k2.mant = 0x95F612;
+        k2.exp = -24;
+        const Fp sum = Add(hi, lo, 62, 25).cut(24), less = Mul(lo, k2, 62).cut(24);
+        return Sub(sum, less, 62, 25).cut(24);
     };
     // the planes' values where the numerators are taken: their constants, or the first vertex's u / w, v / w, 1 / w
     Fp pu = u.C0, pv = v.C0, pw = w.C0;
@@ -562,6 +610,11 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
     Fp ly = length(minor(u.B0, pu, w.B0, pw, u.Sb, su, w.Sb, sw, sgn(u.Sb, sw), sgn(su, w.Sb)),
                    minor(v.B0, pv, w.B0, pw, v.Sb, sv, w.Sb, sw, sgn(v.Sb, sw), sgn(sv, w.Sb)));
     Fp best = (lx.bad || (!ly.bad && lx.toDouble() >= ly.toDouble())) ? lx : ly;
+    if (undivided && !best.bad && !best.zero()) {
+        best = Mul(best, inv2, 24);                     // the longer length, once times 1/det^2
+        if (ranged && above(best)) best = inf();
+        else if (ranged && below(best)) best = Fp();
+    }
     Fp k8, kFull;
     if (best.bad) {
         if (!ranged) return r;
@@ -576,6 +629,12 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
         k8.exp += sizeLog2 - 2;
         kFull = k8;
         k8 = k8.cut(8);
+        r.kFull = kFull.toDouble();
+        if (MipK() == 98 || MipK() == 99) {                 // one step of 8 bits more, less
+            const int b = Fp::Bits(k8.mant), sh = b > 8 ? b - 8 : 0;
+            uint64_t m = (k8.mant >> sh) + (MipK() == 98 ? 1 : -1);
+            k8.mant = m << sh;
+        }
     }
     Fp one = Fp::FromHalves(2);
     Fp wFull = Divide(one, q);
