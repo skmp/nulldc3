@@ -9,6 +9,14 @@
         times the reciprocal: ((a x0 + b y0) + c) * inv
       - that start is kept as a 20 bit float; the slopes are a * inv and b * inv as 20 bit floats, cut to 21 bits
         under the larger one's exponent and to the tile's grid, 26 bits under the start's exponent
+      - the start is cut to the slopes' grid as well (21 bits under the larger slope's exponent), toward zero, of
+        either sign: it matters where the start is smaller than the slopes (the plane crosses zero near the tile's
+        first pixel). A negative start then comes out up to one grid step higher, and a pixel just under a stored
+        step goes over it: the depth buffers of polly2-data's dumps read out (dreamcast-tests dumprender.sh z,
+        zdumps.sh), the 36 depths of 64 frames that differed (sa2_ingame 34, shenmue_intro 2), and the 3 brackets
+        of zmeas (reach1, reach1r, zero6) the model missed; 0 of 89,801 brackets missed with it, 39 before. A
+        positive start cut lower shows only at depths below about a quarter of the slopes: dreamcast-tests
+        pvr-tests/zstart, 47,522 of 47,522 pixels with any start cut (121 differ when only a negative one is)
       - a pixel is the start plus whole steps, and is stored with a 19 bit mantissa; the steps are fixed point
         however far the depth reaches above the start (zmeas mix reach: exact to 29 powers of two above it), and a
         start of exactly zero is stepped the same way, on the slopes' own grid
@@ -35,6 +43,9 @@ struct DepthConfig {
     int pairBits = 21;
     int tileBits = 26;
     int storedBits = 19;
+    // the start cut to the slopes' grid too: 1 any start (a console: zstart), 2 a negative one only, 0 not (the
+    // model before); 0 and 2 are kept for the generators and depthprobe --scan
+    int startOnSlopes = 1;
     // The setup's numbers have the limits measured for the TSP's (pvr_tsp_plane.h, Plane::Setup): exponent
     // field 0 is zero and 255 infinity, a result of 2^128 or more is an infinity and one below 2^-126 a zero,
     // with the same rules for sums and products of them. Not measured here number by number: with them
@@ -160,6 +171,8 @@ struct DepthTile {
         // at each pixel in floating point, as before, gave 22)
         int e = first.zero() ? pair + (cfg.tileBits - cfg.pairBits) : first.top();
         Fp start = first.cut(cfg.startBits);
+        if (pair != pvrfp::NoExp && (cfg.startOnSlopes == 1 || (cfg.startOnSlopes == 2 && start.neg)))
+            start = start.cutBelow(pair - cfg.pairBits);
         unit = e - cfg.tileBits;
         auto step = [&](const Fp& v) -> pvrfp::i128 {
             if (v.zero())
