@@ -16,6 +16,7 @@
 #include "cfg/cfg.h"
 #include "libswirl.h"
 #include "gui/gui_renderer.h"
+#include "hw/pvr/pvr_coredump.h"
 #include "hw/sh4/sh4_sched.h"
 #include "utils/run_control.h"
 
@@ -88,6 +89,17 @@ Sh4RCB* p_sh4rcb;
 XXH64_hash_t XXH64(const void* input, size_t length, unsigned long long seed)
 {
 	fprintf(stderr, "a hash nobody asked for\n");
+	abort();
+}
+
+// Only a script (config:Script.File) presses buttons or asks for a dump, and no case has one
+u16 kcode[4] = { 0xffff, 0xffff, 0xffff, 0xffff };
+u8 rt[4], lt[4];
+s8 joyx[4], joyy[4];
+
+void pvr_coredump_request(const string& path)
+{
+	fprintf(stderr, "a dump nobody asked for\n");
 	abort();
 }
 
