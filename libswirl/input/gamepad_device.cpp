@@ -13,6 +13,8 @@
 #include "oslib/oslib.h"
 #include "cfg/cfg.h"
 #include "libswirl.h"
+#include "hw/pvr/pvr_coredump.h"
+#include <ctime>
 
 #define MAPLE_PORT_CFG_PREFIX "maple_"
 
@@ -102,6 +104,8 @@ bool GamepadDevice::gamepad_btn_input(u32 code, bool pressed)
 		case EMU_BTN_REFSW2_DUMP: {
 			if (pressed) {
 				refsw2_do_dump = true;
+				// and the next frame as a PVR core dump (hw/pvr/pvr_coredump.h), beside the renderer's folder
+				pvr_coredump_request(get_writable_dumps_path() + "pvrdump-" + std::to_string((long long)time(nullptr)) + ".pvrdmp");
 			}
 			break;
 		}

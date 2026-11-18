@@ -24,7 +24,7 @@ for o in $objs; do [ -f "$o" ] || { echo "refsw3-offline: build failed"; exit 1;
 # link only when something changed, and put the new program in place in one step: other runs may be using it
 new=""; for o in $objs; do [ "$o" -nt "$OUT/refsw3-offline" ] && new=1; done
 if [ -n "$new" ] || [ ! -f "$OUT/refsw3-offline" ]; then
-  c++ $objs -lpthread -o "$OUT/refsw3-offline.new.$$" && mv "$OUT/refsw3-offline.new.$$" "$OUT/refsw3-offline" && echo "built $OUT/refsw3-offline"
+  c++ $objs -lpthread -lz -o "$OUT/refsw3-offline.new.$$" && mv "$OUT/refsw3-offline.new.$$" "$OUT/refsw3-offline" && echo "built $OUT/refsw3-offline"
 else
   echo "$OUT/refsw3-offline is up to date"
 fi

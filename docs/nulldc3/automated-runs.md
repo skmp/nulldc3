@@ -26,11 +26,51 @@ A complete headless run:
 | `<product id>:Dreamcast.RTC`, `<product id>:Debug.FixedRtc` | as above | The two keys in the section of a game (`[T1234N]` in `emu.cfg`, the product number of the disc). Like every setting of a game they go over the keys of that name in section `config` for that game, 0 included; between the two keys the rule is the same: `Debug.FixedRtc`, when it is not 0, is taken. |
 | `config:Debug.BlockOnFault` | `yes` | A fatal fault blocks the process for a native debugger instead of ending it. Linux and macOS. See "Faults". |
 | `config:Debug.AicaHash` | N | The sound regression harness: the run ends behind the N-th tick of the AICA with one line of hashes, and with no exit line. See "The sound line". |
+| `config:Script.File` | a path | A script of the run: controller input, pictures and PVR core dumps at given vblanks. See "Scripts". A script that cannot be read ends the process at its start (an error line, code 1). |
+| `config:Script.ShotEvery` | N | The last presented frame as a PNG every N vblanks, `<Script.ShotDir>/<vblank, 6 digits>.png`. |
+| `config:Script.ShotDir` | a folder | Where `Script.ShotEvery` writes (it has to exist; default: the working directory). |
 
 Keys that were there before and that a headless run usually wants: `audio:backend=none` (no audio device is opened;
 with a backend and `config:aica.LimitFPS`, the default, the run is held at real time), `config:Debug.SerialConsoleEnabled=yes`
 (what the guest writes to the serial port goes to stdout: the `printf` of a KallistiOS program), `config:pvr.backend`,
 `config:Dynarec.Enabled=no` (the SH4 interpreter).
+
+## Scripts
+
+`config:Script.File` drives a run without a person: what a player would press, when, and when to keep a picture or a
+dump. One step a line, `<vblank> <op> [arguments]`, `#` starts a comment; the steps are taken in vblank order (lines
+of one vblank in their order), at the vblank since the start of the process that they name, on the emulator thread:
+two runs of one binary with the same script and keys (and `config:Dreamcast.RTC`) see the same frames.
+
+| op | arguments | what it does |
+|---|---|---|
+| `press` | buttons | held down from this vblank (the controller of port A) |
+| `release` | buttons | let go |
+| `tap` | buttons [N] | held for N vblanks (default 4) |
+| `stick` | x y | the analog stick, -128 .. 127 each (0 0: centered) |
+| `lt`, `rt` | 0 .. 255 | the triggers |
+| `png` | a path | the last presented frame as a PNG (a software renderer's, as `Exit.FramePng`) |
+| `dump` | a path | a PVR core dump of the next render that is not a render to texture (below) |
+| `exit` | | the run ends here (reason `script`) |
+
+Buttons are `A B C D X Y Z START UP DOWN LEFT RIGHT UP2 DOWN2 LEFT2 RIGHT2` (the second set: the D pad of a second
+directional input), joined with `+` (`A+START`). A run with a script counts as automated (it ends on the guest's exit,
+and saves nothing into `emu.cfg`). With a window the steps run as well, and the host's input for port A mixes in.
+
+    20 press A        # hold A
+    300 release A
+    1900 tap START
+    2400 dump C:\work\title.pvrdmp
+    2400 png C:\work\title.png
+    3000 exit
+
+**A PVR core dump** (`.pvrdmp`, `libswirl/hw/pvr/pvr_coredump.h`) is what a render of the PVR core reads, in one file:
+the 11 bytes `pvrcoredump`, a gzip member of video memory in 32 bit area order (8 MB on a Dreamcast, 16 MB on NAOMI:
+the size is what it inflates to), and a gzip member of the PVR register file (8 KB, `0x005F8000`-`0x005F9FFF`). It is
+taken where the render starts, before the renderer runs, so the lists, parameters and the region array of the tile
+accelerator are in video memory as `STARTRENDER` found them (refsw3-ta, the TA of the software renderers). The dump
+key also writes one, `data/dumps/pvrdump-<time>.pvrdmp`, beside its folder. `refsw3-offline --dump <file.pvrdmp> [png]`
+renders one; `-c "pvrdmp <file>; ..."` loads one for its commands.
 
 ## What ends a run, and how
 

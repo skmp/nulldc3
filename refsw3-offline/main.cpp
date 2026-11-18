@@ -16,6 +16,8 @@
         -c "cmd; cmd"          commands on the command line
         --dump <folder> [png]  render a dump made by the emulator (vram.bin and pvr_regs.bin) and write the
                                displayed picture to <folder>/frame.png or to [png]
+        --dump <file.pvrdmp> [png]   the same for a PVR core dump (libswirl/hw/pvr/pvr_coredump.h); the picture
+                               goes to <file>.png or to [png]
         --lax                  an unwritten register is a warning
         -v                     say what is done
 
@@ -42,6 +44,8 @@
         regs <file>                  load a raw register block (pvr_regs.bin: 8 KB, 0x005F8000-0x005F9FFF; the 32 KB
                                      block of older builds is read for its first 8 KB); every register counts as written
         vram <file>                  load raw video memory in 32 bit area order (vram.bin)
+        pvrdmp <file>                load both from a PVR core dump (.pvrdmp: "pvrcoredump", gzip of the video
+                                     memory, gzip of the register block); every register counts as written
         save <folder>                write vram.bin and pvr_regs.bin, as the emulator's dump does
         echo <text>
 */
@@ -57,6 +61,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <zlib.h>
 
 namespace refcore {
 void RenderCORE();
@@ -293,6 +298,61 @@ static bool load_vram(const char* path) {
             return false;
         }
     fclose(f);
+    return true;
+}
+
+// A gzip member of data from at: inflated into out (at most cap bytes); at moves past it. -1: not a whole member
+static long inflate_member(const std::vector<u8>& data, size_t& at, u8* out, size_t cap) {
+    z_stream z;
+    memset(&z, 0, sizeof(z));
+    if (at >= data.size() || inflateInit2(&z, MAX_WBITS + 16) != Z_OK)
+        return -1;
+    z.next_in = (Bytef*)&data[at];
+    z.avail_in = (uInt)(data.size() - at);
+    z.next_out = out;
+    z.avail_out = (uInt)cap;
+    int status = inflate(&z, Z_FINISH);
+    long made = (long)z.total_out;
+    at += z.total_in;
+    inflateEnd(&z);
+    return status == Z_STREAM_END ? made : -1;
+}
+
+// A PVR core dump (.pvrdmp, libswirl/hw/pvr/pvr_coredump.h): "pvrcoredump", a gzip member of video memory in 32 bit
+// area order (8 MB; a NAOMI's 16 MB is said and refused here), a gzip member of the 8 KB register block
+static bool load_pvrdmp(const char* path) {
+    FILE* f = fopen(path, "rb");
+    std::vector<u8> data;
+    if (f) {
+        u8 chunk[1 << 16];
+        size_t n;
+        while ((n = fread(chunk, 1, sizeof(chunk), f)) > 0)
+            data.insert(data.end(), chunk, chunk + n);
+        fclose(f);
+    }
+    if (data.size() < 11 || memcmp(data.data(), "pvrcoredump", 11) != 0) {
+        fprintf(stderr, "refsw3-offline: %s is not a PVR core dump (no \"pvrcoredump\" at its start)\n", path);
+        return false;
+    }
+    size_t at = 11;
+    std::vector<u8> linear(32u << 20);
+    long size = inflate_member(data, at, linear.data(), linear.size());
+    if (size != (long)VRAM_SIZE) {
+        if (size == (16 << 20))
+            fprintf(stderr, "refsw3-offline: %s has 16 MB of video memory (NAOMI); this build has %u bytes\n", path, (unsigned)VRAM_SIZE);
+        else
+            fprintf(stderr, "refsw3-offline: %s: its video memory does not inflate to %u bytes (%ld)\n", path, (unsigned)VRAM_SIZE, size);
+        return false;
+    }
+    std::vector<u8> regs(sizeof(pvr_regs) + 1);
+    if (inflate_member(data, at, regs.data(), regs.size()) != (long)sizeof(pvr_regs)) {
+        fprintf(stderr, "refsw3-offline: %s: its register block does not inflate to %u bytes\n", path, (unsigned)sizeof(pvr_regs));
+        return false;
+    }
+    for (u32 i = 0; i < VRAM_SIZE; i += 4)
+        memcpy(vrp(vram, i), &linear[i], 4);
+    memcpy(pvr_regs, regs.data(), sizeof(pvr_regs));
+    memset(written, 1, sizeof(written));
     return true;
 }
 
@@ -629,6 +689,8 @@ static bool command(const std::string& line) {
         return load_regs(t[1].c_str());
     } else if (c == "vram" && t.size() == 2) {
         return load_vram(t[1].c_str());
+    } else if (c == "pvrdmp" && t.size() == 2) {
+        return load_pvrdmp(t[1].c_str());
     } else if (c == "save" && t.size() == 2) {
         return save_dump(t[1]);
     } else if (c == "echo") {
@@ -696,9 +758,12 @@ int main(int argc, char** argv) {
             }
         } else if (a == "--dump" && i + 1 < argc) {
             std::string folder = argv[++i];
-            std::string png = (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i] : folder + "/frame.png";
+            const bool core = folder.size() > 7 && folder.compare(folder.size() - 7, 7, ".pvrdmp") == 0;
+            std::string png = (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i]
+                            : core ? folder.substr(0, folder.size() - 7) + ".png" : folder + "/frame.png";
             did = true;
-            ok = load_vram((folder + "/vram.bin").c_str()) && load_regs((folder + "/pvr_regs.bin").c_str());
+            ok = core ? load_pvrdmp(folder.c_str())
+                      : load_vram((folder + "/vram.bin").c_str()) && load_regs((folder + "/pvr_regs.bin").c_str());
             if (ok) {
                 reg_write(STARTRENDER_addr, 0xFFFFFFFF);
                 ok = write_display(png.c_str());
@@ -707,7 +772,7 @@ int main(int argc, char** argv) {
             printf("usage: refsw3-offline [--lax] [-v] [-c \"cmd; cmd\"] [--dump <folder> [png]] [script | -]...\n"
                    "commands: reset | reg <name|offset> <value> | w32 <addr> <word>... | w64 <addr> <word>... | ta <word>... |\n"
                    "          render | wait <events> | dump32 <addr> <words> <file> | png <file> | log <file|off> |\n"
-                   "          regs <file> | vram <file> | save <folder> | echo <text>      (numbers are hexadecimal)\n");
+                   "          regs <file> | vram <file> | pvrdmp <file> | save <folder> | echo <text>   (numbers are hexadecimal)\n");
             return 0;
         } else {
             FILE* f = a == "-" ? stdin : fopen(a.c_str(), "r");

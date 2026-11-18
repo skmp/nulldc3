@@ -9,6 +9,7 @@
 #include "gui/gui_partials.h"
 
 #include "Renderer_if.h"
+#include "pvr_coredump.h"
 #include "ta.h"
 #include "ta_lle.h"
 #include "hw/pvr/pvr_mem.h"
@@ -218,6 +219,9 @@ static bool rend_frame(u8* vram, TA_context* ctx) {
 			re.Set();
 		}
 	}
+
+    // a PVR core dump asked for (the dump key, Script.File's dump): video memory as this render finds it
+    pvr_coredump_poll(vram, (FB_W_SOF1 & 0x1000000) != 0);
 
     bool do_swp = proc && renderer->RenderPVR();
 
