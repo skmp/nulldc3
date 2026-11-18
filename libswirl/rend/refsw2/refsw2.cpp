@@ -10,10 +10,10 @@
 u8* emu_vram;
 extern u32 FrameCount;
 
-// Set by the input code of every build, consumed by the renderers of the TA_LLE build
+// Set by the input code (the dump key), consumed by the renderers that draw what refsw3-ta wrote: refsw2, refsw3,
+// refmister
 std::atomic<bool> refsw2_do_dump(false);
 
-#if FEAT_TA == TA_LLE
 #include "imgui/imgui.h"
 #include "hw/pvr/Renderer_if.h"
 #include "rend/gles/gles.h"
@@ -347,5 +347,4 @@ struct refsw2rend : Renderer
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 };
-static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refsw2", "Different refsw", 2, [](u8* vram) { return (Renderer*) new refsw2rend(vram); }, true });
-#endif
+static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refsw2", "refsw2 + refsw3-ta", 2, [](u8* vram) { return (Renderer*) new refsw2rend(vram); }, true, true });

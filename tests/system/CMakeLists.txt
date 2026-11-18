@@ -1,12 +1,12 @@
 ## System tests ##
 #
 #	The emulator binary itself, headless, on guest programs: system_test.py runs one case per test, and
-#	vmem_test.py the cases of the memory layout (system.vmem.*); README.md has the cases. Two builds of the
-#	emulator are tested, the default one (system.*) and the one without the TA of lxdream, -DHAS_TA_LLE=OFF
-#	(system.hle.*).
+#	vmem_test.py the cases of the memory layout (system.vmem.*); README.md has the cases. Every case runs twice on
+#	the one emulator: as the renderer chooses the TA (system.*: refsw3-ta for the renderers that draw from video
+#	memory, none included), and with the emulator's own TA forced (system.hle.*: --ta-hle, config pvr.ForceTaHle).
 #
-#	NULLDC_EMULATOR / NULLDC_EMULATOR_TA_HLE    binaries to test. Empty: this project builds the emulator of the
-#	                                            tree, into <build dir>/system/emulator and emulator-ta-hle
+#	NULLDC_EMULATOR                             binary to test. Empty: this project builds the emulator of the
+#	                                            tree, into <build dir>/system/emulator
 #	NULLDC_ELF_DIR                              directory with 2ndmix.elf and hello.elf, the KallistiOS examples.
 #	                                            Empty: the cases that boot them are skipped (missing data)
 #	NULLDC_SYSTEM_TESTS=OFF                     no system tests and no build of the emulator
@@ -14,11 +14,10 @@
 
 option(NULLDC_SYSTEM_TESTS "Build the emulator and run the system tests (system.*)" ON)
 set(NULLDC_EMULATOR "" CACHE FILEPATH "Emulator binary for the system tests, empty: built from this tree")
-set(NULLDC_EMULATOR_TA_HLE "" CACHE FILEPATH "Emulator binary of a -DHAS_TA_LLE=OFF build for the system tests, empty: built from this tree")
 set(NULLDC_ELF_DIR "" CACHE PATH "Directory with 2ndmix.elf and hello.elf (KallistiOS examples), empty: the system tests that boot them are skipped")
 
 # case, and what it needs besides the emulator: ELF (the programs of NULLDC_ELF_DIR), SHIM (fault_shim),
-# LLE (the renderers of the default build)
+# LLE (refsw3-ta: not with --ta-hle)
 set(nulldc_system_cases
   "help:"
   "guest_exit.jit:"
@@ -43,6 +42,7 @@ set(nulldc_system_cases
   "boot.hello.jit:ELF"
   "boot.hello.interp:ELF"
   "frame.refsw2:ELF,LLE"
+  "frame.refsw3:ELF,LLE"
   "determinism:ELF"
   "perf.script:"
   "dirs.default:"
@@ -102,19 +102,22 @@ endif()
 set(nulldc_vmem_cases vmem.concurrent vmem.none vmem.taken)
 
 # nulldc_system_emulator(<prefix> <given binary> <build dir name> <TA_HLE ON|OFF>): the binary, built here unless given
+# (once: system.hle.* runs the same one, with the emulator's own TA forced)
 function(nulldc_system_emulator prefix given dir ta_hle)
   if(given)
     set(binary "${given}")
   else()
     set(binary "${CMAKE_CURRENT_BINARY_DIR}/${dir}/nulldc3")
-    # In the console pool: one build of the emulator at a time, and it has all the cores for itself
-    add_custom_target(nulldc_${dir} ALL
-      COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${nulldc_root_path}" "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}/${dir}"
-              "-DGENERATOR=${CMAKE_GENERATOR}" "-DTA_HLE=${ta_hle}" -P "${CMAKE_CURRENT_SOURCE_DIR}/build_emulator.cmake"
-      BYPRODUCTS "${binary}"
-      USES_TERMINAL
-      COMMENT "The emulator for the system tests: ${dir}"
-      VERBATIM)
+    if(NOT TARGET nulldc_${dir})
+      # In the console pool: one build of the emulator at a time, and it has all the cores for itself
+      add_custom_target(nulldc_${dir} ALL
+        COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${nulldc_root_path}" "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}/${dir}"
+                "-DGENERATOR=${CMAKE_GENERATOR}" -P "${CMAKE_CURRENT_SOURCE_DIR}/build_emulator.cmake"
+        BYPRODUCTS "${binary}"
+        USES_TERMINAL
+        COMMENT "The emulator for the system tests: ${dir}"
+        VERBATIM)
+    endif()
   endif()
 
   foreach(entry ${nulldc_system_cases})
@@ -189,6 +192,6 @@ if(nulldc_system_skip)
     endforeach()
   endforeach()
 else()
-  nulldc_system_emulator(system     "${NULLDC_EMULATOR}"        emulator        OFF)
-  nulldc_system_emulator(system.hle "${NULLDC_EMULATOR_TA_HLE}" emulator-ta-hle ON)
+  nulldc_system_emulator(system     "${NULLDC_EMULATOR}" emulator OFF)
+  nulldc_system_emulator(system.hle "${NULLDC_EMULATOR}" emulator ON)
 endif()

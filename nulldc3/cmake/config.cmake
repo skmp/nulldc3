@@ -51,26 +51,13 @@ set(COMPILER_GCC   0x30000002)
 set(COMPILER_CLANG 0x30000003)
 set(COMPILER_INTEL 0x30000004)
 
-set(TA_HLE 0x60000001)
-set(TA_LLE 0x60000002)
-
-
 # options
-# on by default
-option(HAS_TA_LLE "Use TA LLE" ON)
+# The TA is chosen at run time with the renderer (hw/pvr/ta_lle.h): refsw3-ta (refsw3/refta) or the emulator's own
 
 # The release builds of CI (nulldc3/ci) name no path of the machine that built them: GCC and Clang write the source
 # tree as "." into __FILE__ and the debug information (-ffile-prefix-map, appended to the flags below), MSVC writes
 # the PDB's name without its directory into the executable (/PDBALTPATH:%_PDB%). Off: the commands as before
 option(NULLDC_PREFIX_MAP "Release builds: no build machine path in the binary (-ffile-prefix-map, /PDBALTPATH)" OFF)
-
-# set(FEAT_TA ${TA_LLE})
-
-if(HAS_TA_LLE)
-  set(FEAT_TA ${TA_LLE})
-else()
-  set(FEAT_TA ${TA_HLE})
-endif()
 
 
 ## These default to host, but are used for cross so make sure not to contaminate
@@ -416,7 +403,6 @@ add_definitions(-DFEAT_SHREC=${FEAT_SHREC})
 
 add_definitions(-DBUILD_COMPILER=${BUILD_COMPILER})
 
-add_definitions(-DFEAT_TA=${FEAT_TA})
 
 add_definitions(-DTARGET_NO_WEBUI)
 add_definitions(-DTARGET_NO_OPENMP)

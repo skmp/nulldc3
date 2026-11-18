@@ -221,10 +221,16 @@ def limit_core():
     resource.setrlimit(resource.RLIMIT_CORE, (1, resource.getrlimit(resource.RLIMIT_CORE)[1]))
 
 
+# --ta-hle: every run on the emulator's own TA, whatever the renderer (pvr.ForceTaHle; hw/pvr/ta_lle.h)
+FORCE_TA_HLE = False
+
+
 def headless(*keys, engine='jit', rtc=RTC_PIN):
     """The keys of a headless run: no audio backend, the serial port on stdout, a pinned clock."""
     base = ['config:Headless=yes', 'audio:backend=none', 'config:Debug.SerialConsoleEnabled=yes',
             'config:Dynarec.Enabled=' + ('yes' if engine == 'jit' else 'no')]
+    if FORCE_TA_HLE:
+        base.append('config:pvr.ForceTaHle=yes')
     if rtc is not None:
         base.append('config:Dreamcast.RTC=%d' % rtc)
     return base + list(keys)
@@ -502,13 +508,13 @@ def read_png_size(path):
     return size
 
 
-def case_frame_refsw2(h):
+def case_frame_refsw2(h, backend='refsw2'):
     """The software reference renderer runs headless: the frame it presents is hashed and written as a PNG."""
     png = os.path.join(h.work, 'frame.png')
-    keys = headless('config:pvr.backend=refsw2', 'config:Exit.AfterVblanks=240', 'config:Exit.StateHash=yes')
+    keys = headless('config:pvr.backend=' + backend, 'config:Exit.AfterVblanks=240', 'config:Exit.StateHash=yes')
     run = h.run('frame', keys + ['config:Exit.FramePng=' + png], h.elf('2ndmix.elf'))
     check_clean(run, 'vblanks')
-    check('RendIF: Using renderer: refsw2' in run.log, 'not refsw2', run)
+    check('RendIF: Using renderer: ' + backend in run.log, 'not ' + backend, run)
     check(run.fields.get('frame_size') == '640x480', 'frame_size=%s' % run.fields.get('frame_size'), run)
     check(re.fullmatch(r'[0-9a-f]{16}', run.fields.get('frame', '')) is not None, 'no frame hash', run)
     check(os.path.isfile(png), 'no PNG was written', run)
@@ -523,8 +529,13 @@ def case_frame_refsw2(h):
     check_clean(none, 'vblanks')
     check(none.fields.get('frame') == 'none', 'the none renderer presented a frame', none)
     for field in ('sh4', 'sched', 'ram', 'aram', 'arm7'):
-        check(none.fields[field] == run.fields[field], '%s differs between refsw2 and none' % field, run)
-    check(none.fields['vram'] != run.fields['vram'], 'refsw2 left VRAM as the none renderer does', run)
+        check(none.fields[field] == run.fields[field], '%s differs between %s and none' % (field, backend), run)
+    check(none.fields['vram'] != run.fields['vram'], '%s left VRAM as the none renderer does' % backend, run)
+
+
+def case_frame_refsw3(h):
+    """refsw3 (refsw3-core and refsw3-ta) runs headless as refsw2 does, on the same TA."""
+    case_frame_refsw2(h, 'refsw3')
 
 
 def start_spin(h, tag, keys=(), engine='interp', env=None):
@@ -1185,6 +1196,7 @@ CASES = {
     'boot.hello.jit': lambda h: case_boot(h, 'hello', 'jit'),
     'boot.hello.interp': lambda h: case_boot(h, 'hello', 'interp'),
     'frame.refsw2': case_frame_refsw2,
+    'frame.refsw3': case_frame_refsw3,
     'fault.segv': lambda h: case_fault(h, 'segv'),
     'fault.bus': lambda h: case_fault(h, 'bus'),
     'fault.ill': lambda h: case_fault(h, 'ill'),
@@ -1210,11 +1222,14 @@ def main():
     parser.add_argument('--work', required=True, help='scratch directory of this case, emptied first')
     parser.add_argument('--elf-dir', help='directory with 2ndmix.elf and hello.elf')
     parser.add_argument('--shim', help='the fault_shim library, for the fault cases')
-    parser.add_argument('--ta-hle', action='store_true', help='the emulator is a -DHAS_TA_LLE=OFF build')
+    parser.add_argument('--ta-hle', action='store_true',
+                        help='every run on the emulator\'s own TA (config pvr.ForceTaHle), not refsw3-ta')
     parser.add_argument('--watchdog', type=int, default=WATCHDOG,
                         help='seconds of wall clock one run of the emulator gets (%d)' % WATCHDOG)
     parser.add_argument('--keep', action='store_true', help='keep the directories of the runs of a passed case')
     options = parser.parse_args()
+    global FORCE_TA_HLE
+    FORCE_TA_HLE = options.ta_hle
 
     if not os.path.isfile(options.emulator):
         print('FAIL %s: no emulator at %s' % (options.case, options.emulator))

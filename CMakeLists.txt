@@ -74,7 +74,6 @@ set(d_core ${nulldc_core_path})
 file(GLOB_RECURSE hw_SRCS	${d_core}/hw/*.cpp			${d_core}/hw/*.h)
 # the C interface of the DSP core is the playground's (its wasm build), not the emulator's
 list(FILTER hw_SRCS EXCLUDE REGEX "/hw/aica/dsp_core/wasm/")
-file(GLOB_RECURSE lxdream_SRCS	${d_core}/gpl/lxdream/*.cpp			${d_core}/gpl/lxdream/*.h)
 
 file(GLOB cfg_SRCS			${d_core}/cfg/*.cpp			${d_core}/cfg/*.h)
 file(GLOB rend_SRCS			${d_core}/rend/*.cpp		${d_core}/rend/*.h)
@@ -100,13 +99,15 @@ file(GLOB gles_SRCS				${d_core}/rend/gles/*.cpp	${d_core}/rend/gles/*.h)
 file(GLOB norend_SRCS			${d_core}/rend/norend/*.cpp	${d_core}/rend/norend/*.h)
 file(GLOB softrend_SRCS		${d_core}/rend/soft/*.cpp	${d_core}/rend/soft/*.h)
 file(GLOB refsw2_SRCS		${d_core}/rend/refsw2/*.cpp	${d_core}/rend/refsw2/*.h)
+# refsw3, next to libswirl: refsw3-core (refcore, the ISP and TSP as a console has them) and refsw3-ta (refta, the TA)
+file(GLOB refsw3_SRCS		${nulldc_root_path}/refsw3/refcore/*.cpp	${nulldc_root_path}/refsw3/refcore/*.h
+							${nulldc_root_path}/refsw3/refta/*.cpp	${nulldc_root_path}/refsw3/refta/*.h)
 file(GLOB refmister_SRCS		${d_core}/rend/refmister/*.cpp	${d_core}/rend/refmister/*.h)
 if(${HOST_OS} EQUAL ${OS_WINDOWS})
   file(GLOB d3d11_SRCS		${d_core}/rend/d3d11/*.cpp	${d_core}/rend/d3d11/*.h)
 endif()
 
 set(core_SRCS
-  ${lxdream_SRCS}
   ${hw_SRCS}
   ${cfg_SRCS}
   ${rend_SRCS}
@@ -116,6 +117,7 @@ set(core_SRCS
   ${norend_SRCS}
   ${softrend_SRCS}
   ${refsw2_SRCS}
+  ${refsw3_SRCS}
   ${refmister_SRCS}
   ${d3d11_SRCS}
   ${input_SRCS}
@@ -321,6 +323,7 @@ else()
 endif()
 
 include_directories ("${nulldc_core_path}")
+include_directories ("${nulldc_root_path}/refsw3")     # refta/refta.h, refcore/...
 
 set(nulldc_SRCS ${core_SRCS} ${deps_SRCS} ${osd_SRCS})
 

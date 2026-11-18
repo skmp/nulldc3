@@ -153,15 +153,18 @@ and the tests `debugger.sound.*`.
 
 Renderers in headless mode (`config:pvr.backend`):
 
-| backend | build | headless |
+| backend | TA (`hw/pvr/ta_lle.h`) | headless |
 |---|---|---|
-| `auto` (the default) | both | picks `none` |
-| `none` | both | yes. Nothing is rendered; in the default build the TA still builds its lists in VRAM. The guest runs at full speed. |
-| `refsw2`, `refmister` | default (TA_LLE) | yes. They render into the framebuffer in VRAM, as always, on the emulator thread, and the frame they would hand to GL at each vblank (640x480 with the two fields woven for an interlaced mode) is kept for `Exit.FrameHash` / `Exit.FramePng`. |
-| `refsw`, `refsw-dbg` | default (TA_LLE) | no: `refsw` sets up GL in its `Init`. |
-| `gles` | `-DHAS_TA_LLE=OFF` (TA_HLE) | no |
+| `auto` (the default) | the one of what it picks | picks `none` (with a window: `refsw3`, the highest priority) |
+| `none` | refsw3-ta | yes. Nothing is rendered; refsw3-ta still builds its lists in VRAM. The guest runs at full speed. |
+| `refsw3`, `refsw2`, `refmister` | refsw3-ta | yes. They render into the framebuffer in VRAM, as always, on the emulator thread, and the frame they would hand to GL at each vblank (640x480 with the two fields woven for an interlaced mode) is kept for `Exit.FrameHash` / `Exit.FramePng`. `refsw3` is refsw3-core (`refsw3/refcore`), `refsw2` the older core. |
+| `refsw`, `refsw-dbg` | refsw3-ta | no: `refsw` sets up GL in its `Init`. |
+| `gles` (legacy GL) | the emulator's own | no |
 
-`Exit.FrameHash` and `Exit.FramePng` also work with a window, for `refsw2` and `refmister`. The GL renderers
+The TA goes with the renderer, latched at each `TA_LIST_INIT`; `config:pvr.ForceTaHle=yes` gives every renderer the
+emulator's own TA (the system tests' `system.hle.*`).
+
+`Exit.FrameHash` and `Exit.FramePng` also work with a window, for `refsw3`, `refsw2` and `refmister`. The GL renderers
 present nothing that is captured (`frame=none`).
 
 Not headless: save states with the GUI's notifications, anything that needs the GUI (settings, the game list, disc

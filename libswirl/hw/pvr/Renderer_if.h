@@ -36,7 +36,13 @@ struct rendererbackend_t {
 	int priority;
 	Renderer* (*create)(u8* vram);
 	bool headless = false;	// works without a GL context: what it presents goes to runctl_present
+	bool lle_ta = false;	// draws what refsw3-ta (refsw3/refta) wrote into video memory; false: what the emulator's own TA
+							// (hw/pvr/ta.cpp, "HLE") passes to Process()
 };
+
+// The TA the renderer chosen in the settings wants (settings.pvr.backend, or what "auto" picks), unless
+// settings.pvr.ForceTaHle: true refsw3-ta, false the emulator's own. hw/pvr/ta_lle.h latches it at TA_LIST_INIT.
+bool rend_wants_lle_ta();
 
 struct Renderer
 {

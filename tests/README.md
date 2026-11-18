@@ -66,9 +66,9 @@ project and for the projects of `debugger/disasm`, `net` and `regs` configured o
 git worktree of this repository, has to be named, or those tests are skipped. `devtools.commit` checks that the
 checkout is at the commit the repository pins for its submodule `devtools/`.
 
-The build includes two builds of the emulator for the system tests, about a minute each the first time
-(`-DNULLDC_SYSTEM_TESTS=OFF` leaves them and the system tests out, `-DNULLDC_EMULATOR=` and
-`-DNULLDC_EMULATOR_TA_HLE=` test given binaries instead: `system/README.md`).
+The build includes a build of the emulator for the system tests, about a minute the first time
+(`-DNULLDC_SYSTEM_TESTS=OFF` leaves it and the system tests out, `-DNULLDC_EMULATOR=` tests a given binary
+instead: `system/README.md`).
 
 | test | what it runs | data |
 |---|---|---|
@@ -91,7 +91,7 @@ The build includes two builds of the emulator for the system tests, about a minu
 | `cfg.log_file` | `cl_LogToFile` of the command line parser, what the Windows switch `--log` does with stdout and stderr: one file, made empty first, with every line of both streams in the order they were written and none lost when the process ends without a flush (a child process that ends with `_exit`); a log that cannot be opened leaves the streams as they were | none |
 | `runctl.guest_exit.*` | `utils/run_control.cpp` on the config store, with stand-ins for the machine and the user interface, one process per run (`window`: no key, `key`: `Exit.OnGuestExit`, `vblanks`: `Exit.AfterVblanks`, `seconds`: `Exit.AfterSeconds`, `headless`): a guest program that returns to the BIOS ends every run but the first, with `reason=guest-exit` on the exit line and the user interface stopped, and leaves the first to its window | none |
 | `system.*` | the emulator binary of the default build, headless: `--help`, the keys that end a run and the line it prints, the pinned RTC with its keys in section `config` and in the section of a game, `emu.cfg` left alone, the directory a run keeps its files in (the one of the executable, the one that holds an AppImage, `--portable <dir>`, `--shared`) and every command line that is refused, what a fatal fault and a signal that is sent do and that the faults of the guest are still handled, programs that boot under reios on the JIT and on the interpreter with their serial output, the software renderer into a PNG, a run that is repeated and has to end in the same state hash every time, emulators started together that each get the memory of their layout, a run on the JIT without the layout, and the speed script of `tests/perf` on one of them (`system/README.md` has the list, and what a deterministic run takes) | none, or the programs of `NULLDC_ELF_DIR` |
-| `system.hle.*` | the same on the emulator built with `-DHAS_TA_LLE=OFF` | none, or the programs of `NULLDC_ELF_DIR` |
+| `system.hle.*` | the same with the emulator's own TA forced (`config:pvr.ForceTaHle=yes`) instead of refsw3-ta | none, or the programs of `NULLDC_ELF_DIR` |
 | `devtools.commit` | the UI checkout the tests are given (`NULLDC_DEVTOOLS_DIR`) is at the commit the repository pins for its submodule `devtools/`, when both are git checkouts; it says what it compared | `NULLDC_DEVTOOLS_DIR` |
 | `devtools.commit_check` | the script of `devtools.commit` on repositories made for the test: a UI at the commit the tree pins passes and says so; one at another commit fails and names both; a tree without the gitlink fails; a UI directory that is no git checkout or not the top of one, and a tree that is no git checkout, are not compared and pass | git |
 | `devtools.lookup` | where the tests look for the UI when they are given none (`devtools/lookup.cmake`), on scratch layouts of a tree and a checkout beside it: an uninitialised submodule (an empty directory), one without `node_modules`, one with `node_modules` as a file and one with half of what is needed are passed over for the checkout beside the tree; a complete submodule is taken first; with neither the look-up is empty | none |

@@ -43,6 +43,7 @@ enum serialize_version_enum {
 	V4,
 	V5,		//the DSP is the T5.0 core: its part is the core's state blob; a channel's DSP send is its ISEL
 	V6,		//no batch render: the sound generator's part has no mix of 32 samples (mxlr) and no count of them
+	V7,		//the PVR registers are their 8 KB (0x005F8000-0x005F9FFF), not 32 KB
 } ;
 
 //gdrom
@@ -686,7 +687,7 @@ bool register_unserialize(RegisterStruct* regs, size_t size,void **data, unsigne
 bool dc_serialize(void **data, unsigned int *total_size)
 {
 	int i = 0;
-	serialize_version_enum version = V6 ;
+	serialize_version_enum version = V7 ;
 
 	*total_size = 0 ;
 
@@ -898,7 +899,7 @@ bool dc_unserialize(void **data, unsigned int *total_size)
 
 	NULLDC_US(version) ;
 
-	if (version != V6)
+	if (version != V7)
 	{
 		fprintf(stderr, "Save State version not supported: %d\n", version);
 		return false;

@@ -12,11 +12,11 @@
 #       <work>/release: the release emulator, Release, the UI bundle <dist-native> embedded (an explicit path: no
 #       bundle there is a configure error), -DNULLDC_PREFIX_MAP=ON, -DCMAKE_VERBOSE_MAKEFILE=OFF; its configure
 #       lines "Dreamcast DevTools: ..." into <out>/nulldc3-<version>-linux-<arch>.configure.txt, beside the
-#       AppImage appimage.sh makes there. <work>/hle: the -DHAS_TA_LLE=OFF emulator for the system tests (no UI).
+#       AppImage appimage.sh makes there. (One emulator: the TA is chosen at run time with the renderer.)
 #   linux.sh test <ci|full> --ui <ui checkout> [--work <dir>] [--data <dir>] [--no-npm-ci] [--no-emsdk]
 #                 [--jobs <n>] [-- <cmake argument>...]
-#       the tests project (<work>/tests) with the two emulators of build as NULLDC_EMULATOR and
-#       NULLDC_EMULATOR_TA_HLE, the vector submodules of the tree, the UI checkout (npm ci there; with --no-npm-ci
+#       the tests project (<work>/tests) with the emulator of build as NULLDC_EMULATOR (system.hle.* runs it with
+#       the emulator's own TA forced), the vector submodules of the tree, the UI checkout (npm ci there; with --no-npm-ci
 #       its node_modules as they are, for a checkout that is not the script's to change) as NULLDC_DEVTOOLS_DIR, and ctest -j4 --output-junit <work>/tests/junit.xml. ci: what CI has (PL-D58), the
 #       data that is missing skips its tests (NULLDC_TESTS_REQUIRE_DATA=OFF). full: the data of the gates from
 #       --data <dir>, which has elf/ (2ndmix.elf, hello.elf), wren7-rtl/, caique-rtl/ and shrike4-rtl/, and every
@@ -146,11 +146,6 @@ cmd_build() {
   grep '^-- Dreamcast DevTools: ' "$work/release-configure.log" | sed 's/^-- //' > "$out/nulldc3-$version-linux-$arch_.configure.txt"
   echo "nulldc3 $version, linux-$arch_: $(grep 'embedding' "$out/nulldc3-$version-linux-$arch_.configure.txt")"
   summary "nullDC \`$version\` linux-$arch_: $(grep 'embedding' "$out/nulldc3-$version-linux-$arch_.configure.txt" | sed 's/^Dreamcast DevTools: //')"
-
-  # the emulator without the TA of lxdream, for the system tests' system.hle.* (no UI: it ships nowhere)
-  cmake -S "$tree" -B "$work/hle" -G Ninja -DCMAKE_BUILD_TYPE=Release "${launcher[@]}" \
-    -DHAS_TA_LLE=OFF -DNULLDC_DEVTOOLS_DIST=OFF -DNULLDC_PREFIX_MAP=ON -DCMAKE_VERBOSE_MAKEFILE=OFF -Wno-dev > "$work/hle-configure.log"
-  ninja -C "$work/hle" ${jobs[@]+"${jobs[@]}"}
 }
 
 cmd_test() {
@@ -175,7 +170,7 @@ cmd_test() {
   [ -n "$work" ] || work=$(default_work)
   ui=$(cd "$ui" && pwd)
   check_ui "$ui"
-  [ -x "$work/release/nulldc3" ] && [ -x "$work/hle/nulldc3" ] || die "no emulators in $work/release and $work/hle: linux.sh build first"
+  [ -x "$work/release/nulldc3" ] || die "no emulator in $work/release: linux.sh build first"
   if [ $npm_ci = yes ]; then
     (cd "$ui" && npm ci)
   else
@@ -183,7 +178,7 @@ cmd_test() {
   fi
 
   local args=(
-    -DNULLDC_EMULATOR="$work/release/nulldc3" -DNULLDC_EMULATOR_TA_HLE="$work/hle/nulldc3"
+    -DNULLDC_EMULATOR="$work/release/nulldc3"
     -DNULLDC_SH4_TESTS_DIR="$tree/tests/vendor/sh4-tests" -DNULLDC_ARM7_TESTS_DIR="$tree/tests/vendor/arm7di-tests-dreamcast"
     -DNULLDC_DEVTOOLS_DIR="$ui"
   )

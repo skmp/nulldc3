@@ -312,7 +312,6 @@ struct refsw_impl : refsw
     }
 };
 
-#if FEAT_TA == TA_LLE || defined(REFSW_OFFLINE)
 
 Renderer* rend_refsw(u8* vram) {
     return rend_refred_base(vram, [=]() { 
@@ -320,7 +319,7 @@ Renderer* rend_refsw(u8* vram) {
     });
 }
 
-static auto refrend = RegisterRendererBackend(rendererbackend_t{ "refsw", "RefSW", 0, rend_refsw });
+static auto refrend = RegisterRendererBackend(rendererbackend_t{ "refsw", "refsw + refsw3-ta", 0, rend_refsw, false, true });
 
 Renderer* rend_refsw_debug(u8* vram) {
     return rend_refred_base(vram, [=]() { 
@@ -328,5 +327,4 @@ Renderer* rend_refsw_debug(u8* vram) {
     });
 }
 
-static auto refrend_debug = RegisterRendererBackend(rendererbackend_t{ "refsw-dbg", "RefSW Debug", 0, rend_refsw_debug });
-#endif
+static auto refrend_debug = RegisterRendererBackend(rendererbackend_t{ "refsw-dbg", "RefSW Debug (+ refsw3-ta)", 0, rend_refsw_debug, false, true });
