@@ -155,21 +155,22 @@ union TCW
 /// END Texture Control Word
 #pragma pack(pop) 
 
-//generic vertex storage type
+// A vertex as the TA wrote it to parameter memory: x, y, z (1/w), u, v are the bits of IEEE singles (a 16 bit
+// u, v: the upper half of one), taken apart by the setup units (pvr_softfp.h Fp::FromSingle)
 struct Vertex
 {
-	float x,y,z;
+	u32 x,y,z;
 
 	u8 col[4];
 	u8 spc[4];
 
-	float u,v;
+	u32 u,v;
 
 	// Two volumes format
 	u8 col1[4];
 	u8 spc1[4];
 
-	float u1,v1;
+	u32 u1,v1;
 };
 
 enum PixelFormat

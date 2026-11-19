@@ -27,26 +27,47 @@ namespace pvrisp {
 
 using pvrfp::Fp;
 
+// The edge unit's numbers as the hardware has them, baked in (pvr_softfp.h: C<N>). Every one measured with
+// dreamcast-tests/pvr-tests/covmeas (98 archived sets, 0 differences) and hugepos; EdgeConfig below is the same with
+// plain ints, for the probes of dreamcast-tests/model to sweep (covprobe --scan); the code is templated on either.
+struct EdgeHW {
+    static constexpr pvrfp::C<24> productBits{};    // x * y, dx * y0, dy * x0
+    static constexpr pvrfp::C<24> sumBits{};        // every add
+    static constexpr pvrfp::C<25> reach{};          // exponents an adder can align over; beyond, the smaller is dropped
+    static constexpr pvrfp::C<-1> guard{};          // guard bits of the tile-start adds; negative: exact before the cut
+    static constexpr pvrfp::C<20> startBits{};      // the start value as kept per tile
+    static constexpr pvrfp::C<20> slopeBits{};      // the steps
+    static constexpr pvrfp::C<21> pairBits{};       // bits of both steps under the exponent of the larger
+    static constexpr pvrfp::C<6> blockAdd{};        // E = top(larger step) + blockAdd ...
+    static constexpr pvrfp::C<1> startAdd{};        // ... or top(start) + startAdd
+    static constexpr pvrfp::C<21> zeroShift{};      // ZERO: |v| <= 2^(E - zeroShift)
+    static constexpr pvrfp::C<21> tieShift{};       // the column step is zero for a row that starts at zero when |sx| <= 2^(E - tieShift)
+    static constexpr pvrfp::C<128> overflowExp{};   // the start saturates when the sum, or the start, reaches 2^overflowExp ...
+    static constexpr pvrfp::C<127> saturateExp{};   // ... to 2^saturateExp
+    static constexpr std::true_type lastColumnByStep{};   // a zero pixel in column 31: inside iff the column step is positive
+};
+
 struct EdgeConfig {
-    int productBits = 24;       // x * y, dx * y0, dy * x0
-    int sumBits = 24;           // every add
-    int reach = 25;             // exponents an adder can align over; beyond, the smaller operand is dropped
-    int guard = -1;             // guard bits of the tile-start adds; negative: exact before the cut
-    int startBits = 20;         // the start value as kept per tile
-    int slopeBits = 20;         // the steps
-    int pairBits = 21;          // bits of both steps under the exponent of the larger
-    int blockAdd = 6;           // E = top(larger step) + blockAdd ...
-    int startAdd = 1;           // ... or top(start) + startAdd
-    int zeroShift = 21;         // ZERO: |v| <= 2^(E - zeroShift)
-    int tieShift = 21;          // the column step is zero for a row that starts at zero when |sx| <= 2^(E - tieShift)
-    int overflowExp = 128;      // the start saturates when the sum, or the start, reaches 2^overflowExp ...
-    int saturateExp = 127;      // ... to 2^saturateExp
-    bool lastColumnByStep = true;   // a zero pixel in column 31: inside iff the column step is positive
+    int productBits = EdgeHW::productBits;
+    int sumBits = EdgeHW::sumBits;
+    int reach = EdgeHW::reach;
+    int guard = EdgeHW::guard;
+    int startBits = EdgeHW::startBits;
+    int slopeBits = EdgeHW::slopeBits;
+    int pairBits = EdgeHW::pairBits;
+    int blockAdd = EdgeHW::blockAdd;
+    int startAdd = EdgeHW::startAdd;
+    int zeroShift = EdgeHW::zeroShift;
+    int tieShift = EdgeHW::tieShift;
+    int overflowExp = EdgeHW::overflowExp;
+    int saturateExp = EdgeHW::saturateExp;
+    bool lastColumnByStep = EdgeHW::lastColumnByStep;
 };
 
 // The winding of a triangle: -1 when the setup's determinant is positive or zero, +1 when it is negative.
 // `bad` when a coordinate is an infinity or a NaN.
-inline int Winding(const Fp x[3], const Fp y[3], const EdgeConfig& cfg, bool* bad = nullptr, Fp* detOut = nullptr)
+template<class Cfg>
+inline int Winding(const Fp x[3], const Fp y[3], const Cfg& cfg, bool* bad = nullptr, Fp* detOut = nullptr)
 {
     auto e = [&](int j, int k) {
         return pvrfp::Sub(pvrfp::Mul(x[j], y[k], cfg.productBits), pvrfp::Mul(x[k], y[j], cfg.productBits), cfg.sumBits, cfg.reach);
@@ -60,16 +81,17 @@ inline int Winding(const Fp x[3], const Fp y[3], const EdgeConfig& cfg, bool* ba
     return (det.neg && !det.zero()) ? 1 : -1;
 }
 
-// The rows a polygon is rasterized on (not a modifier volume triangle): floor(ymin) .. floor(ymax + 0.5).
-inline void RowRange(const float* y, int n, double* first, double* last)
+// The rows a polygon is rasterized on (not a modifier volume triangle): floor(ymin) .. floor(ymax + 0.5), whatever
+// the sample offset (covmeas, mix sliver: the truncated edge functions of a sliver accept pixels beyond its ends, and
+// a console cuts those rows off). The corners finite; floor(y + 1/2) = (floor(2y) + 1) >> 1; beyond 2^40 clamped.
+inline void RowRange(const Fp* y, int n, int64_t* first, int64_t* last)
 {
-    double lo = y[0], hi = y[0];
-    for (int k = 1; k < n; k++) {
-        if (y[k] < lo) lo = y[k];
-        if (y[k] > hi) hi = y[k];
+    *first = INT64_MAX; *last = INT64_MIN;
+    for (int k = 0; k < n; k++) {
+        const int64_t f = pvrfp::FloorScaled(y[k], 0), l = (pvrfp::FloorScaled(y[k], 1) + 1) >> 1;
+        if (f < *first) *first = f;
+        if (l > *last) *last = l;
     }
-    *first = floor(lo);
-    *last = floor(hi + 0.5);
 }
 
 // One edge in one tile, ready to be asked about pixels.
@@ -81,7 +103,8 @@ struct EdgeTile {
     bool lastColumnByStep = true;
 
     // a -> b, sgn from Winding(); (x0Halves, y0Halves): the tile's first sample point in half pixels
-    void Setup(const Fp& xa, const Fp& ya, const Fp& xb, const Fp& yb, int64_t x0Halves, int64_t y0Halves, int sgn, const EdgeConfig& cfg)
+    template<class Cfg>
+    void Setup(const Fp& xa, const Fp& ya, const Fp& xb, const Fp& yb, int64_t x0Halves, int64_t y0Halves, int sgn, const Cfg& cfg)
     {
         using namespace pvrfp;
         constant = true;
@@ -89,11 +112,13 @@ struct EdgeTile {
         lastColumnByStep = cfg.lastColumnByStep;
         if (xa.bad || ya.bad || xb.bad || yb.bad)
             return;                                     // an infinity or a NaN: nothing is inside
-        const int PB = cfg.productBits, SB = cfg.sumBits, RE = cfg.reach;
+        const auto PB = cfg.productBits;
+        const auto SB = cfg.sumBits;
+        const auto RE = cfg.reach;
         Fp c = Sub(Mul(xb, ya, PB), Mul(xa, yb, PB), SB, RE);
         Fp dx = Sub(xa, xb, SB, RE), dy = Sub(ya, yb, SB, RE);
         Fp x0 = Fp::FromHalves(x0Halves), y0 = Fp::FromHalves(y0Halves);
-        const int GD = cfg.guard;
+        const auto GD = cfg.guard;
         Fp first = Add(Mul(dx, y0, PB), -Mul(dy, x0, PB), SB, RE, GD);
         Fp start;
         if (first.atLeastPow2(cfg.overflowExp))

@@ -32,35 +32,57 @@ using pvrfp::Fp;
 // is what is left of two large terms cancelling and a third far smaller (set dump_gundam1: 747,976 readings,
 // 596,862 right with the sums exact); with it gundam_ingame, daytona_sanic, daytona_intro, sa2_ingame2 and three
 // more are the console's in all of video memory.
-struct PlaneConfig {
-    int productBits = 24, sumBits = 24, reach = 25, recipBits = 24;
-    int coefBits = 16;          // A, B, C
-    int gridBits = 22;          // under the tile's exponent
-    int valueBits = 16;         // the plane's value at the pixel
+// The TSP setup's numbers as the hardware has them, baked in (pvr_softfp.h: C<N>); the evidence for each is above
+// and at its use. PlaneConfig below is the same with plain ints, for dreamcast-tests/model/tspprobe --scan (its
+// fields[] table points at them); PlaneT is templated on either.
+struct PlaneHW {
+    static constexpr pvrfp::C<24> productBits{};
+    static constexpr pvrfp::C<24> sumBits{};
+    static constexpr pvrfp::C<25> reach{};          // set reach1 (above)
+    static constexpr pvrfp::C<24> recipBits{};
+    static constexpr pvrfp::C<16> coefBits{};       // A, B, C
+    static constexpr pvrfp::C<22> gridBits{};       // under the tile's exponent
+    static constexpr pvrfp::C<16> valueBits{};      // the plane's value at the pixel
     // EXPERIMENT (dreamcast-tests/model/tspprobe valueFixed= / wfixed=; default 0): drop at least this many low bits of
     // the grid's integer, as a fixed field would, instead of only those below 16 bits from the leading one
-    int valueFixed = 0;
+    static constexpr pvrfp::C<0> valueFixed{};
     // The numbers of the setup have an exponent field of 8 bits: a result is at least 2^expLow and below
     // 2^(expHigh + 1), or it is a zero or an infinity (see Plane::Setup). range 0: no limits, the arithmetic as
     // it was before dreamcast-tests/pvr-tests/uvmeas measured them (mixes wexp, whuge, wtiny, wspec, wneg).
-    int range = 1, expLow = -126, expHigh = 127;
+    static constexpr pvrfp::C<1> range{};
+    static constexpr pvrfp::C<-126> expLow{};
+    static constexpr pvrfp::C<127> expHigh{};
     // The last addition of a sum of three terms, (t1 + t2) + t3: of t1 + t2 and t3, one that is zero counts as
     // 2^-127 there when the other is below 2^(-127 + zeroReach), that is, has the smallest exponent there is
     // (see Plane::Setup).
-    int zeroReach = 2;
+    static constexpr pvrfp::C<2> zeroReach{};
     // EXPERIMENT (model/tspprobe tileLocal=): 0 a run's coordinates are the screen's (measured: every uvmeas reading);
     // 1 they are the tile's own: the tile's constant C + A Xt + B Yt (exact, rounded down once) plus A x and B y with
     // x, y counted from the tile's corner, on the same grid (15,801 readings wrong); 2 the same with the grid chosen
     // from the tile's constant and the tile's own coordinates (1,277,606); 3 every piece rounded down by itself (111,580)
-    int tileLocal = 0;
+    static constexpr pvrfp::C<0> tileLocal{};
     // EXPERIMENT (model/tspprobe macOrder=): 0 C, A x and B y each rounded down by itself (measured); 1 C + B y rounded
     // together, then A x added rounded (a MAC for the line, then one for the run); 2 C + A x together, B y alone;
     // 3 all three together, rounded once
-    int macOrder = 0;
+    static constexpr pvrfp::C<0> macOrder{};
     // EXPERIMENT (model/tspprobe sumA=, sumW=): the order of the three terms of an attribute plane's slope sums (sumA)
     // and of the 1/w plane's (sumW): 0 (t0 + t1) + t2 (measured), 1 (t0 + t2) + t1, 2 (t1 + t2) + t0. sumA 2 gives set
     // dump_gundam1 too, but 22,582 readings of ugen5 and 1,621 of wtiny1 wrong: the reach does it (above).
-    int sumA = 0, sumW = 0;
+    static constexpr pvrfp::C<0> sumA{};
+    static constexpr pvrfp::C<0> sumW{};
+};
+
+struct PlaneConfig {
+    int productBits = PlaneHW::productBits, sumBits = PlaneHW::sumBits, reach = PlaneHW::reach, recipBits = PlaneHW::recipBits;
+    int coefBits = PlaneHW::coefBits;
+    int gridBits = PlaneHW::gridBits;
+    int valueBits = PlaneHW::valueBits;
+    int valueFixed = PlaneHW::valueFixed;
+    int range = PlaneHW::range, expLow = PlaneHW::expLow, expHigh = PlaneHW::expHigh;
+    int zeroReach = PlaneHW::zeroReach;
+    int tileLocal = PlaneHW::tileLocal;
+    int macOrder = PlaneHW::macOrder;
+    int sumA = PlaneHW::sumA, sumW = PlaneHW::sumW;
 };
 
 // floor(v / 2^unit) as an integer; a negative zero gives -1
@@ -81,20 +103,24 @@ inline int64_t FloorUnits(const Fp& v, int unit)
     return v.neg ? -m : m;
 }
 
-struct Plane {
+template<class Cfg>
+struct PlaneT {
     Fp A, B, C;
     Fp A0, B0, C0;              // the same before the cut to coefBits: what the mipmap level is made of
     Fp Sa, Sb, Sc;              // the three sums before they are divided by the determinant (MipSelect)
     Fp Sdet;                    // and the determinant
     bool bad = false;           // an infinity or a NaN among the inputs: not handled here
-    PlaneConfig cfg;
+    Cfg cfg;
 
-    // x, y, z (1/w) of the corners; attr: the attribute at each corner for an attribute / w plane, or null
-    void Setup(const float x[3], const float y[3], const float z[3], const float* attr, const PlaneConfig& config)
+    // x, y, z (1/w) of the corners; attr: the attribute at each corner for an attribute / w plane, or null. The bits
+    // of IEEE singles, as the TA gives them (a colour: refsw_tile.h ColorExp)
+    void Setup(const uint32_t x[3], const uint32_t y[3], const uint32_t z[3], const uint32_t* attr, const Cfg& config)
     {
         using namespace pvrfp;
         cfg = config;
-        const int PB = cfg.productBits, SB = cfg.sumBits, RE = cfg.reach;
+        const auto PB = cfg.productBits;
+        const auto SB = cfg.sumBits;
+        const auto RE = cfg.reach;
         Fp X[3], Y[3], Z[3], AT[3];
         bad = false;
         // The range of the setup's numbers (cfg.range; dreamcast-tests/pvr-tests/uvmeas: 3.9 million readings at very
@@ -119,23 +145,7 @@ struct Plane {
         auto zero = [](bool neg) { Fp r; r.neg = neg; return r; };
         auto above = [&](const Fp& v) { return !v.zero() && v.top() - 1 > cfg.expHigh; };
         auto below = [&](const Fp& v) { return !v.zero() && v.top() - 1 < cfg.expLow; };
-        auto load = [&](float f) {
-            if (!ranged)
-                return Fp::FromFloat(f);
-            uint32_t u;
-            memcpy(&u, &f, 4);
-            const uint32_t field = (u >> 23) & 0xff;
-            const bool neg = (u >> 31) != 0;
-            if (field == 0)
-                return zero(neg);
-            if (field == 255)
-                return inf(neg);
-            Fp r;
-            r.neg = neg;
-            r.mant = (u & 0x7fffff) | 0x800000;
-            r.exp = (int32_t)field - 150;
-            return r;
-        };
+        auto load = [&](uint32_t u) { return Fp::FromSingle(u, ranged); };
         auto mul = [&](const Fp& p, const Fp& q) {
             if (!ranged)
                 return Mul(p, q, PB);
@@ -194,12 +204,14 @@ struct Plane {
             }
         }
         static const int ord[3][3] = { { 0, 1, 2 }, { 0, 2, 1 }, { 1, 2, 0 } };
-        const int* o = ord[attr ? cfg.sumA : cfg.sumW];
+        const int* o = ord[attr ? (int)cfg.sumA : (int)cfg.sumW];
         Fp a = sum3(ta[o[0]], ta[o[1]], ta[o[2]]);
         Fp b = sum3(tb[o[0]], tb[o[1]], tb[o[2]]);
         Fp c = attr ? sum3(tc[0], tc[1], tc[2]) : sum3(tc[0], tc[2], tc[1]);
         Fp det = sum3(e[0], e[1], e[2]);
         Sa = a; Sb = b; Sc = c; Sdet = det;
+        if (!det.bad && !det.zero() && (pvrfp::perpVal.bad || !pvrfp::perpVal.zero()) && pvrfp::AbsAtMost(det, pvrfp::perpVal))
+            det = Fp();                                 // FPU_PERP_VAL: as a determinant of zero (pvr_isp_depth.h)
         if (det.zero() && !det.bad) {
             // flat at the third corner's value (dreamcast-tests/pvr-tests/covmeas, mix degen --vcol; for 1 / w a guess)
             A = Fp(); B = Fp();
@@ -224,8 +236,11 @@ struct Plane {
     // The plane at a pixel. x0Halves, yHalves: the sample point of the run's first pixel and of the line, in half
     // pixels (absolute); n: whole pixels from the run's first pixel; tileLeft, tileTop: the tile's first pixel.
     // super: a SupSample point (TSP bit 12, dreamcast-tests/pvr-tests/supsample). The evaluator then steps along the
-    // run in half pixels, (2 n + hx) steps of A / 2 instead of n of A, the centre's point too, and a point half a
-    // line down (hy) is the line's value plus B / 2; each half coefficient is cut to the grid like a whole one.
+    // run in half pixels, (2 n + hx) steps of A / 2 instead of n of A, the centre's point too, each half coefficient
+    // cut to the grid like a whole one. A point half a line down (hy) has B / 2 added to C before C is cut to the
+    // grid: floor(C + B / 2), not floor(C) + floor(B / 2), one unit more where their fractions below the grid carry
+    // (C has any only where another term sets the grid; dreamcast-tests/pvr-tests/ssrare: of 140,545 pixels where
+    // that unit shows, the console has it on exactly those 24 that carry).
     Fp Value(int64_t x0Halves, int64_t yHalves, int n, int tileLeft, int tileTop, bool super = false, int hx = 0, int hy = 0) const
     {
         using namespace pvrfp;
@@ -290,7 +305,9 @@ struct Plane {
             Fp ah = Mul(a_, half, 62), bh = Mul(b_, half, 62);
             if (ah.zero()) ah.neg = a_.neg;
             if (bh.zero()) bh.neg = b_.neg;
-            k += -(int64_t)n * FloorUnits(a_, unit) + (int64_t)(2 * n + hx) * FloorUnits(ah, unit) + hy * FloorUnits(bh, unit);
+            k += -(int64_t)n * FloorUnits(a_, unit) + (int64_t)(2 * n + hx) * FloorUnits(ah, unit);
+            if (hy)
+                k += FloorUnits(Add(c_, bh, 62, 400), unit) - FloorUnits(c_, unit);
         }
         // The value becomes a float again: 16 bits from its leading bit, cut toward minus infinity, with a signed
         // 8 bit exponent. Below 2^-128 the exponent stays -128 and the mantissa is kept
@@ -322,6 +339,8 @@ struct Plane {
         return v;
     }
 };
+
+using Plane = PlaneT<PlaneConfig>;    // the run-time form, for the probes
 
 // The TSP's reciprocal, read off a console for all 32768 16 bit mantissas (dreamcast-tests/pvr-tests/uvmeas, mix
 // recipscan): a table over the 9 bits below the leading one, t[i] = ceil(2^32 / (64 i)) in half units, and a linear
@@ -369,7 +388,7 @@ inline Fp DenominatorSeen(const Fp& den)
     int bits = Fp::Bits(d.mant);
     // the 16 bits from the leading one (a value with more was cut by Plane::Value already: only zeros go)
     if (bits > 16) { d.mant >>= (bits - 16); d.exp += bits - 16; bits = 16; }
-    while (bits < 16) { d.mant <<= 1; d.exp--; bits++; }            // 32768 .. 65535
+    if (bits < 16) { d.mant <<= 16 - bits; d.exp -= 16 - bits; }    // 32768 .. 65535
     d.mant = 32768 + ((65536 - d.mant) & 32767);
     return d;
 }
@@ -438,7 +457,7 @@ inline Fp Divide(const Fp& num, const Fp& den0)
 struct MipChoice {
     int level;      // 0: the largest
     int k;          // of 256: the share of level + 1 (trilinear pass B); pass A has 256 - k of this level
-    double kFull;   // K before its cut to 8 bits (0: none); for the generators (pvr-tests/mipk)
+    Fp kFull;       // K before its cut to 8 bits (0: none); for the generators (pvr-tests/mipk)
 };
 
 // MIP_K (0: the model): 1 K as it was before (numerators of the divided coefficients, exactly, and the longer plus
@@ -457,10 +476,11 @@ inline int MipK()
 
 // first: null (DCalcCtrl 0: the numerators are taken at the screen's origin), or the first vertex's u, v, 1/w, x
 // and y (DCalcCtrl 1: they are taken at that vertex).
-inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const Fp& q, int sizeLog2, int biasQuarters, const float* first = nullptr)
+template<class P>
+inline MipChoice MipSelect(const P& u, const P& v, const P& w, const Fp& q, int sizeLog2, int biasQuarters, const uint32_t* first = nullptr)
 {
     using namespace pvrfp;
-    MipChoice r = { 0, 0, 0 };
+    MipChoice r = { 0, 0, Fp() };
     const bool ranged = w.cfg.range != 0;
     if (biasQuarters <= 0 || u.bad || v.bad || w.bad)
         return r;
@@ -541,8 +561,9 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
         if (p.bad || q.bad) {
             Fp x; x.bad = true; return x;
         }
-        const Fp& hi = p.toDouble() >= q.toDouble() ? p : q;
-        const Fp& lo = p.toDouble() >= q.toDouble() ? q : p;
+        const bool pLonger = AtMost(q, p);
+        const Fp& hi = pLonger ? p : q;
+        const Fp& lo = pLonger ? q : p;
         if (lo.zero())
             return hi;
         if (MipK() == 1) {                              // as it was: the longer plus 27146 / 65536 of the shorter
@@ -570,18 +591,7 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
         // arithmetic: a flat 1/w = z overflows from 2^57 as with DCalcCtrl 0, and an infinite or NaN z1 gives the
         // levels it gives there (dreamcast-tests/pvr-tests/mipmeas, mix wextd: 2400 of 2400 cells). The vertex's own u1
         // z1, v1 z1, z1 give the same levels in every set measured; the plane is one path for both.
-        auto load = [&](float f) {
-            if (!ranged)
-                return Fp::FromFloat(f);
-            uint32_t bits;
-            memcpy(&bits, &f, 4);
-            const uint32_t field = (bits >> 23) & 0xff;
-            Fp x;
-            x.neg = (bits >> 31) != 0;
-            if (field == 255) x.bad = true;
-            else if (field != 0) { x.mant = (bits & 0x7fffff) | 0x800000; x.exp = (int32_t)field - 150; }
-            return x;
-        };
+        auto load = [&](uint32_t u) { return Fp::FromSingle(u, ranged); };
         auto rmul = [&](const Fp& x, const Fp& y) {
             if (x.bad || y.bad) {
                 const Fp& o = x.bad ? y : x;
@@ -614,10 +624,10 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
             if (ranged && below(m)) return Fp();
             return m;
         };
-        auto at1 = [&](const Plane& pl) { return radd(radd(rmul(pl.Sa, x1), rmul(pl.Sb, y1)), pl.Sc); };
+        auto at1 = [&](const P& pl) { return radd(radd(rmul(pl.Sa, x1), rmul(pl.Sb, y1)), pl.Sc); };
         su = at1(u); sv = at1(v); sw = at1(w);
         if (!x1.bad && !y1.bad) {
-            auto val1 = [&](const Plane& pl) { return Add(Add(Mul(pl.A0, x1, 62), Mul(pl.B0, y1, 62), 62, 200), pl.C0, 62, 200); };
+            auto val1 = [&](const P& pl) { return Add(Add(Mul(pl.A0, x1, 62), Mul(pl.B0, y1, 62), 62, 200), pl.C0, 62, 200); };
             pu = val1(u); pv = val1(v); pw = val1(w);
         }
     }
@@ -626,7 +636,7 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
                    minor(pv, v.A0, pw, w.A0, sv, v.Sa, sw, w.Sa, sgn(sv, w.Sa), sgn(v.Sa, sw)));
     Fp ly = length(minor(u.B0, pu, w.B0, pw, u.Sb, su, w.Sb, sw, sgn(u.Sb, sw), sgn(su, w.Sb)),
                    minor(v.B0, pv, w.B0, pw, v.Sb, sv, w.Sb, sw, sgn(v.Sb, sw), sgn(sv, w.Sb)));
-    Fp best = (lx.bad || (!ly.bad && lx.toDouble() >= ly.toDouble())) ? lx : ly;
+    Fp best = (lx.bad || (!ly.bad && AtMost(ly, lx))) ? lx : ly;
     if (undivided && !best.bad && !best.zero()) {
         best = Mul(best, inv2, 24);                     // the longer length, once times 1/det^2
         if (ranged && above(best)) best = inf();
@@ -646,7 +656,7 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
         k8.exp += sizeLog2 - 2;
         kFull = k8;
         k8 = k8.cut(8);
-        r.kFull = kFull.toDouble();
+        r.kFull = kFull;
         if (MipK() == 98 || MipK() == 99) {                 // one step of 8 bits more, less
             const int b = Fp::Bits(k8.mant), sh = b > 8 ? b - 8 : 0;
             uint64_t m = (k8.mant >> sh) + (MipK() == 98 ? 1 : -1);
@@ -671,7 +681,9 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
     int M = (int)(bits >= 8 ? d.mant >> (bits - 8) : d.mant << (8 - bits));          // m: 128 .. 255
     // EXPERIMENT (environment MIP_ARITH; 0 or unset: the measured arithmetic above). Other ways to the level, to
     // be scored against the console's mipmeas sets: 1 exponents only; 2 a log with the mantissa taken as linear
-    // (log2 m ~ m - 1, and back the same way); 3 exact log and antilog of the 8 bit K and w; 4 K * w^2 uncut; 5 w * w not cut; 6 K * w^2 rounded.
+    // (log2 m ~ m - 1, and back the same way); 4 K * w^2 uncut; 5 w * w not cut; 6 K * w^2 rounded. (3, an exact log and
+    // antilog of the 8 bit K and w in doubles, went with refsw3's last doubles on 2026-11-19: dreamcast-tests README
+    // has its score.)
     static const int mipArith = [] { const char* e = getenv("MIP_ARITH"); return e ? atoi(e) : 0; }();
     if (mipArith && !k8.zero() && !w8.zero()) {
         auto top8 = [](const Fp& x, int& e) {
@@ -688,11 +700,6 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
             const int t = (eK * 128 + (mK - 128)) + 2 * (eW * 128 + (mW - 128));
             L = t >> 7;
             M = 128 + (t & 127);
-        } else if (mipArith == 3) {
-            const double t = std::log2(mK / 128.0) + eK + 2 * (std::log2(mW / 128.0) + eW);
-            L = (int)std::floor(t);
-            M = (int)std::floor(std::exp2(t - L) * 128);
-            if (M > 255) M = 255;
         } else if (mipArith == 5) {
             // the model without its cut of w * w to 8 bits (a log domain squares by a shift and rounds nothing there)
             Fp dd = Mul(k8, Mul(w8, w8, 62), 8);

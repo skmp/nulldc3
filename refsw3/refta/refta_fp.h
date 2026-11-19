@@ -9,6 +9,7 @@
     same; denormals are their tiny values, not zero.
 */
 #include <cstdint>
+#include "../refcore/pvr_bits.h"
 
 namespace refta_fp {
 
@@ -44,10 +45,7 @@ struct F32 {
     {
         if (!mant)
             return false;
-        int bits = 0;
-        for (uint32_t m = mant; m; m >>= 1)
-            bits++;
-        return exp + bits > e;
+        return exp + pvrfp::BitLength(mant) > e;
     }
 
     // floor(|value| * 2^k), for |value| * 2^k below 2^32 (not for specials)

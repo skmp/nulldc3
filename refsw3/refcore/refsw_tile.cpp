@@ -20,7 +20,6 @@ void refsw3_offline_read(unsigned int reg_addr);       // refsw3-offline: a fog 
 #include <cmath>
 #include <memory>
 #include <set>
-#include <float.h>
 #include <cstdio>
 #include <cstdlib>
 
@@ -55,37 +54,14 @@ constexpr const u32 depthBufferA = 0;
 constexpr const u32 depthBufferB = 1;
 constexpr const u32 depthBufferC = 2;
 
-static float mmin(float a, float b, float c, float d)
-{
-    float rv = std::min(a, b);
-    rv = std::min(c, rv);
-    return std::max(d, rv);
-}
-
-static float mmax(float a, float b, float c, float d)
-{
-    float rv = std::max(a, b);
-    rv = std::max(c, rv);
-    return std::min(d, rv);
-}
-
-
-// Z buffer doesn't store sign, and has 19 bits of m
-f32  mask_w(f32 w) {
-    // u32 wu = (u32&)w;
-    // wu = wu & 0x7FFFFFF8;
-    // return (f32&)wu;
-    return w;
-}
-
-void ClearBuffers(u32 paramValue, float depthValue, u32 stencilValue)
+void ClearBuffers(u32 paramValue, ZType depthValue, u32 stencilValue)
 {
     auto zb = depthBuffer[depthBufferA];
     auto stencil = stencilBuffer;
     auto pb = tagBuffer[tagBufferA];;
 
     for (int i = 0; i < MAX_RENDER_PIXELS; i++) {
-        zb[i] = mask_w(depthValue);
+        zb[i] = depthValue;
         stencil[i] = stencilValue;
         pb[i] = paramValue;
         tagStatus[i] = { true, false };
@@ -176,14 +152,14 @@ void PeelBuffersPTFinal() {
 // layer was drawn the nearest layer's, whether it writes depth or not (dreamcast-tests/pvr-tests/keepz page 3).
 static ZType savedDepth[MAX_RENDER_PIXELS];
 void SaveDepth() { memcpy(savedDepth, depthBuffer[depthBufferA], sizeof(savedDepth)); }
-void SaveDepthAt(u32 index, float invW) { savedDepth[index] = invW; }
+void SaveDepthAt(u32 index, ZType invW) { savedDepth[index] = invW; }
 void RestoreDepth() { memcpy(depthBuffer[depthBufferA], savedDepth, sizeof(savedDepth)); }
 
 void SetTagToMax()
 {
     memset(tagBuffer[tagBufferA], 0xFF, sizeof(tagBuffer[tagBufferA]));
 }
-void PeelBuffers(float depthValue, u32 stencilValue)
+void PeelBuffers(ZType depthValue, u32 stencilValue)
 {
     memcpy(depthBuffer[depthBufferB], depthBuffer[depthBufferA], sizeof(ZType) * MAX_RENDER_PIXELS);
     memcpy(tagBuffer[tagBufferB], tagBuffer[tagBufferA], sizeof(parameter_tag_t) * MAX_RENDER_PIXELS);
@@ -193,7 +169,7 @@ void PeelBuffers(float depthValue, u32 stencilValue)
     auto stencil = stencilBuffer;
 
     for (int i = 0; i < MAX_RENDER_PIXELS; i++) {
-        zb[i] = mask_w(depthValue);    // set the "closest" test to furthest value possible
+        zb[i] = depthValue;            // set the "closest" test to furthest value possible
         tagStatus[i] = { false, false };
         stencil[i] = stencilValue;
     }
@@ -245,6 +221,12 @@ bool GetMoreToDraw()
 //              order; the oldest span's primitive is drained, all its spans in the window oldest first, also those
 //              that come in while it lasts; then the next oldest span's primitive. Each tile (and here each pass)
 //              on its own. Not modelled: the "early drains" the measurements show but do not explain.
+//              SPAN_SORT_CFG (dreamcast-tests README "spansortcfg"): bit 8, offset sort, compares the primitives'
+//              parameter offsets only, so a strip's triangles are one primitive to the sorter (timemeas order
+//              scenes 39, 40: with it 1 run of 1024 out of order that way, 82 taken triangle by triangle; without
+//              it 0 and 90). Bit 0 off: no sorter, the spans in raster order; a console then shades a few runs
+//              early (a line's last run, a run of the next line) by the pipeline's timing, which is not modelled.
+//              Neither changes a picture (only what the order carries: tspAlphaStuck, offs).
 //   the TSP    shades each span from its first pixel (PlaneStepper3::SpanStart: the planes are evaluated at the
 //              span's start and stepped from there, dreamcast-tests/pvr-tests/uvspan)
 // The order matters to the picture only through what the TSP keeps from one pixel to the next: tspAlphaStuck and
@@ -295,6 +277,14 @@ static int SpanGen(Span* spans)
 // The order the TSP shades the spans in: indices into spans
 static int SpanSort(const Span* spans, int n, u16* order)
 {
+    const u32 cfg = SPAN_SORT_CFG;
+    if (!(cfg & 1)) {
+        for (int i = 0; i < n; i++)
+            order[i] = (u16)i;
+        return n;
+    }
+    // the primitive the sorter sees: with offset sort the strip's, without the triangle's (tag_offset: its index)
+    const parameter_tag_t key = (cfg & 0x100) ? ~(parameter_tag_t)7 : ~(parameter_tag_t)0;
     constexpr int Window = 96;
     u16 window[Window];         // the spans in the window, oldest first
     int inWindow = 0, next = 0, out = 0;
@@ -304,12 +294,12 @@ static int SpanSort(const Span* spans, int n, u16* order)
     };
     fill();
     while (inWindow) {
-        const parameter_tag_t prim = spans[window[0]].tag;
+        const parameter_tag_t prim = spans[window[0]].tag & key;
         // drain the primitive: its oldest span in the window, until it has none there; each span shaded makes room
         // for the next span of the tile, which may be the primitive's too
         for (;;) {
             int i = 0;
-            while (i < inWindow && spans[window[i]].tag != prim)
+            while (i < inWindow && (spans[window[i]].tag & key) != prim)
                 i++;
             if (i == inWindow)
                 break;
@@ -327,7 +317,7 @@ static int SpanSort(const Span* spans, int n, u16* order)
 // TAG holds references to trianes, ACCUM is the tile framebuffer
 template<RenderMode rm>
 void RenderParamTags(int tileX, int tileY) {
-    float halfpixel = HALF_OFFSET.tsp_pixel_half_offset ? 0.5f : 0;
+    const bool halfpixel = HALF_OFFSET.tsp_pixel_half_offset;
     taRECT rect;
     rect.left = tileX;
     rect.top = tileY;
@@ -357,13 +347,14 @@ void RenderParamTags(int tileX, int tileY) {
 
             tilePixelsShaded++;
             const auto& Entry = GetFpuEntry(&rect, rm, t);
-            auto invW = Entry.ips.invW.Ip(x + halfpixel, y + halfpixel);
+            const PixPos pp = { x, y, halfpixel };
+            const pvrfp::Fp invW = Entry.ips.invW.Val(pp);
             // Punch through shaded again inside a modifier volume is alpha tested too: its colour replaces the
             // pixel's, not blended with its alpha (dreamcast-tests/pvr-tests/dumprules, cell 22)
             // a pixel resolved in the pass before: shaded for the run, keeps its colour, goes on below
             const bool keepRes = (rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN) && tagStatus[index].rendered;
             const u32 keep1 = colorBuffer1[index], keep2 = colorBuffer2[index];
-            bool AlphaTestPassed = PixelFlush_tsp(rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN || (rm == RM_PUNCHTHROUGH_MV && tagStatus[index].rendered), &Entry, x + halfpixel, y + halfpixel, index, invW, InVolume, t);
+            bool AlphaTestPassed = PixelFlush_tsp(rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN || (rm == RM_PUNCHTHROUGH_MV && tagStatus[index].rendered), &Entry, pp, index, invW, InVolume, t);
             if (keepRes) {
                 colorBuffer1[index] = keep1; colorBuffer2[index] = keep2;
                 depthBuffer[depthBufferB][index] = depthBuffer[depthBufferA][index];
@@ -431,23 +422,23 @@ void decode_pvr_vertex(DrawParameters* params, pvr32addr_t ptr, Vertex* cv, u32 
     //Offset Col
 
     //XYZ are _allways_ there :)
-    cv->x=vrf(emu_vram, ptr);ptr+=4;
-    cv->y=vrf(emu_vram, ptr);ptr+=4;
-    cv->z=vrf(emu_vram, ptr);ptr+=4;
+    cv->x=vri(emu_vram, ptr);ptr+=4;
+    cv->y=vri(emu_vram, ptr);ptr+=4;
+    cv->z=vri(emu_vram, ptr);ptr+=4;
 
     if (params->isp.Texture)
     {	//Do texture , if any
         if (params->isp.UV_16b)
         {
             u32 uv=vri(emu_vram, ptr);
-            cv->u = f16((u16)(uv >>16));
-            cv->v = f16((u16)(uv >> 0));
+            cv->u = uv & 0xffff0000;            // the upper halves of IEEE singles
+            cv->v = uv << 16;
             ptr+=4;
         }
         else
         {
-            cv->u=vrf(emu_vram, ptr);ptr+=4;
-            cv->v=vrf(emu_vram, ptr);ptr+=4;
+            cv->u=vri(emu_vram, ptr);ptr+=4;
+            cv->v=vri(emu_vram, ptr);ptr+=4;
         }
     }
 
@@ -467,14 +458,14 @@ void decode_pvr_vertex(DrawParameters* params, pvr32addr_t ptr, Vertex* cv, u32 
             if (params->isp.UV_16b)
             {
                 u32 uv=vri(emu_vram, ptr);
-                cv->u1 = f16((u16)(uv >>16));
-                cv->v1 = f16((u16)(uv >> 0));
+                cv->u1 = uv & 0xffff0000;
+                cv->v1 = uv << 16;
                 ptr+=4;
             }
             else
             {
-                cv->u1=vrf(emu_vram, ptr);ptr+=4;
-                cv->v1=vrf(emu_vram, ptr);ptr+=4;
+                cv->u1=vri(emu_vram, ptr);ptr+=4;
+                cv->v1=vri(emu_vram, ptr);ptr+=4;
             }
         }
 
@@ -566,15 +557,6 @@ void ClearFpuCache() {
     tspAlphaStuck = false;          // a new tile
 }
 
-// this is disabled for now, as it breaks game scenes
-ALWAYS_INLINE bool IsTopLeft(float x, float y) {
-    bool IsTop = y == 0 && x > 0;
-    bool IsLeft = y < 0;
-
-    return IsTop || IsLeft;
-}
-
-
 bool ptResolvedLastPass(u32 index);
 
 // The order of the fragments in the sorted translucent passes and the punch-through passes: a key of the depth and
@@ -587,7 +569,7 @@ bool ptResolvedLastPass(u32 index);
 // the key of what is there, the opaque polygon's, a punch-through layer's or the background's, tag and all: a
 // fragment at exactly its depth is drawn only with a tag above it (dreamcast-tests/pvr-tests/trtie). TAG_BELOW, a
 // reference with no tag, is the punch-through boundary before any.
-static ALWAYS_INLINE bool KeyAbove(float aW, parameter_tag_t aTag, float bW, parameter_tag_t bTag)
+static ALWAYS_INLINE bool KeyAbove(ZType aW, parameter_tag_t aTag, ZType bW, parameter_tag_t bTag)
 {
     if (aW != bW)
         return aW > bW;
@@ -598,7 +580,7 @@ static ALWAYS_INLINE bool KeyAbove(float aW, parameter_tag_t aTag, float bW, par
 
 // Depth processing for a pixel -- render_mode 0: OPAQ, 1: PT, 2: TRANS
 template<RenderMode render_mode>
-ALWAYS_INLINE void PixelFlush_isp(u32 depth_mode, u32 ZWriteDis, float x, float y, float invW, u32 index, parameter_tag_t tag)
+ALWAYS_INLINE void PixelFlush_isp(u32 depth_mode, u32 ZWriteDis, ZType invW, u32 index, parameter_tag_t tag)
 {
     auto pb = tagBuffer[tagBufferA] + index;
     auto ts = tagStatus + index;
@@ -614,7 +596,7 @@ ALWAYS_INLINE void PixelFlush_isp(u32 depth_mode, u32 ZWriteDis, float x, float 
     else if (render_mode == RM_MODIFIER)
         mode = 4;
 
-    RENDLOG("ISP: %d %d %d %f %f %f %08X", index, render_mode, mode, x, y, invW, tag);
+    RENDLOG("ISP: %d %d %d %f %08X", index, render_mode, mode, invW.toDouble(), tag);
     switch(mode) {
         // never
         case 0: RENDLOG("ZFAIL"); return; break;
@@ -641,11 +623,11 @@ ALWAYS_INLINE void PixelFlush_isp(u32 depth_mode, u32 ZWriteDis, float x, float 
         {
             // Z pre-pass only
             if (!ZWriteDis) {
-                *zb = mask_w(invW);
+                *zb = invW;
             }
             *pb = tag;
             ts->valid = 1;
-            RENDLOG("RENDERED: %f", *zb);
+            RENDLOG("RENDERED: %f", zb->toDouble());
         }
         break;
 
@@ -688,7 +670,7 @@ ALWAYS_INLINE void PixelFlush_isp(u32 depth_mode, u32 ZWriteDis, float x, float 
                 return;
             }
             MoreToDraw = true;                      // something to shade
-            *zb = mask_w(invW);
+            *zb = invW;
             *pb = tag;
             ts->valid = 1;
             RENDLOG("RENDERED");
@@ -699,11 +681,11 @@ ALWAYS_INLINE void PixelFlush_isp(u32 depth_mode, u32 ZWriteDis, float x, float 
         case RM_TRANSLUCENT_PRESORT:
         {
             if (!ZWriteDis) {
-                *zb = mask_w(invW);
+                *zb = invW;
             }
             *pb = tag;
             ts->valid = true;
-            RENDLOG("RENDERED: %f", *zb);
+            RENDLOG("RENDERED: %f", zb->toDouble());
         }
         break;
         // The translucent sort: above the layer drawn last (zb2, pb2; the opaque depth in the first pass), the
@@ -721,7 +703,7 @@ ALWAYS_INLINE void PixelFlush_isp(u32 depth_mode, u32 ZWriteDis, float x, float 
             }
             if (ts->valid)
                 MoreToDraw = true;
-            *zb = mask_w(invW);
+            *zb = invW;
             *pb = tag;
             ts->valid = true;
             RENDLOG("RENDERED");
@@ -732,29 +714,45 @@ ALWAYS_INLINE void PixelFlush_isp(u32 depth_mode, u32 ZWriteDis, float x, float 
     }
 }
 
+// The ISP's cull by size: |det| <= |FPU_CULL_VAL|, the determinant as the setup has it (pvrisp::Winding). Equal is
+// culled (dreamcast-tests/pvr-tests/raster page 4: legs of 1 pixel with the threshold at 1.0, cullval: every
+// determinant of 1/4 .. 192 at 0.5, 1 and 2). The register's sign does not count, and an infinity or any NaN culls
+// every triangle (dreamcast-tests/pvr-tests/cullval: -1, -2, -0.5, -0 render as 1, 2, 0.5, +0; -inf, NaN, -NaN and a
+// signalling NaN as +inf; 2^-149 culls nothing, 16 of 16 pages). An infinite determinant draws nothing anyway.
+static bool CulledBySize(const pvrfp::Fp& det)
+{
+    using pvrfp::Fp;
+    if (det.bad)
+        return false;
+    const u32 size = PvrReg(FPU_CULL_VAL_addr, u32) & 0x7fffffff;
+    if (size >= 0x7f800000)
+        return true;
+    return pvrfp::AbsAtMost(det, Fp::FromBits(size));
+}
+
+// The ISP's cull by facing (CullMode 2, 3): a determinant below zero (-0 is not) or above zero
+static bool CulledByFacing(u32 cullMode, const pvrfp::Fp& det)
+{
+    if (cullMode < 2 || det.bad || det.zero())
+        return false;
+    return (cullMode & 1) ? !det.neg : det.neg;
+}
+
 // Does the ISP's setup cull this triangle (CullMode: too small, or facing away)? The same arithmetic as below.
 bool TriangleCulled(const DrawParameters* params, const Vertex& v1, const Vertex& v2, const Vertex& v3, const Vertex* v4)
 {
     if (params->isp.CullMode == 0)
         return false;
-    static const pvrisp::EdgeConfig edgeConfig;
+    static const pvrisp::EdgeHW edgeConfig;          // the hardware's numbers, baked in (pvr_isp_edge.h)
     using pvrfp::Fp;
-    const Fp FX[4] = { Fp::FromFloat(v1.x), Fp::FromFloat(v2.x), Fp::FromFloat(v3.x), v4 ? Fp::FromFloat(v4->x) : Fp() };
-    const Fp FY[4] = { Fp::FromFloat(v1.y), Fp::FromFloat(v2.y), Fp::FromFloat(v3.y), v4 ? Fp::FromFloat(v4->y) : Fp() };
+    const Fp FX[4] = { Fp::FromBits(v1.x), Fp::FromBits(v2.x), Fp::FromBits(v3.x), v4 ? Fp::FromBits(v4->x) : Fp() };
+    const Fp FY[4] = { Fp::FromBits(v1.y), Fp::FromBits(v2.y), Fp::FromBits(v3.y), v4 ? Fp::FromBits(v4->y) : Fp() };
     bool badCorner = false;
     Fp det;
     pvrisp::Winding(FX, FY, edgeConfig, &badCorner, &det);
     if (badCorner || FX[3].bad || FY[3].bad)
         return false;
-    const double tri_area = det.toDouble();
-    if (fabs(tri_area) <= FPU_CULL_VAL)
-        return true;
-    if (params->isp.CullMode >= 2) {
-        const u32 mode = params->isp.CullMode & 1;
-        if ((mode == 0 && tri_area < 0) || (mode == 1 && tri_area > 0))
-            return true;
-    }
-    return false;
+    return CulledBySize(det) || CulledByFacing(params->isp.CullMode, det);
 }
 
 // Rasterize a single triangle to ISP (or ISP+TSP for PT)
@@ -764,20 +762,13 @@ void RasterizeTriangle(DrawParameters* params, parameter_tag_t tag, const Vertex
     const int stride_bytes = STRIDE_PIXEL_OFFSET * 4;
     //Plane equation
 
-#define FLUSH_NAN(a) std::isnan(a) ? 0 : a
-
-    const float Y1 = FLUSH_NAN(v1.y);
-    const float Y2 = FLUSH_NAN(v2.y);
-    const float Y3 = FLUSH_NAN(v3.y);
-    const float Y4 = v4 ? FLUSH_NAN(v4->y) : 0;
-
     // The winding, the area for culling and the inside test are computed in the setup units' own arithmetic
     // (pvr_isp_edge.h on pvr_softfp.h; every rule measured on a console with dreamcast-tests/pvr-tests/covmeas and
     // dreamcast-tests/pvr-tests/hugepos). The same code is the model the probes of dreamcast-tests/model run.
-    static const pvrisp::EdgeConfig edgeConfig;
+    static const pvrisp::EdgeHW edgeConfig;          // the hardware's numbers, baked in (pvr_isp_edge.h)
     using pvrfp::Fp;
-    const Fp FX[4] = { Fp::FromFloat(v1.x), Fp::FromFloat(v2.x), Fp::FromFloat(v3.x), v4 ? Fp::FromFloat(v4->x) : Fp() };
-    const Fp FY[4] = { Fp::FromFloat(v1.y), Fp::FromFloat(v2.y), Fp::FromFloat(v3.y), v4 ? Fp::FromFloat(v4->y) : Fp() };
+    const Fp FX[4] = { Fp::FromBits(v1.x), Fp::FromBits(v2.x), Fp::FromBits(v3.x), v4 ? Fp::FromBits(v4->x) : Fp() };
+    const Fp FY[4] = { Fp::FromBits(v1.y), Fp::FromBits(v2.y), Fp::FromBits(v3.y), v4 ? Fp::FromBits(v4->y) : Fp() };
     bool badCorner = false;
     Fp det;
     // -1 when the determinant is positive or zero (a zero counts as positive: covmeas, mix sliver)
@@ -785,43 +776,12 @@ void RasterizeTriangle(DrawParameters* params, parameter_tag_t tag, const Vertex
     // an infinity or a NaN among the corners: a console draws nothing (dreamcast-tests/pvr-tests/huge)
     if (badCorner || FX[3].bad || FY[3].bad)
         return;
-    // twice the area as the setup has it; corners at 2^100 are fine here (dreamcast-tests/pvr-tests/huge,
+    // cull: det is twice the area as the setup has it; corners at 2^100 are fine here (dreamcast-tests/pvr-tests/huge,
     // dreamcast-tests/pvr-tests/hugepos)
-    const double tri_area = det.toDouble();
-
-    // cull
-    if (params->isp.CullMode != 0) {
-        //area: (X1-X3)*(Y2-Y3)-(Y1-Y3)*(X2-X3)
-
-        double abs_area = fabs(tri_area);
-
-        // hardware also drops a triangle whose area value equals the threshold (dreamcast-tests/pvr-tests/raster page
-        // 4: legs of 1 pixel with the threshold at 1.0)
-        if (abs_area <= FPU_CULL_VAL)
-            return;
-
-        if (params->isp.CullMode >= 2) {
-            u32 mode = params->isp.CullMode & 1;
-
-            if (
-                (mode == 0 && tri_area < 0) ||
-                (mode == 1 && tri_area > 0)) {
-                RENDLOG("CULLED");
-                return;
-            }
-        }
+    if (params->isp.CullMode != 0 && (CulledBySize(det) || CulledByFacing(params->isp.CullMode, det))) {
+        RENDLOG("CULLED");
+        return;
     }
-
-    // Bounding rectangle
-//  int minx = mmin(X1, X2, X3, area->left);
-//  int miny = mmin(Y1, Y2, Y3, area->top);
-
-//  int spanx = mmax(X1+1, X2+1, X3+1, area->right - 1) - minx + 1;
-//  int spany = mmax(Y1+1, Y2+1, Y3+1, area->bottom - 1) - miny + 1;
-
-    //Inside scissor area?
-//  if (spanx < 0 || spany < 0)
-//      return;
 
     // The ISP evaluates an edge per tile: a start value at the first sample point and whole steps, and it
     // decides rows and tie pixels in its own way (pvrisp::EdgeTile). The edges are turned to one winding
@@ -836,41 +796,29 @@ void RasterizeTriangle(DrawParameters* params, parameter_tag_t tag, const Vertex
     if (v4)
         E41.Setup(FX[3], FY[3], FX[0], FY[0], x0h, y0h, sgn, edgeConfig);
     // The ISP's depth per tile, in the setup units' arithmetic (pvr_isp_depth.h; dreamcast-tests/pvr-tests/zmeas)
-    static const pvrisp::DepthConfig depthConfig;
-    pvrisp::DepthTile Z;
+    static const pvrisp::DepthHW depthConfig;
+    pvrisp::DepthTileT<pvrisp::DepthHW> Z;
     {
-        const float zx[3] = { v1.x, v2.x, v3.x }, zy[3] = { v1.y, v2.y, v3.y }, zz[3] = { v1.z, v2.z, v3.z };
+        const u32 zx[3] = { v1.x, v2.x, v3.x }, zy[3] = { v1.y, v2.y, v3.y }, zz[3] = { v1.z, v2.z, v3.z };
         Z.Setup(zx, zy, zz, area->left, area->top, depthConfig);
     }
     const bool sampleCenters = HALF_OFFSET.fpu_pixel_half_offset;
-
-    float halfpixel = HALF_OFFSET.fpu_pixel_half_offset ? 0.5f : 0;
-    float y_ps    = halfpixel;
-    float minx_ps = halfpixel;
 
     // The rows a polygon is rasterized on: from the row its top corner is in to the row of its bottom corner's
     // y + 0.5, whatever the sample offset. Ordinary polygons never notice; the truncated edge functions of a
     // sliver accept pixels beyond its ends, and a console cuts those rows off. Modifier volume triangles have
     // no such limit (dreamcast-tests/pvr-tests/covmeas, mix sliver).
-    double rowFirst = -INFINITY, rowLast = INFINITY;
-    if (render_mode != RM_MODIFIER) {
-        double ymin = std::min(std::min((double)Y1, (double)Y2), (double)Y3), ymax = std::max(std::max((double)Y1, (double)Y2), (double)Y3);
-        if (v4) {
-            ymin = std::min(ymin, (double)Y4);
-            ymax = std::max(ymax, (double)Y4);
-        }
-        rowFirst = floor(ymin);
-        rowLast = floor(ymax + 0.5);
-    }
+    int64_t rowFirst = INT64_MIN, rowLast = INT64_MAX;
+    if (render_mode != RM_MODIFIER)
+        pvrisp::RowRange(FY, v4 ? 4 : 3, &rowFirst, &rowLast);
 
     // Loop through ALL pixels in the tile (no smart clipping)
 	for (int y = 0; y < 32; y++)
     {
-        float x_ps = minx_ps;
         if (area->top + y < rowFirst || area->top + y > rowLast)
-            goto next_y;
+            continue;
         if (E12.RowOutside(y) || E23.RowOutside(y) || E31.RowOutside(y) || (v4 && E41.RowOutside(y)))
-            goto next_y;
+            continue;
 
         for (int x = 0; x < 32; x++)
         {
@@ -878,18 +826,14 @@ void RasterizeTriangle(DrawParameters* params, parameter_tag_t tag, const Vertex
 
             if (inTriangle) {
                 u32 index = y * 32 + x;
-                float invW = Z.At(x, y, sampleCenters);
+                const ZType invW = Z.At(x, y, sampleCenters);
                 // A pixel whose depth is below zero is drawn like any other (dreamcast-tests/pvr-tests/uvmeas, mix
                 // wneg: 780,000 texels read off such polygons). An untextured one comes out black, which
                 // dreamcast-tests/pvr-tests/huge took for "not drawn": the TSP's quotient has the sign of colour / w
                 // alone (pvrtsp::DenominatorSeen), so the colour is below zero.
-                PixelFlush_isp<render_mode>(params->isp.DepthMode, params->isp.ZWriteDis, x_ps, y_ps, invW, index, tag);
+                PixelFlush_isp<render_mode>(params->isp.DepthMode, params->isp.ZWriteDis, invW, index, tag);
             }
-
-            x_ps = x_ps + 1;
         }
-    next_y:
-        y_ps = y_ps + 1;
     }
 }
 
@@ -1238,28 +1182,49 @@ using TextureFetch_fp = decltype(&TextureFetch<false, false, false, false, 0>);
 // zero: a coordinate that is exactly on a boundary belongs to the texel before it, except at 0
 // (dreamcast-tests/pvr-tests/sample: point sampling with half-pixel shifts, bilinear with the weights of page 2).
 // Values within 1/32 of a unit of an integer are treated as being exactly on it.
-ALWAYS_INLINE int TexCoordFixed(float x) {
-    // The coordinate the TSP delivers is already rounded down (see PlaneStepper3): with 1/w = 1 it arrives one
-    // unit of its 16th bit under the nominal value, which is what makes a coordinate exactly on a texel
-    // boundary show the texel before it (dreamcast-tests/pvr-tests/sample, dreamcast-tests/pvr-tests/uvmeas).
-    // Rounded down in two's complement, below zero too: dreamcast-tests/pvr-tests/coordfix (every weight step from
-    // -4 to +4 texels and at up to 2^17 texels, clamp and flip; truncating toward zero gets 437 of its 1568 regions
-    // wrong, weights from the magnitude 489).
-    double f = floor((double)x);
-    // far outside an int (coordinates of thousands of texture repeats): keep the sign and the low 26 bits,
-    // which is all that wrapping, flipping and clamping look at
-    if (f >= 1073741824.0)
-        f = 1073741824.0 + fmod(f, 67108864.0);
-    else if (f < -1073741824.0)
-        f = -1073741824.0 + fmod(fmod(f, 67108864.0) + 67108864.0, 67108864.0);
-    if (!(f == f))
-        f = 0;                  // not a number, or too large to wrap (infinity): texel 0
-    return (int)f;
+ALWAYS_INLINE int TexCoordFixed(const pvrfp::Fp& u, int shift) {
+    // u * 2^shift (the size of the texture in 1/256 texel: exact, u has 17 bits), rounded down in two's complement,
+    // below zero too (dreamcast-tests/pvr-tests/coordfix: every weight step from -4 to +4 texels and at up to 2^17
+    // texels, clamp and flip; toward zero gets 437 of its 1568 regions wrong). The coordinate the TSP delivers is
+    // already rounded down (PlaneStepper3), which is what makes a coordinate exactly on a texel boundary show the
+    // texel before it (dreamcast-tests/pvr-tests/sample, uvmeas). Far outside an int (coordinates of thousands of
+    // texture repeats): the sign and the low 26 bits, which is all that wrapping, flipping and clamping look at;
+    // 2^128 and beyond (an infinity) or not a number: texel 0.
+    if (u.bad || u.zero())
+        return 0;
+    const int top = u.top() + shift;                    // |u| 2^shift is in [2^(top - 1), 2^top)
+    if (top > 128)
+        return 0;
+    const int e = u.exp + shift;                        // u 2^shift = mant 2^e
+    if (top <= 31) {
+        int64_t f;
+        if (e >= 0)
+            f = (int64_t)(u.mant << e);
+        else {
+            const int s = -e;
+            const uint64_t lost = s >= 64 ? u.mant : (u.mant & ((1ull << s) - 1));
+            f = s >= 64 ? 0 : (int64_t)(u.mant >> s);
+            if (u.neg && lost)
+                f += 1;
+        }
+        if (u.neg)
+            f = -f;
+        if (f >= 1073741824)
+            return (int)(1073741824 + (f & 67108863));
+        if (f < -1073741824)
+            return (int)(-1073741824 + (f & 67108863));
+        return (int)f;
+    }
+    // 2^30 and more: an integer; its low 26 bits (two's complement for a negative one)
+    const uint64_t low = e >= 26 ? 0 : (uint64_t)(u.mant << e) & 67108863;
+    if (!u.neg)
+        return (int)(1073741824 + low);
+    return (int)(-1073741824 + (int64_t)((67108864 - low) & 67108863));
 }
 
 // Fetch pixels from UVs, interpolate
 template<bool pp_IgnoreTexA,  bool pp_ClampU, bool pp_ClampV, bool pp_FlipU, bool pp_FlipV, u32 pp_FilterMode>
-static Color TextureFilter(TSP tsp, TCW tcw, float u, float v, u32 MipLevel, f32 dTrilinear, TextureFetch_fp fetch) {
+static Color TextureFilter(TSP tsp, TCW tcw, const pvrfp::Fp& u, const pvrfp::Fp& v, u32 MipLevel, TextureFetch_fp fetch) {
         
     // The half texel offset belongs to bilinear filtering only: a point sample is taken at the pixel center
     // (dreamcast-tests/pvr-tests/sample).
@@ -1278,8 +1243,9 @@ static Color TextureFilter(TSP tsp, TCW tcw, float u, float v, u32 MipLevel, f32
         sizeV = 8 << tsp.TexV;
     }
 
-    int ui = TexCoordFixed(u * sizeU * 256) + halfpixel;
-    int vi = TexCoordFixed(v * sizeV * 256) + halfpixel;
+    auto log2 = [](int n) { return pvrfp::TrailingZeros((uint64_t)n); };     // the sizes are powers of two
+    int ui = TexCoordFixed(u, log2(sizeU) + 8) + halfpixel;
+    int vi = TexCoordFixed(v, log2(sizeV) + 8) + halfpixel;
     if (tcw.MipMapped && !TcwRaster(tcw)) {
         // A mipmapped texture's coordinates are made at the full size, the half texel taken off there, and
         // only then shifted down to the level: at level L the bilinear footprint sits 1/2 - 1/2^(L+1) texel
@@ -1290,9 +1256,9 @@ static Color TextureFilter(TSP tsp, TCW tcw, float u, float v, u32 MipLevel, f32
         // half texel and all, and then scaled to the full height: declared 16x8, the bilinear footprint sits
         // one whole row higher than declared 16x16 (dreamcast-tests/pvr-tests/sample, "declared").
         const int d = (int)tsp.TexU - (int)tsp.TexV;
-        int v0 = TexCoordFixed(v * (8 << tsp.TexV) * 256) + halfpixel;
+        int v0 = TexCoordFixed(v, 3 + tsp.TexV + 8) + halfpixel;
         v0 = d > 0 ? v0 * (1 << d) : v0 >> -d;
-        ui = (TexCoordFixed(u * (8 << tsp.TexU) * 256) + halfpixel) >> MipLevel;
+        ui = (TexCoordFixed(u, 3 + tsp.TexU + 8) + halfpixel) >> MipLevel;
         vi = v0 >> MipLevel;
     }
 
@@ -1542,11 +1508,11 @@ static Color BumpMapper(Color textel, Color offset) {
 // exactly half way goes down (the middle of a 0..255 ramp over an even number of pixels is 127;
 // dreamcast-tests/pvr-tests/shade). The threshold is a little under one half: anything from 0.4967 to 0.4975 reproduces
 // all 80256 samples of that page, 0.4961 and 0.499 do not.
-#define COLOR_BIAS 0.5f
+// (PlaneStepper3::Rounded: floor(v + 1/2), exact on the quotient's 17 bits.)
 
 // Interpolate the base color, also cheap shadows modifier
 template<bool pp_UseAlpha, bool pp_CheapShadows>
-ALWAYS_INLINE Color InterpolateBase(const PlaneStepper3* Col, float x, float y, float W, bool InVolume) {
+ALWAYS_INLINE Color InterpolateBase(const PlaneStepper3* Col, PixPos p, const pvrfp::Fp& W, bool InVolume) {
     Color rv;
     u32 mult = 256;
 
@@ -1556,7 +1522,7 @@ ALWAYS_INLINE Color InterpolateBase(const PlaneStepper3* Col, float x, float y, 
     // the intensity scales the colour before it is clamped: a colour far above 255 (a quotient of extreme
     // depths) stays white at 0x80 and 0xff, and only 0 makes it black (dreamcast-tests/pvr-tests/modvol, pages 0 to 2)
     for (int i = 0; i < 4; i++) {
-        u32 c = (u32)(COLOR_BIAS + Col[i].IpWide(x, y, W));
+        u32 c = (u32)Col[i].Rounded(p, W, 65535);
         c = (c * mult) >> 8;
         rv.bgra[i] = c > 255 ? 255 : c;
     }
@@ -1572,15 +1538,15 @@ ALWAYS_INLINE Color InterpolateBase(const PlaneStepper3* Col, float x, float y, 
 
 // Interpolate the offset color, also cheap shadows modifier
 template<bool pp_CheapShadows>
-ALWAYS_INLINE Color InterpolateOffs(const PlaneStepper3* Ofs, float x, float y, float W, bool InVolume) {
+ALWAYS_INLINE Color InterpolateOffs(const PlaneStepper3* Ofs, PixPos p, const pvrfp::Fp& W, bool InVolume) {
     Color rv;
     u32 mult = 256;
 
     for (int i = 0; i < 3; i++) {
-        u32 c = (u32)(COLOR_BIAS + Ofs[i].IpU8(x, y, W));
+        u32 c = (u32)Ofs[i].Rounded(p, W, 255);
         rv.bgra[i] = (c * mult) >> 8;
     }
-    rv.bgra[3] = COLOR_BIAS + Ofs[3].IpU8(x, y, W);
+    rv.bgra[3] = (u8)Ofs[3].Rounded(p, W, 255);
 
     RENDLOG("IO: %08X", rv.raw);
     return rv;
@@ -1655,32 +1621,33 @@ ALWAYS_INLINE u32 FOG_K(u32 a) {
     return FOG_VARIANT == 0 ? a : FOG_VARIANT == 1 ? a + (a == 255) : a + (a >> 7);
 }
 
-ALWAYS_INLINE u8 LookupFogTable(float invW) {
-    u8* fog_density=(u8*)&FOG_DENSITY;
-    float fog_den_mant=fog_density[1]/128.0f;  //bit 7 -> x. bit, so [6:0] -> fraction -> /128
-    s32 fog_den_exp=(s8)fog_density[0];
-        
-    float fog_den = fog_den_mant*powf(2.0f,fog_den_exp);
+ALWAYS_INLINE u8 LookupFogTable(const pvrfp::Fp& W) {
+    // FOG_DENSITY: an 8 bit mantissa (bit 7 the units, bits 6..0 the fraction) and a signed 8 bit exponent. The
+    // product with the pixel's 1/w (the TSP's own: the plane's value, 16 bits, dreamcast-tests/pvr-tests/tspw) is the
+    // fog's w, exact: 8 x 16 bits fit in a float's 24, so no rounding mode is ever asked for. Then clamped to
+    // 1 .. 256 - 2^-16 (dreamcast-tests/pvr-tests/fog, tspw). The table index is its exponent's low 3 bits (plus 1)
+    // and the top 4 bits of its 23 bit fraction; the blend between two entries the next 8 bits.
+    static_assert(8 + pvrtsp::PlaneHW::valueBits <= 24, "the fog product is exact only with a 16 bit 1/w");
+    const u8* fog_density = (const u8*)&FOG_DENSITY;
+    const int dm = fog_density[1], de = (s8)fog_density[0];
+    uint64_t M;                         // fogW = M 2^E, M in [2^23, 2^24)
+    int E;
+    if (W.bad || W.neg || W.zero() || dm == 0) {
+        M = 1ull << 23; E = -23;        // below 1: 1
+    } else {
+        uint64_t m = (uint64_t)dm * W.mant;     // exact, at most 24 bits (W >= 0 has at most 16)
+        int e = W.exp + de - 7;
+        const int n = pvrfp::Fp::Bits(m);
+        m <<= 24 - n; e -= 24 - n;
+        M = m; E = e;
+        if (E + 23 < 0) { M = 1ull << 23; E = -23; }                    // below 1: 1
+        else if (E + 23 > 7) { M = (1ull << 24) - 1; E = -16; }         // 256 and above: 256 - 2^-16
+    }
+    const u32 exponent = (u32)(E + 23 + 127), fraction = (u32)(M - (1ull << 23));
 
-    f32 fogW = fog_den * invW;
+    u32 index = (((exponent + 1) & 7) << 4) | ((fraction >> 19) & 15);
 
-    fogW = std::max((float)fogW, 1.0f);
-    fogW = std::min((float)fogW, 255.999985f);
-
-    union f32_fields {
-        f32 full;
-        struct {
-            u32 m: 23;
-            u32 e: 8;
-            u32 s: 1;
-        };
-    };
-
-    f32_fields fog_fields = { fogW };
-
-    u32 index = (((fog_fields.e +1) & 7) << 4) |  ((fog_fields.m>>19) & 15);
-
-    u8 blendFactor = (fog_fields.m>>11) & 255;
+    u8 blendFactor = (fraction >> 11) & 255;
     u8 blend_inv = 255^blendFactor;
 
     OFFLINE_READ(FOG_TABLE_START_addr + index * 4);
@@ -1694,7 +1661,7 @@ ALWAYS_INLINE u8 LookupFogTable(float invW) {
 
 // Color Clamp and Fog a pixel
 template<bool pp_Offset, bool pp_ColorClamp, u32 pp_FogCtrl>
-ALWAYS_INLINE Color FogUnit(Color col, float invW, u8 offs_a) {
+ALWAYS_INLINE Color FogUnit(Color col, const pvrfp::Fp& invW, u8 offs_a) {
     if (pp_ColorClamp) {
         Color clamp_max = { FOG_CLAMP_MAX };
         Color clamp_min = { FOG_CLAMP_MIN };
@@ -1794,18 +1761,24 @@ using ColorCombiner_fp = decltype(&ColorCombiner<0,0,0>);
 using TextureFilter_fp = decltype(&TextureFilter<0,0,0,0,0,0>);
 // Implement the full texture/shade pipeline for a pixel
 
-static Color offs = { 0x20004080 }; // this one persists across invocations, as tested via bump maps. Default value was randomly chosen.
+// The offset colour the core keeps (found by purist): a bump map without the offset bit is lit by it. It is the last
+// vertex's offset colour, as it was sent, of the last primitive with the offset bit the TSP shaded, in the TSP's
+// order (span sorter), across tiles, renders and core resets; about zero after the console was switched on
+// (dreamcast-tests/pvr-tests/offspersist: 293 of 299 cells and more on every page; a Gouraud, flat, SupSample or
+// bump-map setter all the same; a reader shaded before its tile's setter reads the tile before's). Decal,
+// modulate and vertex fog without the offset bit do not read it (page 10).
+static Color offsKept = { 0 };
 template<bool pp_UseAlpha, bool pp_Texture, bool pp_Offset, bool pp_ColorClamp, u32 pp_FogCtrl, bool pp_CheapShadows>
-static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, bool InVolume, u32 index, TextureFetch_fp fetch, TextureFilter_fp filter, ColorCombiner_fp combiner, BlendingUnit_fp blending)
+static bool PixelFlush_tsp(const FpuEntry *entry, PixPos p, const pvrfp::Fp& W, bool InVolume, u32 index, TextureFetch_fp fetch, TextureFilter_fp filter, ColorCombiner_fp combiner, BlendingUnit_fp blending)
 {
     u32 two_voume_index = InVolume & !pp_CheapShadows;
     auto cb = (Color*)colorBuffer1 + index;
   
     Color base = { 0 }, textel = { 0 };
 
-    base = InterpolateBase<pp_UseAlpha, pp_CheapShadows>(entry->ips.Col[InVolume ? 1 : 0], x, y, W, InVolume);
+    base = InterpolateBase<pp_UseAlpha, pp_CheapShadows>(entry->ips.Col[InVolume ? 1 : 0], p, W, InVolume);
 
-    float dTrilinear = 0;
+    int dTrilinear = 0;             // of 256: the share of the next level (MipSelect's k)
     u32 MipLevel = 0;
     const bool bump = pp_Texture && entry->params.tcw[two_voume_index].PixelFmt == PixelBumpMap;
     // SupSample: the pixel is made at four points and averaged (below)
@@ -1840,7 +1813,7 @@ static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, boo
     };
 
     // the level and the trilinear coefficient where 1/w is q; `finer`: a SupSample point's, one level finer
-    auto mipChoose = [&](float q, bool finer, u32& level, float& dTri) {
+    auto mipChoose = [&](const pvrfp::Fp& q, bool finer, u32& level, int& dTri) {
         level = 0;
         dTri = 0;
         if (entry->params.tcw[two_voume_index].MipMapped) {
@@ -1848,7 +1821,7 @@ static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, boo
             // (pvr_tsp_plane.h, MipSelect; measured with dreamcast-tests/pvr-tests/mipmeas).
             const auto& ips = entry->ips;
             auto choice = pvrtsp::MipSelect(ips.U[two_voume_index].soft, ips.V[two_voume_index].soft, ips.invW.soft,
-                                            pvrfp::Fp::FromFloat(q), 3 + entry->params.tsp[two_voume_index].TexU,
+                                            q, 3 + entry->params.tsp[two_voume_index].TexU,
                                             // D adjust 0 (the manual: "illegal") is 4/4 on a console: Berserk's
                                             // ground (polly2-data berserk_*), dreamcast-tests mipmeas --bias0
                                             entry->params.tsp[two_voume_index].MipMapD ? (int)entry->params.tsp[two_voume_index].MipMapD : 4,
@@ -1862,25 +1835,30 @@ static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, boo
                 else
                     choice.level--;
             }
-            level = choice.level > 11 ? 11 : choice.level;
-            dTri = choice.k / 256.0f;
+            // Trilinear pass B samples the next smaller level. Neither goes past the 1x1 level (3 + TexU: a
+            // mipmapped texture is square), and the fraction fades both passes all the same: a level past it reads
+            // the 1x1 level, and so does pass B at the 1x1 level (dreamcast-tests/pvr-tests/trimin: levels 1x1 - 1
+            // .. 20 of 8 x 8 and 64 x 64 textures, fractions 0, 1/2 and the last, passes A, B, both, bilinear,
+            // point, VQ, SupSample: 180 of 180 cells; the texels in front of the 1x1 level are never read).
+            const u32 last = 3 + entry->params.tsp[two_voume_index].TexU;
+            const bool passB = entry->params.tsp[two_voume_index].FilterMode == 3;
+            level = (u32)choice.level + (passB ? 1 : 0);
+            if (level > last)
+                level = last;
+            dTri = choice.k;
             if (TcwRaster(entry->params.tcw[two_voume_index]))
                 level = 0;       // no levels to choose from; the fraction still fades the trilinear passes
         }
-        // trilinear pass B samples the next smaller level
-        if (entry->params.tsp[two_voume_index].FilterMode == 3 && entry->params.tcw[two_voume_index].MipMapped
-            && !TcwRaster(entry->params.tcw[two_voume_index]))
-            level++;
     };
     // Trilinear: pass A (mode 2) draws this level fading out toward the next one, pass B (mode 3) the next level
     // fading in; the two passes are added by the blend unit. The fade is of the finished colour, after the
     // shading, the offset colour, the colour clamp and the fog, alpha too, bump maps too (pvr-tests/supsample2 page
     // 21 and its control: of the texel, as it was, misses 149,148 of 153,600 pixels; pvr-tests/trifade, 22 pages of
     // flat cells). A texture without mipmaps is not faded (pvr-tests/mip, "565 without mipmaps").
-    auto fade = [&](Color c, float dTri) {
+    auto fade = [&](Color c, int dTri) {
         if (!pp_Texture || entry->params.tsp[two_voume_index].FilterMode < 2 || !entry->params.tcw[two_voume_index].MipMapped)
             return c;
-        int k = (int)(dTri * 256);
+        int k = dTri;
         if (k < 0) k = 0;
         if (k > 256) k = 256;
         const u32 w = entry->params.tsp[two_voume_index].FilterMode == 2 ? 256 - k : k;
@@ -1889,6 +1867,7 @@ static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, boo
         return c;
     };
 
+    Color offs = offsKept;      // this pixel's offset colour (without the offset bit: the kept one, for a bump map)
     if (pp_Texture) {
         if (dump_textures) {
 
@@ -1901,13 +1880,14 @@ static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, boo
             }
         }
         if (!super) {
-            float u = entry->ips.U[two_voume_index].Ip(x, y, W);
-            float v = entry->ips.V[two_voume_index].Ip(x, y, W);
+            const pvrfp::Fp u = entry->ips.U[two_voume_index].Quot(p, W);
+            const pvrfp::Fp v = entry->ips.V[two_voume_index].Quot(p, W);
             mipChoose(W, false, MipLevel, dTrilinear);
-            textel = filter(entry->params.tsp[two_voume_index], entry->params.tcw[two_voume_index], u, v, MipLevel, dTrilinear, fetch);
+            textel = filter(entry->params.tsp[two_voume_index], entry->params.tcw[two_voume_index], u, v, MipLevel, fetch);
         }
         if (pp_Offset) {
-            offs = bump ? bumpLight() : InterpolateOffs<pp_CheapShadows>(entry->ips.Ofs[InVolume ? 1 : 0], x, y, W, InVolume);
+            offs = bump ? bumpLight() : InterpolateOffs<pp_CheapShadows>(entry->ips.Ofs[InVolume ? 1 : 0], p, W, InVolume);
+            offsKept = bumpLight();
         }
     }
 
@@ -1926,20 +1906,20 @@ static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, boo
             Stepper::superActive = true;
             Stepper::superHx = k & 1;
             Stepper::superHy = k >> 1;
-            const float ws = entry->ips.invW.Ip(x, y);
-            const float us = pp_Texture ? entry->ips.U[two_voume_index].Ip(x, y, ws) : 0, vs = pp_Texture ? entry->ips.V[two_voume_index].Ip(x, y, ws) : 0;
-            RENDLOG("SS%d: w %a u %a v %a", k, ws, us, vs);
-            const Color bk = InterpolateBase<pp_UseAlpha, pp_CheapShadows>(entry->ips.Col[InVolume ? 1 : 0], x, y, ws, InVolume);
-            const Color ok = pp_Texture && pp_Offset && !bump ? InterpolateOffs<pp_CheapShadows>(entry->ips.Ofs[InVolume ? 1 : 0], x, y, ws, InVolume) : offs;
+            const pvrfp::Fp ws = entry->ips.invW.Val(p);
+            const pvrfp::Fp us = pp_Texture ? entry->ips.U[two_voume_index].Quot(p, ws) : pvrfp::Fp(), vs = pp_Texture ? entry->ips.V[two_voume_index].Quot(p, ws) : pvrfp::Fp();
+            RENDLOG("SS%d: w %a u %a v %a", k, ws.toDouble(), us.toDouble(), vs.toDouble());
+            const Color bk = InterpolateBase<pp_UseAlpha, pp_CheapShadows>(entry->ips.Col[InVolume ? 1 : 0], p, ws, InVolume);
+            const Color ok = pp_Texture && pp_Offset && !bump ? InterpolateOffs<pp_CheapShadows>(entry->ips.Ofs[InVolume ? 1 : 0], p, ws, InVolume) : offs;
             Stepper::superActive = false;
             Stepper::superHx = 0;
             Stepper::superHy = 0;
             u32 level = 0;
-            float dTri = 0;
+            int dTri = 0;
             Color t = { 0 };
             if (pp_Texture) {
                 mipChoose(ws, true, level, dTri);
-                t = filter(entry->params.tsp[two_voume_index], entry->params.tcw[two_voume_index], us, vs, level, dTri, fetch);
+                t = filter(entry->params.tsp[two_voume_index], entry->params.tcw[two_voume_index], us, vs, level, fetch);
             }
             c4[k] = fade(FogUnit<pp_Offset, pp_ColorClamp, pp_FogCtrl>(shade(bk, t, ok), ws, bump ? 0 : ok.a), dTri);
         }
@@ -1948,7 +1928,7 @@ static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, boo
     } else {
         col = shade(base, textel, offs);
         // the fog table is indexed with the TSP's own 1/w (dreamcast-tests/pvr-tests/tspw)
-        col = FogUnit<pp_Offset, pp_ColorClamp, pp_FogCtrl>(col, entry->ips.invW.Ip(x, y), bump ? 0 : offs.a);
+        col = FogUnit<pp_Offset, pp_ColorClamp, pp_FogCtrl>(col, entry->ips.invW.Val(p), bump ? 0 : offs.a);
         col = fade(col, dTrilinear);
     }
 
@@ -1968,11 +1948,11 @@ using PixelFlush_tsp_fp = decltype(&PixelFlush_tsp<0,0,0,0,0,0>);
 #include "gentable.h"
 
 // Lookup/create cached TSP parameters, and call PixelFlush_tsp
-bool PixelFlush_tsp(bool pp_AlphaTest, const FpuEntry* entry, float x, float y, u32 index, float invW, bool InVolume, ISP_BACKGND_T_type core_tag)
+bool PixelFlush_tsp(bool pp_AlphaTest, const FpuEntry* entry, PixPos p, u32 index, const pvrfp::Fp& invW, bool InVolume, ISP_BACKGND_T_type core_tag)
 {
     u32 two_voume_index = InVolume & !FPU_SHAD_SCALE.intensity_shadow;
 
-    RENDLOG("TSP: %d %f %f %d %f %d %08X %08X %08X %08X", index, x, y, InVolume, invW, pp_AlphaTest, entry->params.isp.full, entry->params.tsp[two_voume_index].full, entry->params.tcw[two_voume_index].full, core_tag.full);
+    RENDLOG("TSP: %d %f %f %d %f %d %08X %08X %08X %08X", index, p.x + (p.half ? 0.5 : 0.0), p.y + (p.half ? 0.5 : 0.0), InVolume, invW.toDouble(), pp_AlphaTest, entry->params.isp.full, entry->params.tsp[two_voume_index].full, entry->params.tcw[two_voume_index].full, core_tag.full);
 
     const bool raster = TcwRaster(entry->params.tcw[two_voume_index]);
     auto fetch = TextureFetch_table
@@ -2013,7 +1993,7 @@ bool PixelFlush_tsp(bool pp_AlphaTest, const FpuEntry* entry, float x, float y, 
         [entry->params.tsp[two_voume_index].FogCtrl]
         [FPU_SHAD_SCALE.intensity_shadow];
 
-    const bool rv = pixel(entry, x, y, invW, InVolume, index, fetch, filter, combiner, blending);
+    const bool rv = pixel(entry, p, invW, InVolume, index, fetch, filter, combiner, blending);
 
     const auto& tsp = entry->params.tsp[two_voume_index];
     if (tsp.SrcSelect && tsp.DstSelect && tsp.DstInstr == 0 && (tsp.SrcInstr == 1 || tsp.SrcInstr == 4))

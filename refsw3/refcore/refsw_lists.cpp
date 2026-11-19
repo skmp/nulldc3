@@ -66,7 +66,6 @@
 #include "TexUtils.h"
 
 #include <cmath>
-#include <float.h>
 
 #include <memory>
 #include <cstdio>
@@ -83,6 +82,9 @@
 #include "refsw_lists.h"
 
 #include "refsw_tile.h"
+
+// For the logs only: the value of an IEEE single's bits, to print (%a: exactly). No arithmetic is done on it.
+static inline double LogSingle(u32 b) { float f; memcpy(&f, &b, 4); return f; }
 
 // refsw3's core (refcore): in a namespace of its own, beside rend/refsw2, which has the same names
 namespace refcore {
@@ -137,8 +139,10 @@ void RenderTriangle(RenderMode render_mode, DrawParameters* params, parameter_ta
         if (!PtChunkTake(v4 ? 4 : 3))
             return;
     }
+#define LF(b) LogSingle(b)
     RENDLOG("TRIA: %08X %08X %08X %08X %a %a %a %a %a  %a %a %a %a %a  %a %a %a %a %a", tag, params->isp.full, params->tsp[0].full, params->tcw[0].full,   // the corners exactly (dreamcast-tests: dumptri, uvmeas/zmeas game triangles)
-        v1.x, v1.y, v1.z, v1.u, v1.v, v2.x, v2.y, v2.z, v2.u, v2.v, v3.x, v3.y, v3.z, v3.u, v3.v);
+        LF(v1.x), LF(v1.y), LF(v1.z), LF(v1.u), LF(v1.v), LF(v2.x), LF(v2.y), LF(v2.z), LF(v2.u), LF(v2.v), LF(v3.x), LF(v3.y), LF(v3.z), LF(v3.u), LF(v3.v));
+#undef LF
     RENDLOG("TRIC: %08X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X", tag,   // the corners' colours, ARGB (dumptri)
         v1.col[3], v1.col[2], v1.col[1], v1.col[0], v2.col[3], v2.col[2], v2.col[1], v2.col[0], v3.col[3], v3.col[2], v3.col[1], v3.col[0]);
     RasterizeTriangle_table[render_mode](params, tag, v1, v2, v3, v4, area);
@@ -367,6 +371,10 @@ static bool ObjectListHasPrimitive(pvr32addr_t base)
 // Called on START_RENDER write
 void RenderCORE() {
     u32 base = REGION_BASE;
+    {   // pvr_softfp.h: its size; an infinity is Fp::bad, a NaN is 0
+        const u32 pv = FPU_PERP_VAL & 0x7fffffff;
+        pvrfp::perpVal = pv > 0x7f800000 ? pvrfp::Fp() : pvrfp::Fp::FromBits(pv);
+    }
 
     RegionArrayEntry entry;
     
@@ -386,9 +394,18 @@ void RenderCORE() {
     // Always FB_W_SOF1: on a console nothing reaches FB_W_SOF2, whatever the interlace and field bits of
     // SCALER_CTL and the display's mode and field are (dreamcast-tests/pvr-tests/sof2probe, sof2field, scalermeas);
     // those bits only choose which lines the scaler takes. FB_W_SOF2 is the second strip buffer: with FB_R_CTRL
-    // bit 22 the strips of 16 * size lines go to FB_W_SOF1 and FB_W_SOF2 in turn, each from the buffer's
-    // first line (dreamcast-tests/pvr-tests/sof2sweep). That mode is not implemented here.
+    // bit 22 the picture goes out in strips of 16 * size lines (size 0: nothing is written). The write-out keeps a
+    // strip number that only grows: a line at or below the next strip's first line moves it on; the line goes to
+    // FB_W_SOF1 for an even strip, FB_W_SOF2 for an odd one, at its distance from the strip's first line
+    // (dreamcast-tests/pvr-tests/sof2sweep: every line of both buffers on 10 of its 11 strip pages, tiles row by row
+    // and column by column; with half-tile strips the later tiles of a row fall before the buffer). Not modelled:
+    // where those lines before a buffer go (they are not written here), the one pixel of a strip's first line that
+    // lands in the other buffer, half-tile strips with the tiles column by column (the console swaps the buffers
+    // for the later columns), the scaler with strips (scrambled on a console).
     const u32 fbBase = FB_W_SOF1;
+    const bool stripBuf = FB_R_CTRL.fb_strip_buf_en;
+    const int stripLines = 16 * FB_R_CTRL.fb_stripsize;
+    int strip = 0;
     const bool rtt = fbBase & 0x1000000;
     const auto fb_packmode = FB_W_CTRL.fb_packmode;
     verify(fb_packmode != 0x7);
@@ -399,7 +416,19 @@ void RenderCORE() {
     auto put = [&](int X, int Y, int b8, int g8, int r8, int a8) {
         if (X < (int)FB_X_CLIP.min || X > (int)FB_X_CLIP.max || Y < (int)FB_Y_CLIP.min || Y > (int)FB_Y_CLIP.max)
             return;
-        const u32 dst = fbBase + (u32)Y * FB_W_LINESTRIDE.stride * 8 + (u32)X * bpp;
+        u32 base = fbBase;
+        int line = Y;
+        if (stripBuf) {
+            if (stripLines == 0)
+                return;
+            while (Y >= (strip + 1) * stripLines)
+                strip++;
+            line = Y - strip * stripLines;
+            if (line < 0)
+                return;
+            base = (strip & 1) ? FB_W_SOF2 : FB_W_SOF1;
+        }
+        const u32 dst = base + (u32)line * FB_W_LINESTRIDE.stride * 8 + (u32)X * bpp;
         const int add = dither ? ditherAdd[Y & 3][X & 3] : 0;
         // a channel cut to `bits` bits: add the dither value, drop the low bits, saturate
         auto cut = [add](int v, int bits) {
@@ -579,18 +608,18 @@ void RenderCORE() {
             // a polygon at 0.5 ties with a background of 0.5 + 2^-20, as the 19 bit float has it and a fixed point would
             // not; trtie pages 12-15, polly2-data rez_ingame: a polygon at exactly a background of about 1e-5 is in front
             // of it; dumprules pages 4-7, polly2-data xtreme_intro: nothing is behind a background below 2^-20).
-            float bgDepth = ISP_BACKGND_D.f;
-            if (std::isfinite(bgDepth) && bgDepth >= 0) {
-                if (bgDepth < 0.25f)
-                    bgDepth = (float)(floor((double)bgDepth * 1048576.0) / 1048576.0);
-                else {
-                    int e;
-                    const double m = frexp((double)bgDepth, &e);
-                    bgDepth = (float)ldexp(floor(m * 524288.0) / 524288.0, e);
-                }
-            } else if (((ISP_BACKGND_D.i >> 23) & 0xff) < 107)
-                bgDepth = 0.0f;
-            ClearBuffers(bgTag, bgDepth, 0);
+            // On the register's bits: from 0.25 on (exponent field 125) the low 5 of the 23 fraction bits go, below it
+            // those under 2^-20 (130 - field), below 2^-20 (field 107) all of it. GAP: a background below zero, an
+            // infinity or a NaN is kept as given (but one below 2^-20 in size is 0): not measured.
+            const u32 bg = ISP_BACKGND_D.i, field = (bg >> 23) & 0xff;
+            u32 bgBits;
+            if (field == 0xff || ((bg >> 31) && (bg & 0x7fffffff)))
+                bgBits = field < 107 ? 0 : bg;
+            else {
+                const int cut = std::max(5, 130 - (int)field);
+                bgBits = cut > 23 ? (bg & 0x80000000) : (bg & ~((1u << cut) - 1));
+            }
+            ClearBuffers(bgTag, ZType::Bits(bgBits), 0);
         } else {
             RENDLOG("ZKEEP");
             ClearParamStatusBuffer();
@@ -700,7 +729,7 @@ void RenderCORE() {
                     ClearMoreToDraw();
 
                     // copy depth test to depth reference buffer, clear depth test buffer, clear stencil
-                    PeelBuffers(FLT_MAX, 0);
+                    PeelBuffers(ZType::Bits(0x7f7fffff), 0);       // the largest finite float
 
                     // render to TAGS
                     {

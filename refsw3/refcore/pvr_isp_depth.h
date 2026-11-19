@@ -32,34 +32,120 @@ namespace pvrisp {
 
 using pvrfp::Fp;
 
+// The depth unit's numbers as the hardware has them, baked in (pvr_softfp.h: C<N>); the evidence is above (zmeas,
+// zstart, covmeas). DepthConfig below is the same with plain ints, for dreamcast-tests/model/depthprobe --scan and the
+// generators; DepthTileT is templated on either.
+struct DepthHW {
+    static constexpr pvrfp::C<24> productBits{};    // z * (difference), z * e, a * x0, b * y0
+    static constexpr pvrfp::C<24> sumBits{};
+    static constexpr pvrfp::C<25> reach{};          // the adders' alignment reach (measured on the edge unit, pvr_isp_edge.h)
+    static constexpr pvrfp::C<24> recipBits{};      // 1 / determinant
+    static constexpr pvrfp::C<24> coefBits{};       // a * inv, b * inv, c * inv, start * inv
+    static constexpr pvrfp::C<20> startBits{};
+    static constexpr pvrfp::C<20> slopeBits{};
+    static constexpr pvrfp::C<21> pairBits{};
+    static constexpr pvrfp::C<26> tileBits{};
+    static constexpr pvrfp::C<19> storedBits{};
+    // the start cut to the slopes' grid too: 1 any start (a console: zstart), 2 a negative one only, 0 not (the model
+    // before); 0 and 2 are kept for the generators and depthprobe --scan
+    static constexpr pvrfp::C<1> startOnSlopes{};
+    // The setup's numbers have the limits measured for the TSP's (pvr_tsp_plane.h, Plane::Setup): exponent field 0 is
+    // zero and 255 infinity, a result of 2^128 or more is an infinity and one below 2^-126 a zero, with the same rules
+    // for sums and products of them. Not measured here number by number: with them dreamcast-tests/pvr-tests/huge is
+    // the console's in 250 of 250 regions (228 without), including the quads of which a console draws one triangle
+    // only at 2^127, the largest number, infinity and NaN (the two triangles' sums come to infinities of opposite
+    // sign). range 0: no limits, as before.
+    static constexpr pvrfp::C<1> range{};
+};
+
 struct DepthConfig {
-    int productBits = 24;       // z * (difference), z * e, a * x0, b * y0
-    int sumBits = 24;
-    int reach = 25;             // the adders' alignment reach (measured on the edge unit)
-    int recipBits = 24;         // 1 / determinant
-    int coefBits = 24;          // a * inv, b * inv, c * inv, start * inv
-    int startBits = 20;
-    int slopeBits = 20;
-    int pairBits = 21;
-    int tileBits = 26;
-    int storedBits = 19;
-    // the start cut to the slopes' grid too: 1 any start (a console: zstart), 2 a negative one only, 0 not (the
-    // model before); 0 and 2 are kept for the generators and depthprobe --scan
-    int startOnSlopes = 1;
-    // The setup's numbers have the limits measured for the TSP's (pvr_tsp_plane.h, Plane::Setup): exponent
-    // field 0 is zero and 255 infinity, a result of 2^128 or more is an infinity and one below 2^-126 a zero,
-    // with the same rules for sums and products of them. Not measured here number by number: with them
-    // dreamcast-tests/pvr-tests/huge is the console's in 250 of 250 regions (228 without), including the quads of which
-    // a console draws one triangle only at 2^127, the largest number, infinity and NaN (the two triangles'
-    // sums come to infinities of opposite sign). range 0: no limits, as before.
-    int range = 1;
+    int productBits = DepthHW::productBits;
+    int sumBits = DepthHW::sumBits;
+    int reach = DepthHW::reach;
+    int recipBits = DepthHW::recipBits;
+    int coefBits = DepthHW::coefBits;
+    int startBits = DepthHW::startBits;
+    int slopeBits = DepthHW::slopeBits;
+    int pairBits = DepthHW::pairBits;
+    int tileBits = DepthHW::tileBits;
+    int storedBits = DepthHW::storedBits;
+    int startOnSlopes = DepthHW::startOnSlopes;
+    int range = DepthHW::range;
 };
 
 using pvrfp::Recip;
 
-struct DepthTile {
+// A depth as the ISP stores and compares it: the bits of an IEEE single (19 significant bits from the depth unit; a
+// corner's z as given when the plane cannot be set up; the background's), compared as floats compare: a NaN with
+// nothing (every compare false but !=), -0 equal to +0. Measured: the 19 bits (zmeas, zblock, precision), depths
+// below zero drawn like any other (uvmeas wneg), infinite and NaN inputs (huge, detinf). GAP: below 2^-126 the
+// value is rounded to a float's denormal grid, and from 2^128 it is an infinity: a float's range, not measured as
+// the depth buffer's own; nor is a NaN depth's compare (huge passes with it).
+struct StoredDepth {
+    uint32_t bits = 0;
+    static StoredDepth Bits(uint32_t b) { StoredDepth d; d.bits = b; return d; }
+    bool nan() const { return (bits & 0x7fffffffu) > 0x7f800000u; }
+    // an order of the bits that is the order of the values (zeros alike), for those that are not NaNs
+    uint32_t key() const
+    {
+        const uint32_t b = (bits & 0x7fffffffu) ? bits : 0;
+        return (b & 0x80000000u) ? ~b : (b | 0x80000000u);
+    }
+    friend bool operator<(StoredDepth a, StoredDepth b) { return !a.nan() && !b.nan() && a.key() < b.key(); }
+    friend bool operator>(StoredDepth a, StoredDepth b) { return b < a; }
+    friend bool operator<=(StoredDepth a, StoredDepth b) { return !a.nan() && !b.nan() && a.key() <= b.key(); }
+    friend bool operator>=(StoredDepth a, StoredDepth b) { return b <= a; }
+    friend bool operator==(StoredDepth a, StoredDepth b) { return !a.nan() && !b.nan() && a.key() == b.key(); }
+    friend bool operator!=(StoredDepth a, StoredDepth b) { return !(a == b); }
+
+    // v as a float: to nearest, ties to even, on the denormal grid (2^-149) below 2^-126, an infinity from 2^128; a
+    // value that is an infinity or a NaN (Fp::bad) is a NaN (as the float conversion of the model before had it)
+    static StoredDepth FromFp(const Fp& v)
+    {
+        if (v.bad)
+            return Bits(0x7fc00000u);
+        const uint32_t sign = v.neg ? 0x80000000u : 0;
+        if (v.zero())
+            return Bits(sign);
+        uint64_t m = v.mant;
+        int e = v.exp;                                  // value = m 2^e
+        const int top = v.top();                        // in [2^(top - 1), 2^top)
+        // the last bit kept: 24 bits from the leading one, or 2^-149 below 2^-126
+        int keep = top - 24;
+        if (keep < -149)
+            keep = -149;
+        if (e < keep) {
+            const int d = keep - e;
+            if (d > 63) {
+                m = 0;                                  // far below half a step: zero
+            } else {
+                const uint64_t rest = m & ((1ull << d) - 1), half = 1ull << (d - 1);
+                m >>= d;
+                if (rest > half || (rest == half && (m & 1)))
+                    m++;
+            }
+            e = keep;
+        }
+        if (m == 0)
+            return Bits(sign);
+        const int t2 = e + Fp::Bits(m);                 // after the rounding
+        if (t2 > 128)
+            return Bits(sign | 0x7f800000u);
+        if (t2 <= -126) {                               // denormal: the mantissa at 2^-149
+            return Bits(sign | (uint32_t)(m << (e + 149)));
+        }
+        const int n = Fp::Bits(m);
+        const uint32_t frac = (uint32_t)((n <= 24 ? m << (24 - n) : m >> (n - 24)) & 0x7fffffu);
+        return Bits(sign | (uint32_t)(t2 - 1 + 127) << 23 | frac);
+    }
+    // for logs and the probes of dreamcast-tests/model only
+    double toDouble() const { float f; memcpy(&f, &bits, 4); return f; }
+};
+
+template<class Cfg>
+struct DepthTileT {
     bool valid = false, block = false;
-    float first_z = 0;                                  // not valid: the depth every pixel gets
+    StoredDepth first_z;                                // not valid: the depth every pixel gets
     // block form: twice the depth in units of 2^unit is d0 + sx2 * dx + sy2 * dy, with sx2, sy2 the steps from
     // the tile's first pixel center in half pixels
     pvrfp::i128 d0 = 0, dx = 0, dy = 0;
@@ -67,32 +153,24 @@ struct DepthTile {
     // float form (a plane of zero)
     Fp A, B, C;
     int left = 0, top = 0;
-    DepthConfig cfg;
+    Cfg cfg;
 
-    // x, y, z of the three corners in rasterizer order; (left, top): the tile's first pixel
-    void Setup(const float x[3], const float y[3], const float z[3], int tileLeft, int tileTop, const DepthConfig& config)
+    // x, y, z of the three corners in rasterizer order, the bits of IEEE singles as the TA gives them; (left, top):
+    // the tile's first pixel
+    void Setup(const uint32_t x[3], const uint32_t y[3], const uint32_t z[3], int tileLeft, int tileTop, const Cfg& config)
     {
         using namespace pvrfp;
         cfg = config;
         left = tileLeft; top = tileTop;
-        first_z = z[0];
-        const int PB = cfg.productBits, SB = cfg.sumBits, RE = cfg.reach;
+        first_z = StoredDepth::Bits(z[0]);
+        const auto PB = cfg.productBits;
+        const auto SB = cfg.sumBits;
+        const auto RE = cfg.reach;
         Fp X[3], Y[3], Z[3];
         const bool ranged = cfg.range != 0;
         auto inf = [](bool neg) { Fp r; r.bad = true; r.neg = neg; return r; };
         auto zero = [](bool neg) { Fp r; r.neg = neg; return r; };
-        auto load = [&](float f) {
-            if (!ranged)
-                return Fp::FromFloat(f);
-            uint32_t u;
-            memcpy(&u, &f, 4);
-            const uint32_t field = (u >> 23) & 0xff;
-            const bool neg = (u >> 31) != 0;
-            if (field == 0) return zero(neg);
-            if (field == 255) return inf(neg);
-            Fp r; r.neg = neg; r.mant = (u & 0x7fffff) | 0x800000; r.exp = (int32_t)field - 150;
-            return r;
-        };
+        auto load = [&](uint32_t u) { return Fp::FromSingle(u, ranged); };
         auto limit = [&](const Fp& r, bool sumSign) {
             if (!ranged || r.zero()) return r;
             if (r.top() - 1 > 127) return inf(r.neg);
@@ -131,9 +209,11 @@ struct DepthTile {
             // dreamcast-tests/pvr-tests/modvol, where a polygon of garbage with such corners decides whether it is in a
             // volume, has it behind 0.75.
             valid = false; block = false;
-            first_z = 0.0f;
+            first_z = StoredDepth();
             return;
         }
+        if (!det.bad && !det.zero() && (pvrfp::perpVal.bad || !pvrfp::perpVal.zero()) && pvrfp::AbsAtMost(det, pvrfp::perpVal))
+            det = Fp();                                 // FPU_PERP_VAL: as a determinant of zero
         if (ranged && !det.zero() && !det.bad) {
             // the depth of the tile's first pixel with these numbers; an infinity is stored as one
             Fp inv0 = Recip(det, cfg.recipBits);
@@ -141,7 +221,8 @@ struct DepthTile {
             Fp first0 = mul(add(add(mul(a, x00), mul(b, y00)), c), inv0);
             if (first0.bad || a.bad || b.bad || c.bad) {
                 valid = false; block = false;
-                first_z = first0.bad ? (first0.neg ? -INFINITY : INFINITY) : (float)first0.cut(cfg.storedBits).toDouble();
+                first_z = first0.bad ? StoredDepth::Bits(first0.neg ? 0xff800000u : 0x7f800000u)
+                                     : StoredDepth::FromFp(first0.cut(cfg.storedBits));
                 return;
             }
         }
@@ -153,7 +234,7 @@ struct DepthTile {
             if (det.zero() && !det.bad && !Z[0].bad && !Z[1].bad && !Z[2].bad) {
                 Fp third = Recip(Fp::FromHalves(6), cfg.recipBits);
                 Fp mean = Mul(sum3(Z[0], Z[1], Z[2]), third, cfg.coefBits);
-                first_z = (float)mean.cut(cfg.storedBits).toDouble();
+                first_z = StoredDepth::FromFp(mean.cut(cfg.storedBits));
             }
             return;
         }
@@ -194,7 +275,7 @@ struct DepthTile {
 
     // The depth stored for the pixel i columns right and j rows down of the tile's first pixel; centers: the
     // ISP samples at pixel centers (HALF_OFFSET bit 0).
-    float At(int i, int j, bool centers) const
+    StoredDepth At(int i, int j, bool centers) const
     {
         using namespace pvrfp;
         if (!valid)
@@ -210,12 +291,16 @@ struct DepthTile {
             v.mant = (uint64_t)(m >> drop);
             v.exp = unit - 1 + drop;
         } else {
-            const int PB = cfg.productBits, SB = cfg.sumBits, RE = cfg.reach;
+            const auto PB = cfg.productBits;
+            const auto SB = cfg.sumBits;
+            const auto RE = cfg.reach;
             Fp X = Fp::FromHalves(2 * (int64_t)(left + i) + (centers ? 1 : 0)), Y = Fp::FromHalves(2 * (int64_t)(top + j) + (centers ? 1 : 0));
             v = Add(Add(Mul(A, X, PB), Mul(B, Y, PB), SB, RE), C, SB, RE);
         }
-        return (float)v.cut(cfg.storedBits).toDouble();
+        return StoredDepth::FromFp(v.cut(cfg.storedBits));
     }
 };
+
+using DepthTile = DepthTileT<DepthConfig>;    // the run-time form, for the probes and generators
 
 } // namespace pvrisp

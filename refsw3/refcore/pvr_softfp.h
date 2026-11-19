@@ -21,8 +21,15 @@
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include <type_traits>
+#include "pvr_bits.h"
 
 namespace pvrfp {
+
+// Precisions and modes are int-like: a plain int (the run-time form, which the model's probes sweep) or C<N>, the
+// same number baked in at compile time (the hardware's, which refsw3 runs). Every operation here is a template on
+// that type, one body for both: with C<N> the compiler folds it into constants.
+template<int N> using C = std::integral_constant<int, N>;
 
 // 128 bit integers for the exact sums and the fixed-point stepping. GCC and Clang have them (__int128); MSVC does
 // not, and gets two structs that do, in two's complement, the few things this code asks of them: shifts, sums,
@@ -105,16 +112,7 @@ struct Fp {
     uint64_t mant = 0;      // at most 32 bits after any operation here
 
     // the number of bits of v (0 for 0)
-    static int Bits(uint64_t v)
-    {
-#if defined(__GNUC__) || defined(__clang__)
-        return v ? 64 - __builtin_clzll(v) : 0;
-#else
-        int n = 0;
-        while (v) { n++; v >>= 1; }
-        return n;
-#endif
-    }
+    static int Bits(uint64_t v) { return BitLength(v); }
 
     bool zero() const { return mant == 0; }
 
@@ -124,7 +122,8 @@ struct Fp {
     Fp operator-() const { Fp r = *this; r.neg = !r.neg; return r; }
 
     // Keep the `bits` most significant bits of the mantissa (toward zero).
-    Fp cut(int bits) const
+    template<class B>
+    Fp cut(B bits) const
     {
         Fp r = *this;
         int n = Bits(r.mant);
@@ -147,10 +146,37 @@ struct Fp {
         return r;
     }
 
+    // FromFloat, FromDouble, toDouble: the host's floats, for the probes and generators of dreamcast-tests/model
+    // (which work in them) and for logs. refsw3's arithmetic does not use them: its inputs are the bits of IEEE
+    // singles (FromSingle, FromBits).
     static Fp FromFloat(float f)
     {
         uint32_t u;
         memcpy(&u, &f, 4);
+        return FromBits(u);
+    }
+    // An IEEE single as the setup units take it (the TA's vertices, the registers: their bits). ranged (the units'
+    // range rules, dreamcast-tests/pvr-tests/uvmeas wexp, whuge, wtiny, wspec, huge): exponent field 0 is a zero and
+    // field 255 an infinity (Fp::bad), whatever the mantissa says, both with their sign; otherwise FromBits.
+    static Fp FromSingle(uint32_t u, bool ranged)
+    {
+        if (!ranged)
+            return FromBits(u);
+        Fp r;
+        r.neg = (u >> 31) != 0;
+        const uint32_t field = (u >> 23) & 0xff;
+        if (field == 255)
+            r.bad = true;
+        else if (field != 0) {
+            r.mant = (u & 0x7fffff) | 0x800000;
+            r.exp = (int32_t)field - 150;
+        }
+        return r;
+    }
+    // the bits of an IEEE single (an input format: vertices, registers), exactly; an infinity or a NaN is bad
+    // (unsigned), a denormal a denormal
+    static Fp FromBits(uint32_t u)
+    {
         Fp r;
         r.neg = (u >> 31) != 0;
         uint32_t e = (u >> 23) & 0xff, m = u & 0x7fffff;
@@ -193,7 +219,8 @@ struct Fp {
         double m = frexp(fabs(v), &e);
         r.mant = (uint64_t)ldexp(m, 53);
         r.exp = e - 53;
-        while (!(r.mant & 1)) { r.mant >>= 1; r.exp++; }
+        const int tz = TrailingZeros(r.mant);
+        r.mant >>= tz; r.exp += tz;
         return r;
     }
 
@@ -206,8 +233,8 @@ struct Fp {
         return r;
     }
 
-    // For debugging and for code that still works in double: exact while the mantissa has at most 53 bits and
-    // the exponent is in a double's range.
+    // For logs and the probes (see FromFloat): exact while the mantissa has at most 53 bits and the exponent is in a
+    // double's range.
     double toDouble() const
     {
         if (bad)
@@ -220,8 +247,72 @@ struct Fp {
     bool atLeastPow2(int e) const { return mant != 0 && top() > e; }
 };
 
+// floor(v 2^shift) as an integer, clamped to [-2^40, 2^40]; v finite (a negative zero gives 0)
+inline int64_t FloorScaled(const Fp& v, int shift)
+{
+    const int64_t lim = (int64_t)1 << 40;
+    if (v.zero())
+        return 0;
+    if (v.top() + shift > 40)
+        return v.neg ? -lim : lim;
+    const int e = v.exp + shift;
+    int64_t m;
+    if (e >= 0)
+        m = (int64_t)(v.mant << e);
+    else {
+        const int s = -e;
+        const uint64_t lost = s >= 64 ? v.mant : (v.mant & ((1ull << s) - 1));
+        m = s >= 64 ? 0 : (int64_t)(v.mant >> s);
+        if (v.neg && lost)
+            m += 1;
+    }
+    return v.neg ? -m : m;
+}
+
+// The bits of the IEEE single v 2^e, v an integer of at most 24 bits (0 <= v < 2^24) and the result a normal number:
+// a colour's 8 bit value as the planes take it (2^-8 units, refsw_tile.h ColorExp)
+inline uint32_t SingleBits(uint32_t v, int e)
+{
+    if (v == 0)
+        return 0;
+    const int n = Fp::Bits(v);
+    return (uint32_t)(e + n - 1 + 127) << 23 | ((v << (24 - n)) & 0x7fffff);
+}
+
+// |a| <= |b|, exactly; a must be finite, b an infinity (bad) is above every finite value
+inline bool AbsAtMost(const Fp& a, const Fp& b)
+{
+    if (b.bad || a.zero())
+        return true;
+    if (b.zero())
+        return false;
+    if (a.top() != b.top())
+        return a.top() < b.top();
+    return a.mant << (64 - Fp::Bits(a.mant)) <= b.mant << (64 - Fp::Bits(b.mant));
+}
+
+// a <= b, exactly, both finite (a zero of either sign is zero)
+inline bool AtMost(const Fp& a, const Fp& b)
+{
+    const bool an = a.neg && !a.zero(), bn = b.neg && !b.zero();
+    if (an != bn)
+        return an;
+    return an ? AbsAtMost(b, a) : AbsAtMost(a, b);
+}
+
+// FPU_PERP_VAL (as a float): a triangle whose determinant is at most this in size is taken as one of determinant
+// zero, by the ISP's depth (the mean of the corners) and the TSP's planes (flat at the third corner): "perpendicular"
+// (dreamcast-tests README "perpval": at 1/128, the value 22 polly2-data dumps set, 1.0 and 2^20 every pixel the
+// console changes on covmeas's sliver sets and pvr-tests/perpval, up to 136,764 a run; whether a determinant equal
+// to it counts is not measured). Its sign does not count (-1 is 1.0, every pixel), and an infinity takes every
+// triangle with a finite determinant (then not modelled: triangles of huge or infinite determinant, faredge and detinf,
+// and 3,807 of zmeas gen5's 174,646 changed pixels). Set per render by refsw3 (the register's size: Fp::bad for an infinity; a NaN:
+// 0); 0 in the probes.
+inline Fp perpVal;
+
 // a * b, the product's mantissa cut to `bits` bits.
-inline Fp Mul(const Fp& a, const Fp& b, int bits)
+template<class B>
+inline Fp Mul(const Fp& a, const Fp& b, B bits)
 {
     Fp r;
     r.bad = a.bad || b.bad;
@@ -237,7 +328,8 @@ inline Fp Mul(const Fp& a, const Fp& b, int bits)
 // a sticky bit) and its mantissa is then cut to `bits` bits.
 // guard: how many bits below the larger operand's last bit the smaller operand keeps when it is aligned (the rest
 // is cut off before the add); negative: all of them (exact, as with a sticky bit).
-inline Fp Add(const Fp& a, const Fp& b, int bits, int reach, int guard = -1)
+template<class B, class R, class G = int>
+inline Fp Add(const Fp& a, const Fp& b, B bits, R reach, G guard = G(-1))
 {
     Fp r;
     r.bad = a.bad || b.bad;
@@ -280,14 +372,16 @@ inline Fp Add(const Fp& a, const Fp& b, int bits, int reach, int guard = -1)
     return r;
 }
 
-inline Fp Sub(const Fp& a, const Fp& b, int bits, int reach) { return Add(a, -b, bits, reach); }
+template<class B, class R>
+inline Fp Sub(const Fp& a, const Fp& b, B bits, R reach) { return Add(a, -b, bits, reach); }
 
 // 1 / v with the mantissa cut to `bits` bits (v not zero)
-inline Fp Recip(const Fp& v, int bits)
+template<class B>
+inline Fp Recip(const Fp& v, B bits)
 {
     Fp d = v.cut(32);
     int nb = Fp::Bits(d.mant);
-    int sh = nb + bits + 2;                             // at most 60
+    int sh = nb + (int)bits + 2;                        // at most 60
     Fp r;
     r.bad = v.bad;
     r.neg = v.neg;
