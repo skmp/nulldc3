@@ -76,34 +76,42 @@ struct DepthConfig {
 using pvrfp::Recip;
 
 // A depth as the ISP stores and compares it: the bits of an IEEE single (19 significant bits from the depth unit; a
-// corner's z as given when the plane cannot be set up; the background's), compared as floats compare: a NaN with
-// nothing (every compare false but !=), -0 equal to +0. Measured: the 19 bits (zmeas, zblock, precision), depths
-// below zero drawn like any other (uvmeas wneg), infinite and NaN inputs (huge, detinf). GAP: below 2^-126 the
-// value is rounded to a float's denormal grid, and from 2^128 it is an infinity: a float's range, not measured as
-// the depth buffer's own; nor is a NaN depth's compare (huge passes with it).
+// corner's z as given when the plane cannot be set up; the background's, refsw_lists.cpp). The compare is NOT a
+// float compare: the bits are read as a signed 32 bit integer, the fraction bits of a negative depth inverted. So
+// positive depths order as floats, every negative one is below zero, and of two negative depths the one with the
+// larger exponent is the larger, within one exponent the float's own order holds (-2 > -1 > -1.5 > -0.5 > -0.75);
+// a NaN is an ordinary number (positive ones above +infinity); -0 is +0 (dreamcast-tests/pvr-tests/zsign: every pair
+// of 20 depths from -2^100 to 2^100, textured so that the negative ones show, Greater and Less; bgspec, bgneg,
+// bgneg2: probes against backgrounds below zero). Also measured: the 19 bits (zmeas, zblock, precision), depths
+// below zero drawn like any other (uvmeas wneg). GAP: below 2^-126 the value is rounded to a float's denormal grid,
+// and from 2^128 it is an infinity: a float's range, not measured as the depth buffer's own.
 struct StoredDepth {
     uint32_t bits = 0;
     static StoredDepth Bits(uint32_t b) { StoredDepth d; d.bits = b; return d; }
-    bool nan() const { return (bits & 0x7fffffffu) > 0x7f800000u; }
-    // an order of the bits that is the order of the values (zeros alike), for those that are not NaNs
-    uint32_t key() const
+    int32_t key() const
     {
-        const uint32_t b = (bits & 0x7fffffffu) ? bits : 0;
-        return (b & 0x80000000u) ? ~b : (b | 0x80000000u);
+        if (bits == 0x80000000u)
+            return 0;
+        return (int32_t)(bits ^ ((bits >> 31) ? 0x007fffffu : 0));
     }
-    friend bool operator<(StoredDepth a, StoredDepth b) { return !a.nan() && !b.nan() && a.key() < b.key(); }
+    friend bool operator<(StoredDepth a, StoredDepth b) { return a.key() < b.key(); }
     friend bool operator>(StoredDepth a, StoredDepth b) { return b < a; }
-    friend bool operator<=(StoredDepth a, StoredDepth b) { return !a.nan() && !b.nan() && a.key() <= b.key(); }
+    friend bool operator<=(StoredDepth a, StoredDepth b) { return a.key() <= b.key(); }
     friend bool operator>=(StoredDepth a, StoredDepth b) { return b <= a; }
-    friend bool operator==(StoredDepth a, StoredDepth b) { return !a.nan() && !b.nan() && a.key() == b.key(); }
+    friend bool operator==(StoredDepth a, StoredDepth b) { return a.key() == b.key(); }
     friend bool operator!=(StoredDepth a, StoredDepth b) { return !(a == b); }
 
-    // v as a float: to nearest, ties to even, on the denormal grid (2^-149) below 2^-126, an infinity from 2^128; a
-    // value that is an infinity or a NaN (Fp::bad) is a NaN (as the float conversion of the model before had it)
+    // A depth that overflows is 2^127 with its sign: a polygon whose plane cannot be set up for its size (corners at
+    // the largest float, +-infinity, a NaN, or -2^116 and beyond over a cell) ties with a background of +-2^127, is
+    // above one of 1.5 2^126 and below one of 1.5 2^127 (dreamcast-tests/pvr-tests/bgbig, bgspec, zsign page 15).
+    static StoredDepth Saturated(bool neg) { return Bits((neg ? 0x80000000u : 0) | 0x7f000000u); }
+
+    // v as a float: to nearest, ties to even, on the denormal grid (2^-149) below 2^-126, 2^127 (Saturated) from
+    // 2^128 and for an infinity or a NaN (Fp::bad)
     static StoredDepth FromFp(const Fp& v)
     {
         if (v.bad)
-            return Bits(0x7fc00000u);
+            return Saturated(v.neg);
         const uint32_t sign = v.neg ? 0x80000000u : 0;
         if (v.zero())
             return Bits(sign);
@@ -130,7 +138,7 @@ struct StoredDepth {
             return Bits(sign);
         const int t2 = e + Fp::Bits(m);                 // after the rounding
         if (t2 > 128)
-            return Bits(sign | 0x7f800000u);
+            return Saturated(v.neg);
         if (t2 <= -126) {                               // denormal: the mantissa at 2^-149
             return Bits(sign | (uint32_t)(m << (e + 149)));
         }
@@ -215,14 +223,13 @@ struct DepthTileT {
         if (!det.bad && !det.zero() && (pvrfp::perpVal.bad || !pvrfp::perpVal.zero()) && pvrfp::AbsAtMost(det, pvrfp::perpVal))
             det = Fp();                                 // FPU_PERP_VAL: as a determinant of zero
         if (ranged && !det.zero() && !det.bad) {
-            // the depth of the tile's first pixel with these numbers; an infinity is stored as one
+            // the depth of the tile's first pixel with these numbers; an overflow is stored as 2^127 (Saturated)
             Fp inv0 = Recip(det, cfg.recipBits);
             Fp x00 = Fp::FromHalves(2 * (int64_t)left + 1), y00 = Fp::FromHalves(2 * (int64_t)top + 1);
             Fp first0 = mul(add(add(mul(a, x00), mul(b, y00)), c), inv0);
             if (first0.bad || a.bad || b.bad || c.bad) {
                 valid = false; block = false;
-                first_z = first0.bad ? StoredDepth::Bits(first0.neg ? 0xff800000u : 0x7f800000u)
-                                     : StoredDepth::FromFp(first0.cut(cfg.storedBits));
+                first_z = first0.bad ? StoredDepth::Saturated(first0.neg) : StoredDepth::FromFp(first0.cut(cfg.storedBits));
                 return;
             }
         }

@@ -609,16 +609,25 @@ void RenderCORE() {
             // not; trtie pages 12-15, polly2-data rez_ingame: a polygon at exactly a background of about 1e-5 is in front
             // of it; dumprules pages 4-7, polly2-data xtreme_intro: nothing is behind a background below 2^-20).
             // On the register's bits: from 0.25 on (exponent field 125) the low 5 of the 23 fraction bits go, below it
-            // those under 2^-20 (130 - field), below 2^-20 (field 107) all of it. GAP: a background below zero, an
-            // infinity or a NaN is kept as given (but one below 2^-20 in size is 0): not measured.
+            // those under 2^-20 (130 - field), below 2^-20 (field 107) all of it. Exponent field 255 (an infinity, a
+            // NaN) is 254, the fraction kept: +-infinity is +-2^127 and ties with a polygon that overflows
+            // (StoredDepth::Saturated), 0x7f800001 too (its fraction is cut), a NaN is above it (dreamcast-tests/pvr-tests
+            // bgspec, bgbig: and the largest float, 0x7f7fffe0 cut, is above it; 2^127 ties).
+            // Below zero (pvr-tests/bgneg, bgneg2, bgspec; the ISP's order is StoredDepth's): a magnitude below 2^-20 is
+            // 0; from 2^-20 to below 64 (fields 107 .. 132) the background is the lowest depth of the binade of 64
+            // in that order, 0xc2ffffff (-127.99999, not cut: below the probe at 0xc2ffffe0, above -32; the same
+            // for -2^-20, -1, -32, -63.75 and 20 more); from 64 on it is itself (-64, -65, -100, -1024, -2^20,
+            // -2^60, -2^100, -inf, -NaN). GAP: whether one of those with low bits loses them as a positive one does.
             const u32 bg = ISP_BACKGND_D.i, field = (bg >> 23) & 0xff;
             u32 bgBits;
-            if (field == 0xff || ((bg >> 31) && (bg & 0x7fffffff)))
-                bgBits = field < 107 ? 0 : bg;
+            if (bg >> 31)
+                bgBits = field < 107 ? 0 : field < 133 ? 0xc2ffffffu : (bg & ~31u);
             else {
                 const int cut = std::max(5, 130 - (int)field);
-                bgBits = cut > 23 ? (bg & 0x80000000) : (bg & ~((1u << cut) - 1));
+                bgBits = cut > 23 ? 0 : (bg & ~((1u << cut) - 1));
             }
+            if (field == 255)
+                bgBits -= 1u << 23;
             ClearBuffers(bgTag, ZType::Bits(bgBits), 0);
         } else {
             RENDLOG("ZKEEP");
