@@ -379,10 +379,25 @@ struct RecipTable {
 // The leading bit stays where it is and the 15 bits under it are negated: a mantissa m of 16 bits (32768 .. 65535) is
 // read as 32768 + (-m mod 32768), so -v between two powers of two reads as 3 * 2^p - v, and a power of two as
 // itself. The sign is dropped: the quotient has the numerator's.
+// A 1/w of -1 grid unit (every bit set, no leading bit: -2^-143, Plane::Value) is not normalized first: its mantissa
+// is all ones at the smallest exponent, and with the leading bit forced it is read as 0xFFFF 2^-143, just under
+// 2^-127 (dreamcast-tests/pvr-tests/texfar_m1: the first pixel of a line where 1/w is exactly -1 unit, under
+// attribute / w from 2^-138 to 2^40, 1/w 2^-20 .. 2^100, both signs: 166 of 166 point-sampled readings with this
+// and no other mantissa from 2^-160 to 2^-110; 2^-143 itself got 98 of 300 regions; texfar_m1q: the flat
+// attribute's quotient there, -1 unit over -1 unit, a hair below 0, not -1: 0 of 300 regions with 2^-143, 300 so).
+// The same as the rule above if the 15 bits are those of the two's complement mantissa, -1 being 0xFFFF. So no
+// denominator is below 2^-128 and no quotient above about 2^243 (texfar_quot, texfar_m1q). GAP: the mipmap level
+// at such a pixel (MipChoose's w comes from here too) is not measured.
 inline Fp DenominatorSeen(const Fp& den)
 {
     if (!den.neg || den.zero())
         return den;
+    if (den.top() < -127) {                             // only -1 unit is below 2^-128 (Plane::Value)
+        Fp d;
+        d.mant = 0xffff;
+        d.exp = -143;
+        return d;
+    }
     Fp d = den;
     d.neg = false;
     int bits = Fp::Bits(d.mant);

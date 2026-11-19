@@ -1178,6 +1178,16 @@ ALWAYS_INLINE u32 BlendMul(u32 x, bool inverted) {
 
 using TextureFetch_fp = decltype(&TextureFetch<false, false, false, false, 0>);
 
+// A coordinate in 1/256 texel as refsw3 carries it: as it is inside +-2^30, beyond that the sign and the low 26 bits
+// (all that wrapping, flipping and clamping look at; see TexCoordFixed).
+ALWAYS_INLINE int CoordKeep(int64_t f) {
+    if (f >= 1073741824)
+        return (int)(1073741824 + (f & 67108863));
+    if (f < -1073741824)
+        return (int)(-1073741824 + (f & 67108863));
+    return (int)f;
+}
+
 // A texture coordinate in 1/256 texel as hardware sees it. Hardware's coordinates come out a hair toward
 // zero: a coordinate that is exactly on a boundary belongs to the texel before it, except at 0
 // (dreamcast-tests/pvr-tests/sample: point sampling with half-pixel shifts, bilinear with the weights of page 2).
@@ -1188,13 +1198,19 @@ ALWAYS_INLINE int TexCoordFixed(const pvrfp::Fp& u, int shift) {
     // texels, clamp and flip; toward zero gets 437 of its 1568 regions wrong). The coordinate the TSP delivers is
     // already rounded down (PlaneStepper3), which is what makes a coordinate exactly on a texel boundary show the
     // texel before it (dreamcast-tests/pvr-tests/sample, uvmeas). Far outside an int (coordinates of thousands of
-    // texture repeats): the sign and the low 26 bits, which is all that wrapping, flipping and clamping look at;
-    // 2^128 and beyond (an infinity) or not a number: texel 0.
+    // texture repeats): the sign and the low 26 bits, which is all that wrapping, flipping and clamping look at.
+    // That holds at 2^128 and beyond too: there is no overflow to texel 0 there (as the old float code had it), a
+    // clamped one is the last texel, below zero the first, wrapped and flipped the low bits are zeros
+    // (dreamcast-tests/pvr-tests/texfar_edge: quotients of exactly 2^128, (1 + 2^-15) 2^128, 1.5 2^128, 2^129,
+    // 2^132 and up to the largest float times the size, in 1/256 texel, of 8, 64 and 1024 texel textures, along U
+    // and V, point and bilinear: 63 clamped regions the last texel, as above 2^127; texfar: 28 regions;
+    // texfar_quot: quotients over a zero 1/w up to 2^260 in 1/256 texel, 103 regions; texfar_m1q: up to 2^261).
+    // The low bits are the integer's own up to where the quotient's 17 bits leave them (texfar_bits: tops 2^9 ..
+    // 2^36, wrap and flip, both signs, U and V: 300 of 300, as refsw3 had it).
+    // A quotient is never an infinity or a NaN (Divide); u.bad is for a caller that has one.
     if (u.bad || u.zero())
         return 0;
     const int top = u.top() + shift;                    // |u| 2^shift is in [2^(top - 1), 2^top)
-    if (top > 128)
-        return 0;
     const int e = u.exp + shift;                        // u 2^shift = mant 2^e
     if (top <= 31) {
         int64_t f;
@@ -1209,11 +1225,7 @@ ALWAYS_INLINE int TexCoordFixed(const pvrfp::Fp& u, int shift) {
         }
         if (u.neg)
             f = -f;
-        if (f >= 1073741824)
-            return (int)(1073741824 + (f & 67108863));
-        if (f < -1073741824)
-            return (int)(-1073741824 + (f & 67108863));
-        return (int)f;
+        return CoordKeep(f);
     }
     // 2^30 and more: an integer; its low 26 bits (two's complement for a negative one)
     const uint64_t low = e >= 26 ? 0 : (uint64_t)(u.mant << e) & 67108863;
@@ -1256,8 +1268,19 @@ static Color TextureFilter(TSP tsp, TCW tcw, const pvrfp::Fp& u, const pvrfp::Fp
         // half texel and all, and then scaled to the full height: declared 16x8, the bilinear footprint sits
         // one whole row higher than declared 16x16 (dreamcast-tests/pvr-tests/sample, "declared").
         const int d = (int)tsp.TexU - (int)tsp.TexV;
-        int v0 = TexCoordFixed(v, 3 + tsp.TexV + 8) + halfpixel;
-        v0 = d > 0 ? v0 * (1 << d) : v0 >> -d;
+        // Scaled up (declared shorter), the coordinate keeps the fraction bits the scaling brings up: it is
+        // v at the full height, 8 fraction bits there, less the half texel of the declared height, 128 << d, which
+        // tells only from d = 4 on, where the lowest of them reaches the 5 bit weight (dreamcast-tests/pvr-tests/
+        // texfar_mipv row 12, 256x256 declared 256x8, V flipped, bilinear, v below zero: 5 of 20 regions one step
+        // of green off with the declared height's coordinate scaled, 20 of 20 so; texfar_decl, every V weight
+        // step of 256 declared x8, x16, x32, 128x8, 64x8 at levels 0, 1, 2, wrap, flip, clamp, both signs: 122 of
+        // 300 regions wrong scaled, every one with d >= 4 + level, 300 of 300 so). The scaling is of the whole
+        // coordinate, however far out: a clamped one past the declared V size is the last row, not an int that
+        // overflowed to row 0 (dreamcast-tests/pvr-tests/texfar_mip rows 11 and 12, 64x64 declared 64x8, V
+        // clamped, point and bilinear: 24 regions of v from 2^64 to the largest float times 2^11 in 1/256 texel,
+        // every one the last row; texfar_mipv: the low bits after the scaling, d = 1, 2, 3, 5, 280 regions).
+        int v0 = d > 0 ? CoordKeep((int64_t)TexCoordFixed(v, 3 + tsp.TexU + 8) + (int64_t)halfpixel * (1 << d))
+                       : (TexCoordFixed(v, 3 + tsp.TexV + 8) + halfpixel) >> -d;
         ui = (TexCoordFixed(u, 3 + tsp.TexU + 8) + halfpixel) >> MipLevel;
         vi = v0 >> MipLevel;
     }
