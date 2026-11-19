@@ -353,6 +353,28 @@ struct PVRDevice : MMIODevice {
             }
         }
 
+        // SPAN_SORT_CFG: every game and test writes 0x101 (span sort bit 0, offset sort bit 8). On a console
+        // (dreamcast-tests README "spansortcfg") neither changes a picture, only the order the TSP shades runs in and
+        // the time. refsw3 models offset sort (a strip's triangles one primitive to the sorter) and, with the sorter
+        // off, shades in raster order, where a console shades some runs early by its pipeline's timing (unmodelled;
+        // the time, up to 4.6 times, neither). Bit 16 (TSP cache bypass): the same order, the time within 2%
+        // (0x10101; pictures not compared). Two settings hung the core on a later render, and every render after it,
+        // until the console was switched off: offset sort without span sort (0x100, the manual: setting prohibited),
+        // and the cache bypass without offset sort (0x10001, on the 23rd render of a run).
+        static u32 spanSortSaid = 0x101;    // said once a value, from the one everything writes (the register starts at 0)
+        if (addr == SPAN_SORT_CFG_addr && data != spanSortSaid)
+        {
+            spanSortSaid = data;
+            if ((data & 0x101) == 0x100)
+                EMUERROR("SPAN_SORT_CFG %08X: offset sort without span sort (prohibited) hangs a console's core on a later render", data);
+            else if ((data & 0x10100) == 0x10000)
+                EMUERROR("SPAN_SORT_CFG %08X: TSP cache bypass without offset sort hung a console's core on a later render", data);
+            else if (data & 0x10000)
+                EMUWARN("SPAN_SORT_CFG %08X: TSP cache bypass (bit 16): rendered as without it (a console: the same order, the time within 2%%)", data);
+            else if (!(data & 1))
+                EMUWARN("SPAN_SORT_CFG %08X: span sort off: shaded in raster order; a console's timing-dependent order and its up to 4.6 times the render time are not modelled", data);
+        }
+
         if (addr == TA_LIST_CONT_addr)
         {
             //a write of anything works ? (the emulator's own TA; refsw3-ta needs bit 31)
