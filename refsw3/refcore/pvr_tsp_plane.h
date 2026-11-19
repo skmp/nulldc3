@@ -15,7 +15,8 @@
         below zero). The result is cut down to 16 bits.
       - attribute = (attribute / w) / (1 / w) with a table reciprocal of 16 bits (512 measured digits) and the
         product of the two mantissas cut down at 17 fractional bits.
-      - a determinant of zero: the plane is flat at the third corner's value (measured for colors).
+      - a determinant of zero: the plane is flat: 1/w the mean of the depths, an attribute the third corner's
+        (dreamcast-tests/pvr-tests/slivers_detzero, slivers_dzzero).
 */
 #pragma once
 #include "pvr_softfp.h"
@@ -213,9 +214,52 @@ struct PlaneT {
         if (!det.bad && !det.zero() && (pvrfp::perpVal.bad || !pvrfp::perpVal.zero()) && pvrfp::AbsAtMost(det, pvrfp::perpVal))
             det = Fp();                                 // FPU_PERP_VAL: as a determinant of zero (pvr_isp_depth.h)
         if (det.zero() && !det.bad) {
-            // flat at the third corner's value (dreamcast-tests/pvr-tests/covmeas, mix degen --vcol; for 1 / w a guess)
+            // A determinant of zero: every plane is flat. The 1/w plane is the mean of the three depths, ((z1 + z2) +
+            // z3) times the single nearest 1/3 (0x3eaaaaab, a hair above it), the sums and the product in the setup's
+            // 24 bit arithmetic; an attribute plane is the third corner's attribute times that, so a colour or U is
+            // the third corner's (dreamcast-tests/pvr-tests/covmeas, mix degen --vcol: the colour). Measured with
+            // dreamcast-tests/pvr-tests/slivers_tsp (covmeas's degenerate and almost-point triangles with a depth, a U
+            // and a colour per corner: with the third corner's depth, refsw3's guess until then, 42 of its 3600
+            // cells differ, every degenerate one that is drawn, in 1/w and U; with the mean none) and slivers_detzero
+            // (9,600 triples of depths picked where ways of taking the mean differ, each read as 1/w through table
+            // fog, as a U of 64 over it and as a random U over it: 9,600 of 9,600 triples; with the 1/3 cut down,
+            // 0xaaaaaa, 8,143; with 1/3 rounded up at 26 bits or more 9,594; the sums 25 bits wide 9,474; (z1 + z3) + z2
+            // 9,413, (z2 + z3) + z1 9,379; the exact mean 9,373; the colour of every one, Gouraud, the third
+            // corner's). FPU_PERP_VAL's triangles take the same path (slivers_perp: 2,400 of 2,400 cells).
             A = Fp(); B = Fp();
-            C = attr ? mul(AT[2], Z[2]).cut(cfg.coefBits) : Z[2].cut(cfg.coefBits);
+            Fp third;
+            third.mant = 0xaaaaab;
+            third.exp = -25;
+            // A depth of exponent field 0 is a zero, but not quite in the first addition: there, against a depth of
+            // 2^-126 .. 2^-125 of the other sign, it is taken as (1 + m 2^-23) 2^-127 (m its mantissa, the hidden
+            // bit not cleared, as the planes' last addition takes a zero for 2^-127), and if the difference would be
+            // below 2^-126 the sum is +0; otherwise the sum is the other depth as it is, the zero taking nothing
+            // off (dreamcast-tests/pvr-tests/slivers_dzspec: 4 rows of tiny depths; slivers_dzzero: 9,600 of 9,600
+            // triples, 831 of them exactly on the boundary, which keeps the depth. Taking the zero off the kept
+            // depth: 6,711; the zero as its denormal value: 7,562; as 2^-127: 7,564; a zero as zero: 6,834). Signs
+            // equal, or a larger depth: the zero is nothing. In the last addition the planes' rule (Setup above);
+            // GAP: not told apart there, the mean of a sum below 2^-125 is below the range anyway.
+            auto fieldZero = [&](int k) { return ((z[k] >> 23) & 0xff) == 0; };
+            auto withZero = [&](const Fp& p, uint32_t zeroBits) {
+                const bool zneg = (zeroBits >> 31) != 0;
+                if (p.zero() || p.bad || p.top() - 1 != cfg.expLow || p.neg == zneg)
+                    return p;
+                Fp zv;
+                zv.mant = (1u << 23) | (zeroBits & 0x7fffffu);
+                zv.exp = -150;
+                zv.neg = zneg;
+                const Fp r = Add(p, zv, 62, 400);
+                return (r.zero() || r.top() - 1 < cfg.expLow) ? Fp() : p;
+            };
+            Fp first;
+            if (ranged && fieldZero(0) && !fieldZero(1))
+                first = withZero(Z[1], z[0]);
+            else if (ranged && fieldZero(1) && !fieldZero(0))
+                first = withZero(Z[0], z[1]);
+            else
+                first = addTerm(Z[0], Z[1], false);
+            const Fp mean = mul(addTerm(first, Z[2], true), third);
+            C = attr ? mul(AT[2], mean).cut(cfg.coefBits) : mean.cut(cfg.coefBits);
             A0 = A; B0 = B; C0 = C;
             return;
         }

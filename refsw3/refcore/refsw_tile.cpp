@@ -1655,6 +1655,10 @@ ALWAYS_INLINE u8 LookupFogTable(const pvrfp::Fp& W) {
     const int dm = fog_density[1], de = (s8)fog_density[0];
     uint64_t M;                         // fogW = M 2^E, M in [2^23, 2^24)
     int E;
+    // A 1/w below zero gets no fog, as one below 1 (dreamcast-tests/pvr-tests/slivers_dzspec: 1,501 rows of triangles
+    // with a flat depth of -2^-8 .. -2^8 and 575 of determinant zero whose mean is below zero, all black under a
+    // white fog as the console has them, where its magnitude would give 18,012 and 18,400 pixels grey; slivers_tsp:
+    // 9 pixels of slivers whose 1/w is below zero)
     if (W.bad || W.neg || W.zero() || dm == 0) {
         M = 1ull << 23; E = -23;        // below 1: 1
     } else {
