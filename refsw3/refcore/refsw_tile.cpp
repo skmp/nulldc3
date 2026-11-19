@@ -250,7 +250,93 @@ bool GetMoreToDraw()
     return MoreToDraw;
 }
 
-    // Render to ACCUM from TAG buffer
+// From the ISP to the TSP, as the hardware hands a tile over (dreamcast-tests/pvr-tests/PIPELINE_SHAPE.md [2], [2b];
+// timemeas/REPORT.md "In what order the TSP shades a tile"):
+//   SpanGen    the ISP's side cuts the tag buffer into spans (runs): pixels of one primitive next to each other
+//              on a line, in raster order, one span a clock whatever its length
+//   SpanSort   the span sorter puts them in the order the TSP shades them: a window of 96 spans filled in raster
+//              order; the oldest span's primitive is drained, all its spans in the window oldest first, also those
+//              that come in while it lasts; then the next oldest span's primitive. Each tile (and here each pass)
+//              on its own. Not modelled: the "early drains" the measurements show but do not explain.
+//   the TSP    shades each span from its first pixel (PlaneStepper3::SpanStart: the planes are evaluated at the
+//              span's start and stepped from there, dreamcast-tests/pvr-tests/uvspan)
+// The order matters to the picture only through what the TSP keeps from one pixel to the next: tspAlphaStuck and
+// the offset colour a polygon without one reads (offs).
+struct Span {
+    parameter_tag_t tag;    // the primitive (ISP_BACKGND_T)
+    u8 y, x, len;
+};
+
+// The tile's spans of this pass, in raster order. Which pixels are shaded and where a span ends depend on the pass.
+template<RenderMode rm>
+static int SpanGen(Span* spans)
+{
+    int n = 0;
+    for (int y = 0; y < 32; y++) {
+        bool open = false;
+        bool openVol = false;
+        for (int x = 0; x < 32; x++) {
+            const auto index = y * 32 + x;
+            const auto tag = tagBuffer[tagBufferA][index];
+            bool valid = tagStatus[index].valid;
+            const bool volHit = (stencilBuffer[index] & 0b001) == 0b001;
+            // The punch-through pixels inside a volume are shaded again after the passes, all of them: a polygon
+            // without the shadow bit with its own parameters, in runs over the pixels inside (dreamcast-tests/pvr-tests/
+            // uvrun kind 7; polly2-data jgr_tree_shadows*); the opaque ones there too (OpInPt), not alpha tested
+            if (rm == RM_PUNCHTHROUGH_MV)
+                valid = volHit && (tagStatus[index].rendered || OpInPt);
+            // A span ends where the volume state changes, shadow bit or not: opaque (not in a tile with punch-through
+            // drawn: see OpInPt), sorted translucent and the punch-through volume pass (uvrun kinds 6, 9, 7; volrun:
+            // edges made by the depth test too). Not translucent polygons in the order sent, which an
+            // opaque volume's shadow reaches but whose spans it does not cut (uvrun kinds 10, 11; polly2-data
+            // sa2_ingame2, taxi3, xtreme_intro, jgr_tree_shadows*).
+            const bool vol = rm == RM_TRANSLUCENT_PRESORT || rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN || (rm == RM_OPAQUE && OpInPt) ? false : volHit;
+            if (!valid) {
+                open = false;
+            } else if (!open || tag != spans[n - 1].tag || vol != openVol) {
+                open = true;
+                openVol = vol;
+                spans[n++] = { tag, (u8)y, (u8)x, 1 };
+            } else {
+                spans[n - 1].len++;
+            }
+        }
+    }
+    return n;
+}
+
+// The order the TSP shades the spans in: indices into spans
+static int SpanSort(const Span* spans, int n, u16* order)
+{
+    constexpr int Window = 96;
+    u16 window[Window];         // the spans in the window, oldest first
+    int inWindow = 0, next = 0, out = 0;
+    auto fill = [&] {
+        while (inWindow < Window && next < n)
+            window[inWindow++] = (u16)next++;
+    };
+    fill();
+    while (inWindow) {
+        const parameter_tag_t prim = spans[window[0]].tag;
+        // drain the primitive: its oldest span in the window, until it has none there; each span shaded makes room
+        // for the next span of the tile, which may be the primitive's too
+        for (;;) {
+            int i = 0;
+            while (i < inWindow && spans[window[i]].tag != prim)
+                i++;
+            if (i == inWindow)
+                break;
+            order[out++] = window[i];
+            for (int j = i + 1; j < inWindow; j++)
+                window[j - 1] = window[j];
+            inWindow--;
+            fill();
+        }
+    }
+    return out;
+}
+
+// Render to ACCUM from TAG buffer
 // TAG holds references to trianes, ACCUM is the tile framebuffer
 template<RenderMode rm>
 void RenderParamTags(int tileX, int tileY) {
@@ -261,104 +347,71 @@ void RenderParamTags(int tileX, int tileY) {
     rect.bottom = rect.top + 32;
     rect.right = rect.left + 32;
 
-    for (int y = 0; y < 32; y++) {
-        // The TSP evaluates its planes once per run of pixels of one triangle on a line and steps from there
-        // (dreamcast-tests/pvr-tests/uvspan): PlaneStepper3 needs the run's first column.
-        bool runOpen = false;
-        bool runVolume = false;
-        int runStart = 0;
-        auto runTag = tagBuffer[tagBufferA][0];
-        for (int x = 0; x < 32; x++) {
+    static Span spans[32 * 32];
+    static u16 order[32 * 32];
+    const int n = SpanSort(spans, SpanGen<rm>(spans), order);
+
+    for (int s = 0; s < n; s++) {
+        const Span& span = spans[order[s]];
+        const int y = span.y;
+        PlaneStepper3::SpanStart = span.x;
+        for (int x = span.x; x < span.x + span.len; x++) {
             auto index = y * 32 + x;
-            auto tag =  tagBuffer[tagBufferA][index];
-            bool TagValid = tagStatus[index].valid;
-            ISP_BACKGND_T_type t { .full = tag };
+            ISP_BACKGND_T_type t { .full = span.tag };
             // inside a modifier volume, whatever the polygon's shadow bit; the volume's parameters (or its intensity)
             // only for a polygon with the bit
             const bool volHit = (stencilBuffer[index] & 0b001) == 0b001;
             bool InVolume = volHit && t.shadow;
-
-            // The punch-through pixels inside a volume are shaded again after the passes, all of them: a polygon
-            // without the shadow bit with its own parameters, in runs over the pixels inside (dreamcast-tests/pvr-tests/
-            // uvrun kind 7; polly2-data jgr_tree_shadows*); the opaque ones there too (OpInPt), not alpha tested
-            if (rm == RM_PUNCHTHROUGH_MV) {
-                if (!volHit) {
-                    runOpen = false;
-                    continue;
-                } else {
-                    TagValid = tagStatus[index].rendered || OpInPt;
-                }
-            }
-
             if (rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN) {
                 InVolume = false;
             }
 
-            // A run ends where the volume state changes, shadow bit or not: opaque (not in a tile with punch-through
-            // drawn: see OpInPt), sorted translucent and the punch-through volume pass (uvrun kinds 6, 9, 7; volrun:
-            // edges made by the depth test too). Not translucent polygons in the order sent, which an
-            // opaque volume's shadow reaches but whose runs it does not cut (uvrun kinds 10, 11; polly2-data
-            // sa2_ingame2, taxi3, xtreme_intro, jgr_tree_shadows*).
-            const bool runVol = rm == RM_TRANSLUCENT_PRESORT || rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN || (rm == RM_OPAQUE && OpInPt) ? false : volHit;
-            if (!TagValid) {
-                runOpen = false;
-            } else if (!runOpen || tag != runTag || runVol != runVolume) {
-                runOpen = true;
-                runTag = tag;
-                runVolume = runVol;
-                runStart = x;
+            tilePixelsShaded++;
+            const auto& Entry = GetFpuEntry(&rect, rm, t);
+            auto invW = Entry.ips.invW.Ip(x + halfpixel, y + halfpixel);
+            // Punch through shaded again inside a modifier volume is alpha tested too: its colour replaces the
+            // pixel's, not blended with its alpha (dreamcast-tests/pvr-tests/dumprules, cell 22)
+            // a pixel resolved in the pass before: shaded for the run, keeps its colour, goes on below
+            const bool keepRes = (rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN) && tagStatus[index].rendered;
+            const u32 keep1 = colorBuffer1[index], keep2 = colorBuffer2[index];
+            bool AlphaTestPassed = PixelFlush_tsp(rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN || (rm == RM_PUNCHTHROUGH_MV && tagStatus[index].rendered), &Entry, x + halfpixel, y + halfpixel, index, invW, InVolume, t);
+            if (keepRes) {
+                colorBuffer1[index] = keep1; colorBuffer2[index] = keep2;
+                depthBuffer[depthBufferB][index] = depthBuffer[depthBufferA][index];
+                tagBuffer[tagBufferB][index] = tagBuffer[tagBufferA][index];
+                tagStatus[index].valid = false;
+                continue;
             }
-            PlaneStepper3::SpanStart = runStart;
 
-            if (TagValid) {
-                tilePixelsShaded++;
-                const auto& Entry = GetFpuEntry(&rect, rm, t);
-                auto invW = Entry.ips.invW.Ip(x + halfpixel, y + halfpixel);
-                // Punch through shaded again inside a modifier volume is alpha tested too: its colour replaces the
-                // pixel's, not blended with its alpha (dreamcast-tests/pvr-tests/dumprules, cell 22)
-                // a pixel resolved in the pass before: shaded for the run, keeps its colour, goes on below
-                const bool keepRes = (rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN) && tagStatus[index].rendered;
-                const u32 keep1 = colorBuffer1[index], keep2 = colorBuffer2[index];
-                bool AlphaTestPassed = PixelFlush_tsp(rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN || (rm == RM_PUNCHTHROUGH_MV && tagStatus[index].rendered), &Entry, x + halfpixel, y + halfpixel, index, invW, InVolume, t);
-                if (keepRes) {
-                    colorBuffer1[index] = keep1; colorBuffer2[index] = keep2;
+            if (rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN) {
+                // can only happen when rm == RM_PUNCHTHROUGH
+                if (!AlphaTestPassed) {
+                    // the next pass looks below this fragment's key; the pixel is shaded again only if that pass
+                    // draws a polygon there (shading the same one again with another run start could pass:
+                    // dreamcast-tests/pvr-tests/ptruns; polly2-data jgr_tree_shadows2)
+                    MoreToDraw = true;
                     depthBuffer[depthBufferB][index] = depthBuffer[depthBufferA][index];
                     tagBuffer[tagBufferB][index] = tagBuffer[tagBufferA][index];
                     tagStatus[index].valid = false;
-                    continue;
-                }
-
-                if (rm == RM_PUNCHTHROUGH_PASS0 || rm == RM_PUNCHTHROUGH_PASSN) {
-                    // can only happen when rm == RM_PUNCHTHROUGH
-                    if (!AlphaTestPassed) {
-                        // the next pass looks below this fragment's key; the pixel is shaded again only if that pass
-                        // draws a polygon there (shading the same one again with another run start could pass:
-                        // dreamcast-tests/pvr-tests/ptruns; polly2-data jgr_tree_shadows2)
-                        MoreToDraw = true;
-                        depthBuffer[depthBufferB][index] = depthBuffer[depthBufferA][index];
-                        tagBuffer[tagBufferB][index] = tagBuffer[tagBufferA][index];
-                        tagStatus[index].valid = false;
-                    } else {
-                        tagStatus[index].rendered = true;
-                        tagStatus[index].valid = false;
-                        resPass[index] = PtPass;
-                        resTag[index] = tagBuffer[tagBufferA][index];
-                        resDepth[index] = depthBuffer[depthBufferA][index];
-                        depthBuffer[depthBufferB][index] = depthBuffer[depthBufferA][index];      // the next pass looks below it
-                        tagBuffer[tagBufferB][index] = tagBuffer[tagBufferA][index];
-                    }
-                }
-
-                if (rm == RM_TRANSLUCENT_PRESORT) {
+                } else {
+                    tagStatus[index].rendered = true;
                     tagStatus[index].valid = false;
+                    resPass[index] = PtPass;
+                    resTag[index] = tagBuffer[tagBufferA][index];
+                    resDepth[index] = depthBuffer[depthBufferA][index];
+                    depthBuffer[depthBufferB][index] = depthBuffer[depthBufferA][index];      // the next pass looks below it
+                    tagBuffer[tagBufferB][index] = tagBuffer[tagBufferA][index];
                 }
-                // a sorted translucent layer leaves its depth for a keep Z entry after this one, whether it writes depth
-                // or not; drawn back to front, so the nearest stays (dreamcast-tests/pvr-tests/keepz page 3; as
-                // polly2-rtl's z_keep restore)
-                if (rm == RM_TRANSLUCENT_AUTOSORT)
-                    SaveDepthAt(index, depthBuffer[depthBufferA][index]);     // the ISP's depth of the layer drawn
             }
 
+            if (rm == RM_TRANSLUCENT_PRESORT) {
+                tagStatus[index].valid = false;
+            }
+            // a sorted translucent layer leaves its depth for a keep Z entry after this one, whether it writes depth
+            // or not; drawn back to front, so the nearest stays (dreamcast-tests/pvr-tests/keepz page 3; as
+            // polly2-rtl's z_keep restore)
+            if (rm == RM_TRANSLUCENT_AUTOSORT)
+                SaveDepthAt(index, depthBuffer[depthBufferA][index]);     // the ISP's depth of the layer drawn
         }
     }
 }
