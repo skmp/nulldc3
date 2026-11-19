@@ -1024,11 +1024,56 @@ constexpr u32 fBitsPerPixel() {
     }
 }
 
-u64 VQLookup(u32 start_address, u64 memtel, u32 offset) {
-    u8* memtel8 = (u8*)&memtel;
+// TEXT_CONTROL (0x0E4) above the stride: bit 17, bit 16 and the bank bits 12..8.
+#define TEXT_CONTROL_SWAP16      (1u << 17)
+#define TEXT_CONTROL_INDEX_SWAP  (1u << 16)
 
+// The byte a VQ texture's index is read from; offset: the index byte's place from the texture's start
+// (mipmap level and twiddled place; the code book's 2 KB not included).
+//  - The bank bits (TEXT_CONTROL 12..8, b) are XORed into address bits 23..19 of the texture's start plus
+//    that offset, before the code book's 2 KB is added: ((start + offset) ^ (b << 19)) + 2048. Only the
+//    index moves; code book entries, and every texture that is not VQ, are read where they are. Measured with
+//    video memory filled with words that name their own place (every address bit), VQ code books whose
+//    entries show the index byte read (dreamcast-tests/pvr-tests):
+//      texctl_bank (four VQ 565 textures, b = 0 .. 15): 112,640 of 112,640 decoded index word halves as this
+//        rule has it; b's bits 0..3 move address bits 19..22.
+//      texctl_bankbase (index addresses past a 512 KB line, reached through the code book's 2 KB, the mipmap
+//        offset or the twiddled place; b = 0 .. 15 and with the endian bits): 65,728 of 65,728 halves, where
+//        XORing after the 2 KB is added is wrong on 6,098, XORing the start alone on 21,330.
+//      texctl_bankmip (ten mipmapped VQ 565 textures whose start plus offset crosses a 512 KB line inside one
+//        of the levels 8x8 .. 64x64, every level 64x64 .. 1x1 read, point sampled, bilinear, trilinear passes A
+//        and B; b = 0 .. 15 and with the endian bits, 20 pages): 2,716 of 2,716 regions as the console, the same
+//        on two console runs; XORing after the 2 KB: 1,214 regions wrong, the start alone 502, start plus the
+//        mipmap offset (the twiddled place after) 205.
+//      texctl_addr (VQ 565, mipmapped VQ 565, VQ palette 8 and 4 bpp, b = 0 .. 15 and with the endian bits, 22
+//        pages): 31,410 of 31,410 halves; the textures that are not VQ (565 twiddled and strided, palette 8 and
+//        4 bpp, YUV422 twiddled and strided, bump map, 4444, at 0x4b2000 .. 0x6d0000) read their own places,
+//        every address bit, with every bank value: 565 twiddled and strided 1,441,792 of 1,441,792 words, 233
+//        of 233 regions as the console (the same on two console runs); with the bank bits XORed into their
+//        addresses too, 144 of the 233 regions are wrong.
+//    GAP: bank bit 4 is taken to be address bit 23: inferred, not measured. With it set (b = 16 .. 31), or with
+//    a sum past 8 MB, the console reads data that differs from run to run, as it would outside video memory (an
+//    earlier texctl_bank, b = 16 .. 31: 8,800 to 17,716 of 65,536 pixels per texture differ between two runs;
+//    an earlier texctl with bank values 16, 20, 31: its VQ textures differed between two runs, 1,424 to 2,728
+//    pixels each). Here the address wraps at 8 MB.
+//    GAP: an index read that lands in the framebuffer of the render that reads it gives what is there at that
+//    moment, which depends on whether the tile has been written out yet (the earlier texctl_bank: 376 to 864
+//    pixels differed on 3 pages); refsw3 reads video memory as it is when it renders the tile, so this is the
+//    framebuffer write-out's timing, not modelled. The tests above keep their reads out of the framebuffer.
+//  - Bit 16 swaps the index bytes in pairs: byte address ^ 1 (texctl page 1: the VQ 565 and palette 8 bpp VQ
+//    textures read entry e ^ 1 where the index byte is e, all 4096 texels; texctl_addr pages 1, 3, 6, 7, 19,
+//    21 and texctl_bankbase pages 16, 18: every decoded index word half in byte order 1 0 3 2, palette 4 bpp
+//    VQ too). Nothing else moves (texctl page 1: the 565, palette 8 and 4 bpp textures read as laid out).
+static inline u32 VQIndexAddress(u32 start_address, u32 offset) {
+    u32 at = ((start_address + offset) ^ (((TEXT_CONTROL >> 8) & 31) << 19)) + 256 * 4 * 2;
+    if (TEXT_CONTROL & TEXT_CONTROL_INDEX_SWAP)
+        at ^= 1;
+    return at;
+}
+
+u64 VQLookup(u32 start_address, u32 offset) {
     u64 *vq_book = (u64*)&emu_vram[start_address & (VRAM_MASK-7)];
-    u8 index = memtel8[offset & 7];
+    u8 index = emu_vram[VQIndexAddress(start_address, offset) & VRAM_MASK];
     return vq_book[index];
 }
 
@@ -1135,11 +1180,25 @@ static Color TextureFetch(TSP tsp, TCW tcw, int u, int v, u32 MipLevel) {
     auto base_address = TexAddressGen<VQ_Comp>(tcw);
     auto offset = TexOffsetGen<VQ_Comp, MipMapped, ScanOrder>(tsp, u, v, stride, MipLevel);
 
-    u64 memtel = (u64&)emu_vram[(base_address + offset * fbpp / 16) & (VRAM_MASK-7)];
-
+    u64 memtel;
     if (VQ_Comp) {
-        memtel = VQLookup(start_address, memtel, offset * fbpp / 16);
+        memtel = VQLookup(start_address, offset * fbpp / 16);
+    } else {
+        memtel = (u64&)emu_vram[(base_address + offset * fbpp / 16) & (VRAM_MASK-7)];
     }
+
+    // TEXT_CONTROL bit 17: the two bytes of every 16 bit unit of texture data swapped, in every format: 16 bit
+    // texels, palette indices (8 bpp: byte address ^ 1; 4 bpp: nibble address ^ 2) and VQ code book entries;
+    // not VQ index bytes, and no address changes (dreamcast-tests/pvr-tests/texctl pages 2, 3 and 11 (0x30200,
+    // bank value 2 too): 565 raster and twiddled, palette 8 and 4 bpp, VQ 565, VQ palette 8 and 4 bpp, every
+    // texel; page 3 with bit 16: VQ palette 8 bpp read at ^ 9, both at once; 84 of 84 regions as the console;
+    // texctl_addr pages 2, 3, 7, 20, 21, textures read straight from memory that names its places: 565 twiddled
+    // and strided, all 32,768 words each their own place with the bytes swapped; YUV422 twiddled and strided,
+    // bump map (its intensity shown through SRC_ALPHA: 3,954 of 4,096 pixels change with the swap), 4444,
+    // palette and VQ textures: every region as the console; texctl_bankmip pages 17, 18: mipmapped VQ 565,
+    // bilinear and trilinear too, every region as the console).
+    if (TEXT_CONTROL & TEXT_CONTROL_SWAP16)
+        memtel = ((memtel & 0x00ff00ff00ff00ffull) << 8) | ((memtel >> 8) & 0x00ff00ff00ff00ffull);
 
     u32 textel = DecodeTextel<PixelFmt>(tcw.PalSelect, memtel, offset, VQ_Comp || MipMapped || !ScanOrder);
 
