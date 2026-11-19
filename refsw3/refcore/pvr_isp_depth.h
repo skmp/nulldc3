@@ -153,6 +153,12 @@ struct StoredDepth {
 template<class Cfg>
 struct DepthTileT {
     bool valid = false, block = false;
+    // A plane that overflows but has slopes (dreamcast-tests/pvr-tests/zword, zbad, zbadbg, zbadk, zovf; README zspec).
+    // ovf 2: a slope overflowed: every pixel's depth is kWrap[(sa i + sb j) mod 32], i, j from the tile's first pixel,
+    // sa, sb the overflowed slopes' signs (0: that slope did not overflow). ovf 1: only the constant did: the tile's
+    // first pixel 0, every other one ovfWord.
+    int ovf = 0, sa = 0, sb = 0;
+    StoredDepth ovfWord;
     StoredDepth first_z;                                // not valid: the depth every pixel gets
     // block form: twice the depth in units of 2^unit is d0 + sx2 * dx + sy2 * dy, with sx2, sy2 the steps from
     // the tile's first pixel center in half pixels
@@ -230,6 +236,27 @@ struct DepthTileT {
             if (first0.bad || a.bad || b.bad || c.bad) {
                 valid = false; block = false;
                 first_z = first0.bad ? StoredDepth::Saturated(first0.neg) : StoredDepth::FromFp(first0.cut(cfg.storedBits));
+                // The depth unit evaluates such a plane all the same. When a slope overflows (from about 32 z = 2^128
+                // for a cell-sized triangle) its step is +-2^124 a pixel from a start of 0, in a register whose top
+                // bit is 2^128, so the steps wrap every 32 pixels from the tile's first pixel; the word stored is
+                // a function of the register alone (kWrap). When only the constant overflows (it holds the corners'
+                // x y: from about z = 2^114 .. 2^117 on the screen), the tile's first pixel is 0 and every other one
+                // the negative full scale of the block, -(2^(e + 1) - ulp), e the block's exponent from the slopes
+                // (pair + 5). A plane of zero slopes (all corners bad, flat) is the saturated 2^127 above (bgbig).
+                if (a.bad || b.bad) {
+                    ovf = 2;
+                    sa = a.bad ? ((a.neg != det.neg) ? -1 : 1) : 0;
+                    sb = b.bad ? ((b.neg != det.neg) ? -1 : 1) : 0;
+                } else if (!a.zero() || !b.zero()) {
+                    const Fp invS = Recip(det, cfg.recipBits);
+                    const Fp As = Mul(a, invS, cfg.coefBits), Bs = Mul(b, invS, cfg.coefBits);
+                    const int pairS = As.top() > Bs.top() ? As.top() : Bs.top();
+                    const int eS = pairS + (cfg.tileBits - cfg.pairBits);
+                    ovf = 1;
+                    // GAP: the sign (measured below zero with slopes below zero only), and the low 5 bits
+                    ovfWord = StoredDepth::Bits((As.neg || (As.zero() && Bs.neg) ? 0x80000000u : 0) |
+                                                (uint32_t)(eS + 127) << 23 | 0x7fffffu);
+                }
                 return;
             }
         }
@@ -251,9 +278,21 @@ struct DepthTileT {
         C = Mul(c, inv, cfg.coefBits);
         Fp x0 = Fp::FromHalves(2 * (int64_t)left + 1), y0 = Fp::FromHalves(2 * (int64_t)top + 1);
         Fp first = Mul(Add(Add(Mul(a, x0, PB), Mul(b, y0, PB), SB, RE), c, SB, RE), inv, cfg.coefBits);
+        if (ranged) {
+            // The range holds for the coefficients and the tile's start too: below 2^-126 they are zero
+            // (dreamcast-tests/pvr-tests/zspec pages 3-6: a plane from 2^-124 to -2^-124 over a cell, slopes of
+            // 2^-128 a pixel, is stored as its start everywhere; one from 2^-126 to -2^-126, start below 2^-126, as 0)
+            auto under = [](Fp& v) { if (!v.zero() && v.top() - 1 < -126) v.mant = 0; };
+            under(A); under(B); under(C); under(first);
+        }
         int pair = A.top() > B.top() ? A.top() : B.top();
-        if (first.zero() && pair == pvrfp::NoExp)
-            return;                                     // a plane of zero: the float form, which gives 0
+        if (first.zero() && pair == pvrfp::NoExp) {
+            // no start and no slopes (a plane of zero, or one whose start and slopes are below 2^-126 and so zero:
+            // zspec page 3-6, the plane from 2^-126 to -2^-126): 0 at every pixel
+            valid = false;
+            first_z = StoredDepth();
+            return;
+        }
         // A start of exactly zero is stepped from zero all the same, on the slopes' own grid (21 bits under the
         // larger one's exponent): dreamcast-tests/pvr-tests/zmeas, mix reach, 30 of 30 readings (evaluating the plane
         // at each pixel in floating point, as before, gave 22)
@@ -282,9 +321,25 @@ struct DepthTileT {
 
     // The depth stored for the pixel i columns right and j rows down of the tile's first pixel; centers: the
     // ISP samples at pixel centers (HALF_OFFSET bit 0).
+    // The words of an overflowing plane's register (ovf 2) by its value m = (sa i + sb j) mod 32 in steps of 2^124:
+    // dreamcast-tests/pvr-tests/zword (the words, to the stored depth's 19 bits), the same for +inf, NaN and 2^127 corners
+    // at every place tried, and the mirror (steps of +2^124) word for word. GAP: where zword says a word lies between
+    // two probes 32 apart the low 5 bits are taken as ones (m 17 .. 22, 24 .. 29), m 2 .. 15 are beyond the largest
+    // float (any word above 0x7f7fffe0: taken as 0x7fffffff) and m 16 below every probe (taken as the lowest word).
+    static constexpr uint32_t kWrap[32] = {
+        0x00000000u, 0x7f000000u, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu,
+        0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu,
+        0x807fffffu, 0xfdffffffu, 0xfe7fffffu, 0xfe7fffffu, 0xfeffffffu, 0xfeffffffu, 0xfeffffffu, 0xfeffffe0u,
+        0xff7fffffu, 0xff7fffffu, 0xff7fffffu, 0xff7fffffu, 0xff7fffffu, 0xff7fffffu, 0xff7fffe0u, 0xff000000u,
+    };
+
     StoredDepth At(int i, int j, bool centers) const
     {
         using namespace pvrfp;
+        if (ovf == 2)
+            return StoredDepth::Bits(kWrap[(sa * i + sb * j) & 31]);
+        if (ovf == 1)
+            return (i == 0 && j == 0) ? StoredDepth() : ovfWord;
         if (!valid)
             return first_z;
         const int h = centers ? 0 : -1;

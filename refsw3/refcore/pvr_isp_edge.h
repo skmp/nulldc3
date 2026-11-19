@@ -125,8 +125,19 @@ struct EdgeTile {
             start = Fp::Pow2(cfg.saturateExp, first.neg);
         else {
             start = Add(first, c, SB, RE, GD);
-            if (start.atLeastPow2(cfg.overflowExp))
-                start = Fp::Pow2(cfg.saturateExp, start.neg);
+            if (start.atLeastPow2(cfg.overflowExp)) {
+                // Through the constant only. With a column step of 2^127 or more (an edge far down or up, the next
+                // pixel's value past 2^128 away) the start is not 2^127 but +-2^132 less the first sum
+                // (dreamcast-tests/pvr-tests/faredge pages 12-35: the K 127 vertical triangles' crossings, 19 to 24
+                // pixels into the tile; modvol: its garbage polygon's edge, 192 of 192 cells). GAP: faredge page 4's
+                // first-column strip (far corner up, the first product the one past 2^128) keeps 2^127 on the
+                // console, and page 1's control strip; which of the two the hardware takes when is not known.
+                const bool neg = start.neg;
+                if (dy.atLeastPow2(cfg.saturateExp))
+                    start = Add(Fp::Pow2(cfg.saturateExp + 5, neg), -first, 62, 400);
+                else
+                    start = Fp::Pow2(cfg.saturateExp, neg);
+            }
         }
         Fp sy = dx.cut(cfg.slopeBits), sx = (-dy).cut(cfg.slopeBits);
         int ep = dx.top() > dy.top() ? dx.top() : dy.top();
