@@ -496,7 +496,14 @@ inline MipChoice MipSelect(const Plane& u, const Plane& v, const Plane& w, const
     if (ranged && below(inv))
         inv = Fp();
     const bool undivided = MipK() != 1 && !det.zero() && !inv.zero();
-    const Fp inv2 = Mul(inv, inv, 24);
+    Fp inv2 = Mul(inv, inv, 24);
+    // 1/det^2 is a number of the setup's range like the others: below 2^-126 (a determinant above about 2^63) it is
+    // zero, so the length is zero and the level the largest map without blending, whatever the numerators are
+    // (polly2-data sydney_race, sydney_stadium: the kerb's triangles with two corners at about 2^36 and 1/w of 10^6,
+    // determinants of 2^63.0 .. 2^66.8 on the largest map on every pixel, those of 2^62.9 and below as before;
+    // dreamcast-tests pvr-tests/mipdump)
+    if (ranged && below(inv2))
+        inv2 = Fp();
     // |a1 b2 - b1 a2|: of the undivided sums sa1 .. sb2 (MIP_K 1: of the divided coefficients a1 .. b2)
     auto minor = [&](const Fp& a1, const Fp& b1, const Fp& a2, const Fp& b2, const Fp& sa1, const Fp& sb1, const Fp& sa2, const Fp& sb2, bool neg1, bool neg2) {
         const int k1 = kind(sa1, sb2), k2 = kind(sb1, sa2);
