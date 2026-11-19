@@ -124,33 +124,10 @@ struct PlaneStepper3
     // (before the last rule of the sums went in).
     static constexpr int ColorExp = -8;
 
-    // An interpolated colour as the TSP rounds it: v = attribute / w at the pixel in the attribute's own scale
-    // (times 2^-scaleExp), below zero 0, above `max` max (255; 65535 for the cheap shadow's intensity, which comes
-    // before the clamp), and then floor(v + 1/2): to nearest, half way up (dreamcast-tests/pvr-tests/shade, 80,256 of
-    // 80,256 samples). A quotient that is an infinity or a NaN (a depth of 0, infinity or NaN at the pixel): the
-    // attribute itself (dreamcast-tests/pvr-tests/huge: a console still draws such a polygon in its colour).
+    // An interpolated colour as the TSP rounds it (pvr_tsp_plane.h, ColorRounded: the rule and its evidence)
     int Rounded(PixPos p, const pvrfp::Fp& W, int max) const
     {
-        const pvrfp::Fp q = Quot(p, W);
-        if (q.bad)
-            return fallback;
-        if (q.neg || q.zero())
-            return 0;
-        const int e = q.exp - scaleExp;                     // v = mant * 2^e
-        if (q.top() - scaleExp > 30)
-            return max;
-        // floor(v + 1/2) = floor((2 mant 2^e + 1) / 2)
-        int64_t twice;
-        if (e >= -1)
-            twice = (int64_t)(q.mant << (e + 1));
-        else {
-            const int s = -(e + 1);
-            twice = s >= 64 ? 0 : (int64_t)(q.mant >> s);
-        }
-        int64_t v = (twice + 1) >> 1;
-        if (twice > 2 * (int64_t)max)                       // v above max (before the rounding): max
-            return max;
-        return (int)(v > max ? max : v);
+        return pvrtsp::ColorRounded(Quot(p, W), scaleExp, max, fallback);
     }
 };
 

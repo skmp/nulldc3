@@ -435,6 +435,37 @@ inline Fp Divide(const Fp& num, const Fp& den0)
     return out;
 }
 
+// An interpolated colour as the TSP rounds it: q = attribute / w at the pixel (Divide), the attribute entered times
+// 2^scaleExp (refsw_tile.h PlaneStepper3: a colour's 8 bit value times 2^-8); v = q in the attribute's own scale,
+// below zero 0, above `max` max (255; 65535 for the cheap shadow's intensity, which comes before the clamp), and then
+// floor(v + 1/2): to nearest, half way up (dreamcast-tests/pvr-tests/shade, 80,256 of 80,256 samples). A quotient that
+// is an infinity or a NaN (a depth of 0, infinity or NaN at the pixel): `fallback`, the attribute itself
+// (dreamcast-tests/pvr-tests/huge: a console still draws such a polygon in its colour). Shared with the probes of
+// dreamcast-tests/model (covprobe shades the pages it reads as a console's: a sliver's colour, from planes that are
+// garbage, is what decides whether covmeas counts its pixel).
+inline int ColorRounded(const Fp& q, int scaleExp, int max, int fallback)
+{
+    if (q.bad)
+        return fallback;
+    if (q.neg || q.zero())
+        return 0;
+    const int e = q.exp - scaleExp;                     // v = mant * 2^e
+    if (q.top() - scaleExp > 30)
+        return max;
+    // floor(v + 1/2) = floor((2 mant 2^e + 1) / 2)
+    int64_t twice;
+    if (e >= -1)
+        twice = (int64_t)(q.mant << (e + 1));
+    else {
+        const int s = -(e + 1);
+        twice = s >= 64 ? 0 : (int64_t)(q.mant >> s);
+    }
+    int64_t v = (twice + 1) >> 1;
+    if (twice > 2 * (int64_t)max)                       // v above max (before the rounding): max
+        return max;
+    return (int)(v > max ? max : v);
+}
+
 // The mipmap level of a pixel and the coefficient trilinear filtering blends the next level in with
 // (dreamcast-tests/pvr-tests/mipmeas and mip).
 //
