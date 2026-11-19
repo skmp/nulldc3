@@ -1315,18 +1315,8 @@ static Color TextureFilter(TSP tsp, TCW tcw, float u, float v, u32 MipLevel, f32
         }
 
         // A texture without mipmaps is filtered bilinearly by either trilinear pass, at full strength
-        // (dreamcast-tests/pvr-tests/mip, "565 without mipmaps").
-        if (pp_FilterMode >= 2 && tcw.MipMapped) {
-            // Trilinear: pass A (mode 2) draws this level fading out toward the next one, pass B (mode 3) is
-            // called with the next level and fades it in; the two passes are added by the blend unit.
-            // dTrilinear is the next level's coefficient, of 256 (pvrtsp::MipSelect).
-            int k = (int)(dTrilinear * 256);
-            if (k < 0) k = 0;
-            if (k > 256) k = 256;
-            u32 w = pp_FilterMode == 2 ? 256 - k : k;
-            for (int i = 0; i < 4; i++)
-                textel.bgra[i] = (textel.bgra[i] * w) >> 8;
-        }
+        // (dreamcast-tests/pvr-tests/mip, "565 without mipmaps"). The trilinear fade is PixelFlush_tsp's, of the
+        // finished colour.
     }
         
 
@@ -1748,8 +1738,90 @@ static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, boo
 
     base = InterpolateBase<pp_UseAlpha, pp_CheapShadows>(entry->ips.Col[InVolume ? 1 : 0], x, y, W, InVolume);
 
-    float dTrilinear;
-    u32 MipLevel;
+    float dTrilinear = 0;
+    u32 MipLevel = 0;
+    const bool bump = pp_Texture && entry->params.tcw[two_voume_index].PixelFmt == PixelBumpMap;
+    // SupSample: the pixel is made at four points and averaged (below)
+    const bool super = entry->params.tsp[two_voume_index].SupSample;
+    Color col;
+    // A bump map's light (K1 K2 K3 Q, the offset colour) is the last vertex's offset colour as it is: not
+    // interpolated on a Gouraud polygon, and not through the 1/w planes on a flat one (pvr-tests/supsample2 page 30
+    // and its control: interpolated, 123,578 pixels miss; flat through the planes, 15 and the 6 of pages 29 and 31,
+    // next to a corner of large w; pvr-tests/bumplight, strips of four triangles at depths 2^-8 .. 4, with
+    // SupSample, fog and an intensity shadow). The planes' fallback is that colour (with an intensity shadow's
+    // scaling). Nor is it a fog: vertex fog does nothing to a bump map (bumplight page 5: K1 as the fog's alpha
+    // misses every cell).
+    auto bumpLight = [&]() {
+        Color l;
+        for (int i = 0; i < 4; i++)
+            l.bgra[i] = (u8)entry->ips.Ofs[InVolume ? 1 : 0][i].fallback;
+        return l;
+    };
+    // the texture environment: the texel t with the base colour b and the offset colour o. A bump map's result takes
+    // the texel's place (with modulate, hardware multiplies it by the base color, dreamcast-tests/pvr-tests/bump); the
+    // offset color holds the light and is not added.
+    auto shade = [&](Color b, Color t, Color o) {
+        if (!bump)
+            return combiner(b, t, o);
+        Color none = { 0 };
+        switch (entry->params.tsp[two_voume_index].ShadInstr) {
+            case 1: return ColorCombiner<true, false, 1>(b, BumpMapper(t, o), none);
+            case 2: return ColorCombiner<true, false, 2>(b, BumpMapper(t, o), none);
+            case 3: return ColorCombiner<true, false, 3>(b, BumpMapper(t, o), none);
+            default: return ColorCombiner<true, false, 0>(b, BumpMapper(t, o), none);
+        }
+    };
+
+    // the level and the trilinear coefficient where 1/w is q; `finer`: a SupSample point's, one level finer
+    auto mipChoose = [&](float q, bool finer, u32& level, float& dTri) {
+        level = 0;
+        dTri = 0;
+        if (entry->params.tcw[two_voume_index].MipMapped) {
+            // The level and the trilinear coefficient come from the polygon's planes and the pixel's 1/w
+            // (pvr_tsp_plane.h, MipSelect; measured with dreamcast-tests/pvr-tests/mipmeas).
+            const auto& ips = entry->ips;
+            auto choice = pvrtsp::MipSelect(ips.U[two_voume_index].soft, ips.V[two_voume_index].soft, ips.invW.soft,
+                                            pvrfp::Fp::FromFloat(q), 3 + entry->params.tsp[two_voume_index].TexU,
+                                            // D adjust 0 (the manual: "illegal") is 4/4 on a console: Berserk's
+                                            // ground (polly2-data berserk_*), dreamcast-tests mipmeas --bias0
+                                            entry->params.tsp[two_voume_index].MipMapD ? (int)entry->params.tsp[two_voume_index].MipMapD : 4,
+                                            entry->params.isp.DCalcCtrl ? ips.first[two_voume_index] : nullptr);
+            if (finer) {
+                // half a pixel apart, as if the texels a pixel were halved (pvr-tests/supsample2: every mipmapped
+                // page, flat and perspective, every filter); what would be below the largest map is the largest
+                // map without blending
+                if (choice.level == 0)
+                    choice.k = 0;
+                else
+                    choice.level--;
+            }
+            level = choice.level > 11 ? 11 : choice.level;
+            dTri = choice.k / 256.0f;
+            if (TcwRaster(entry->params.tcw[two_voume_index]))
+                level = 0;       // no levels to choose from; the fraction still fades the trilinear passes
+        }
+        // trilinear pass B samples the next smaller level
+        if (entry->params.tsp[two_voume_index].FilterMode == 3 && entry->params.tcw[two_voume_index].MipMapped
+            && !TcwRaster(entry->params.tcw[two_voume_index]))
+            level++;
+    };
+    // Trilinear: pass A (mode 2) draws this level fading out toward the next one, pass B (mode 3) the next level
+    // fading in; the two passes are added by the blend unit. The fade is of the finished colour, after the
+    // shading, the offset colour, the colour clamp and the fog, alpha too, bump maps too (pvr-tests/supsample2 page
+    // 21 and its control: of the texel, as it was, misses 149,148 of 153,600 pixels; pvr-tests/trifade, 22 pages of
+    // flat cells). A texture without mipmaps is not faded (pvr-tests/mip, "565 without mipmaps").
+    auto fade = [&](Color c, float dTri) {
+        if (!pp_Texture || entry->params.tsp[two_voume_index].FilterMode < 2 || !entry->params.tcw[two_voume_index].MipMapped)
+            return c;
+        int k = (int)(dTri * 256);
+        if (k < 0) k = 0;
+        if (k > 256) k = 256;
+        const u32 w = entry->params.tsp[two_voume_index].FilterMode == 2 ? 256 - k : k;
+        for (int i = 0; i < 4; i++)
+            c.bgra[i] = (c.bgra[i] * w) >> 8;
+        return c;
+    };
+
     if (pp_Texture) {
         if (dump_textures) {
 
@@ -1761,56 +1833,57 @@ static bool PixelFlush_tsp(const FpuEntry *entry, float x, float y, float W, boo
                 DumpTexture(entry->params.tsp[two_voume_index],  entry->params.tcw[two_voume_index], fetch);
             }
         }
-        float u = entry->ips.U[two_voume_index].Ip(x, y, W);
-        float v = entry->ips.V[two_voume_index].Ip(x, y, W);
-
-        if (entry->params.tcw[two_voume_index].MipMapped) {
-            // The level and the trilinear coefficient come from the polygon's planes and the pixel's 1/w
-            // (pvr_tsp_plane.h, MipSelect; measured with dreamcast-tests/pvr-tests/mipmeas).
-            const auto& ips = entry->ips;
-            auto choice = pvrtsp::MipSelect(ips.U[two_voume_index].soft, ips.V[two_voume_index].soft, ips.invW.soft,
-                                            pvrfp::Fp::FromFloat(W), 3 + entry->params.tsp[two_voume_index].TexU,
-                                            // D adjust 0 (the manual: "illegal") is 4/4 on a console: Berserk's
-                                            // ground (polly2-data berserk_*), dreamcast-tests mipmeas --bias0
-                                            entry->params.tsp[two_voume_index].MipMapD ? (int)entry->params.tsp[two_voume_index].MipMapD : 4,
-                                            entry->params.isp.DCalcCtrl ? ips.first[two_voume_index] : nullptr);
-            MipLevel = choice.level > 11 ? 11 : choice.level;
-            dTrilinear = choice.k / 256.0f;
-            if (TcwRaster(entry->params.tcw[two_voume_index]))
-                MipLevel = 0;       // no levels to choose from; the fraction still fades the trilinear passes
-        } else {
-            dTrilinear = 0;
-            MipLevel = 0;
+        if (!super) {
+            float u = entry->ips.U[two_voume_index].Ip(x, y, W);
+            float v = entry->ips.V[two_voume_index].Ip(x, y, W);
+            mipChoose(W, false, MipLevel, dTrilinear);
+            textel = filter(entry->params.tsp[two_voume_index], entry->params.tcw[two_voume_index], u, v, MipLevel, dTrilinear, fetch);
         }
-        
-        // trilinear pass B samples the next smaller level
-        if (entry->params.tsp[two_voume_index].FilterMode == 3 && entry->params.tcw[two_voume_index].MipMapped
-            && !TcwRaster(entry->params.tcw[two_voume_index]))
-            MipLevel++;
-        textel = filter(entry->params.tsp[two_voume_index], entry->params.tcw[two_voume_index], u, v, MipLevel, dTrilinear, fetch);
         if (pp_Offset) {
-            offs = InterpolateOffs<pp_CheapShadows>(entry->ips.Ofs[InVolume ? 1 : 0], x, y, W, InVolume);
+            offs = bump ? bumpLight() : InterpolateOffs<pp_CheapShadows>(entry->ips.Ofs[InVolume ? 1 : 0], x, y, W, InVolume);
         }
     }
 
-    Color col;
-    if (pp_Texture && entry->params.tcw[two_voume_index].PixelFmt == PixelBumpMap) {
-        // The bump result takes the texel's place in the texture environment (with modulate, hardware
-        // multiplies it by the base color, dreamcast-tests/pvr-tests/bump); the offset color holds the light and is not
-        // added.
-        Color none = { 0 };
-        col = ColorCombiner<true, false, 0>(base, BumpMapper(textel, offs), none);
-        switch (entry->params.tsp[two_voume_index].ShadInstr) {
-            case 1: col = ColorCombiner<true, false, 1>(base, BumpMapper(textel, offs), none); break;
-            case 2: col = ColorCombiner<true, false, 2>(base, BumpMapper(textel, offs), none); break;
-            case 3: col = ColorCombiner<true, false, 3>(base, BumpMapper(textel, offs), none); break;
+    if (super) {
+        // SupSample (dreamcast-tests/pvr-tests/supsample, supsample2, ssmip, sscolor; polly2-data outtrigger_menu,
+        // mrdriller_*): the pixel is made at four points, its centre and half a pixel right, down and both. The planes
+        // are evaluated for them in half pixel steps (pvr_tsp_plane.h), and each point has everything of its own: its
+        // 1/w, coordinates, level and trilinear coefficient (one level finer than the pixel's would be), texel, base
+        // and offset colours, shading, fog (with its own 1/w, or its own offset alpha) and trilinear fade. The four
+        // colours are then averaged per channel, each row's two and then the rows. (The base and offset colours of
+        // the centre: 125k pixels of supsample2's Gouraud pages miss; the fog of the average: every fog page misses;
+        // the texels averaged before they are shaded: 56k pixels of supsample page 18.)
+        using Stepper = std::remove_reference_t<decltype(entry->ips.invW)>;
+        Color c4[4];
+        for (int k = 0; k < 4; k++) {
+            Stepper::superActive = true;
+            Stepper::superHx = k & 1;
+            Stepper::superHy = k >> 1;
+            const float ws = entry->ips.invW.Ip(x, y);
+            const float us = pp_Texture ? entry->ips.U[two_voume_index].Ip(x, y, ws) : 0, vs = pp_Texture ? entry->ips.V[two_voume_index].Ip(x, y, ws) : 0;
+            RENDLOG("SS%d: w %a u %a v %a", k, ws, us, vs);
+            const Color bk = InterpolateBase<pp_UseAlpha, pp_CheapShadows>(entry->ips.Col[InVolume ? 1 : 0], x, y, ws, InVolume);
+            const Color ok = pp_Texture && pp_Offset && !bump ? InterpolateOffs<pp_CheapShadows>(entry->ips.Ofs[InVolume ? 1 : 0], x, y, ws, InVolume) : offs;
+            Stepper::superActive = false;
+            Stepper::superHx = 0;
+            Stepper::superHy = 0;
+            u32 level = 0;
+            float dTri = 0;
+            Color t = { 0 };
+            if (pp_Texture) {
+                mipChoose(ws, true, level, dTri);
+                t = filter(entry->params.tsp[two_voume_index], entry->params.tcw[two_voume_index], us, vs, level, dTri, fetch);
+            }
+            c4[k] = fade(FogUnit<pp_Offset, pp_ColorClamp, pp_FogCtrl>(shade(bk, t, ok), ws, bump ? 0 : ok.a), dTri);
         }
+        for (int c = 0; c < 4; c++)
+            col.bgra[c] = (((c4[0].bgra[c] + c4[1].bgra[c]) >> 1) + ((c4[2].bgra[c] + c4[3].bgra[c]) >> 1)) >> 1;
     } else {
-        col = combiner(base, textel, offs);
+        col = shade(base, textel, offs);
+        // the fog table is indexed with the TSP's own 1/w (dreamcast-tests/pvr-tests/tspw)
+        col = FogUnit<pp_Offset, pp_ColorClamp, pp_FogCtrl>(col, entry->ips.invW.Ip(x, y), bump ? 0 : offs.a);
+        col = fade(col, dTrilinear);
     }
-        
-    // the fog table is indexed with the TSP's own 1/w (dreamcast-tests/pvr-tests/tspw)
-    col = FogUnit<pp_Offset, pp_ColorClamp, pp_FogCtrl>(col, entry->ips.invW.Ip(x, y), offs.a);
 
     // if (pp_Texture) {
     //     col = MipDebugColor[10-MipLevel];

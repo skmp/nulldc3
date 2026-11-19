@@ -91,7 +91,8 @@ struct PlaneStepper3
     double ddx, ddy;            // A and B
     double c;                   // C, at the screen's origin
     double left, top;
-    float fallback = 0;         // the attribute itself, for depths of 0, infinity or NaN
+    float fallback = 0;         // the attribute itself, for depths of 0, infinity or NaN (the last vertex's: a bump
+                                // map's light is that offset colour as it is, PixelFlush_tsp)
     int scaleExp = 0;           // the attribute enters the plane times 2^scaleExp (colours: see IPs3::Setup)
     // The plane in the setup units' own arithmetic (pvr_tsp_plane.h): what is used whenever the inputs are
     // finite. ddx, ddy, c above are the same coefficients as doubles, kept for inputs that are not.
@@ -230,6 +231,10 @@ struct PlaneStepper3
 
     // Column (in the tile) of the first pixel of the run of pixels being shaded: set by the loop over the tags.
     static int SpanStart;
+    // SupSample: the evaluations are of one of the four points (pvr_tsp_plane.h, Value); hx, hy: half a pixel
+    // further along x, y
+    static inline bool superActive = false;
+    static inline int superHx = 0, superHy = 0;
 
     static int Exp(double v)
     {
@@ -249,6 +254,8 @@ struct PlaneStepper3
             double fy = floor(y);
             int64_t x0h = 2 * (int64_t)(left + SpanStart) + (x - fx != 0 ? 1 : 0);
             int64_t yh = 2 * (int64_t)(top + fy) + (y - fy != 0 ? 1 : 0);
+            if (superActive)
+                return soft.Value(x0h, yh, (int)n, (int)left, (int)top, true, superHx, superHy).toDouble();
             return soft.Value(x0h, yh, (int)n, (int)left, (int)top).toDouble();
         }
         double X0 = left + SpanStart + (x - fx), Y = top + y;

@@ -223,7 +223,10 @@ struct Plane {
 
     // The plane at a pixel. x0Halves, yHalves: the sample point of the run's first pixel and of the line, in half
     // pixels (absolute); n: whole pixels from the run's first pixel; tileLeft, tileTop: the tile's first pixel.
-    Fp Value(int64_t x0Halves, int64_t yHalves, int n, int tileLeft, int tileTop) const
+    // super: a SupSample point (TSP bit 12, dreamcast-tests/pvr-tests/supsample). The evaluator then steps along the
+    // run in half pixels, (2 n + hx) steps of A / 2 instead of n of A, the centre's point too, and a point half a
+    // line down (hy) is the line's value plus B / 2; each half coefficient is cut to the grid like a whole one.
+    Fp Value(int64_t x0Halves, int64_t yHalves, int n, int tileLeft, int tileTop, bool super = false, int hx = 0, int hy = 0) const
     {
         using namespace pvrfp;
         // The evaluator has no zero and no infinity: it takes a coefficient's exponent field as a signed 8 bit
@@ -281,6 +284,13 @@ struct Plane {
                 k = FloorUnits(c_, unit) + FloorUnits(axt, unit) + FloorUnits(byt, unit) + FloorUnits(axl, unit) + FloorUnits(byl, unit)
                     + (int64_t)n * FloorUnits(a_, unit);
             }
+        }
+        if (super) {
+            const Fp half = Fp::FromHalves(1);
+            Fp ah = Mul(a_, half, 62), bh = Mul(b_, half, 62);
+            if (ah.zero()) ah.neg = a_.neg;
+            if (bh.zero()) bh.neg = b_.neg;
+            k += -(int64_t)n * FloorUnits(a_, unit) + (int64_t)(2 * n + hx) * FloorUnits(ah, unit) + hy * FloorUnits(bh, unit);
         }
         // The value becomes a float again: 16 bits from its leading bit, cut toward minus infinity, with a signed
         // 8 bit exponent. Below 2^-128 the exponent stays -128 and the mantissa is kept

@@ -80,9 +80,14 @@ struct IPs3
     PlaneStepper3 V[2];
     PlaneStepper3 Col[2][4];
     PlaneStepper3 Ofs[2][4];
+    u8 light[2][4];         // the last vertex's offset colour as it is: a bump map's light (refsw3-core)
 
     void Setup(taRECT *rect, DrawParameters* params, const Vertex& v1, const Vertex& v2, const Vertex& v3, bool TwoVolumes)
     {
+        for (int i = 0; i < 4; i++) {
+            light[0][i] = v3.spc[i];
+            light[1][i] = v3.spc1[i];
+        }
         invW.Setup(rect, v1, v2, v3, v1.z, v2.z, v3.z);
         U[0].Setup(rect, v1, v2, v3, v1.u * v1.z, v2.u * v2.z, v3.u * v3.z);
         V[0].Setup(rect, v1, v2, v3, v1.v * v1.z, v2.v * v2.z, v3.v * v3.z);
