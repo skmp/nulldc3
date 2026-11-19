@@ -154,10 +154,12 @@ template<class Cfg>
 struct DepthTileT {
     bool valid = false, block = false;
     // A plane that overflows but has slopes (dreamcast-tests/pvr-tests/zword, zbad, zbadbg, zbadk, zovf; README zspec).
-    // ovf 2: a slope overflowed: every pixel's depth is kWrap[(sa i + sb j) mod 32], i, j from the tile's first pixel,
-    // sa, sb the overflowed slopes' signs (0: that slope did not overflow). ovf 1: only the constant did: the tile's
-    // first pixel 0, every other one ovfWord.
+    // ovf 2: a slope overflowed: every pixel's depth is the word of the register r = r0 + (sa i + sb j) 2^25 (kWrap at
+    // whole steps, WrapWord between them), i, j from the tile's first pixel, sa, sb the overflowed slopes' signs (0: that
+    // slope did not overflow), r0 the plane's start, all in units of 2^102 (2^25: one step, 2^127). ovf 1: only the
+    // constant did: the tile's first pixel 0, every other one ovfWord.
     int ovf = 0, sa = 0, sb = 0;
+    int64_t r0 = 0;
     StoredDepth ovfWord;
     StoredDepth first_z;                                // not valid: the depth every pixel gets
     // block form: twice the depth in units of 2^unit is d0 + sx2 * dx + sy2 * dy, with sx2, sy2 the steps from
@@ -237,9 +239,9 @@ struct DepthTileT {
                 valid = false; block = false;
                 first_z = first0.bad ? StoredDepth::Saturated(first0.neg) : StoredDepth::FromFp(first0.cut(cfg.storedBits));
                 // The depth unit evaluates such a plane all the same. When a slope overflows (from about 32 z = 2^128
-                // for a cell-sized triangle) its step is +-2^124 a pixel from a start of 0, in a register whose top
-                // bit is 2^128, so the steps wrap every 32 pixels from the tile's first pixel; the word stored is
-                // a function of the register alone (kWrap). When only the constant overflows (it holds the corners'
+                // for a cell-sized triangle) its step is +-2^127 a pixel from the plane's start, in a register whose
+                // sign is at 2^131, so the steps wrap every 32 pixels from the tile's first pixel; the word stored is
+                // a function of the register alone (WrapWord). When only the constant overflows (it holds the corners'
                 // x y: from about z = 2^114 .. 2^117 on the screen), the tile's first pixel is 0 and every other one
                 // the negative full scale of the block, -(2^(e + 1) - ulp), e the block's exponent from the slopes
                 // (pair + 5). A plane of zero slopes (all corners bad, flat) is the saturated 2^127 above (bgbig).
@@ -247,6 +249,29 @@ struct DepthTileT {
                     ovf = 2;
                     sa = a.bad ? ((a.neg != det.neg) ? -1 : 1) : 0;
                     sb = b.bad ? ((b.neg != det.neg) ? -1 : 1) : 0;
+                    // The register starts at the plane's start, first0 above, with the infinities' rules: an infinity
+                    // is one step with its sign (2^127, the slopes' step; its NaN payload does not count), a finite
+                    // start is kept as a number, its bits from 2^102 up. dreamcast-tests/pvr-tests/nantr_pos (300 cells
+                    // of one bad corner, every corner bad in turn, both orientations, NaNs 7fc00000 7fa00000 7f800001
+                    // 7fffffff ffc00000 ffffffff, +-inf, +-max, 2^127, 2^123; 9 pages of backgrounds): 2700 of 2700
+                    // regions, 70 cells start at +-1 step (refsw3 before: 2140 regions). That was zbad / zbadbg's one
+                    // cell (TR at a NaN at x = 0: TR's term of c is NaN * 0 there, so c is finite and the start a x0 is
+                    // +inf); TR or BL bad with the edge facing it on a line through the origin (x = 0, y = 0, the
+                    // diagonal) is the same everywhere. The start is (a x0 + b y0) + c: TL bad, (-inf - inf) + inf, is 0
+                    // (zword), and a TR / BL corner facing the diagonal starts at the sign of c, flipping across it.
+                    // nantr_word: the words, to 19 bits, of 8 such triangles, 31 pixels each, those of 1 step on.
+                    // nantr_fin (16 starts at the tile's first pixel, the slopes' infinities cancelling): 2^120 .. the
+                    // largest float as themselves (2^120 as 2^120 - 2^102), 0.5 and 2^100 as 0; nantr_fin2,
+                    // nantr_wreg: steps added to such starts (WrapWord). GAP: a finite start below zero is taken
+                    // toward zero to 2^102 (no test tells), and is cut to the start's 20 bits first, as an ordinary one.
+                    if (first0.bad) {
+                        r0 = first0.neg ? -(int64_t(1) << 25) : (int64_t(1) << 25);
+                    } else if (!first0.zero()) {
+                        const Fp st = first0.cut(cfg.startBits);
+                        const int sh = st.exp - 102;
+                        const int64_t m = sh >= 0 ? (sh < 40 ? (int64_t)(st.mant << sh) : 0) : (-sh < 64 ? (int64_t)(st.mant >> -sh) : 0);
+                        r0 = st.neg ? -m : m;
+                    }
                 } else if (!a.zero() || !b.zero()) {
                     const Fp invS = Recip(det, cfg.recipBits);
                     const Fp As = Mul(a, invS, cfg.coefBits), Bs = Mul(b, invS, cfg.coefBits);
@@ -321,23 +346,70 @@ struct DepthTileT {
 
     // The depth stored for the pixel i columns right and j rows down of the tile's first pixel; centers: the
     // ISP samples at pixel centers (HALF_OFFSET bit 0).
-    // The words of an overflowing plane's register (ovf 2) by its value m = (sa i + sb j) mod 32 in steps of 2^124:
-    // dreamcast-tests/pvr-tests/zword (the words, to the stored depth's 19 bits), the same for +inf, NaN and 2^127 corners
-    // at every place tried, and the mirror (steps of +2^124) word for word. GAP: where zword says a word lies between
-    // two probes 32 apart the low 5 bits are taken as ones (m 17 .. 22, 24 .. 29), m 2 .. 15 are beyond the largest
-    // float (any word above 0x7f7fffe0: taken as 0x7fffffff) and m 16 below every probe (taken as the lowest word).
+    // The words of an overflowing plane's register (ovf 2) at whole steps, by m = (r / 2^127) mod 32 (r0 = 0: m = (sa i +
+    // sb j) mod 32): dreamcast-tests/pvr-tests/zword (the words, to the stored depth's 19 bits), the same for +inf, NaN
+    // and 2^127 corners at every place tried, and the mirror (steps of +2^127) word for word. GAP: where zword says a
+    // word lies between two probes 32 apart the low 5 bits are taken as ones (m 17 .. 22, 24 .. 29), m 2 .. 15 are
+    // beyond the largest float (any word above 0x7f7fffe0: taken as 0x7fffffff) and m 16 below every probe (taken as
+    // the lowest word).
     static constexpr uint32_t kWrap[32] = {
         0x00000000u, 0x7f000000u, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu,
         0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu, 0x7fffffffu,
         0x807fffffu, 0xfdffffffu, 0xfe7fffffu, 0xfe7fffffu, 0xfeffffffu, 0xfeffffffu, 0xfeffffffu, 0xfeffffe0u,
         0xff7fffffu, 0xff7fffffu, 0xff7fffffu, 0xff7fffffu, 0xff7fffffu, 0xff7fffffu, 0xff7fffe0u, 0xff000000u,
     };
+    // The word stored for the overflowing plane's register (ovf 2) between whole steps: r in units of 2^102, two's
+    // complement with its sign at 2^131 (it wraps every 32 steps of 2^127). Zero is 0; above zero it is r itself, cut to
+    // 19 bits, from 2^128 on beyond the largest float (0x7fffffff); below zero, with u = r + 2^131 (the bits under the
+    // sign) cut to 19 bits and 2^p its leading one, the exponent field is p + 124 and the ISP's compare key's fraction
+    // (the word's fraction inverted) is v = (u / 2^p - 1.75) 2^26 - 1: below 0 the binade's lowest word, from 2^23 on the
+    // next binade's lowest word. So from -2 steps to -1 step the word is r itself, from -9 to -8.5 steps r + 8 steps,
+    // from -12.5 to -12.25 r + 12 steps, ..., and in between the binades' lowest words (monotone in r). At whole steps
+    // the formula gives each of kWrap's 32 words (zword). Between them: dreamcast-tests/pvr-tests/nantr_fin (16 starts at
+    // the tile's first pixel), nantr_fin2 (8 starts with 0 .. +-15 steps, 31 pixels each) and nantr_wreg (8 starts of
+    // up to 1/8 step with 0 .. -12 steps, 14 pixels each), every word as the formula where the probes pin one: 2^127 +
+    // 2^110 as itself, -(2^127 + 2^110) as 0xff000100 (u's 19 bits), 2^119 - 9 steps as 0xfeff0000, 1/8 - 9 steps as
+    // 0xfee00100, 1/8 - 2 steps as 0xff700100; -8.125, -8.0625, -8.09375, -12.125, -12.09375 steps with the lowest words
+    // of -8 and -12 (not above them: v from 2^23 on); -2^119 and 2^119 - 1 step between -2^127 and 0.25.
+    // GAP: the low 5 bits where zword's words lie between two probes (v below -1 and from 2^23 on: taken as ones in the
+    // word, as kWrap; v = -1: 0x7fffe0 as zword's -9 and -2); the words beyond the largest float (taken as 0x7fffffff);
+    // between -1 step and 0 (exponent field 255: above -2^127 and below 0.25 in the ISP's order, nothing finer).
+    static uint32_t WrapWord(int64_t r)
+    {
+        r = ((r + (int64_t(1) << 29)) & ((int64_t(1) << 30) - 1)) - (int64_t(1) << 29);
+        if (r == 0)
+            return 0;
+        if (r > 0) {
+            if (r >= (int64_t(1) << 26))
+                return 0x7fffffffu;
+            const int p = Fp::Bits((uint64_t)r) - 1;
+            const uint64_t m = p <= 23 ? (uint64_t)r << (23 - p) : (uint64_t)r >> (p - 23);
+            return (uint32_t)(p + 102 + 127) << 23 | ((uint32_t)m & 0x7fffe0u);
+        }
+        int64_t u = r + (int64_t(1) << 29);
+        if (u == 0)
+            return 0x807fffffu;                         // -16 steps: exponent field 0, the lowest word (zword)
+        const int p = Fp::Bits((uint64_t)u) - 1;
+        if (p > 18)
+            u &= ~((int64_t(1) << (p - 18)) - 1);
+        const int64_t v = ((u << 26) >> p) - 7 * (int64_t(1) << 24) - 1;
+        uint32_t e = (uint32_t)(p + 226);
+        if (v < -1)
+            return 0x80000000u | e << 23 | 0x7fffffu;
+        if (v == -1)
+            return 0x80000000u | e << 23 | 0x7fffe0u;
+        if (v >= (int64_t(1) << 23))
+            return 0x80000000u | (e + 1) << 23 | 0x7fffffu;
+        return 0x80000000u | e << 23 | ((uint32_t)~v & 0x7fffffu);
+    }
 
     StoredDepth At(int i, int j, bool centers) const
     {
         using namespace pvrfp;
-        if (ovf == 2)
-            return StoredDepth::Bits(kWrap[(sa * i + sb * j) & 31]);
+        if (ovf == 2) {
+            const int64_t r = r0 + (int64_t)(sa * i + sb * j) * (int64_t(1) << 25);
+            return StoredDepth::Bits((r & ((int64_t(1) << 25) - 1)) ? WrapWord(r) : kWrap[(r >> 25) & 31]);
+        }
         if (ovf == 1)
             return (i == 0 && j == 0) ? StoredDepth() : ovfWord;
         if (!valid)
