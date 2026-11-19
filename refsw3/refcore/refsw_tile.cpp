@@ -103,28 +103,15 @@ void ClearParamStatusBuffer() {
 // a reference with no tag (see KeyAbove)
 static const parameter_tag_t TAG_BELOW = 0xFFFFFFFF;
 
-// In a tile whose first punch-through pass draws something, the opaque polygons' runs do not end at volume edges,
-// and the opaque pixels inside a volume are shaded again in the punch-through volume pass, in its runs with the
-// punch-through pixels there (dreamcast-tests/pvr-tests/optrun kinds 9, 10; volrun; polly2-data jgr_car,
-// jgr_tree_shadows*). Punch-through pixels in front of an opaque polygon do not end its runs (optrun kinds 1-8), and
-// a punch-through list that draws nothing in the tile changes nothing (polly2-data sa2_ingame, 18wheel_select).
+// In a tile whose punch-through list holds a primitive (drawn or not: dreamcast-tests/pvr-tests/optcull), the opaque
+// polygons' runs do not end at volume edges, and the opaque pixels inside a volume are shaded again in the
+// punch-through volume pass, in its runs with the punch-through pixels there (optrun kinds 9, 10; volrun; polly2-data
+// jgr_car, jgr_tree_shadows*, ff2_fight). Punch-through pixels in front of an opaque polygon do not end its runs
+// (optrun kinds 1-8), and a punch-through list with no primitive in it changes nothing (polly2-data sa2_ingame,
+// 18wheel_select: an empty list in every tile).
 bool OpInPt = false;                                    // set per tile by refsw_lists.cpp
 static parameter_tag_t opTag[MAX_RENDER_PIXELS];        // the opaque tag of each pixel
 static parameter_tag_t refTagC[MAX_RENDER_PIXELS];      // the tag of depthBufferC's layer: opaque (or background), or resolved
-// the look at the first punch-through pass (refsw_lists.cpp) leaves the tile as it found it
-static ZType snapDepth[MAX_RENDER_PIXELS];
-static parameter_tag_t snapTag[MAX_RENDER_PIXELS];
-static TagState snapStatus[MAX_RENDER_PIXELS];
-static StencilType snapStencil[MAX_RENDER_PIXELS];
-void SnapshotTile(bool save) {
-    if (save) {
-        memcpy(snapDepth, depthBuffer[depthBufferA], sizeof(snapDepth)); memcpy(snapTag, tagBuffer[tagBufferA], sizeof(snapTag));
-        memcpy(snapStatus, tagStatus, sizeof(snapStatus)); memcpy(snapStencil, stencilBuffer, sizeof(snapStencil));
-    } else {
-        memcpy(depthBuffer[depthBufferA], snapDepth, sizeof(snapDepth)); memcpy(tagBuffer[tagBufferA], snapTag, sizeof(snapTag));
-        memcpy(tagStatus, snapStatus, sizeof(snapStatus)); memcpy(stencilBuffer, snapStencil, sizeof(snapStencil));
-    }
-}
 
 // A pass of punch-through takes in the pixels shaded in the pass before it: those that failed the alpha test go on
 // to their next fragment, and so do those that passed, for that one pass only, as part of its runs (shaded, but
@@ -350,11 +337,13 @@ void RenderParamTags(int tileX, int tileY) {
     static Span spans[32 * 32];
     static u16 order[32 * 32];
     const int n = SpanSort(spans, SpanGen<rm>(spans), order);
+    RENDLOG("PASS: %d %d %d", (int)rm, tileX, tileY);
 
     for (int s = 0; s < n; s++) {
         const Span& span = spans[order[s]];
         const int y = span.y;
         PlaneStepper3::SpanStart = span.x;
+        RENDLOG("SPAN: %d %d %d %08X %d", y, span.x, span.len, span.tag, (int)rm);
         for (int x = span.x; x < span.x + span.len; x++) {
             auto index = y * 32 + x;
             ISP_BACKGND_T_type t { .full = span.tag };
@@ -741,6 +730,31 @@ ALWAYS_INLINE void PixelFlush_isp(u32 depth_mode, u32 ZWriteDis, float x, float 
 
         case RM_PUNCHTHROUGH_MV: die("this is invalid here"); break;
     }
+}
+
+// Does the ISP's setup cull this triangle (CullMode: too small, or facing away)? The same arithmetic as below.
+bool TriangleCulled(const DrawParameters* params, const Vertex& v1, const Vertex& v2, const Vertex& v3, const Vertex* v4)
+{
+    if (params->isp.CullMode == 0)
+        return false;
+    static const pvrisp::EdgeConfig edgeConfig;
+    using pvrfp::Fp;
+    const Fp FX[4] = { Fp::FromFloat(v1.x), Fp::FromFloat(v2.x), Fp::FromFloat(v3.x), v4 ? Fp::FromFloat(v4->x) : Fp() };
+    const Fp FY[4] = { Fp::FromFloat(v1.y), Fp::FromFloat(v2.y), Fp::FromFloat(v3.y), v4 ? Fp::FromFloat(v4->y) : Fp() };
+    bool badCorner = false;
+    Fp det;
+    pvrisp::Winding(FX, FY, edgeConfig, &badCorner, &det);
+    if (badCorner || FX[3].bad || FY[3].bad)
+        return false;
+    const double tri_area = det.toDouble();
+    if (fabs(tri_area) <= FPU_CULL_VAL)
+        return true;
+    if (params->isp.CullMode >= 2) {
+        const u32 mode = params->isp.CullMode & 1;
+        if ((mode == 0 && tri_area < 0) || (mode == 1 && tri_area > 0))
+            return true;
+    }
+    return false;
 }
 
 // Rasterize a single triangle to ISP (or ISP+TSP for PT)

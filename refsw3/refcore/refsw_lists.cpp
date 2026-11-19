@@ -104,23 +104,36 @@ std::vector<u32> rendlog_tiles;
 // entry is cut between chunks (dreamcast-tests/pvr-tests/ptchunk, ptchunkq: 210 configurations of triangles and
 // sprites at 0x20-0x25 and 0x40; polly2-data shenmue_intro*, jgr_tree_shadows2). Whether a quad itself at the
 // boundary counts 4 or 3 there is not measured (the readout cannot tell).
+// A primitive the setup culls (CullMode: facing away or small) takes no room in the chunk, but the primitive right
+// after it is checked with the culled one's vertices still counted (3, a quad's last vertex not yet, as above); then
+// they are gone. Two culled ones in a row: still 3. A strip's triangles outside the tile (its entry's mask) take no
+// room either (dreamcast-tests/pvr-tests/ptchunkcost, ptchunklag; polly2-data f1wgp_driver, f1wgp_race,
+// vrally_rally4). A corner that is infinite or not a number (nothing drawn, not culled) still counts as stored.
 static bool ptChunking = false;
 static int ptChunk, ptChunkSize, ptChunkAt, ptChunkFill, ptChunks;
 static bool ptChunkPrevQuad = false;
+static int ptChunkCulled;               // the vertices of a culled primitive right before: counted in the next check only
 static bool PtChunkTake(int nv) {       // the next nv vertices of the list: in the chunk being peeled?
-    if (ptChunkFill > 0 && (ptChunkFill - (ptChunkPrevQuad ? 1 : 0)) + nv > ptChunkSize - 2) {
+    if (ptChunkFill > 0 && (ptChunkFill - (ptChunkPrevQuad ? 1 : 0)) + ptChunkCulled + nv > ptChunkSize - 2) {
         ptChunkAt++;
         ptChunkFill = 0;
     }
     ptChunkFill += nv;
     ptChunkPrevQuad = nv == 4;
+    ptChunkCulled = 0;
     ptChunks = ptChunkAt + 1;
     return ptChunkAt == ptChunk;
 }
 
+bool TriangleCulled(const DrawParameters* params, const Vertex& v1, const Vertex& v2, const Vertex& v3, const Vertex* v4);  // refsw_tile.cpp
+
 void RenderTriangle(RenderMode render_mode, DrawParameters* params, parameter_tag_t tag, const Vertex& v1, const Vertex& v2, const Vertex& v3, const Vertex* v4, taRECT* area)
-{   
+{
     if (ptChunking && (render_mode == RM_PUNCHTHROUGH_PASS0 || render_mode == RM_PUNCHTHROUGH_PASSN)) {
+        if (TriangleCulled(params, v1, v2, v3, v4)) {
+            ptChunkCulled = 3;          // a quad's 4th vertex is not counted yet (ptchunklag kind 5)
+            return;
+        }
         if (!PtChunkTake(v4 ? 4 : 3))
             return;
     }
@@ -326,6 +339,26 @@ void RenderObjectList(RenderMode render_mode, pvr32addr_t base, taRECT* rect)
                 default:
                     printf("RenderObjectList: Not handled object type: %d\n", obj.type);
             }
+        }
+    }
+}
+
+// Does an object list hold a primitive (a strip entry with a triangle in the tile, a triangle or quad array)?
+static bool ObjectListHasPrimitive(pvr32addr_t base)
+{
+    for (;;) {
+        ObjectListEntry obj;
+        obj.full = vri(emu_vram, base);
+        base += 4;
+        if (!obj.is_not_triangle_strip) {
+            if (obj.tstrip.mask)
+                return true;
+        } else if (obj.type == 0b100 || obj.type == 0b101) {
+            return true;
+        } else if (obj.type == 0b111) {
+            if (obj.link.end_of_list)
+                return false;
+            base = obj.link.next_block_ptr_in_words * 4;
         }
     }
 }
@@ -576,25 +609,13 @@ void RenderCORE() {
             }
         }
 
-        // Does the first punch-through pass draw anything in this tile? Then the opaque runs do not end at volume
-        // edges, and the opaque pixels inside a volume are shaded again with the punch-through ones (refsw_tile.cpp,
-        // OpInPt; dreamcast-tests/pvr-tests/optrun).
+        // Does the tile's punch-through list hold a primitive? Then the opaque runs do not end at volume edges, and
+        // the opaque pixels inside a volume are shaded again with the punch-through ones (refsw_tile.cpp, OpInPt;
+        // dreamcast-tests/pvr-tests/optrun). Whether it draws anything does not matter: a culled triangle, one behind
+        // the opaque ones, a degenerate one or one between the pixel centres is enough (pvr-tests/optcull; polly2-data
+        // ff2_fight, tile (10, 12)).
         extern bool OpInPt;
-        {
-            OpInPt = !entry.puncht.empty;
-            if (OpInPt) {
-                extern void SnapshotTile(bool save);
-                extern void PeelBuffersPTInitial();
-                extern int PtPass;
-                SnapshotTile(true);
-                PeelBuffersPTInitial();
-                PtPass = 0;
-                ClearMoreToDraw();
-                RenderObjectList(RM_PUNCHTHROUGH_PASS0, entry.puncht.ptr_in_words * 4, &rect);
-                OpInPt = GetMoreToDraw();
-                SnapshotTile(false);
-            }
-        }
+        OpInPt = !entry.puncht.empty && ObjectListHasPrimitive(entry.puncht.ptr_in_words * 4);
         RENDLOG("OP_PARAMS");
         // Render TAGS to ACCUM
         RenderParamTags<RM_OPAQUE>(rect.left, rect.top);
@@ -623,6 +644,7 @@ void RenderCORE() {
                     ptChunkAt = 0;
                     ptChunkFill = 0;
                     ptChunkPrevQuad = false;
+                    ptChunkCulled = 0;
                     RenderObjectList(pass ? RM_PUNCHTHROUGH_PASSN : RM_PUNCHTHROUGH_PASS0, entry.puncht.ptr_in_words * 4, &rect);
                     if (!GetMoreToDraw())
                         break;
