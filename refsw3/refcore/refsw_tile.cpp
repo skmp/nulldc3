@@ -1368,6 +1368,11 @@ static Color TextureFilter(TSP tsp, TCW tcw, const pvrfp::Fp& u, const pvrfp::Fp
         // overflowed to row 0 (dreamcast-tests/pvr-tests/texfar_mip rows 11 and 12, 64x64 declared 64x8, V
         // clamped, point and bilinear: 24 regions of v from 2^64 to the largest float times 2^11 in 1/256 texel,
         // every one the last row; texfar_mipv: the low bits after the scaling, d = 1, 2, 3, 5, 280 regions).
+        // Declared taller (d < 0) the same holds the other way: V at the square's height less the declared half texel,
+        // 128 >> -d, the fraction bits the square's (dreamcast-tests/pvr-tests/tsp2_tall: 8 .. 128 texel squares
+        // declared up to 1024 tall, d = -1 .. -7, levels 0 .. 2, wrap, flip, clamp, both signs, bilinear and point,
+        // v with bits at every place under the square's weight: 300 of 300 regions; the square's own half texel: 20;
+        // the declared coordinate's row shifted down with its own fraction as the weight: 42).
         int v0 = d > 0 ? CoordKeep((int64_t)TexCoordFixed(v, 3 + tsp.TexU + 8) + (int64_t)halfpixel * (1 << d))
                        : (TexCoordFixed(v, 3 + tsp.TexV + 8) + halfpixel) >> -d;
         ui = (TexCoordFixed(u, 3 + tsp.TexU + 8) + halfpixel) >> MipLevel;

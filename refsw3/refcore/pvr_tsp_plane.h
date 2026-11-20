@@ -53,9 +53,8 @@ struct PlaneHW {
     static constexpr pvrfp::C<1> range{};
     static constexpr pvrfp::C<-126> expLow{};
     static constexpr pvrfp::C<127> expHigh{};
-    // The last addition of a sum of three terms, (t1 + t2) + t3: of t1 + t2 and t3, one that is zero counts as
-    // 2^-127 there when the other is below 2^(-127 + zeroReach), that is, has the smallest exponent there is
-    // (see Plane::Setup).
+    // Adding a zero (see Plane::Setup): the zero counts as 2^-127 with its sign, for whether the sum is below the
+    // range, when the other operand is below 2^(-127 + zeroReach), that is, has the smallest exponent there is.
     static constexpr pvrfp::C<2> zeroReach{};
     // EXPERIMENT (model/tspprobe tileLocal=): 0 a run's coordinates are the screen's (measured: every uvmeas reading);
     // 1 they are the tile's own: the tile's constant C + A Xt + B Yt (exact, rounded down once) plus A x and B y with
@@ -104,6 +103,19 @@ inline int64_t FloorUnits(const Fp& v, int unit)
     return v.neg ? -m : m;
 }
 
+// EXPERIMENT (environment TSP_ZERO, or set by a generator; 0: the model): how the setup's adders add a zero (Setup).
+// 1 the rule before dreamcast-tests/pvr-tests/tsp2_zadd: in a sum's last addition a zero added to 2^-126 .. 2^-125
+// counts as 2^-127 with its sign (so 1.25 2^-126 + 0 is 1.75 2^-126), in the first a zero is a zero, -0 + -0 is -0
+inline int tspZeroVariant = -1;
+inline int TspZero()
+{
+    if (tspZeroVariant < 0) {
+        const char* e = getenv("TSP_ZERO");
+        tspZeroVariant = e ? atoi(e) : 0;
+    }
+    return tspZeroVariant;
+}
+
 template<class Cfg>
 struct PlaneT {
     Fp A, B, C;
@@ -132,15 +144,27 @@ struct PlaneT {
         //             infinity; a result of 2^128 or more is an infinity, one below 2^-126 a zero. The sign is the
         //             product's in every case.
         //   sum       infinity plus a number is that infinity; two infinities of the same sign too, of opposite
-        //             signs they are +0. A result of 2^128 or more is an infinity, one below 2^-126 is +0 (as an
-        //             exact cancellation is).
-        //   the last addition of a sum of three terms, (t1 + t2) + t3: when one of the two is zero and the other
-        //             2^-126 .. 2^-125, the zero is added as 2^-127 with its sign: -2.5 * 2^-127 + 0 is
-        //             -1.5 * 2^-127, which is below the range and so +0, and the slope made of it has the other
-        //             sign. (As if that adder's path for operands one exponent apart did not know a zero.)
-        //             Measured in the sign of slopes that underflow: 5 cells of uvmeas wtiny1 with a zero third
-        //             term, 21 of cmeas cwext1 with either. In the first addition, t1 + t2, a zero is a zero (one
-        //             cell of cwext1 tells). Whether the cut is at 2^-125 or 2^-124 is not told (zeroReach 2 or 3).
+        //             signs they are +0. A result of 2^128 or more is an infinity, one below 2^-126 is +0, and every
+        //             sum that is zero is +0 (an exact cancellation, -0 + -0 too).
+        //   a zero    (an input, a product below 2^-126 with its sign, or a sum) added to a number x of 2^-126 ..
+        //             1.5 2^-126 whose sign is not the zero's gives +0, as if the zero were 2^-127 with its sign
+        //             and the sum then below the range; added to any other x it gives x, to the bit. In every
+        //             addition, the first of a sum of three terms as well as the last: the ISP's depth setup's rule
+        //             (pvr_isp_depth.h add, dreamcast-tests/pvr-tests/depthgaps_zadd), one adder. Measured with
+        //             dreamcast-tests/pvr-tests/tsp2_zadd: 9,600 slivers of determinant about 1 whose U / w x slope
+        //             is a sum with a zero term and another of 1 .. 2 2^-126 (so that the slope's magnitude shows,
+        //             times the screen's x), U read through uvmeas's number texture: 9,600 of 9,600 with this rule.
+        //             The rule before (a zero counted as 2^-127 in a sum's last addition, 1.25 2^-126 + 0 =
+        //             1.75 2^-126; a zero a zero in the first; -0 + -0 = -0; fitted on the sign of 26 slopes that
+        //             underflow, uvmeas wtiny1 and cmeas cwext1, which this rule gives as well): 1,463. Only -0 + -0 =
+        //             -0 changed: 7,203 (3 of the 2,400 cases with two zeros); 2^-127 kept in the last addition:
+        //             6,207 (207 of 3,600 with the zero there); no rule in the first addition: 7,253 (53 of 2,400
+        //             with the zero there); 2^-127 in both: 3,810. uvmeas (36 sets) and cmeas (c1, cwext1, cwsum1)
+        //             stay exact. -0 + -0 = +0 in the determinant-zero mean too: tsp2_mipdz2 row 14, column 0 (three
+        //             corners of -2^-127 (1 + j/16), denormals: the mean (-0 + -0) + -0, the level's w that of its
+        //             +0, trilinear pass B): 2 of 2 regions, as -0 neither. GAP: whether a zero from a denormal
+        //             input brings its mantissa in here as it does in the mean's first addition (below); the
+        //             coordinate differences and the edge products take the rule too (one adder), not measured there.
         const bool ranged = cfg.range != 0;
         auto inf = [](bool neg) { Fp r; r.bad = true; r.neg = neg; return r; };
         auto zero = [](bool neg) { Fp r; r.neg = neg; return r; };
@@ -160,23 +184,38 @@ struct PlaneT {
             if (below(r)) return zero(neg);
             return r;
         };
-        auto addTerm = [&](const Fp& p0, const Fp& q0, bool third) {
+        const bool oldZero = TspZero() == 1;            // EXPERIMENT: the rule before tsp2_zadd
+        auto addTerm = [&](const Fp& p, const Fp& q, bool third) {
             if (!ranged)
-                return Add(p0, q0, SB, RE);
-            if (p0.bad || q0.bad) {
-                if (p0.bad && q0.bad && p0.neg != q0.neg)
+                return Add(p, q, SB, RE);
+            if (p.bad || q.bad) {
+                if (p.bad && q.bad && p.neg != q.neg)
                     return zero(false);
-                return inf(p0.bad ? p0.neg : q0.neg);
+                return inf(p.bad ? p.neg : q.neg);
             }
-            Fp p = p0, q = q0;
-            if (third) {
-                auto smallest = [&](const Fp& v) { return !v.zero() && v.top() - 1 < -127 + cfg.zeroReach; };
-                if (q0.zero() && smallest(p0)) { q.mant = 1; q.exp = -127; }
-                if (p0.zero() && smallest(q0)) { p.mant = 1; p.exp = -127; }
+            auto smallest = [&](const Fp& v) { return !v.zero() && v.top() - 1 < -127 + cfg.zeroReach; };
+            if (oldZero) {
+                Fp a = p, b = q;
+                if (third) {
+                    if (q.zero() && smallest(p)) { b.mant = 1; b.exp = -127; }
+                    if (p.zero() && smallest(q)) { a.mant = 1; a.exp = -127; }
+                }
+                Fp r = Add(a, b, SB, RE);
+                if (above(r)) return inf(r.neg);
+                if (below(r)) return zero(false);
+                return r;
+            }
+            if (p.zero() != q.zero()) {
+                const Fp& v = p.zero() ? q : p;
+                const bool zneg = p.zero() ? p.neg : q.neg;
+                const int n = Fp::Bits(v.mant);
+                const bool half = n >= 2 && ((v.mant >> (n - 2)) & 1);        // |v| >= 1.5 2^(top - 1)
+                if (smallest(v) && zneg != v.neg && !half)
+                    return zero(false);
             }
             Fp r = Add(p, q, SB, RE);
             if (above(r)) return inf(r.neg);
-            if (below(r)) return zero(false);
+            if (below(r) || r.zero()) return zero(false);
             return r;
         };
         auto add = [&](const Fp& p, const Fp& q) { return addTerm(p, q, false); };
@@ -246,13 +285,14 @@ struct PlaneT {
             const Fp third = pvrfp::OneThird();
             // A depth of exponent field 0 is a zero, but not quite in the first addition: there, against a depth of
             // 2^-126 .. 2^-125 of the other sign, it is taken as (1 + m 2^-23) 2^-127 (m its mantissa, the hidden
-            // bit not cleared, as the planes' last addition takes a zero for 2^-127), and if the difference would be
-            // below 2^-126 the sum is +0; otherwise the sum is the other depth as it is, the zero taking nothing
-            // off (dreamcast-tests/pvr-tests/slivers_dzspec: 4 rows of tiny depths; slivers_dzzero: 9,600 of 9,600
-            // triples, 831 of them exactly on the boundary, which keeps the depth. Taking the zero off the kept
+            // bit not cleared, as every addition takes a zero for 2^-127 there: Setup above), and if the difference
+            // would be below 2^-126 the sum is +0; otherwise the sum is the other depth as it is, the zero taking
+            // nothing off (dreamcast-tests/pvr-tests/slivers_dzspec: 4 rows of tiny depths; slivers_dzzero: 9,600 of
+            // 9,600 triples, 831 of them exactly on the boundary, which keeps the depth. Taking the zero off the kept
             // depth: 6,711; the zero as its denormal value: 7,562; as 2^-127: 7,564; a zero as zero: 6,834). Signs
-            // equal, or a larger depth: the zero is nothing. In the last addition the planes' rule (Setup above);
-            // GAP: not told apart there, the mean of a sum below 2^-125 is below the range anyway.
+            // equal, or a larger depth: the zero is nothing. With m = 0 that is the rule of every addition (Setup
+            // above). In the last addition that rule; GAP: a denormal's m there is not told apart, the mean of a sum
+            // below 2^-125 is below the range anyway.
             auto fieldZero = [&](int k) { return ((z[k] >> 23) & 0xff) == 0; };
             auto withZero = [&](const Fp& p, uint32_t zeroBits) {
                 const bool zneg = (zeroBits >> 31) != 0;
@@ -444,8 +484,12 @@ struct RecipTable {
 // and no other mantissa from 2^-160 to 2^-110; 2^-143 itself got 98 of 300 regions; texfar_m1q: the flat
 // attribute's quotient there, -1 unit over -1 unit, a hair below 0, not -1: 0 of 300 regions with 2^-143, 300 so).
 // The same as the rule above if the 15 bits are those of the two's complement mantissa, -1 being 0xFFFF. So no
-// denominator is below 2^-128 and no quotient above about 2^243 (texfar_quot, texfar_m1q). GAP: the mipmap level
-// at such a pixel (MipChoose's w comes from here too) is not measured.
+// denominator is below 2^-128 and no quotient above about 2^243 (texfar_quot, texfar_m1q). The mipmap level's w
+// there is this divider's too (MipSelect; dreamcast-tests/pvr-tests/tsp2_m1), and so are the colours' quotients:
+// tsp2_m1 rows 10-14, Gouraud base and offset colours (a colour per corner, or one at all three) with 1/w of 2^-100
+// .. 2^100, and the flat-shaded control: 300 of 300 regions, the colour/w there 0 (below zero, -1 unit too) or 255
+// by its sign, every channel. GAP: a colour's quotient below 1 there (8 bit colours with in-range slopes do not get
+// the colour/w below 2^-127 at that pixel).
 inline Fp DenominatorSeen(const Fp& den)
 {
     if (!den.neg || den.zero())
@@ -578,6 +622,11 @@ inline int MipK()
     return mipKVariant;
 }
 
+// EXPERIMENT (MipSelect, environment MIP_DZ; a generator may set it; 0: the model): a determinant of zero read as
+// 1 1/det = +0 (K a zero's: 2^(-127 + size); polly2-rtl's D4), 2 1/det = an infinity (K an infinity's, 2^(-128 +
+// size), where a numerator is not zero, else a zero's)
+inline int mipDzVariant = -1;
+
 // first: null (DCalcCtrl 0: the numerators are taken at the screen's origin), or the first vertex's u, v, 1/w, x
 // and y (DCalcCtrl 1: they are taken at that vertex).
 template<class P>
@@ -616,10 +665,16 @@ inline MipChoice MipSelect(const P& u, const P& v, const P& w, const Fp& q, int 
     // 24 bits (where every coefficient divided first loses its own cut; the 1/w plane's C of a flat triangle whose
     // determinant is not a power of two is just under 1, and the console's numerators are as if it were 1)
     const Fp& det = w.Sdet;
-    Fp inv = det.bad ? Fp() : Recip(det, 24);
+    if (mipDzVariant < 0) {
+        const char* e = getenv("MIP_DZ");
+        mipDzVariant = e ? atoi(e) : 0;
+    }
+    const int mipDz = mipDzVariant;
+    const bool infInv = det.zero() && !det.bad && mipDz == 2;
+    Fp inv = (det.bad || det.zero()) ? Fp() : Recip(det, 24);
     if (ranged && below(inv))
         inv = Fp();
-    const bool undivided = MipK() != 1 && !det.zero() && !inv.zero();
+    const bool undivided = MipK() != 1 && ((!det.zero() && !inv.zero()) || infInv);
     Fp inv2 = Mul(inv, inv, 24);
     // 1/det^2 is a number of the setup's range like the others: below 2^-126 (a determinant above about 2^63) it is
     // zero, so the length is zero and the level the largest map without blending, whatever the numerators are
@@ -642,6 +697,8 @@ inline MipChoice MipSelect(const P& u, const P& v, const P& w, const Fp& q, int 
             Fp n = Sub(q1, q2, 62, 200).cut(24);
             n.neg = false;
             n.bad = false;
+            if (infInv)
+                return n.zero() ? Fp() : inf();
             if (ranged) {                               // the limits as before: by the quotient
                 const Fp nq = Mul(n, inv2, 62);
                 if (below(nq)) return Fp();
@@ -741,7 +798,24 @@ inline MipChoice MipSelect(const P& u, const P& v, const P& w, const Fp& q, int 
     Fp ly = length(minor(u.B0, pu, w.B0, pw, u.Sb, su, w.Sb, sw, sgn(u.Sb, sw), sgn(su, w.Sb)),
                    minor(v.B0, pv, w.B0, pw, v.Sb, sv, w.Sb, sw, sgn(v.Sb, sw), sgn(sv, w.Sb)));
     Fp best = (lx.bad || (!ly.bad && AtMost(ly, lx))) ? lx : ly;
-    if (undivided && !best.bad && !best.zero()) {
+    // A determinant of zero (the setup's: three equal corners, or a sliver whose products, cut to 24 bits, cancel;
+    // the edge unit draws both) makes a length of all ones, as if beyond every number: whatever the numerators are,
+    // zero or not, and whatever w is, the level is the last one, and its fraction is that of K's 8 bits 0xFF (times
+    // the D adjust) times w * w's 8 bits (below). dreamcast-tests/pvr-tests/tsp2_mipdz (1/w 2^-65 .. 2^-56) and
+    // tsp2_mipdz2 (1/w 2^-127 .. 2^126): 4,800 points and 3,722 such slivers each (1,078 points where no sliver was
+    // found; 882 in mipdz2), 15 rows of sizes 8 .. 256, D adjust 1/4 .. 15/4, DCalcCtrl 1, bilinear, U to 2^20, 1/w
+    // below zero; the level, and trilinear pass B's fraction: 1,200 of 1,200 regions each. 1/det = +0 (polly2-rtl's
+    // decision D4: K = 2^(-127 + size)) got 59 of tsp2_mipdz's, 1/det = an infinity (2^(-128 + size)) 36: both put
+    // the largest map there; a length of 1.FFFFFF 2^127, the largest number, is the console's up to 1/w = 2^48 and
+    // then comes down from the last level, which the console does not (mipdz2: the columns of 1/w 2^64, 2^96, 2^126
+    // wrong in every row). (refsw3 divided by zero here: Recip of 0.)
+    const bool dzForce = det.zero() && !det.bad && mipDz == 0;
+    if (dzForce) {
+        best = Fp();
+        best.mant = 0xffffff;
+        best.exp = -23;
+    }
+    if (undivided && !infInv && !dzForce && !best.bad && !best.zero()) {
         best = Mul(best, inv2, 24);                     // the longer length, once times 1/det^2
         if (ranged && above(best)) best = inf();
         else if (ranged && below(best)) best = Fp();
@@ -769,6 +843,11 @@ inline MipChoice MipSelect(const P& u, const P& v, const P& w, const Fp& q, int 
     }
     Fp one = Fp::FromHalves(2);
     Fp wFull = Divide(one, q);
+    // w is the divider's reciprocal of the pixel's 1/w, at a 1/w of exactly -1 grid unit (Plane::Value's -2^-143)
+    // too, which the divider reads as 0xFFFF 2^-143 (DenominatorSeen): dreamcast-tests/pvr-tests/tsp2_m1 (texfar_m1's
+    // triangles with mipmapped textures of 8 .. 256, D adjust 1/4 .. 15/4, DCalcCtrl 1, U flat or sloped, 1/w 2^-20
+    // .. 2^100; the level, trilinear passes A and B): 600 of 600 regions; that 1/w read as 2^-143 itself (mantissa
+    // 0x8000) or as a zero (2^-128): 200 (the level the last either way, every fraction wrong).
     wFull.neg = false;
     Fp w8 = wFull.cut(8);
     w8.neg = false;
@@ -782,6 +861,8 @@ inline MipChoice MipSelect(const P& u, const P& v, const P& w, const Fp& q, int 
     Fp d = Mul(k8, ww, 8);
     int bits = Fp::Bits(d.mant);
     int L = d.exp + bits - 1;                                   // floor(log2(d))
+    if (dzForce)
+        L = 1 << 16;                                            // a determinant of zero: past the last level (above)
     int M = (int)(bits >= 8 ? d.mant >> (bits - 8) : d.mant << (8 - bits));          // m: 128 .. 255
     // EXPERIMENT (environment MIP_ARITH; 0 or unset: the measured arithmetic above). Other ways to the level, to
     // be scored against the console's mipmeas sets: 1 exponents only; 2 a log with the mantissa taken as linear

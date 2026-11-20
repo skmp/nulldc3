@@ -368,12 +368,12 @@ struct DepthTileT {
         };
         // An addition of the setup's. A sum of zero is +0, -0 + -0 too. A zero added to a number x of 2^-126 ..
         // 1.5 2^-126 in size whose sign is not the zero's is +0 (as if the zero were 2^-127 with its sign and the sum
-        // then below the range; the TSP's mean adds a zero so, pvr_tsp_plane.h withZero); to any other x it is x, to
+        // then below the range; the TSP's setup adds a zero so too: pvr_tsp_plane.h Setup); to any other x it is x, to
         // the bit. A zero is one from an input, a product below 2^-126 with its sign, or a sum. In every addition:
         // dreamcast-tests/pvr-tests/depthgaps_zadd (32 slivers read out to the bit, one triangle per case, nothing
         // else near 2^-126; 12 flat probes against quads at 0, z and z + 2^-126): the slope's last addition, +0 +
         // t3: t3 = -2^-126, -1.25 2^-126, -(1.5 - 2^-22) 2^-126 give a slope of 0, -1.5, -1.75, -(2 - 2^-22) and
-        // +1 .. +1.75 (2^-126) themselves exactly (not 2^-127 more or less: the TSP's planes' rule, 76 of 109
+        // +1 .. +1.75 (2^-126) themselves exactly (not 2^-127 more or less: refsw3's TSP planes' rule then, 76 of 109
         // regions); -0 + -0 is +0 (as -0: 108 of 109); zeros from products below 2^-126 the same; the first
         // addition, -0 + 1.25 2^-126 is +0, +0 + 1.25 and -0 + 1.75 are kept (without the rule there: 108 of 109);
         // the tile's start +0 + c: c = -(1 .. 1.5 - 2^-10) 2^-126 starts at 0, -(1.5 .. 2 - 2^-9) and +1 .. +1.75 at
