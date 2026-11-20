@@ -301,14 +301,29 @@ inline bool AtMost(const Fp& a, const Fp& b)
 }
 
 // FPU_PERP_VAL (as a float): a triangle whose determinant is at most this in size is taken as one of determinant
-// zero, by the ISP's depth (the mean of the corners) and the TSP's planes (flat at the third corner): "perpendicular"
+// zero, by the ISP's depth (the mean of the corners) and the TSP's planes (flat: 1/w the mean, so that attributes come
+// out as the third corner's): "perpendicular"
 // (dreamcast-tests README "perpval": at 1/128, the value 22 polly2-data dumps set, 1.0 and 2^20 every pixel the
-// console changes on covmeas's sliver sets and pvr-tests/perpval, up to 136,764 a run; whether a determinant equal
-// to it counts is not measured). Its sign does not count (-1 is 1.0, every pixel), and an infinity takes every
-// triangle with a finite determinant (then not modelled: triangles of huge or infinite determinant, faredge and detinf,
-// and 3,807 of zmeas gen5's 174,646 changed pixels). Set per render by refsw3 (the register's size: Fp::bad for an infinity; a NaN:
-// 0); 0 in the probes.
+// console changes on covmeas's sliver sets and pvr-tests/perpval, up to 136,764 a run; a determinant equal to it
+// counts: pvr-tests/perpeq). Its sign does not count (-1 is 1.0, every pixel), and a NaN is +infinity
+// (refsw_lists.cpp).
+// Set per render by refsw3 (the register's size: Fp::bad for an infinity or a NaN); 0 in the probes.
 inline Fp perpVal;
+
+// Whether a triangle of determinant det (as the setup computed it: Fp::bad an infinity) is "perpendicular". An
+// infinite FPU_PERP_VAL takes every triangle, those of an infinite determinant too (as equal counts, perpeq):
+// dreamcast-tests pvr-tests/detinf run with FPU_PERP_VAL +infinity (and NaNs, -infinity: the same pages): its
+// triangle of corners at 2^64 .. 2^100 is drawn red (flat at the third corner) at the mean of its corners' depths,
+// like the page of an ordinary determinant, 480 of 480 cells (57 when such a triangle was not perpendicular);
+// faredge with +infinity: 1330 of 1340 cells, the same as with 0 (756 before).
+inline bool Perpendicular(const Fp& det)
+{
+    if (det.zero() && !det.bad)
+        return false;                                   // a zero is one already
+    if (det.bad)
+        return perpVal.bad;
+    return (perpVal.bad || !perpVal.zero()) && AbsAtMost(det, perpVal);
+}
 
 // a * b, the product's mantissa cut to `bits` bits.
 template<class B>

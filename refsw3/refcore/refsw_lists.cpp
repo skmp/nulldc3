@@ -371,9 +371,11 @@ static bool ObjectListHasPrimitive(pvr32addr_t base)
 // Called on START_RENDER write
 void RenderCORE() {
     u32 base = REGION_BASE;
-    {   // pvr_softfp.h: its size; an infinity is Fp::bad, a NaN is 0
+    {   // pvr_softfp.h: its size; an infinity or a NaN is Fp::bad: every NaN is +infinity (dreamcast-tests
+        // pvr-tests/perpval and detinf run with 0x7fc00000, 0x7f800001, 0xffc00000 and -infinity: every pixel as with
+        // +infinity, 136,764 and 1,026,072 of them unlike 0)
         const u32 pv = FPU_PERP_VAL & 0x7fffffff;
-        pvrfp::perpVal = pv > 0x7f800000 ? pvrfp::Fp() : pvrfp::Fp::FromBits(pv);
+        pvrfp::perpVal = pvrfp::Fp::FromBits(pv);
     }
 
     RegionArrayEntry entry;
@@ -617,11 +619,23 @@ void RenderCORE() {
             // 0; from 2^-20 to below 64 (fields 107 .. 132) the background is the lowest depth of the binade of 64
             // in that order, 0xc2ffffff (-127.99999, not cut: below the probe at 0xc2ffffe0, above -32; the same
             // for -2^-20, -1, -32, -63.75 and 20 more); from 64 on it is itself (-64, -65, -100, -1024, -2^20,
-            // -2^60, -2^100, -inf, -NaN). GAP: whether one of those with low bits loses them as a positive one does.
+            // -2^60, -2^100, -inf, -NaN), on the grid of a polygon's depth below zero (pvr_isp_depth.h,
+            // StoredDepth::Store): its low 4 fraction bits cut, then its magnitude rounded up to 16 bits (a multiple of
+            // 0x100 in the word), one that would round up to the next power of two staying at the fraction 0x7fffe0.
+            // dreamcast-tests/pvr-tests/depthgaps_bglow, depthgaps_bglow2 (backgrounds W + L, L = 0 .. 31, against flat
+            // polygons at W: L 0 .. 15 tie with W, 16 .. 31 are below it, for W = -64, -100, -2^20, -2^100; with W of
+            // fraction 0x7fffe0 all 32 tie), depthgaps_bglow3 (16 .. 31 tie with a polygon at W + 0x20, which is
+            // stored as W + 0x100; a background of 0xc2ffffc0 + L ties with polygons at 0xc2ffffc0 and 0xc2ffffe0
+            // for every L, as 0xc2ffffe0): 51 of 51 regions with this rule (35 before), bglow2 27 of 27 (17), bglow
+            // 280 of 300 (272; the rest are the overflow register's words). The depthgaps hunt found the rule; it is
+            // here because a polygon below zero is stored that way (StoredDepth::Store) and the two must agree.
             const u32 bg = ISP_BACKGND_D.i, field = (bg >> 23) & 0xff;
             u32 bgBits;
-            if (bg >> 31)
-                bgBits = field < 107 ? 0 : field < 133 ? 0xc2ffffffu : (bg & ~31u);
+            if (bg >> 31) {
+                const u32 q = ((bg & 0x7ffff0u) + 0xffu) >> 8;
+                bgBits = field < 107 ? 0 : field < 133 ? 0xc2ffffffu
+                       : (bg & 0xff800000u) | (q >= 0x8000u ? 0x7fffe0u : q << 8);
+            }
             else {
                 const int cut = std::max(5, 130 - (int)field);
                 bgBits = cut > 23 ? 0 : (bg & ~((1u << cut) - 1));

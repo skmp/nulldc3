@@ -15,8 +15,8 @@
         below zero). The result is cut down to 16 bits.
       - attribute = (attribute / w) / (1 / w) with a table reciprocal of 16 bits (512 measured digits) and the
         product of the two mantissas cut down at 17 fractional bits.
-      - a determinant of zero: the plane is flat: 1/w the mean of the depths, an attribute the third corner's
-        (dreamcast-tests/pvr-tests/slivers_detzero, slivers_dzzero).
+      - a determinant of zero (or at most FPU_PERP_VAL): the plane is flat: 1/w the mean of the depths, an attribute
+        the third corner's (dreamcast-tests/pvr-tests/slivers_detzero, slivers_dzzero, perpmean_fogw, perpmean_uv).
 */
 #pragma once
 #include "pvr_softfp.h"
@@ -211,8 +211,8 @@ struct PlaneT {
         Fp c = attr ? sum3(tc[0], tc[1], tc[2]) : sum3(tc[0], tc[2], tc[1]);
         Fp det = sum3(e[0], e[1], e[2]);
         Sa = a; Sb = b; Sc = c; Sdet = det;
-        if (!det.bad && !det.zero() && (pvrfp::perpVal.bad || !pvrfp::perpVal.zero()) && pvrfp::AbsAtMost(det, pvrfp::perpVal))
-            det = Fp();                                 // FPU_PERP_VAL: as a determinant of zero (pvr_isp_depth.h)
+        if (pvrfp::Perpendicular(det))
+            det = Fp();                                 // FPU_PERP_VAL: as a determinant of zero (pvr_softfp.h)
         if (det.zero() && !det.bad) {
             // A determinant of zero: every plane is flat. The 1/w plane is the mean of the three depths, ((z1 + z2) +
             // z3) times the single nearest 1/3 (0x3eaaaaab, a hair above it), the sums and the product in the setup's
@@ -226,6 +226,22 @@ struct PlaneT {
             // 0xaaaaaa, 8,143; with 1/3 rounded up at 26 bits or more 9,594; the sums 25 bits wide 9,474; (z1 + z3) + z2
             // 9,413, (z2 + z3) + z1 9,379; the exact mean 9,373; the colour of every one, Gouraud, the third
             // corner's). FPU_PERP_VAL's triangles take the same path (slivers_perp: 2,400 of 2,400 cells).
+            // The same mean on FPU_PERP_VAL's triangles: pvr-tests/perpmean_fogw, perpendicular triangles with table fog of density 1 (the fog's w is
+            // this 1/w; a page of the table's blend bits, one of its index): 16,384 of 16,384 pixels, 12,288 of them
+            // triangles of three different 1/w (both windings); with the third corner's 1/w (the guess before) 4 of 16
+            // regions, those of three equal 1/w. To the last bit: pvr-tests/perpmean_uv (U of 64 .. 128 read through
+            // uvmeas's number texture, so the quotient (u3 X) / X to half a unit of its 16th bit; 8,192 triangles, 1/w
+            // of 2^-20 .. 2^20 or one 12 .. 30 binades below the others, both windings): 8,192 of 8,192 readings; X the
+            // third corner's 1/w 2,220, the sum (w1 + w3) + w2 8,176, the factor 0xaaaaaa 8,132, an exact division by 3
+            // cut to 24 bits 8,182 (2 of 8 regions), the mean cut to 20 bits 7,934, the attribute times the 16 bit mean
+            // 4,102.
+            // With an overflowing sum (corners at 2^127 or the largest float) the plane is an infinity, which the
+            // evaluator takes as 2^-128, and a colour of 0 (a zero, 2^-127) comes out 2 / 1: white, as a console draws
+            // detinf's perpendicular black probe quads at 2^127 and the largest float (FPU_PERP_VAL 2^20 and +infinity:
+            // 16 cells each, black before); any other colour infinity / infinity, 2^-128 / 2^-128: white as well, and a
+            // texel one unit under a whole U. pvr-tests/perpmean_ovf (FPU_PERP_VAL +infinity, 1/w sums at 2^128 and
+            // just under it, ten colour sets, Gouraud, untextured, textured modulate and decal, both windings): 240 of
+            // 240 regions (126 before).
             A = Fp(); B = Fp();
             Fp third;
             third.mant = 0xaaaaab;

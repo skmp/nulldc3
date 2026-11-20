@@ -17,13 +17,16 @@
         of zmeas (reach1, reach1r, zero6) the model missed; 0 of 89,801 brackets missed with it, 39 before. A
         positive start cut lower shows only at depths below about a quarter of the slopes: dreamcast-tests
         pvr-tests/zstart, 47,522 of 47,522 pixels with any start cut (121 differ when only a negative one is)
-      - a pixel is the start plus whole steps, and is stored with a 19 bit mantissa; the steps are fixed point
+      - a pixel is the start plus whole steps, and is stored with a 19 bit mantissa (below zero, in the block's top
+        binade, 16 bits rounded up in size: StoredDepth::Store, pvr-tests/perpmean_bg); the steps are fixed point
         however far the depth reaches above the start (zmeas mix reach: exact to 29 powers of two above it), and a
         start of exactly zero is stepped the same way, on the slopes' own grid
       - a determinant of ZERO (three equal corners, three corners on a line, or a sliver whose constants cancel):
         every pixel gets the mean of the three corners' depths, whatever the constants are
         (dreamcast-tests/pvr-tests/covmeas, mixes degen, tiny and sliver with --prim zprobe --zs: 11,456 + 1,344 + 53
-        pixels, brackets 0.02 to 0.1 wide)
+        pixels, brackets 0.02 to 0.1 wide); the mean is (z1 + z2) + z3 in the setup's adder (z3 the third corner
+        sent, in strips and sprites too), divided by 3 toward zero, zero below 2^-126, stored as a flat plane's start
+        (pvr-tests/perpmean_word: 16,384 stored words of 16,384; perpmean_strip, perpmean_tiny)
 */
 #pragma once
 #include "pvr_softfp.h"
@@ -46,6 +49,7 @@ struct DepthHW {
     static constexpr pvrfp::C<21> pairBits{};
     static constexpr pvrfp::C<26> tileBits{};
     static constexpr pvrfp::C<19> storedBits{};
+    static constexpr pvrfp::C<16> storedNegBits{};  // a depth below zero (StoredDepth::Store)
     // the start cut to the slopes' grid too: 1 any start (a console: zstart), 2 a negative one only, 0 not (the model
     // before); 0 and 2 are kept for the generators and depthprobe --scan
     static constexpr pvrfp::C<1> startOnSlopes{};
@@ -69,6 +73,7 @@ struct DepthConfig {
     int pairBits = DepthHW::pairBits;
     int tileBits = DepthHW::tileBits;
     int storedBits = DepthHW::storedBits;
+    int storedNegBits = DepthHW::storedNegBits;
     int startOnSlopes = DepthHW::startOnSlopes;
     int range = DepthHW::range;
 };
@@ -146,6 +151,40 @@ struct StoredDepth {
         const uint32_t frac = (uint32_t)((n <= 24 ? m << (24 - n) : m >> (n - 24)) & 0x7fffffu);
         return Bits(sign | (uint32_t)(t2 - 1 + 127) << 23 | frac);
     }
+    // The depth unit's value v as the depth buffer keeps it. Above zero its mantissa cut to `bits` (19) bits toward
+    // zero. Below zero to `negBits` (16) bits, the size rounded UP (toward minus infinity): dreamcast-tests
+    // pvr-tests/perpmean_bg (the words of 136 means below zero and 24 flat 2x2 quads, read with the background as
+    // the probe: every one on the 16 bit grid, 0x...00, one step above in size wherever the value had bits below it)
+    // and perpmean_neg (11,258 means below zero, read with zexfil.h's probes, whose own negative depths are rounded
+    // the same way: all consistent with it). Rounding up does not carry into the exponent: a size whose 16 bits are
+    // all ones and more is the binade's largest on the 19 bit grid, 0x...7fffe0 (perpmean_negstore page 0: flat
+    // quads at -0x42ffffff and a start just over -2^14 tie with the backgrounds 0xc2ffffe0 and 0xc67fffe0;
+    // perpmean_neg: the 49 means and probes at the top of a binade; a carry to the next power of two puts the probes
+    // out of order). This is a flat plane's and a mean's, and a sloped plane's in the block's top binade
+    // (DepthTileT::At). A background below zero of 64 and more is rounded the same way after its low 4 fraction bits
+    // are cut (refsw_lists.cpp).
+    // GAP: sizes below about 2^-122: a mean of -2^-125 is below a flat quad at -2^-126 on the console (perpmean_tiny's
+    // first version, 335 of 336), this rule puts it above (0x81000000 against 0x80800000); the depthgaps hunt's clamp
+    // of the block exponent at -122 is the candidate, not yet measured with means.
+    template<class B, class NB>
+    static StoredDepth Store(const Fp& v, B bits, NB negBits)
+    {
+        if (v.bad || !v.neg || v.zero())
+            return FromFp(v.cut(bits));
+        Fp m = v;
+        const int n = Fp::Bits(m.mant);
+        if (n > (int)negBits) {
+            const int d = n - (int)negBits;
+            const bool rest = (m.mant & ((1ull << d) - 1)) != 0;
+            m.mant >>= d; m.exp += d;
+            if (rest && ++m.mant >> (int)negBits) {
+                // no carry into the exponent: the binade's largest size on the 19 bit grid
+                m.mant = (1ull << (int)bits) - 1;
+                m.exp -= (int)bits - (int)negBits;
+            }
+        }
+        return FromFp(m);
+    }
     // for logs and the probes of dreamcast-tests/model only
     double toDouble() const { float f; memcpy(&f, &bits, 4); return f; }
 };
@@ -166,6 +205,9 @@ struct DepthTileT {
     // the tile's first pixel center in half pixels
     pvrfp::i128 d0 = 0, dx = 0, dy = 0;
     int unit = 0;
+    // the block's exponent: the larger of the start's and the larger slope's + 5 (At: a pixel below zero inside
+    // [2^(negE - 1), 2^negE) in size is stored as StoredDepth::Store has it)
+    int negE = 0;
     // float form (a plane of zero)
     Fp A, B, C;
     int left = 0, top = 0;
@@ -218,6 +260,8 @@ struct DepthTileT {
         Fp b = sum3(mul(Z[0], sub(X[2], X[1])), mul(Z[1], sub(X[0], X[2])), mul(Z[2], sub(X[1], X[0])));
         Fp c = sum3(mul(Z[0], e1), mul(Z[2], e3), mul(Z[1], e2));       // (v1 + v3) + v2
         Fp det = sum3(e1, e2, e3);
+        if (pvrfp::Perpendicular(det))
+            det = Fp();                                 // FPU_PERP_VAL: as a determinant of zero (pvr_softfp.h)
         if (ranged && det.bad) {
             // An infinite determinant (corners at 2^64 and beyond): its reciprocal is taken to be zero, and zero
             // times anything is zero, so the depth is 0. Not measured; dreamcast-tests/pvr-tests/huge does not tell
@@ -228,8 +272,6 @@ struct DepthTileT {
             first_z = StoredDepth();
             return;
         }
-        if (!det.bad && !det.zero() && (pvrfp::perpVal.bad || !pvrfp::perpVal.zero()) && pvrfp::AbsAtMost(det, pvrfp::perpVal))
-            det = Fp();                                 // FPU_PERP_VAL: as a determinant of zero
         if (ranged && !det.zero() && !det.bad) {
             // the depth of the tile's first pixel with these numbers; an overflow is stored as 2^127 (Saturated)
             Fp inv0 = Recip(det, cfg.recipBits);
@@ -288,12 +330,54 @@ struct DepthTileT {
         valid = !det.zero() && !det.bad && !a.bad && !b.bad && !c.bad;
         block = false;
         if (!valid) {
-            // an infinity or a NaN among the inputs: the first vertex's depth as given. A determinant of zero:
-            // the mean of the three depths (as a console stores it; the arithmetic of the mean is a guess)
+            // an infinity or a NaN among the inputs: the first vertex's depth as given (GAP for a determinant of zero
+            // or at most FPU_PERP_VAL with an infinite or NaN corner depth: detinf's flat probe quads at +infinity
+            // do not tell this from +-2^127, the saturated word of an overflowing sum). A determinant of zero
+            // (or at most FPU_PERP_VAL): the mean of the three depths, (z1 + z2) + z3 in rasterizer order in the
+            // setup's adder (24 bits, toward zero, the 25 bit reach), divided by 3 toward zero, cut to 20 bits
+            // toward zero as a plane's start is, and stored as any depth (StoredDepth::Store: 19 bits above zero, 16
+            // rounded up in size below).
+            // dreamcast-tests/pvr-tests/perpmean_word: 16,384 triangles at FPU_PERP_VAL 0.75 (flat ones, one binade,
+            // within 4 .. 40 binades, one or two depths 16 .. 40 binades below, all six orders, cancelling pairs,
+            // zeros), every stored word read back (zexfil.h): 16,384 of 16,384 with this; the other sum orders, a
+            // wider or rounding adder, no reach, or a factor 1/3 cut to 24 bits (the reciprocal unit's 0xaaaaaa, as
+            // before: flat triangles one step low, 1,618 words wrong) all miss. The factor here is 1/3 rounded up
+            // to 24 bits (0xaaaaab 2^-25) and the product cut to 24 bits: for every 24 bit sum the same 19 bits as
+            // an exact division (checked for all 2^23 mantissas), so which of the two the hardware does is not
+            // visible. Below zero (pvr-tests/perpmean_neg, the same triangles negated, 11,258 means; perpmean_bg, 136
+            // words): the same sum and quotient of the sizes, toward zero (the adds toward minus infinity instead:
+            // 242 wrong), and the 20 bit cut before the 16 bit one rounds up (without it 557 wrong: flat corners with
+            // bits only in the last 4 of 24 are not rounded up). A sum of 2^128 or more is +-2^127 (perpmean_bg page
+            // 0: 3 x 2^127, the largest float, 2^127 + 2^127 - 2^127 in that order, the same below zero, 36 of 36).
+            // The third corner sent is the one added last in every kind of primitive: pvr-tests/perpmean_strip, the
+            // last triangle of strips sent with Strip_Len 6 at triangles 1, 2, 3, 5, Strip_Len 1 at triangle 1,
+            // Strip_Len 2 at triangle 3 (an odd one has its first two corners swapped: the same sum), and sprites
+            // ((A + B) + C, A at each corner of the square, either way round): 8,192 of 8,192 stored words, 6,164 of
+            // them triples where another corner added last gives another word (496 .. 542 a tile miss with either).
+            // A quotient below 2^-126 is zero, as the tile's start is (the range, above): pvr-tests/perpmean_tiny,
+            // means of u / 3 .. u - ulp (u = 2^-126: sums of u .. 3u - ulp, with zeros, cancellations), both
+            // signs: equal to a background of 0, below a quad at +u, above one at -2^-120; 2u/3 .. 4u/3 and 2^-120 / 3
+            // as their values; 336 of 336 regions (282 with them stored as a float's denormals).
+            // The mean is stepped as the start of a flat plane (DepthTileT::At): stored as such a plane is.
             if (det.zero() && !det.bad && !Z[0].bad && !Z[1].bad && !Z[2].bad) {
-                Fp third = Recip(Fp::FromHalves(6), cfg.recipBits);
+                Fp third; third.mant = 0xaaaaab; third.exp = -25;
                 Fp mean = Mul(sum3(Z[0], Z[1], Z[2]), third, cfg.coefBits);
-                first_z = StoredDepth::FromFp(mean.cut(cfg.storedBits));
+                if (ranged && !mean.bad && !mean.zero() && mean.top() - 1 < -126)
+                    mean = Fp();
+                if (mean.bad) {
+                    first_z = StoredDepth::Saturated(mean.neg);
+                } else if (mean.zero()) {
+                    first_z = StoredDepth();
+                } else {
+                    const Fp m = mean.cut(cfg.startBits);
+                    const int e = m.top();
+                    unit = e - cfg.tileBits;
+                    const pvrfp::i128 s0 = (pvrfp::i128)m.mant << (m.exp - unit);
+                    d0 = 2 * (m.neg ? -s0 : s0);
+                    dx = dy = 0;
+                    negE = e;
+                    valid = block = true;
+                }
             }
             return;
         }
@@ -341,6 +425,7 @@ struct DepthTileT {
         d0 = 2 * (start.neg ? -s0 : s0);
         dx = step(A);
         dy = step(B);
+        negE = e > pair + (cfg.tileBits - cfg.pairBits) ? e : pair + (cfg.tileBits - cfg.pairBits);
         block = true;
     }
 
@@ -430,8 +515,20 @@ struct DepthTileT {
             const auto RE = cfg.reach;
             Fp X = Fp::FromHalves(2 * (int64_t)(left + i) + (centers ? 1 : 0)), Y = Fp::FromHalves(2 * (int64_t)(top + j) + (centers ? 1 : 0));
             v = Add(Add(Mul(A, X, PB), Mul(B, Y, PB), SB, RE), C, SB, RE);
+            return StoredDepth::FromFp(v.cut(cfg.storedBits));
         }
-        return StoredDepth::FromFp(v.cut(cfg.storedBits));
+        // A pixel below zero in the block's top binade (its exponent negE: a flat plane's every pixel) is stored with
+        // 16 bits rounded up in size (StoredDepth::Store): dreamcast-tests/pvr-tests/perpmean_bg page 3 (24 flat 2x2
+        // quads below zero, words read with the background as the probe), perpmean_negstore page 0 (64 flat quads),
+        // perpmean_negedge pages 0 (16 planes of slopes of 1 .. 16 units of the tile's grid, the pixel in the start's
+        // binade) and 2 (64 flat quads), perpmean_neg (zexfil's flat probes below zero), depthgaps_negpp (flat
+        // polygons below zero 1 .. 12 steps of 0x20 apart: tie in groups of 0x100, 360 of 360 regions with this, 264
+        // without). GAP: a pixel below zero outside that binade is neither this nor the 19 bit cut (perpmean_negslope,
+        // perpmean_negstore pages 1 .. 3, perpmean_negedge page 1, depthgaps_negladder, _negramp, _uwmat, _ties: the
+        // depthgaps hunt's item); it is kept as before, cut to 19 bits.
+        if (v.neg && v.top() != negE)
+            return StoredDepth::FromFp(v.cut(cfg.storedBits));
+        return StoredDepth::Store(v, cfg.storedBits, cfg.storedNegBits);
     }
 };
 
