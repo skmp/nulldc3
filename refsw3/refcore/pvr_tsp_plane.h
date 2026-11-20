@@ -317,13 +317,19 @@ struct PlaneT {
             A0 = A; B0 = B; C0 = C;
             return;
         }
-        // The reciprocal has the range too: of a determinant above 2^126 it is below 2^-126 and so zero, and of an
+        // The reciprocal has the range too: of a determinant of 2^126 or more it is zero (below), and of an
         // infinite one it is zero. Every coefficient is then a zero with the sign of its sum times the
         // determinant's (dreamcast-tests/pvr-tests/hugepos: triangle c, determinant -2^127.4, is black, the quotient of
         // two planes below zero; b, +2^127.7, is white exactly where x <= y, where -2^-127 x + 2^-127 y + 2^-127 is
         // above zero; a, whose determinant is an infinity from corners of 2^62 on, is white all over).
+        // The limit is the determinant's exponent: from 2^126 on, 2^126 itself included (its reciprocal's exponent
+        // taken as -(e + 1) before a mantissa of exactly 1 moves it up, as the ISP's depth unit, pvr_isp_depth.h):
+        // dreamcast-tests/pvr-tests/trsort_recip pages 3, 11, 13 (one blue triangle over the screen, determinants of
+        // exactly +2^126, -2^126 and +2^126 with sloped depths; its colour where the probes over it fail, 61,440
+        // pixels a page): white, black and 0x81..0x84 greys, the colours of a zero reciprocal, as at 2^126 (1 +
+        // 2^-23) (pages 4, 12, 14); with 2^-126 kept, blue as at 2^126 (1 - 2^-24) (page 2): 6 of 160 regions wrong.
         Fp inv = det.bad ? zero(det.neg) : Recip(det, cfg.recipBits);
-        if (ranged && below(inv))
+        if (ranged && (below(inv) || (!det.bad && !det.zero() && det.top() - 1 >= 126)))
             inv = zero(inv.neg);
         A0 = mul(a, inv); B0 = mul(b, inv); C0 = mul(c, inv);
         A = A0.cut(cfg.coefBits);

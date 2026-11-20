@@ -425,11 +425,42 @@ struct DepthTileT {
         if (pvrfp::Perpendicular(det))
             det = Fp();                                 // FPU_PERP_VAL: as a determinant of zero (pvr_softfp.h)
         if (ranged && det.bad) {
-            // An infinite determinant (corners at 2^64 and beyond): its reciprocal is taken to be zero, and zero
-            // times anything is zero, so the depth is 0. Not measured; dreamcast-tests/pvr-tests/huge does not tell
-            // (its triangles of that size are drawn whatever their depth), and one pixel of
-            // dreamcast-tests/pvr-tests/modvol, where a polygon of garbage with such corners decides whether it is in a
-            // volume, has it behind 0.75.
+            // An infinite determinant (corners at 2^64 and beyond): its reciprocal is zero, and zero times anything
+            // is zero, so the depth is 0. dreamcast-tests/pvr-tests/trsort_recip page 10 (determinant 2^128 from
+            // corners of 2^116, under flat probes, DepthMode Greater): every probe from 2^-100 up drawn, +0 and
+            // 2^-126 not, as at f = 1 (page 3);
+            // trsort_auto: hugepos's a (infinite from 2^62) ties with depth-0 layers in the sort (page 15, below).
+            // dreamcast-tests/pvr-tests/huge does not tell (its triangles of that size are drawn whatever their
+            // depth), and one pixel of dreamcast-tests/pvr-tests/modvol, where a polygon of garbage with such corners
+            // decides whether it is in a volume, has it behind 0.75.
+            valid = false; block = false;
+            first_z = StoredDepth();
+            return;
+        }
+        // The reciprocal has the setup's range too (as the TSP's, pvr_tsp_plane.h): from a determinant of 2^126 on,
+        // 2^126 itself included, it is zero, and every product with it is zero: the depth is 0 at every pixel, as
+        // with an infinite determinant. Its exponent is checked as -(e + 1) for a determinant of exponent e, before a
+        // mantissa of exactly 1 moves it up: the reciprocal of exactly 2^126, 2^-126 as a number, is zero too.
+        // dreamcast-tests/pvr-tests/trsort_auto (hugepos's three triangles, every corner at depth 1, in the
+        // translucent list sorted per pixel): b, determinant +2^127.7 at M = 2^116, is not drawn at all over a
+        // background of 0.0001 (pages 5 and 10: none of its 248,789 pixels; with the reciprocal kept, a depth of 1,
+        // all of them), and over a background of -1 it ties with a and c (infinite determinants, depth 0) and is
+        // drawn in the tags' order: under c where c covers, over a (page 15; with the reciprocal kept 144,629 pixels
+        // wrong); 240 of 240 regions with this, 202 before. dreamcast-tests/pvr-tests/trsort_recip (one triangle
+        // over the screen of determinant exactly f 2^126, under 10 flat probes from +0 to 2, DepthMode Greater): f =
+        // 0.5, 0.75, 1 - 2^-24 an ordinary depth of 1; f = 1, 1 + 2^-23, 1.25, 1.5, 2, 3, 4 - 2^-22 (and 4, an
+        // infinite determinant) a depth of 0, every probe from 2^-100 up drawn; f = 1 and 1 + 2^-23 with the other
+        // winding, and with corners of 1, 0.5, 0.25, the same. With the reciprocal of 2^126 kept as 2^-126, page 3
+        // and the two others of f = 1: 24 regions of 160 wrong. In the opaque list and in the translucent one in the
+        // order sent hugepos draws with DepthMode Always, which does not tell.
+        // The products overflowing do not matter then: dreamcast-tests/pvr-tests/trsort_recipovf (trsort_recip's
+        // triangle at f = 1 and f = 1 - 2^-24 with corner depths inf 1 1, 1 2^127 1, 2^120 x3, -inf 1 1, under 10
+        // probes from -2^127 to 1.5 2^127): at f = 1 a depth of 0 with every one of them, 80 of 80 regions (2^126
+        // kept: 52; no limit, as before: 52). And the translucent sort orders these depths, and the garbage ones
+        // of f = 1 - 2^-24, as the depth test does (KeyAbove, refsw_tile.cpp): dreamcast-tests/pvr-tests/trsort_garb
+        // (that triangle and the probes, all in the sorted translucent list, nearest-layer and added blending, both
+        // list orders, backgrounds 0.0001 and -2^127): 160 of 160 regions (2^126 kept or no limit: 130).
+        if (ranged && !det.zero() && det.top() - 1 >= 126) {
             valid = false; block = false;
             first_z = StoredDepth();
             return;

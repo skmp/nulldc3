@@ -568,7 +568,11 @@ bool ptResolvedLastPass(u32 index);
 // dumprules page 0). A larger key is nearer, or as near and later in the list. The first reference of either is
 // the key of what is there, the opaque polygon's, a punch-through layer's or the background's, tag and all: a
 // fragment at exactly its depth is drawn only with a tag above it (dreamcast-tests/pvr-tests/trtie). TAG_BELOW, a
-// reference with no tag, is the punch-through boundary before any.
+// reference with no tag, is the punch-through boundary before any. The depth is the stored one in its own order
+// (StoredDepth), garbage depths too: dreamcast-tests/pvr-tests/trsort_garb (a triangle whose depths run through the
+// overflow regimes, or are 0 from a zero reciprocal, against 10 flat probes from -2^127 to 1.5 2^127, all sorted;
+// backgrounds 0.0001 and -2^127, both list orders): 160 of 160 regions, the sort taking what the depth test of
+// trsort_recipovf draws; trsort_auto (hugepos's three triangles sorted): 240 of 240.
 static ALWAYS_INLINE bool KeyAbove(ZType aW, parameter_tag_t aTag, ZType bW, parameter_tag_t bTag)
 {
     if (aW != bW)
