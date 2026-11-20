@@ -20,11 +20,12 @@
         otherwise the sign of the pixel's value; a zero pixel is inside when the next pixel to its right is not
         negative; in the tile's last column, when the column step is positive.
         An edge between two equal corners is zero everywhere and counts as inside.
-    An edge whose E was cut to 129 (a step of 2^124 or more) is walked down its tile from the polygon's first row in it
-    (EdgeTile::Walk): R wraps in [-2^131, 2^131); R and the column step of one sign decide the row; else R + 16 sx, the
-    value at pixel 16, wraps in [-2^131, 2^131) as well, and a row whose value there is outside it is R + sign(R) 2^132;
-    the edge ends (the rows after are outside) when the row's largest value, R + (32 sx mod 2^131) with a column step
-    above zero, else R, falls from above 0 to 0 or below. A dx or dy that reaches 2^128 is an infinite step.
+    An edge whose E was cut to 129 (a step of 2^124 or more) keeps its start and steps in units of 2^(E - 27), cut toward
+    zero, and is walked down its tile from the polygon's first row in it (EdgeTile::Walk): R wraps in [-2^131, 2^131);
+    R and the column step of one sign decide the row; else R + 16 sx, the value at pixel 16, wraps in [-2^131, 2^131)
+    as well, and a row whose value there is outside it is R + sign(R) 2^132; the edge ends (the rows after are outside)
+    when the row's far value, R + (32 sx mod 2^131) with a column step above zero, R + 2^131 with one below zero that is
+    a multiple of 2^126, else R, falls from above ZERO to ZERO or below. A dx or dy that reaches 2^128 steps by +-2^127.
     The winding, and the determinant the culling tests, are the setup's determinant with its products and sums that
     reach 2^128 swamping the rest as the start's do, zero counting as positive (EdgeWinding).
 */
@@ -54,6 +55,7 @@ struct EdgeHW {
     static constexpr pvrfp::C<127> saturateExp{};   // the start then saturates to 2^saturateExp
     static constexpr std::true_type lastColumnByStep{};   // a zero pixel in column 31: inside iff the column step is positive
     static constexpr pvrfp::C<129> blockMax{};      // E is at most this
+    static constexpr pvrfp::C<27> cutUnitBits{};    // an edge whose E was cut keeps its values in units of 2^(E - cutUnitBits)
     static constexpr pvrfp::C<131> walkExp{};       // the walk of an edge whose E was cut keeps R and R + 16 sx in
                                                     // [-2^walkExp, 2^walkExp) (= blockMax + 2), 32 sx below 2^walkExp
 };
@@ -74,6 +76,7 @@ struct EdgeConfig {
     int saturateExp = EdgeHW::saturateExp;
     bool lastColumnByStep = EdgeHW::lastColumnByStep;
     int blockMax = EdgeHW::blockMax;
+    int cutUnitBits = EdgeHW::cutUnitBits;
     int walkExp = EdgeHW::walkExp;
 };
 
@@ -142,7 +145,7 @@ struct EdgeTile {
     bool constant = true, constantInside = false;       // the whole tile has one answer
     bool lastColumnByStep = true;
     // An edge whose block exponent was cut (a step of 2^124 or more): its rows are decided by the walk down the tile
-    // (Walk), in finer units (2^(unit - 6), twice): f0 the start, fx the column step, fy the row step, h 2^131, z ZERO.
+    // (Walk), in the edge's units (2^102, twice): f0 the start, fx the column step, fy the row step, h 2^131, z ZERO.
     bool big = false;
     int firstRow = 0;
     int64_t f0 = 0, fx = 0, fy = 0, h = 0, z = 0;
@@ -227,13 +230,22 @@ struct EdgeTile {
         const bool cut = E > cfg.blockMax;
         if (cut)
             E = cfg.blockMax;
-        const int unit = ep - cfg.pairBits;             // the exponent of the steps' last bit
+        // The exponent of the steps' last bit: 21 bits under the larger step's exponent; for an edge whose E was cut,
+        // 2^(E - 27) (2^102), the steps and the start cut toward zero there, the same units for the walk (Walk).
+        // Measured with dreamcast-tests/pvr-tests/edge2_walk pages 3-5 (900 tiles, one triangle per tile: a near-
+        // horizontal edge to a far corner at x 2^124 .. 2^128, its column step with bits below 2^104 and near zero in a
+        // row of the tile, kept where the alternatives differ): with 2^(E - 27) every tile, 2^(E - 26) 240 wrong,
+        // 2^(E - 28) 428, 2^(ep - 25) 435, 2^(ep - 26) 478, 2^(ep - 27) 557, the steps floored 135, the earlier
+        // 2^(ep - 21) for the rows and 2^(ep - 27) for the walk 339 (faredge_m131 alone allows 2^101 .. 2^103; the
+        // hugepos_* and faredge_* sets are exact with it). hugepos_rules page 11 (10 tiles) was this: its slivers'
+        // column step 629,145 2^106 (0.3 2^127) lost its last bit in 2^(ep - 21) = 2^107, and pixel 7 of row 2 came out
+        // +2^109, inside; it is +2^106, in the ZERO band, a tie that the next pixel (negative) makes outside.
+        const int unit = cut ? E - cfg.cutUnitBits : ep - cfg.pairBits;
         if (E - unit > 56) {
             // the start is 2^30 times a step or more: no pixel of the tile is near zero or changes sign
             constantInside = !s20.neg;
             return;
         }
-        const Fp sxFine = sx, syFine = sy;
         sx = sx.cutBelow(unit);
         sy = sy.cutBelow(unit);
         auto unitsAt = [&](const Fp& v, bool* frac, int unit) -> int64_t {      // floor(v / 2^unit); *frac: not a whole number
@@ -258,22 +270,25 @@ struct EdgeTile {
         bool frac;
         int64_t s0 = unitsAt(s20, &frac, unit);
         t0 = 2 * s0 + (frac ? 1 : 0);
+        // An edge whose E was cut: the start cut toward zero to the unit, no half unit (edge2_walk pages 3-5: 5 tiles
+        // with a start just below zero, -120.x units, whose pixel at -64.x units, just outside ZERO when floored, is
+        // drawn: in the band as -64; floored, with or without the half unit, 5 tiles wrong, cut toward zero 0)
+        if (cut)
+            t0 = 2 * unitsAt(s20.cutBelow(unit), nullptr, unit);
         tx = 2 * unitsAt(sx, nullptr, unit);
         ty = 2 * unitsAt(sy, nullptr, unit);
         zero2 = (int64_t)2 << (E - cfg.zeroShift - unit);
         tie2 = (int64_t)2 << (E - cfg.tieShift - unit);
         constant = false;
-        // The rows of an edge whose E was cut, in units of 2^(unit - 6) (a step of 2^124 or more: E is 129, the values
-        // up to 2^134 in at most 2^38 such units). GAP: only the decisions are measured, not the units' size.
+        // The rows of an edge whose E was cut (a step of 2^124 or more: E is 129) are walked in the same units, 2^102
+        // (the values up to 2^134 in at most 2^32 of them; the walk's register [-2^131, 2^131) is 2^29 of them).
         big = cut && ep >= cfg.blockMax - 5;
         if (big) {
-            const int fine = unit - 6;
-            bool f;
-            f0 = 2 * unitsAt(s20, &f, fine) + (f ? 1 : 0);
-            fx = 2 * unitsAt(sxFine.cutBelow(fine), nullptr, fine);
-            fy = 2 * unitsAt(syFine.cutBelow(fine), nullptr, fine);
-            h = (int64_t)2 << (cfg.walkExp - fine);
-            z = (int64_t)2 << (E - cfg.zeroShift - fine);
+            f0 = t0;
+            fx = tx;
+            fy = ty;
+            h = (int64_t)2 << (cfg.walkExp - unit);
+            z = zero2;
             Walk();
         }
     }
@@ -329,8 +344,9 @@ struct EdgeTile {
     // The walk of an edge whose block exponent was cut, down its tile from the polygon's first row in it (SetFirstRow).
     // Measured with dreamcast-tests/pvr-tests/faredge_walk (16 pages, 3,537 tiles, one triangle per tile, made by
     // agents/nulldc3/hunt/faredge/r3/m/gen3.cpp where the alternatives differ), faredge_m131, faredge_ecap, faredge_k132,
-    // faredge_cmax, faredge and the hugepos_* sets (scored by agents/nulldc3/hunt/faredge/r3/m/evm.cpp: 104 of the
-    // 100,912 tiles of all of them wrong, see the GAP); per row j, R = start + j dx:
+    // faredge_cmax, faredge, the hugepos_* sets and edge2_walk, edge2_end, edge2_mult (scored by agents/nulldc3/hunt/
+    // edge2/score.cpp: the 43,612 tiles of the sets of one triangle per tile all exact; regress.sh has the others);
+    // per row j, R = start + j dx:
     //  - R is held in [-2^131, 2^131): it wraps by 2^132 (hugepos_rules pages 0-3: the H family's long edges, a column
     //    step of 0 and rows R = start + j dx of -2^131 .. -2^132 inside, as R + 2^132; faredge_m131 page 11 tile (1,9),
     //    rows with R past +-2^132 drawn as R -+ 2^132; faredge_walk pages 8-11: a polygon whose first row in the tile
@@ -341,11 +357,11 @@ struct EdgeTile {
     //    reaches 2^131; faredge_m131 pages 0-5, 1,800 tiles: -2^131 exactly is not pushed, +2^131 is; faredge's K 127
     //    vertical triangles, modvol; the far edge of K, R = 2^127 and the step of one sign, stays inside). Since R is
     //    wrapped first, only a column step past 2^127 takes M out of range.
-    //  - The edge ends (every row after this one is outside) when its far value falls from above 0 to 0 or below: the
-    //    row's largest value, R + 32 sx with a column step above zero (at pixel 32), else R, where 32 sx is held below
-    //    2^131: its bits from 2^131 up are lost (32 sx mod 2^131). For an ordinary edge (32 sx < 2^131) that is only the
-    //    row going outside to its end, which a later row cannot undo; with a column step of 2^126 or more it ends the
-    //    edge early. It is what made the rows after the one whose value at pixel 32 is at most 2^132 dark in
+    //  - The edge ends (every row after this one is outside) when its far value falls from above ZERO to ZERO or below:
+    //    the row's largest value, R + 32 sx with a column step above zero (at pixel 32), else R, where 32 sx is held
+    //    below 2^131: its bits from 2^131 up are lost (32 sx mod 2^131). For an ordinary edge (32 sx < 2^131) that is
+    //    only the row going outside to its end, which a later row cannot undo; with a column step of 2^126 or more it
+    //    ends the edge early. It is what made the rows after the one whose value at pixel 32 is at most 2^132 dark in
     //    faredge_m131 pages 6-15 (32 sx = 2^132 + rho: the far value is R + rho, at most 0 there; 9,694 of 9,708 rows,
     //    the 14 others in slivers that start inside the tile, which count from their own first row), the slivers of
     //    hugepos_rules page 11 and hugepos_v3 page 6 whose line ends after the row whose value at pixel 32 is at most
@@ -354,17 +370,38 @@ struct EdgeTile {
     //    the wrapped R; sw3 pages 0 and 9, where 32 sx is 2^132 and 3 2^131, rho 0, do not), and the edge of
     //    hugepos_rules page 0 tile (0,0) whose R falls from +2^127 to 0 (outside after it, not wrapped back past -2^131).
     //    With 32 sx kept whole 15,863 tiles of all sets are wrong, with 0 counting as above 0 7,869; counted from row
-    //    0 instead of the polygon's first row 1,462 (faredge_walk 1,351).
+    //    0 instead of the polygon's first row 1,462 (faredge_walk 1,351). Above ZERO, not above 0: edge2_walk pages
+    //    3-5, 12 tiles (an edge with a start of 0 and a column step of one unit, R + 32 sx = 2^107 in its first row: it
+    //    does not end in the next row; with above 0 the 12 wrong). With a column step below zero the far value is R
+    //    alone (482 tiles of these sets need the end there; R + sx, pixel 1, 54 of them wrong, R + 32 sx 623).
+    //  - With a column step below zero that is a multiple of 2^126 (32 sx = 0 mod 2^131: -2^126, -2^127, -1.5 2^127;
+    //    a saturated difference or not) the far value is R + 2^131: the edge ends only where R falls to -2^131 + ZERO or
+    //    below. dreamcast-tests/pvr-tests/edge2_walk pages 0-1 (600 tiles: two far corners on opposite sides in y, |dy|
+    //    from 2^128, a saturated column step of -2^127) and page 2 (61 tiles: a far corner at y = +-2^127 exactly):
+    //    every one goes on after the row where R falls from +15.x 2^127 to -15.x 2^127 (the end with R alone has all
+    //    661 wrong; hugepos_v5 page 0 tile (0,7), 79 pixels, was one); faredge_ecap pages 7 and 9 tiles (0,4) and (0,9),
+    //    where R reaches -2^131 exactly, do end (with no end at all 2 tiles wrong). pvr-tests/edge2_end, 280 tiles, all
+    //    as modelled: page 0, 56 tiles with -2^127 (R alone: 56 wrong); page 1, 37 whose R reaches -2^131 exactly or
+    //    nearly (no end at all: 37 wrong; R alone 4); page 2, 55 with -2^126 and -1.5 2^127 (R + 2^131 for -2^127
+    //    alone: 55 wrong); page 3, 66 with -2^127 (1 +- 2^-19 .. 2^-8), R alone (R + 2^131 within 2^117 of -2^127: 66
+    //    wrong); page 4, 66 where +2^127 ends with R alone (R + 2^131 with +2^127 too: 66 wrong). Odd multiples of
+    //    2^125 and 2^124 end with R alone: pvr-tests/edge2_mult, 58 tiles (-2^125, -3, -5, -7 2^125 and -1 .. -15 2^124:
+    //    R + 2^131 for multiples of 2^125 29 wrong, of 2^124 58). One datapath gives exactly this: 32 sx reaches the
+    //    far value's adder as a sign and its bits below 2^131, a negative one made two's complement by invert + 1 on
+    //    those bits, which are then gated off by the sign while the carry out of the + 1 (there exactly when the bits
+    //    are all zero) is not and lands at 2^131. It is the same function of sx as the rule above, so no test can
+    //    separate the two; the mechanism is a reading, the rule is what is measured (edge2_walk, edge2_end, edge2_mult
+    //    re-run 2026-11-20 after the reboot: 2,100, 1,500 and 600 of 600 regions as modelled).
     //  - A difference at 2^128 steps by +-2^127 (Setup), so its edge is walked as any other with a step past 2^124.
-    // GAP: hugepos_rules page 11: 10 tiles, a pixel at either end of slivers with a column step of 0.3 2^127 (a tie on
-    // the ordinary path); hugepos_v5: 1 tile, 79 pixels. Not measured: the units the walk keeps (2^(unit - 6) here);
-    // why row 31 starts a row earlier (refsw_tile.cpp); the end rule with sx < 0 (taken as R alone).
+    // The walk's units are the edge's, 2^102 (Setup). Not known: why row 31 starts a row earlier (refsw_tile.cpp).
     void Walk()
     {
         const int s = firstRow;
         const int64_t H = h, Z = z;
         auto wrap = [&](int64_t v) { int64_t w = v % (2 * H); if (w >= H) w -= 2 * H; else if (w < -H) w += 2 * H; return w; };
-        const int64_t far32 = fx > 0 ? (32 * fx) % H : 0;      // 32 sx below 2^131
+        // 32 sx below 2^131 with a column step above zero; 2^131 with one below zero that is a multiple of 2^126
+        // (32 sx = 0 mod 2^131; see above), else 0
+        const int64_t far32 = fx > 0 ? (32 * fx) % H : fx < 0 && (-32 * fx) % H == 0 ? H : 0;
         bool dead = false, wasAbove = false;
         for (int j = 0; j < 32; j++) {
             uint32_t ord = 0;
@@ -379,7 +416,7 @@ struct EdgeTile {
                 continue;
             }
             const int64_t r = f0 + fy * j, rw = wrap(r);
-            const bool above = rw + far32 > 0;
+            const bool above = rw + far32 > Z;
             const bool endsAfter = j > s && wasAbove && !above;
             wasAbove = above;
             uint32_t m;

@@ -820,10 +820,17 @@ void RasterizeTriangle(DrawParameters* params, parameter_tag_t tag, const Vertex
         // 28 .. 31 of the tile; their pushed edges draw in the row above the top corner when the row range lets them:
         // with the plain range 366 of the test's 3,537 tiles wrong, with this 0; rows 30 and 31 both a row earlier 272,
         // a top corner in the last quarter of its row 892; held out, faredge_far32: 390, 0, 36, 440; faredge_m131 page 6
-        // tile (17,8), page 11 tile (2,10), faredge_ecap page 9 tile (7,7): row 30 drawn). Only with an edge whose block
-        // exponent was cut (E.big): GAP whether an ordinary sliver with its top corner in row 31 (which can have a pixel
-        // in row 30 its edge functions accept) starts a row earlier too: no console test has one; why row 31 is not known.
-        if (rowFirst - (int64_t)area->top == 31 && (E12.big || E23.big || E31.big || (v4 && E41.big)))
+        // tile (17,8), page 11 tile (2,10), faredge_ecap page 9 tile (7,7): row 30 drawn). Every polygon, not only one
+        // with an edge whose block exponent was cut: dreamcast-tests/pvr-tests/edge2_walk page 6 (points, three equal
+        // corners, whose edges are inside everywhere, and triangles of corners 1/1024 apart, at y = row + 0, 1/4, 1/2,
+        // 3/4, 1023/1024 of rows 28 .. 31 of their tile): with the top corner in row 31 rows 30 and 31 are filled (25
+        // points, 18 tiny triangles: 43 tiles wrong with the rule for cut edges only, 0 with it for every polygon); in
+        // rows 28 .. 30 none starts earlier (225 tiles). The user tile clip has no part in it: dreamcast-tests/pvr-tests/
+        // edge2_row31 (300 of 300 tiles; the same probes drawn with no user tile clip, with the clip of their own tile
+        // and with one of the 3x3 tiles around it: in each, the 13 points with the top corner in row 31 fill rows 30
+        // and 31 and 9, 9, 10 of the 12 tiny triangles there draw in row 30; none of the 75 in rows 28 .. 30 starts
+        // earlier). Why row 31 is not known.
+        if (rowFirst - (int64_t)area->top == 31)
             rowFirst--;
         // the walk down the tile of an edge with a cut block exponent begins at the polygon's first row (EdgeTile::Walk)
         const int64_t first = rowFirst - (int64_t)area->top;
