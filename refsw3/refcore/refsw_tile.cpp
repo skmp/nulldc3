@@ -749,9 +749,10 @@ bool TriangleCulled(const DrawParameters* params, const Vertex& v1, const Vertex
     const Fp FY[4] = { Fp::FromBits(v1.y), Fp::FromBits(v2.y), Fp::FromBits(v3.y), v4 ? Fp::FromBits(v4->y) : Fp() };
     bool badCorner = false;
     Fp det;
-    pvrisp::Winding(FX, FY, edgeConfig, &badCorner, &det);
+    pvrisp::Winding(FX, FY, edgeConfig, &badCorner);
     if (badCorner || FX[3].bad || FY[3].bad)
         return false;
+    pvrisp::EdgeWinding(FX, FY, edgeConfig, &det);      // the determinant with the swamp (dreamcast-tests/pvr-tests/faredge_cull)
     return CulledBySize(det) || CulledByFacing(params->isp.CullMode, det);
 }
 
@@ -771,8 +772,11 @@ void RasterizeTriangle(DrawParameters* params, parameter_tag_t tag, const Vertex
     const Fp FY[4] = { Fp::FromBits(v1.y), Fp::FromBits(v2.y), Fp::FromBits(v3.y), v4 ? Fp::FromBits(v4->y) : Fp() };
     bool badCorner = false;
     Fp det;
-    // -1 when the determinant is positive or zero (a zero counts as positive: covmeas, mix sliver)
-    const int sgn = pvrisp::Winding(FX, FY, edgeConfig, &badCorner, &det);
+    // -1 when the determinant is positive or zero (a zero counts as positive: covmeas, mix sliver); the determinant the
+    // edges are turned by and the culling tests is the one with the setup's overflowing products swamping the rest
+    // (pvrisp::EdgeWinding; dreamcast-tests/pvr-tests/faredge_m131, faredge_cull)
+    pvrisp::Winding(FX, FY, edgeConfig, &badCorner);
+    const int sgn = pvrisp::EdgeWinding(FX, FY, edgeConfig, &det);
     // an infinity or a NaN among the corners: a console draws nothing (dreamcast-tests/pvr-tests/huge)
     if (badCorner || FX[3].bad || FY[3].bad)
         return;
@@ -809,8 +813,26 @@ void RasterizeTriangle(DrawParameters* params, parameter_tag_t tag, const Vertex
     // sliver accept pixels beyond its ends, and a console cuts those rows off. Modifier volume triangles have
     // no such limit (dreamcast-tests/pvr-tests/covmeas, mix sliver).
     int64_t rowFirst = INT64_MIN, rowLast = INT64_MAX;
-    if (render_mode != RM_MODIFIER)
+    if (render_mode != RM_MODIFIER) {
         pvrisp::RowRange(FY, v4 ? 4 : 3, &rowFirst, &rowLast);
+        // A polygon whose first row is the tile's last (31) starts a row earlier in that tile, the walk of its edges as
+        // well (dreamcast-tests/pvr-tests/faredge_walk pages 0-3: slivers to a far corner whose top corner is in row
+        // 28 .. 31 of the tile; their pushed edges draw in the row above the top corner when the row range lets them:
+        // with the plain range 366 of the test's 3,537 tiles wrong, with this 0; rows 30 and 31 both a row earlier 272,
+        // a top corner in the last quarter of its row 892; held out, faredge_far32: 390, 0, 36, 440; faredge_m131 page 6
+        // tile (17,8), page 11 tile (2,10), faredge_ecap page 9 tile (7,7): row 30 drawn). Only with an edge whose block
+        // exponent was cut (E.big): GAP whether an ordinary sliver with its top corner in row 31 (which can have a pixel
+        // in row 30 its edge functions accept) starts a row earlier too: no console test has one; why row 31 is not known.
+        if (rowFirst - (int64_t)area->top == 31 && (E12.big || E23.big || E31.big || (v4 && E41.big)))
+            rowFirst--;
+        // the walk down the tile of an edge with a cut block exponent begins at the polygon's first row (EdgeTile::Walk)
+        const int64_t first = rowFirst - (int64_t)area->top;
+        E12.SetFirstRow(first);
+        E23.SetFirstRow(first);
+        E31.SetFirstRow(first);
+        if (v4)
+            E41.SetFirstRow(first);
+    }
 
     // Loop through ALL pixels in the tile (no smart clipping)
 	for (int y = 0; y < 32; y++)
