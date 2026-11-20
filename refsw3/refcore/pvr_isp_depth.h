@@ -69,6 +69,11 @@ struct DepthHW {
     // rests on zmeas), zovf_far, zovf_ab (13 x 13 slope values from 0 to 2^132 of both signs). range 0: no limits, as
     // before.
     static constexpr pvrfp::C<1> range{};
+    // The zero rule of the setup's additions (Setup, add) in the coordinate differences (1) or not (0), and in the
+    // edges and the determinant (1) or not (0): 1 and 1 measured (dreamcast-tests/pvr-tests/depth2_zcoord,
+    // depth2_zedge); 0 is kept for their generators.
+    static constexpr pvrfp::C<1> zeroRuleCoords{};
+    static constexpr pvrfp::C<1> zeroRuleEdges{};
 };
 
 struct DepthConfig {
@@ -84,6 +89,8 @@ struct DepthConfig {
     int storedBits = DepthHW::storedBits;
     int startOnSlopes = DepthHW::startOnSlopes;
     int range = DepthHW::range;
+    int zeroRuleCoords = DepthHW::zeroRuleCoords;
+    int zeroRuleEdges = DepthHW::zeroRuleEdges;
 };
 
 using pvrfp::Recip;
@@ -97,8 +104,14 @@ using pvrfp::Recip;
 // of 20 depths from -2^100 to 2^100, textured so that the negative ones show, Greater and Less; bgspec, bgneg,
 // bgneg2: probes against backgrounds below zero). Also measured: the 19 bits (zmeas, zblock, precision), depths
 // below zero drawn like any other (uvmeas wneg). Below 2^-126 a depth above zero is stored as a float's denormal and
-// ordered as one (GAP: their order among each other, 2^-128 against 2^-127 against 1.5 2^-127, is not measured; only
-// that they lie above 0 and below 2^-126): dreamcast-tests/pvr-tests/depthgaps_edges (a ramp from 2^-124 in steps of -1.75 and +1 2^-126:
+// ordered as one, by value: dreamcast-tests/pvr-tests/depth2_denorm (70 pairs of planes over a tile each, slopes of
+// 2^-126 .. 2^-125, a diagonal of each tile between 0 and 2^-126, from about 2^-138 up, the second plane 0 .. a few
+// hundred 2^-145 off the first, Greater, Equal, Less: 2,137 pixel pairs with a depth there; their depths are on the
+// start's grid of 2^-145, the finest a depth there can have, and a store on a grid of 2^-144 would differ at 39
+// pairs, 2^-143 at 151, .. 2^-128 at 1,927, rounded to 2^-144 at 68, one word for all at 1,930; and 70 pairs whose
+// second plane is the first moved by 2^-141 .. 2^-126, 1,976 pixel pairs in different binades, 2^-128 against
+// 2^-127 against 1.5 2^-127 ..: a word of exponent field 0 with the normalized fraction would differ at 463; 420 of
+// 420 regions as refsw3); above 0 and below 2^-126 at every pixel: dreamcast-tests/pvr-tests/depthgaps_edges (a ramp from 2^-124 in steps of -1.75 and +1 2^-126:
 // 2^-128 and 2^-127 above 0 and below 2^-126 at every pixel, 0 where the plane is 0), depthgaps_tiny (flat quads at
 // +-2^-126, +-1.5 2^-126, +-2^-125 ..: above / below 0); slopes and starts are multiples of 2^-145 at least, so a
 // depth there has at most 19 bits and the denormal's own grid is never reached. From 2^128 a depth above zero is
@@ -216,10 +229,13 @@ struct StoredDepth {
     // .. 2^126 a pixel, every pixel read with the background as the probe: from 1.07 2^128 to 13 2^127 above every
     // probe, 0x7f7fffe0 included; those below 2^128 the floats, 20 of 20 regions; refsw3 had 2^127 (Saturated)),
     // depthgaps_bigord (two such triangles over each other, Greater, Equal, Less: ordered by value from 1.02 2^128
-    // to 12 2^127; slopes 2^112 apart (2^116.7 at the pixel) are, 2^100 apart (2^104.7) equal: a grid between those,
-    // taken as 19 bits (2^110 there; GAP: any cut of about 13 to 23 bits fits); above a flat triangle at the largest
-    // float or at +infinity; 33 of 33 regions). The same for
-    // an overflowing register's values (DepthTileT::RegDepth), which depthgaps_mm orders at whole steps only.
+    // to 12 2^127; slopes 2^112 apart (2^116.7 at the pixel) are, 2^100 apart (2^104.7) equal; above a flat triangle
+    // at the largest float or at +infinity; 33 of 33 regions). Its 19 bits are cut, as below 2^128:
+    // dreamcast-tests/pvr-tests/depth2_biggrid (10 sets of 26 pairs of such triangles in tile (0, 0), legs 4, the
+    // second's slopes 2^104 .. 2^110 off the first's: 1,251 pixel pairs at 2^128 .. 1.7 2^129, Greater, Equal, Less,
+    // 30 of 30 regions; 18 bits cut differ at 129 pairs, 20 at 105, 13 / 23 at 679 / 269, 19 rounded at 216, a fixed
+    // grid of 2^110 at 22). The same for an overflowing register's values (DepthTileT::RegDepth): depthgaps_mm orders
+    // them at whole steps, dreamcast-tests/pvr-tests/depth2_regmix against these (RegDepth).
     // v: above 0, 2^128 or more, at most 19 bits.
     static StoredDepth Big(const Fp& v)
     {
@@ -298,16 +314,32 @@ struct DepthTileT {
     // float form (a plane of zero)
     Fp A, B, C;
     int left = 0, top = 0;
+    bool startCenters = true;                           // the start is the plane at the tile's first pixel centre (else corner)
     Cfg cfg;
 
     // x, y, z of the three corners in rasterizer order, the bits of IEEE singles as the TA gives them; (left, top):
     // the tile's first pixel
-    void Setup(const uint32_t x[3], const uint32_t y[3], const uint32_t z[3], int tileLeft, int tileTop, const Cfg& config)
+    void Setup(const uint32_t x[3], const uint32_t y[3], const uint32_t z[3], int tileLeft, int tileTop, const Cfg& config, bool centers = true)
     {
         using namespace pvrfp;
         *this = DepthTileT{};                           // nothing of a previous triangle's (overflow, register, block)
         cfg = config;
         left = tileLeft; top = tileTop;
+        startCenters = centers;
+        // The plane's start is evaluated at the tile's first sample point: its centre, or with HALF_OFFSET bit 0 clear
+        // its top left corner (x0 = left, y0 = top), and the pixels are whole steps from there. Measured where it
+        // shows, in the overflow regimes: dreamcast-tests/pvr-tests/depth2_halfc (HALF_OFFSET 7 and 6, background
+        // probes 0 Greater / Less, 2^127, -2^127 Equal, 2^120, the largest float, -2^126 Greater): in tile (0, 0),
+        // where x0 = y0 = 0 at the corner makes an infinite slope's term 0 (bad x 0 = 0), zword's TL +inf triangle
+        // starts at +1 step (c = +inf alone: m = 1 - (i + j)) and zovf_creg's C0 at -1 step (c = -2^128), at every
+        // pixel of the 14 regions (7 probes each) that differ from a start at the centre; nantr_fin2's (c / det
+        // finite either way), the same triangles in tiles (2, 0) .. (8, 0) (x0 > 0: the same infinities) and two
+        // ordinary ramps the same as at the centre (280 regions: no half steps of the register). For an ordinary
+        // plane too: dreamcast-tests/pvr-tests/depth2_halfo (8 random ordinary triangles over tile (0, 0), HALF_OFFSET
+        // 6, the words of 5 pixels each read by background probes, where the start at the corner and the start at
+        // the centre with half steps back, refsw3 before (At's h), store other words, mostly 1 unit of the 19 bits:
+        // the corner's at all 40, 16 of 16 regions; in random triangles the two differ at 39 % of the pixels).
+        const int64_t sampleHalf = centers ? 1 : 0;
         first_z = StoredDepth::Bits(z[0]);
         const auto PB = cfg.productBits;
         const auto SB = cfg.sumBits;
@@ -349,14 +381,23 @@ struct DepthTileT {
         // probes at depths of exponent fields 0 .. 5, most of field 1, against 0 and against a probe of the same
         // shape at another depth): 2000 of 2000 orders with this (1642 with a zero as a zero, 1944 with the TSP's
         // planes' rule in the last additions, 1972 with -0 + -0 = -0, 1996 without the rule in the first additions).
-        // GAP: the rule sits in the setup's shared add, so it also applies to the coordinate differences and the
-        // determinant of the depth setup; only the depth products' sums were measured.
-        auto add = [&](const Fp& p, const Fp& q) {
+        // The coordinate differences (y1 - y2 .., x2 - x1 ..) go through the same adder, with the rule:
+        // dreamcast-tests/pvr-tests/depth2_zcoord (16 triangles near the origin, one coordinate of two corners among
+        // +-0 and +-(1 .. 1.5) 2^-126, where such a difference multiplies a depth of 2^126 and more or an infinity:
+        // the product a zero, or an infinity times zero 0, with the rule; refsw3 without it there (zeroRuleCoords 0)
+        // stores other words at all 2,599 pixels; 5 background probes each: 80 of 80 regions with it, 4,558 probe
+        // pixels on 49 pages that tell the two apart). So do the edges x_j y_k - x_k y_j and the determinant's sums:
+        // dreamcast-tests/pvr-tests/depth2_zedge (13 triangles near the origin, tiny and signed-zero coordinates,
+        // an infinite corner: an edge of +0 against one of +-(1 .. 1.5) 2^-126 makes the infinite depth's term of the
+        // constant 0 or an infinity; refsw3 without the rule there (zeroRuleEdges 0) stores other words at all 160
+        // pixels; 65 of 65 regions with it, 110 probe pixels on 29 pages that tell the two apart).
+        // rule false: the same addition without the zero rule (zeroRuleCoords, zeroRuleEdges 0: not the hardware's)
+        auto addRule = [&](const Fp& p, const Fp& q, bool rule) {
             if (ranged && (p.bad || q.bad)) {
                 if (p.bad && q.bad && p.neg != q.neg) return zero(false);
                 return inf(p.bad ? p.neg : q.neg);
             }
-            if (ranged && p.zero() != q.zero()) {
+            if (rule && ranged && p.zero() != q.zero()) {
                 const Fp& v = p.zero() ? q : p;
                 const bool zneg = p.zero() ? p.neg : q.neg;
                 const int n = Fp::Bits(v.mant);
@@ -368,17 +409,19 @@ struct DepthTileT {
                 r.neg = false;
             return r;
         };
-        auto sub = [&](const Fp& p, const Fp& q) { return add(p, -q); };
+        auto add = [&](const Fp& p, const Fp& q) { return addRule(p, q, true); };
+        auto subC = [&](const Fp& p, const Fp& q) { return addRule(p, -q, cfg.zeroRuleCoords != 0); };
+        auto addE = [&](const Fp& p, const Fp& q) { return addRule(p, q, cfg.zeroRuleEdges != 0); };
         for (int k = 0; k < 3; k++) {
             X[k] = load(x[k]); Y[k] = load(y[k]); Z[k] = load(z[k]);
         }
-        auto edge = [&](int j, int k) { return sub(mul(X[j], Y[k]), mul(X[k], Y[j])); };
+        auto edge = [&](int j, int k) { return addE(mul(X[j], Y[k]), -mul(X[k], Y[j])); };
         Fp e1 = edge(1, 2), e2 = edge(2, 0), e3 = edge(0, 1);
         auto sum3 = [&](const Fp& p, const Fp& q, const Fp& r) { return add(add(p, q), r); };
-        Fp a = sum3(mul(Z[0], sub(Y[1], Y[2])), mul(Z[1], sub(Y[2], Y[0])), mul(Z[2], sub(Y[0], Y[1])));
-        Fp b = sum3(mul(Z[0], sub(X[2], X[1])), mul(Z[1], sub(X[0], X[2])), mul(Z[2], sub(X[1], X[0])));
+        Fp a = sum3(mul(Z[0], subC(Y[1], Y[2])), mul(Z[1], subC(Y[2], Y[0])), mul(Z[2], subC(Y[0], Y[1])));
+        Fp b = sum3(mul(Z[0], subC(X[2], X[1])), mul(Z[1], subC(X[0], X[2])), mul(Z[2], subC(X[1], X[0])));
         Fp c = sum3(mul(Z[0], e1), mul(Z[2], e3), mul(Z[1], e2));       // (v1 + v3) + v2
-        Fp det = sum3(e1, e2, e3);
+        Fp det = addE(addE(e1, e2), e3);
         if (pvrfp::Perpendicular(det))
             det = Fp();                                 // FPU_PERP_VAL: as a determinant of zero (pvr_softfp.h)
         if (ranged && det.bad) {
@@ -394,7 +437,7 @@ struct DepthTileT {
         if (ranged && !det.zero() && !det.bad) {
             // the depth of the tile's first pixel with these numbers; an overflow is stored as 2^127 (Saturated)
             Fp inv0 = Recip(det, cfg.recipBits);
-            Fp x00 = Fp::FromHalves(2 * (int64_t)left + 1), y00 = Fp::FromHalves(2 * (int64_t)top + 1);
+            Fp x00 = Fp::FromHalves(2 * (int64_t)left + sampleHalf), y00 = Fp::FromHalves(2 * (int64_t)top + sampleHalf);
             Fp first0 = mul(add(add(mul(a, x00), mul(b, y00)), c), inv0);
             rangedFirst = first0;
             haveRangedFirst = true;
@@ -426,8 +469,11 @@ struct DepthTileT {
                 // them).
                 // A slope below zero is taken toward zero onto 2^102: zovf_wrap W2 (b = -16, a slope of -2^-6 a pixel,
                 // the register starting at 0: rounded down, the register is -2^102 and its sign against the probe at 0
-                // flips; the console keeps 0; 124 of 128 regions rounded down). GAP: an off-grid slope below zero of
-                // 2^102 or more (a block of E 128 stores on a grid of 2^112, which hides the difference).
+                // flips; the console keeps 0; 124 of 128 regions rounded down); and an off-grid slope below zero of
+                // 2^102 or more: dreamcast-tests/pvr-tests/depth2_cneg (zovf_creg's C0 with F = -(8192 + 1/2),
+                // -(8192 + 3/4), -(256 + 1/4), -(2^18 + 1/2) units of 2^102 a row, the words of the pixels (1, j) at
+                // 2^127 + j F above zero, read by background probes: toward zero at all 44 targets where down would
+                // store another 19 bit word, and the controls +(8192 + 1/2), -(127 + 1/2): 12 of 12 regions).
                 {
                     const Fp invS = Recip(det, cfg.recipBits);
                     auto rstep = [&](const Fp& v0, bool cap) -> int64_t {
@@ -582,7 +628,7 @@ struct DepthTileT {
         A = Mul(a, inv, cfg.coefBits);
         B = Mul(b, inv, cfg.coefBits);
         C = Mul(c, inv, cfg.coefBits);
-        Fp x0 = Fp::FromHalves(2 * (int64_t)left + 1), y0 = Fp::FromHalves(2 * (int64_t)top + 1);
+        Fp x0 = Fp::FromHalves(2 * (int64_t)left + sampleHalf), y0 = Fp::FromHalves(2 * (int64_t)top + sampleHalf);
         // The start in the setup's range at every step (rangedFirst: a product a x0 below 2^-126 is zero there):
         // dreamcast-tests/pvr-tests/depthgaps_tinyramp (a ramp with a corner at the tile's start a denormal, read
         // as zero, slopes of about 2^-126: 16 pixels along the zero crossing are below zero on the console, above it
@@ -668,7 +714,10 @@ struct DepthTileT {
         return StoredDepth::Neg(E, (int64_t)(t >> sh));
     }
     // The depth stored for the pixel i columns right and j rows down of the tile's first pixel; centers: the
-    // ISP samples at pixel centers (HALF_OFFSET bit 0).
+    // ISP samples at pixel centers (HALF_OFFSET bit 0), as given to Setup (the start is evaluated at that sample
+    // point and the pixels are whole steps from it; a centers other than Setup's moves by half steps: the probes of
+    // dreamcast-tests/model, which set up at the centre). An overflowing plane's register steps whole pixels from
+    // its start either way.
     // The depth stored for an overflowing plane's register (ovf 2): r in units of 2^102, two's complement with its
     // sign at 2^131 (it wraps every 32 steps of 2^127). Zero is 0; above zero, below 2^128, it is r itself, cut to 19
     // bits; from 2^128 on above every float word (StoredDepth::Big); at -2^131 the lowest word there is; otherwise
@@ -692,11 +741,30 @@ struct DepthTileT {
     // steps as 0xff700100; -8.125, -8.0625, -8.09375, -12.125, -12.09375 steps not above -8 and -12 (above the
     // window of E 127 and 126: below every depth of the next E); -2^119 and 2^119 - 1 step between -2^127 and 0.25
     // (above the window of E 128).
-    // GAP: where the words 2 .. 15, 17 .. 22 and 24 .. 29 and the values between them lie among OTHER planes' depths
-    // in the same intervals is not measured: zword, depthgaps_mm and nantr_* pin them against float words and each
-    // other only. Other depths do come there (an ordinary sliver of E 127 has pixels below its window between m = 22
-    // and 23; depthgaps_bigpos's Big pixels lie among m = 2 .. 15, its pages 8 / 9's regime-B pixels above m = 24 ..
-    // 29); the order there is this representation's (RegDepth = Neg / Big), a choice.
+    // Among OTHER planes' depths between the same two float words the register's words and the values between them
+    // lie as this representation (RegDepth = Neg / Big) has them: dreamcast-tests/pvr-tests/depth2_regmix (1,188
+    // pairs in one tile each, a register triangle (zword's TL +-inf and C1, zovf_creg's C0 with a finite slope of
+    // +-2^100 .. 2^122 a row: between whole steps) against a block from a start of 0 (depthgaps_ties' B(L, Z), E 122
+    // .. 128 from its slopes: depths above its window) or another C0, and in tile (0, 0) zword's TL +inf with legs 64
+    // over 17 small triangles a set whose start is -2^127 (depthgaps_bigpos: depths of 2^128 and more, and a block of
+    // E 128 below its window); Greater, Equal, Less: 3,600 of 3,600 regions; 40,884 pixel pairs lie between the same
+    // two float words: a block's depths above the window of E below the register's below the window of E + 1,
+    // between fields 250 / 251 .. 253 / 254 (m = 17 .. 29 and values between steps: 36,314 pairs), above-window
+    // depths of one E ordered by M with the register's (C0, both orders, 132), Big against m = 2 .. 15 (103, both
+    // orders), E 128 below its window against m = 24 .. 29 (45, both orders)). And against an ordinary block's depths
+    // below its window, E 125 .. 127: dreamcast-tests/pvr-tests/depth2_regbelow (tiny triangles 2^-10 .. 2^-4 pixel
+    // around one pixel's centre near the origin, the only place the setup keeps such corners' products in range, their
+    // start in the window of E, slopes below 2^(E - 5); against zovf_creg's C0 with a finite F of -(2^108 .. 2^118) a
+    // row, off the block's grid, and in tile (0, 0) zword's TL +inf with legs 64; Greater, Equal, Less: 2,442 pixel
+    // pairs, 666 of 666 regions as refsw3): the register below the window of the same E ordered by M with the block,
+    // the register's value rounded down onto 2^(E - 16) as the block's (1,308 pairs: E 127 just below m = 23, between
+    // m = 22 and 23, M from -66,382 to -65,536.2, 1,225, 352 of them equal, the register drawn first or second; the
+    // words m = 19 and 22 against blocks of E 126 and 127 at i + j = 45 and 42, 72 (23 equal) and 11; the register
+    // keeping its fraction would differ at 351, both exact at 374, the block's M rounded up at 613, the register's at
+    // 581, the register above / below every block depth there at 754 / 929), and the register above the window of
+    // E - 1 (just below m = 20, 18, 17) below the block below the window of E (1,134 pairs, E 127, 126, 125: 289,
+    // 384, 461; by value it would be above: all 1,134 differ). The words m = 17, 18, 20, 21 lie beyond an ordinary
+    // block's reach (its M is -2^16 - (i + j) 2^11 or more, i + j <= 62 in a tile): their order with one never shows.
     static StoredDepth RegDepth(int64_t r)
     {
         r = ((r + (int64_t(1) << 29)) & ((int64_t(1) << 30) - 1)) - (int64_t(1) << 29);
@@ -727,7 +795,8 @@ struct DepthTileT {
             return RegDepth(r0 + (int64_t)(sa * i + sb * j) * (int64_t(1) << 25) + i * fa + j * fb);
         if (!valid)
             return first_z;
-        const int h = centers ? 0 : -1;
+        // half steps from the sample point the start was evaluated at (Setup) to the one asked for: 0 when they agree
+        const int h = (centers ? 1 : 0) - (startCenters ? 1 : 0);
         Fp v;
         if (block) {
             pvrfp::i128 t = d0 + (2 * i + h) * dx + (2 * j + h) * dy;

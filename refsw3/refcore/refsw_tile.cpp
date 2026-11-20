@@ -802,11 +802,12 @@ void RasterizeTriangle(DrawParameters* params, parameter_tag_t tag, const Vertex
     // The ISP's depth per tile, in the setup units' arithmetic (pvr_isp_depth.h; dreamcast-tests/pvr-tests/zmeas)
     static const pvrisp::DepthHW depthConfig;
     pvrisp::DepthTileT<pvrisp::DepthHW> Z;
-    {
-        const u32 zx[3] = { v1.x, v2.x, v3.x }, zy[3] = { v1.y, v2.y, v3.y }, zz[3] = { v1.z, v2.z, v3.z };
-        Z.Setup(zx, zy, zz, area->left, area->top, depthConfig);
-    }
     const bool sampleCenters = HALF_OFFSET.fpu_pixel_half_offset;
+    {
+        // the start at the tile's first sample point, centre or corner (pvr_isp_depth.h, dreamcast-tests/pvr-tests/depth2_halfc)
+        const u32 zx[3] = { v1.x, v2.x, v3.x }, zy[3] = { v1.y, v2.y, v3.y }, zz[3] = { v1.z, v2.z, v3.z };
+        Z.Setup(zx, zy, zz, area->left, area->top, depthConfig, sampleCenters);
+    }
 
     // The rows a polygon is rasterized on: from the row its top corner is in to the row of its bottom corner's
     // y + 0.5, whatever the sample offset. Ordinary polygons never notice; the truncated edge functions of a
