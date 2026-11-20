@@ -17,7 +17,7 @@
 #include "pvr_sb_regs.h"
 #include "hw/sh4/sh4_mmr.h"
 #include "ta.h"
-#include "gpl/lxdream/tacore.h"
+#include "ta_lle.h"
 #include "pvr_regs.h"
 #include "pvr_mem.h"
 #include "Renderer_if.h"
@@ -28,6 +28,7 @@
 #include "debugger/debugger.h"
 
 bool pal_needs_update = true;
+bool ta_lle = true;     // the TA of the frame being sent (ta_lle.h): latched at TA_LIST_INIT from the renderer
 bool fog_needs_update = true;
 
 u8 pvr_regs[pvr_RegSize];
@@ -255,11 +256,10 @@ struct PVRDevice : MMIODevice {
 
             link_addr = ea_ptr[0x1C >> 2];//Next link
             //transfer global param
-            #if FEAT_TA == TA_HLE
-            ta_vtx_data(ea_ptr, ea_ptr[0x18 >> 2]);
-            #else
-            lxd_ta_write((u8*)ea_ptr, ea_ptr[0x18 >> 2]);
-            #endif
+            if (ta_lle)
+                ta_lle_write(ea_ptr, ea_ptr[0x18 >> 2]);
+            else
+                ta_vtx_data(ea_ptr, ea_ptr[0x18 >> 2]);
             if (link_addr == 2)
             {
                 link_addr = calculate_start_link_addr();
@@ -332,11 +332,11 @@ struct PVRDevice : MMIODevice {
             {
                 DBG_EVENT(dbg::EV_TA_LIST_INIT, "TA_LIST_INIT: TA_OL_BASE %06X, TA_ISP_BASE %06X", TA_OL_BASE, TA_ISP_BASE);
 
-                #if FEAT_TA == TA_HLE
-                ta_vtx_ListInit();
-                #else
-                lxd_ta_init(vram);
-                #endif
+                ta_lle_select();        // the frame that starts goes to the TA the renderer wants
+                if (ta_lle)
+                    ta_lle_list_init(vram);
+                else
+                    ta_vtx_ListInit();
                 data = 0;
             }
         }
@@ -345,24 +345,43 @@ struct PVRDevice : MMIODevice {
         {
             if (data != 0)
             {
-                if (data & 1)
-                    #if FEAT_TA == TA_HLE
+                if (data & 1) {
                     ta_vtx_SoftReset();
-                    #else
-                    lxd_ta_reset();
-                    #endif
+                    ta_lle_reset();
+                }
                 data = 0;
             }
         }
 
+        // SPAN_SORT_CFG: every game and test writes 0x101 (span sort bit 0, offset sort bit 8). On a console
+        // (dreamcast-tests README "spansortcfg") neither changes a picture, only the order the TSP shades runs in and
+        // the time. refsw3 models offset sort (a strip's triangles one primitive to the sorter) and, with the sorter
+        // off, shades in raster order, where a console shades some runs early by its pipeline's timing (unmodelled;
+        // the time, up to 4.6 times, neither). Bit 16 (TSP cache bypass): the same order, the time within 2%
+        // (0x10101; pictures not compared). Two settings hung the core on a later render, and every render after it,
+        // until the console was switched off: offset sort without span sort (0x100, the manual: setting prohibited),
+        // and the cache bypass without offset sort (0x10001, on the 23rd render of a run).
+        static u32 spanSortSaid = 0x101;    // said once a value, from the one everything writes (the register starts at 0)
+        if (addr == SPAN_SORT_CFG_addr && data != spanSortSaid)
+        {
+            spanSortSaid = data;
+            if ((data & 0x101) == 0x100)
+                EMUERROR("SPAN_SORT_CFG %08X: offset sort without span sort (prohibited) hangs a console's core on a later render", data);
+            else if ((data & 0x10100) == 0x10000)
+                EMUERROR("SPAN_SORT_CFG %08X: TSP cache bypass without offset sort hung a console's core on a later render", data);
+            else if (data & 0x10000)
+                EMUWARN("SPAN_SORT_CFG %08X: TSP cache bypass (bit 16): rendered as without it (a console: the same order, the time within 2%%)", data);
+            else if (!(data & 1))
+                EMUWARN("SPAN_SORT_CFG %08X: span sort off: shaded in raster order; a console's timing-dependent order and its up to 4.6 times the render time are not modelled", data);
+        }
+
         if (addr == TA_LIST_CONT_addr)
         {
-            //a write of anything works ?
-            #if FEAT_TA == TA_HLE
-            ta_vtx_ListCont();
-            #else
-            //verify(false);
-            #endif
+            //a write of anything works ? (the emulator's own TA; refsw3-ta needs bit 31)
+            if (!ta_lle)
+                ta_vtx_ListCont();
+            else if (data >> 31)
+                ta_lle_list_cont();
         }
 
         if (addr == SPG_CONTROL_addr || addr == SPG_LOAD_addr)
@@ -455,6 +474,9 @@ struct PVRDevice : MMIODevice {
         SCALER_CTL.full = 0x00000400;
         FB_BURSTCTRL = 0x00090639;
         PT_ALPHA_REF = 0x000000FF;
+        FPU_CULL_VAL = 1.0f;    // what a console has when a program starts (the boot ROM sets it; KOS never writes it)
+        ta_lle_reset();
+        ta_lle_select();
     }
 
 };

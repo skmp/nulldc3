@@ -436,9 +436,9 @@ struct GUIRenderer_impl : GUIRenderer {
     virtual void QueueEmulatorFrame(std::function<bool()> cb) {
         callback_mutex.Lock();
         frameDone = false;
-        #if FEAT_TA == TA_LLE
+        extern bool ta_lle;     // hw/pvr/ta_lle.h: refsw3-ta's frames are queued one at a time
+        if (ta_lle)
             verify(callback == nullptr);
-        #endif
         callback = cb;
         callback_mutex.Unlock();
     }

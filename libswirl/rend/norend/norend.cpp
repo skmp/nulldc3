@@ -34,7 +34,8 @@ struct norend : Renderer
 	void Present() { }
 };
 
-// Registered in every build: with TA_LLE the TA still runs, CORE is what is left out
+// refsw3-ta still runs, CORE is what is left out: the guest sees what it sees with refsw3 or refsw2, except in VRAM
+// (system test frame.refsw2)
 Renderer* rend_norend(u8* vram) { return new ::norend(); }
 
-static auto norend = RegisterRendererBackend(rendererbackend_t{ "none", "No PVR Rendering", -2, rend_norend, true });
+static auto norend = RegisterRendererBackend(rendererbackend_t{ "none", "No PVR Rendering (+ refsw3-ta)", -2, rend_norend, true, true });

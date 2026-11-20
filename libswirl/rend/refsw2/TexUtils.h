@@ -29,7 +29,7 @@ pixel_type cclamp(pixel_type minv, pixel_type maxv, pixel_type x) {
 
 static u32 packRGB(u8 R,u8 G,u8 B)
 {
-	return (R << 0) | (G << 8) | (B << 16) | 0xFF000000;
+	return (B << 0) | (G << 8) | (R << 16) | 0xFF000000;   // Color is b, g, r, a, like the other formats here
 }
 
 static u32 YUV422(s32 Y,s32 Yu,s32 Yv)
@@ -41,9 +41,14 @@ static u32 YUV422(s32 Y,s32 Yu,s32 Yv)
 	//s32 G = (76283*(Y - 16) - 53281 *(Yv - 128) - 25624*(Yu - 128))>>16;
 	//s32 R = (76283*(Y - 16) + 104595*(Yv - 128))>>16;
 	
-	s32 R = Y + Yv*11/8;            // Y + (Yv-128) * (11/8) ?
-	s32 G = Y - (Yu*11 + Yv*22)/32; // Y - (Yu-128) * (11/8) * 0.25 - (Yv-128) * (11/8) * 0.5 ?
-	s32 B = Y + Yu*110/64;          // Y + (Yu-128) * (11/8) * 1.25 ?
+	// Hardware multiplies by 11/8 as x + x/4 + x/8 with arithmetic shifts, and derives the other terms
+	// from that by further shifts (fitted to a console, dreamcast-tests/pvr-tests/texfmt pages 1 and 2; refsw3-core).
+	s32 Tu = Yu + (Yu >> 2) + (Yu >> 3);
+	s32 Tv = Yv + (Yv >> 2) + (Yv >> 3);
+
+	s32 R = Y + Tv;
+	s32 G = Y - (Tu >> 2) - (Tv >> 1);
+	s32 B = Y + Tu + (Tu >> 2);
 
 	return packRGB(cclamp<s32>(0, 255, R),cclamp<s32>(0, 255, G),cclamp<s32>(0, 255, B));
 }

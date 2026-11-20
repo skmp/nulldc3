@@ -13,7 +13,7 @@
 #include "types.h"
 #include "pvr_mem.h"
 #include "ta.h"
-#include "gpl/lxdream/tacore.h"
+#include "ta_lle.h"
 #include "pvr_regs.h"
 #include "Renderer_if.h"
 #include "hw/mem/_vmem.h"
@@ -107,11 +107,10 @@ void TAWrite(u32 address,u32* data,u32 count, u8* vram)
 	u32 address_w=address&0x1FFFFFF;//correct ?
 	if (address_w<0x800000)//TA poly
 	{
-		#if FEAT_TA == TA_HLE
-		ta_vtx_data(data, count);
-		#else
-		lxd_ta_write((u8*)data, count * 32);
-		#endif
+		if (ta_lle)
+			ta_lle_write(data, count * 32);
+		else
+			ta_vtx_data(data, count);
 	}
 	else if(address_w<0x1000000) //Yuv Converter
 	{
@@ -142,11 +141,10 @@ extern "C" void DYNACALL TAWriteSQ(u32 address,u8* sqb)
 
 	if (likely(address_w<0x800000))//TA poly
 	{
-		#if FEAT_TA == TA_HLE
-		ta_vtx_data32(sq);
-		#else
-		lxd_ta_write_burst(address_w, sq);
-		#endif
+		if (ta_lle)
+			ta_lle_write_burst(address_w, sq);
+		else
+			ta_vtx_data32(sq);
 	}
 	else if(likely(address_w<0x1000000)) //Yuv Converter
 	{

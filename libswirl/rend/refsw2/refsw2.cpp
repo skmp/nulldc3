@@ -10,10 +10,10 @@
 u8* emu_vram;
 extern u32 FrameCount;
 
-// Set by the input code of every build, consumed by the renderers of the TA_LLE build
+// Set by the input code (the dump key), consumed by the renderers that draw what refsw3-ta wrote: refsw2, refsw3,
+// refmister
 std::atomic<bool> refsw2_do_dump(false);
 
-#if FEAT_TA == TA_LLE
 #include "imgui/imgui.h"
 #include "hw/pvr/Renderer_if.h"
 #include "rend/gles/gles.h"
@@ -250,20 +250,11 @@ struct refsw2rend : Renderer
             {
                 for (int i = 0; i < width; i++)
                 {
-                    if (addr & 1)
-                    {
-                        u32 src = pvr_read_area1_32(vram, addr - 1);
-                        *dst++ = src >> RED_8;
-                        *dst++ = src >> 8;
-                        *dst++ = src >> BLUE_8;
-                    }
-                    else
-                    {
-                        u32 src = pvr_read_area1_32(vram, addr);
-                        *dst++ = src >> (RED_8 + 8);
-                        *dst++ = src >> 16;
-                        *dst++ = src >> (BLUE_8 + 8);
-                    }
+                    // three bytes a pixel at any byte address, blue first (as the write-out packs them)
+                    const u32 src = vram[pvr_map32(addr)] | vram[pvr_map32(addr + 1)] << 8 | (u32)vram[pvr_map32(addr + 2)] << 16;
+                    *dst++ = src >> RED_8;
+                    *dst++ = src >> 8;
+                    *dst++ = src >> BLUE_8;
                     *dst++ = 0xFF;
                     addr += bpp;
                 }
@@ -347,5 +338,4 @@ struct refsw2rend : Renderer
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 };
-static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refsw2", "Different refsw", 2, [](u8* vram) { return (Renderer*) new refsw2rend(vram); }, true });
-#endif
+static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refsw2", "refsw2 + refsw3-ta", 2, [](u8* vram) { return (Renderer*) new refsw2rend(vram); }, true, true });

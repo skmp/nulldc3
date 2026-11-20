@@ -281,11 +281,13 @@ def main():
     parser.add_argument('--work', required=True, help='scratch directory of this case, emptied first')
     parser.add_argument('--elf-dir', help='directory with 2ndmix.elf')
     parser.add_argument('--shim', help='the vmem_shim library, for vmem.taken')
-    parser.add_argument('--ta-hle', action='store_true', help='the emulator is a -DHAS_TA_LLE=OFF build')
+    parser.add_argument('--ta-hle', action='store_true',
+                        help='every run on the emulator\'s own TA (config pvr.ForceTaHle), not refsw3-ta')
     parser.add_argument('--watchdog', type=int, default=st.WATCHDOG,
                         help='seconds of wall clock one run of the emulator gets (%d)' % st.WATCHDOG)
     parser.add_argument('--keep', action='store_true', help='keep the directories of the runs of a passed case')
     options = parser.parse_args()
+    st.FORCE_TA_HLE = options.ta_hle
 
     if not os.path.isfile(options.emulator):
         print('FAIL %s: no emulator at %s' % (options.case, options.emulator))

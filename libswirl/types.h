@@ -380,8 +380,12 @@ using namespace std;
 #define EMUERROR(format, ...) printf("Error in %20s:%s:%d PC: 0x%08X PR: 0x%08X: " format "\n", \
 		__FILE__, __FUNCTION__, __LINE__, p_sh4rcb->cntx.pc, p_sh4rcb->cntx._pr, ##__VA_ARGS__)
 //strlen(__FILE__) <= 20 ? __FILE__ : __FILE__ + strlen(__FILE__) - 20,
+// something the emulator does not do as the hardware does (or does not know that it does)
+#define EMUWARN(format, ...) printf("Warning in %20s:%s:%d PC: 0x%08X PR: 0x%08X: " format "\n", \
+		__FILE__, __FUNCTION__, __LINE__, p_sh4rcb->cntx.pc, p_sh4rcb->cntx._pr, ##__VA_ARGS__)
 #else
 #define EMUERROR(format, ...)
+#define EMUWARN(format, ...)
 #endif
 #define EMUERROR2 EMUERROR
 #define EMUERROR3 EMUERROR
@@ -543,6 +547,7 @@ struct settings_t
 		u32 MaxThreads;
 		bool SynchronousRender;
 		bool ForceGLES2;
+		bool ForceTaHle;	// the emulator's own TA whatever the renderer (the system tests' --ta-hle); not saved
 	} pvr;
 
 	struct {

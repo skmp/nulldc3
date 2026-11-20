@@ -40,7 +40,7 @@
 	X(EV_DMAC_START,          "dc.holly.dmac.transfer_start", "holly",    "info", EVR_HIGH, "dc.holly.dmac") /* hw/pvr/pvr_sb_regs.cpp: ch2 and sort DMA handlers (E3) */ \
 	X(EV_DMAC_END,            "dc.holly.dmac.transfer_end",   "holly",    "info", EVR_HIGH, "dc.holly.dmac") /* hw/pvr/pvr_sb_regs.cpp: ch2 and sort DMA handlers (E3) */ \
 	X(EV_TA_LIST_INIT,        "dc.holly.ta.list_init",        "ta",       "info", EVR_HIGH, "dc.holly.ta")   /* hw/pvr/pvr_sb_regs.cpp (E3) */ \
-	X(EV_TA_LIST_END,         "dc.holly.ta.list_end",         "ta",       "info", EVR_HIGH, "dc.holly.ta")   /* hw/pvr/ta.cpp (TA_HLE); hw/holly/holly_intc.cpp RaiseAsicNormal (TA_LLE, the default build) (E3) */ \
+	X(EV_TA_LIST_END,         "dc.holly.ta.list_end",         "ta",       "info", EVR_HIGH, "dc.holly.ta")   /* hw/pvr/ta.cpp (the emulator's own TA); hw/holly/holly_intc.cpp RaiseAsicNormal (refsw3-ta) (E3) */ \
 	X(EV_CORE_RENDER_START,   "dc.holly.core.render_start",   "core",     "info", EVR_HIGH, "dc.holly.core") /* hw/pvr/pvr_sb_regs.cpp (E3) */ \
 	X(EV_CORE_RENDER_END,     "dc.holly.core.render_end",     "core",     "info", EVR_HIGH, "dc.holly.core") /* hw/pvr/spg.cpp (E3) */ \
 	X(EV_CORE_VBLANK,         "dc.holly.core.vblank",         "core",     "info", EVR_HIGH, "dc.holly.core") /* hw/pvr/spg.cpp (E3) */ \

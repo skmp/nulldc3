@@ -17,8 +17,10 @@ The runs of an engine are made one after the other and the median of each figure
 and the highest and the load of the machine in front of every run. The result goes to stdout as a table and,
 with --json, to a file as JSON. Not a test: nothing here passes or fails on a number.
 
-  --renderer none   headless, config:pvr.backend=none. Any build of the emulator.
-  --renderer gl     a window and the gles renderer, which only a -DHAS_TA_LLE=OFF build has. Needs a display
+  --renderer none   headless, config:pvr.backend=none, with refsw3-ta (the TA goes with the renderer, hw/pvr/ta_lle.h);
+                    --config config:pvr.ForceTaHle=yes for the emulator's own TA (what the -DHAS_TA_LLE=OFF build
+                    of before measured, BASELINE.md).
+  --renderer gl     a window and the gles renderer (legacy GL: the emulator's own TA). Needs a display
                     and a GL context of a GPU: "Accelerated: yes" from glxinfo -B, as the environment is or,
                     failing that, with GALLIUM_DRIVER=d3d12 (WSL2). The GL renderer string the emulator itself
                     prints is recorded, and a run on a software rasteriser (llvmpipe) is refused: its number
@@ -217,7 +219,7 @@ def main():
             if options.renderer == 'gl':
                 # what the emulator drew with decides the label, not what glxinfo promised
                 if label != 'gles':
-                    sys.exit('perf: the emulator used the renderer %s, not gles: not a -DHAS_TA_LLE=OFF build?' % label)
+                    sys.exit('perf: the emulator used the renderer %s, not gles' % label)
                 software = gl_renderer is None or SOFTWARE_GL.search(gl_renderer) is not None
                 if software and not options.allow_software_gl:
                     sys.exit('perf: the emulator drew with "%s", a software rasteriser: not reported' % gl_renderer)

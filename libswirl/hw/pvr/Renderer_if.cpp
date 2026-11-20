@@ -9,7 +9,9 @@
 #include "gui/gui_partials.h"
 
 #include "Renderer_if.h"
+#include "pvr_coredump.h"
 #include "ta.h"
+#include "ta_lle.h"
 #include "hw/pvr/pvr_mem.h"
 #include "rend/TexCache.h"
 #include "gui/gui.h"
@@ -218,6 +220,9 @@ static bool rend_frame(u8* vram, TA_context* ctx) {
 		}
 	}
 
+    // a PVR core dump asked for (the dump key, Script.File's dump): video memory as this render finds it
+    pvr_coredump_poll(vram, (FB_W_SOF1 & 0x1000000) != 0);
+
     bool do_swp = proc && renderer->RenderPVR();
 
     return do_swp;
@@ -342,15 +347,10 @@ void rend_start_render(u8* vram)
 {
 	render_called = true;
 
-	#if FEAT_TA == TA_HLE
-		pend_rend = false;
-	#else
-		// make sure no fb write is pending
-		if (pend_rend) {
-			re.Wait();
-			pend_rend = false;
-		}
-	#endif
+	// refsw3-ta's frames: make sure no fb write is pending
+	if (ta_lle && pend_rend)
+		re.Wait();
+	pend_rend = false;
 	
 	TA_context* ctx = tactx_Pop(CORE_CURRENT_CTX);
 
@@ -496,34 +496,31 @@ void rend_end_render()
 
 	if (pend_rend) {
 		re.Wait();
-		#if FEAT_TA == TA_LLE
+		if (ta_lle)
 			pend_rend = false;
-		#endif
 	}
 }
 
 void rend_vblank()
 {
-	#if FEAT_TA == TA_HLE
-		if (!render_called && fb_dirty && FB_R_CTRL.fb_enable)
-	#else
+	// refsw3-ta's renderers present every vblank; the emulator's own TA's, a framebuffer the guest wrote itself
+	if (ta_lle)
 		fb_dirty = true;
-		// if (fb_dirty && FB_R_CTRL.fb_enable)
-	#endif
+	if (ta_lle || (!render_called && fb_dirty && FB_R_CTRL.fb_enable))
 	{
         fb_dirty = false;
-		#if FEAT_TA == TA_LLE
-		if (pend_rend) {
-			re.Wait();
-			pend_rend = false;
+		const bool lle = ta_lle;
+		if (lle) {
+			if (pend_rend) {
+				re.Wait();
+				pend_rend = false;
+			}
+			pend_rend = true;
 		}
-		pend_rend = true;
-		#endif
 
-        g_GUIRenderer->QueueEmulatorFrame([] () {
-			#if FEAT_TA == TA_LLE
+        g_GUIRenderer->QueueEmulatorFrame([lle] () {
+			if (lle)
 				re.Set();
-			#endif
 			// TODO: FIXME Actually check and re init this. Better yet, refactor
             if (renderer)
 			{
@@ -551,6 +548,18 @@ bool RegisterRendererBackend(const rendererbackend_t& backend)
 	}
 	backends[backend.slug] = backend;
 	return true;
+}
+
+bool rend_wants_lle_ta()
+{
+	if (settings.pvr.ForceTaHle)
+		return false;
+	if (!p_backends || backends.empty())
+		return true;
+	if (backends.count(settings.pvr.backend))
+		return backends[settings.pvr.backend].lle_ta;
+	// "auto": the backend rend_create_renderer takes, the first by priority
+	return rend_get_backends().front().lle_ta;
 }
 
 vector<rendererbackend_t> rend_get_backends()

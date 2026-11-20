@@ -10,18 +10,18 @@ line with its state hash, the pinned RTC) and what a fatal fault does.
 
 ## Which emulator
 
-Two builds are tested: the default one (`system.*`) and the one without the TA of lxdream, `-DHAS_TA_LLE=OFF`
-(`system.hle.*`), which has the GL renderers instead of the software reference renderers.
+One emulator is tested, twice: with the TA its renderer chooses (`system.*`: refsw3-ta for the renderers that draw
+from video memory, `none` among them; `hw/pvr/ta_lle.h`), and with the emulator's own TA forced (`system.hle.*`:
+`--ta-hle`, which gives every run `config:pvr.ForceTaHle=yes`). The cases that need refsw3-ta (`frame.refsw2`,
+`frame.refsw3`) are not run as `system.hle.*`.
 
-By default the tests project **builds both from the tree it is in**, into `<build dir>/system/emulator` and
-`<build dir>/system/emulator-ta-hle`, every time it is built (`tests/system/build_emulator.cmake`; the output of the
-two builds is in `<build dir>/system/emulator.log` and `emulator-ta-hle.log`, and on the console when one fails).
-A test run therefore tests the sources as they are, with no step to forget. The first build takes about a minute
-per emulator, later ones a few seconds. The emulator is built with the default C and C++ compilers, whatever the
-tests are configured with (it links with GCC only).
+By default the tests project **builds it from the tree it is in**, into `<build dir>/system/emulator`, every time
+it is built (`tests/system/build_emulator.cmake`; the output of the build is in `<build dir>/system/emulator.log`,
+and on the console when it fails). A test run therefore tests the sources as they are, with no step to forget. The
+first build takes about a minute, later ones a few seconds. The emulator is built with the default C and C++
+compilers, whatever the tests are configured with (it links with GCC only).
 
-    -DNULLDC_EMULATOR=<binary>           test this binary as the default build, and do not build one
-    -DNULLDC_EMULATOR_TA_HLE=<binary>    the same for the -DHAS_TA_LLE=OFF build
+    -DNULLDC_EMULATOR=<binary>           test this binary, and do not build one
     -DNULLDC_SYSTEM_TESTS=OFF            no emulator is built, the system tests are reported as skipped
 
 The tests need Linux (headless mode) and `python3`; without them they are reported as skipped.
@@ -73,7 +73,8 @@ Every test is `system_test.py --case <case>` on one of the two emulators, but fo
 | `dirs.errors` | every command line that is refused, each on a copy of the emulator in front of a headless run of `guest_exit` that a mistake would start: each one-dash switch (`-config`, `-portable`, `-shared`, `-help`) naming its two-dash form, `--portable` as the last word, in front of a switch, with an empty word, naming a file, naming a directory that cannot be written, one that cannot be made (below a directory without write permission, and one whose name is too long below a directory that is made on the way and has to be removed again), twice, with `--shared` (both orders), `--shared` twice, without `HOME` and the XDG variables, and with a data directory that cannot be made behind a config directory that was made, an unknown switch (`--bogus`, `-x`, `-`), a game whose name begins with a dash without `--`, the Windows `--console` and `--log`, a value behind `=` (`--portable=<dir>`, `--shared=yes`), `--config` as the last word, with an item that is not `section:key=value`, with nothing after its last comma and in front of a switch, and the directory of the executable that cannot be written. Each: exit code 2, one line `nulldc3: <why>` on stderr that says why (for a portable directory that cannot be written or made, naming `--portable <dir>` and `--shared`), no machine (no `Config dir is`, `Virtual cfg`, `Using MCPU`, exit line), and nothing written below the scratch directory | |
 | `dirs.appimage` | inside an AppImage the files are in the directory that holds the AppImage: a stand-in for the runtime's mount (`mnt/`, read-only, with the emulator at `mnt/usr/bin/nulldc3`) and an AppImage file in `dist/`, the run started by the mount's path with `APPIMAGE` the file and `APPDIR` the mount, given through a symbolic link (the emulator resolves both): `emu.cfg` and the two VMU images in `dist/` and nothing anywhere else (not in the mount, the working directory, `HOME` or the XDG directories), the run says so (`Config dir is`, `Data dir is`), and nothing of the other places is read (as in `dirs.default`); with `APPIMAGE` a symbolic link to the file in a third directory, the directory is the one of the file it points at | |
 | `dirs.appimage.inherited` | `APPIMAGE` and `APPDIR` that another AppImage left in the environment, with the executable outside that `APPDIR`: the files stay beside the executable, and nowhere else; the same with `APPIMAGE` alone, and with an `APPDIR` whose name is the start of the name of the executable's directory without being a directory above it (`bi/` and `bin/`) | |
-| `frame.refsw2` (default build only) | refsw2 runs headless: after 240 vblanks of 2ndmix the exit line has the hash of a 640x480 frame, `Exit.FramePng` wrote a valid PNG of that size that is not an empty frame, and the run differs from the same run with the `none` renderer in VRAM and in nothing else of the state hash | `NULLDC_ELF_DIR` |
+| `frame.refsw2` (not `system.hle.*`) | refsw2 runs headless: after 240 vblanks of 2ndmix the exit line has the hash of a 640x480 frame, `Exit.FramePng` wrote a valid PNG of that size that is not an empty frame, and the run differs from the same run with the `none` renderer in VRAM and in nothing else of the state hash | `NULLDC_ELF_DIR` |
+| `frame.refsw3` (not `system.hle.*`) | the same with refsw3 (refsw3-core and refsw3-ta) | `NULLDC_ELF_DIR` |
 | `vmem.concurrent` | 2ndmix on the JIT for 60 vblanks, 80 runs, 2 at a time, started at the same moment (each run waits at a gate that the test opens for both together), none of them with a file of its data directory for its memory (`vmem_shim.so` refuses it, `VMEM_SHIM_NO_FILE`; its `memfd_create` is the host's, `VMEM_SHIM_MEMFD`): every run says `Info: nvmem is enabled`, none `nvmem is DISABLED`, and ends at its vblanks with exit code 0, all in one state hash. About 20 s | `NULLDC_ELF_DIR` |
 | `vmem.none` | in a user and mount namespace of its own (as `vmem.taken`; a host without one skips the test): 2ndmix on the JIT for 600 vblanks where no file of the memory can be made, without `memfd_create`, on a read-only `/dev/shm` and with no file of the data directory (the shim refuses it). The run says `nvmem is DISABLED` and `Using MCPU Recompiler`, ends at its vblanks with exit code 0, in the state hash of the same run with the layout, and leaves no name in `/dev/shm`. About 3 s | `NULLDC_ELF_DIR` |
 | `vmem.taken` | in a user and mount namespace of its own, with a tmpfs of its own on `/dev/shm` (`unshare -rm`; a host without one skips the test): 2ndmix on the JIT for 60 vblanks, with no file of the data directory (the shim, with the host's `memfd_create`), while `/dev/shm/dcnzorz_mem` is there, as while an emulator from before the fix starts; again without `memfd_create` (the library `vmem_shim.so`, preloaded, refuses it) and without that file, and with `/dev/shm/dcnzorz_mem.<pid>.0`, its own first name, there too; and without `memfd_create` on a read-only `/dev/shm`, with a data directory. Each run has the layout and ends in the state hash of the same run made beside nothing; the names that were there are there behind it, and it leaves none of its own in `/dev/shm` or in the data directory | `NULLDC_ELF_DIR` |

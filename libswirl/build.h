@@ -163,10 +163,6 @@
 #define LICENSE_LGPL 0x50000002
 #define LICENSE_GPL  0x50000003
 
-//FEAT_TA
-#define TA_HLE 0x60000001
-#define TA_LLE 0x60000002
-
 // Native builds are for x86_64 and arm64. A 32-bit x86 or arm host has no recompiler, no fault context and no FP
 // mode code in this tree. Any other host has no recompiler and runs the interpreters
 #if defined(__i386__) || defined(_M_IX86) || defined(__arm__) || defined(_M_ARM)
@@ -177,10 +173,6 @@
 
 #if !defined(TARGET_LICENSE)
 #define TARGET_LICENSE LICENSE_GPL
-#endif
-
-#if !defined(FEAT_TA)
-#define FEAT_TA TA_HLE
 #endif
 
 #ifndef CMAKE_BUILD

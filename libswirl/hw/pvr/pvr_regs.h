@@ -7,7 +7,8 @@
 #pragma once
 #include "types.h"
 
-#define pvr_RegSize (0x8000)
+// The PVR's register area is 0x005F8000-0x005F9FFF: 8 KB (registers, fog table, palette), all the bus maps here
+#define pvr_RegSize (0x2000)
 #define pvr_RegMask (pvr_RegSize-1)
 
 #define PvrReg(x,t) (*(t*)&pvr_regs[(x) & pvr_RegMask])

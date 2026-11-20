@@ -7,7 +7,6 @@
 
 extern u8* emu_vram;
 extern u32 FrameCount;
-#if FEAT_TA == TA_LLE
 #include "imgui/imgui.h"
 #include "hw/pvr/Renderer_if.h"
 #include "rend/gles/gles.h"
@@ -343,5 +342,4 @@ struct refmisterrend : Renderer
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 };
-static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refmister", "mister prototyping", 3, [](u8* vram) { return (Renderer*) new refmisterrend(vram); }, true });
-#endif
+static auto refsw2registration = RegisterRendererBackend(rendererbackend_t{ "refmister", "mister prototyping (+ refsw3-ta)", 3, [](u8* vram) { return (Renderer*) new refmisterrend(vram); }, true, true });
