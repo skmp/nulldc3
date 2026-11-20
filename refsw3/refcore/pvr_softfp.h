@@ -325,6 +325,17 @@ inline bool Perpendicular(const Fp& det)
     return (perpVal.bad || !perpVal.zero()) && AbsAtMost(det, perpVal);
 }
 
+// The factor of the mean of a perpendicular (or determinant-zero) triangle's corners, in the ISP's depth and the
+// TSP's 1/w alike: 1/3 rounded up to 24 bits, 0xaaaaab 2^-25 (dreamcast-tests pvr-tests/perpmean_word, slivers_detzero;
+// pvr_isp_depth.h and pvr_tsp_plane.h, where the measurements are).
+inline Fp OneThird()
+{
+    Fp t;
+    t.mant = 0xaaaaab;
+    t.exp = -25;
+    return t;
+}
+
 // a * b, the product's mantissa cut to `bits` bits.
 template<class B>
 inline Fp Mul(const Fp& a, const Fp& b, B bits)

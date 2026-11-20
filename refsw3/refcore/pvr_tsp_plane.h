@@ -243,9 +243,7 @@ struct PlaneT {
             // just under it, ten colour sets, Gouraud, untextured, textured modulate and decal, both windings): 240 of
             // 240 regions (126 before).
             A = Fp(); B = Fp();
-            Fp third;
-            third.mant = 0xaaaaab;
-            third.exp = -25;
+            const Fp third = pvrfp::OneThird();
             // A depth of exponent field 0 is a zero, but not quite in the first addition: there, against a depth of
             // 2^-126 .. 2^-125 of the other sign, it is taken as (1 + m 2^-23) 2^-127 (m its mantissa, the hidden
             // bit not cleared, as the planes' last addition takes a zero for 2^-127), and if the difference would be

@@ -615,34 +615,42 @@ void RenderCORE() {
             // NaN) is 254, the fraction kept: +-infinity is +-2^127 and ties with a polygon that overflows
             // (StoredDepth::Saturated), 0x7f800001 too (its fraction is cut), a NaN is above it (dreamcast-tests/pvr-tests
             // bgspec, bgbig: and the largest float, 0x7f7fffe0 cut, is above it; 2^127 ties).
-            // Below zero (pvr-tests/bgneg, bgneg2, bgspec; the ISP's order is StoredDepth's): a magnitude below 2^-20 is
-            // 0; from 2^-20 to below 64 (fields 107 .. 132) the background is the lowest depth of the binade of 64
-            // in that order, 0xc2ffffff (-127.99999, not cut: below the probe at 0xc2ffffe0, above -32; the same
-            // for -2^-20, -1, -32, -63.75 and 20 more); from 64 on it is itself (-64, -65, -100, -1024, -2^20,
-            // -2^60, -2^100, -inf, -NaN), on the grid of a polygon's depth below zero (pvr_isp_depth.h,
-            // StoredDepth::Store): its low 4 fraction bits cut, then its magnitude rounded up to 16 bits (a multiple of
-            // 0x100 in the word), one that would round up to the next power of two staying at the fraction 0x7fffe0.
-            // dreamcast-tests/pvr-tests/depthgaps_bglow, depthgaps_bglow2 (backgrounds W + L, L = 0 .. 31, against flat
-            // polygons at W: L 0 .. 15 tie with W, 16 .. 31 are below it, for W = -64, -100, -2^20, -2^100; with W of
-            // fraction 0x7fffe0 all 32 tie), depthgaps_bglow3 (16 .. 31 tie with a polygon at W + 0x20, which is
-            // stored as W + 0x100; a background of 0xc2ffffc0 + L ties with polygons at 0xc2ffffc0 and 0xc2ffffe0
-            // for every L, as 0xc2ffffe0): 51 of 51 regions with this rule (35 before), bglow2 27 of 27 (17), bglow
-            // 280 of 300 (272; the rest are the overflow register's words). The depthgaps hunt found the rule; it is
-            // here because a polygon below zero is stored that way (StoredDepth::Store) and the two must agree.
+            // Below zero (pvr-tests/bgneg, bgneg2, bgspec; the ISP's order is StoredDepth's) the background is stored
+            // as the depth unit stores a flat plane of that depth whose block exponent is at least 6
+            // (pvr_isp_depth.h, StoredDepth::Neg, NegWord): E = max(its exponent, 6), its 20 bits (the start's) on the
+            // block's unit grid 2^(E - 26) toward zero, then M = that over 2^(E - 16), rounded down (the magnitude
+            // up). Above zero the same exponent of at least 6 is the 2^-20 grid of the rule above.
+            // From 64 on (E its own): itself (-64, -65, -100, -1024, -2^20, -2^60, -2^100, -inf, -NaN), its low 4
+            // fraction bits cut, then its magnitude rounded up to a multiple of 0x100, one that would round up to the
+            // next power of two staying at the fraction 0x7fffe0 (pvr-tests/depthgaps_bglow, depthgaps_bglow2: W + L
+            // for every L = 0 .. 31 against flat polygons at W: L 0 .. 15 tie with W, 16 .. 31 are below it, for W
+            // = -64, -100, -2^20, -2^100, -2^127; with W of fraction 0x7fffe0 all 32 tie (-127.99976, the overflow
+            // register's words 0xfeffffe0, 0xff7fffe0); depthgaps_bglow3: 16 .. 31 tie with W + 0x20, which a flat
+            // polygon stores as W + 0x100; -inf + L and -NaN 0xffffffe0 + L as field 254 with that fraction).
+            // Below 64 (E 6, grid 2^-10): pvr-tests/depthgaps_bgpin (a ramp of E 6 stepping by 2^-10 across -1 and
+            // across 0, Greater, Equal, Less): -1 and -1 - 2^-23 tie with the ramp's -1 (M -1024), -2^-20 with its
+            // -2^-10 (M -1: rounded up, not to 0), -0.5 between its -1009 2^-10 and -16 2^-10, -31.99998, -32,
+            // -63.75, -63.99999 below its -1040 2^-10; depthgaps_ties (the one of -1 against ramps of E 6 and 7);
+            // below 2^-20 (field 107) nothing is left on the grid 2^-20: 0 (bgspec: -2^-21, -2^-149, -0 as 0).
+            // (refsw3 had all of -2^-20 .. -63.75 as one word, 0xc2ffffff: bgneg's probes, at -64 .. -100.75, are
+            // above every one of them.)
             const u32 bg = ISP_BACKGND_D.i, field = (bg >> 23) & 0xff;
-            u32 bgBits;
+            ZType bgZ;
             if (bg >> 31) {
-                const u32 q = ((bg & 0x7ffff0u) + 0xffu) >> 8;
-                bgBits = field < 107 ? 0 : field < 133 ? 0xc2ffffffu
-                       : (bg & 0xff800000u) | (q >= 0x8000u ? 0x7fffe0u : q << 8);
-            }
-            else {
+                const int f = field == 255 ? 254 : (int)field;
+                const int E = std::max(f - 126, 6);
+                const uint64_t m20 = (0x800000u | (bg & 0x7fffffu)) >> 4;       // the depth is m20 2^(f - 146)
+                const int sh = f - 120 - E;                                     // in units of 2^(E - 26)
+                const uint64_t t = f < 107 ? 0 : sh >= 0 ? m20 << sh : (-sh < 64 ? m20 >> -sh : 0);
+                bgZ = t ? ZType::Neg(E, -(int64_t)((t + 1023) >> 10)) : ZType();
+            } else {
                 const int cut = std::max(5, 130 - (int)field);
-                bgBits = cut > 23 ? 0 : (bg & ~((1u << cut) - 1));
+                u32 bgBits = cut > 23 ? 0 : (bg & ~((1u << cut) - 1));
+                if (field == 255)
+                    bgBits -= 1u << 23;
+                bgZ = ZType::Bits(bgBits);
             }
-            if (field == 255)
-                bgBits -= 1u << 23;
-            ClearBuffers(bgTag, ZType::Bits(bgBits), 0);
+            ClearBuffers(bgTag, bgZ, 0);
         } else {
             RENDLOG("ZKEEP");
             ClearParamStatusBuffer();
